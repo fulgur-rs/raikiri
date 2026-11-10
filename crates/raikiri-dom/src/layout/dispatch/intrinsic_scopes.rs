@@ -452,6 +452,9 @@ pub(super) fn with_hypothetical_column_main_size(
         || known_main.is_some()
         || (measures_cross && !wraps)
     {
+        if wraps {
+            return with_line_minimum_in_content_box(tree, idx, inputs, vertical, &layout);
+        }
         return layout(tree, inputs);
     }
     let items = tree
@@ -543,14 +546,14 @@ pub(super) fn with_hypothetical_column_main_size(
         }
         return run(tree, rigid, inputs);
     }
-    // Percentage edges refer to the inline size of the containing block,
-    // which is the height of a vertical parent.
-    let basis = if vertical {
-        super::vertical_block::containing_inline_size(tree, idx, &inputs)
-    } else {
-        inputs.parent_size.width
-    };
     if wraps {
+        // Percentage edges refer to the inline size of the containing block,
+        // which is the height of a vertical parent.
+        let basis = if vertical {
+            super::vertical_block::containing_inline_size(tree, idx, &inputs)
+        } else {
+            inputs.parent_size.width
+        };
         return wrapping_column_layout(
             tree,
             idx,
@@ -591,6 +594,93 @@ pub(super) fn with_hypothetical_column_main_size(
     *known = Some(main);
     *known_is_definite = false;
     layout(tree, inputs)
+}
+
+/// Lay out the wrapping flex container `idx`, whose main size is known, with
+/// a minimum main size no larger than its content box.
+///
+/// The lines of a container break at the size of its content box, and at
+/// least at its minimum less its padding and border (CSS Flexbox 1 §9.3).
+/// Taffy raises the room its lines break in to the border box minimum, so a
+/// minimum that comes within the padding and border of the main size lets a
+/// line hold more than the content box. The container then gets a minimum of
+/// its content box size, which leaves its main size as it is.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-line-break>
+fn with_line_minimum_in_content_box(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    inputs: LayoutInput,
+    vertical: bool,
+    layout: &impl Fn(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let style = tree.physical_style(idx);
+    // The main axis is horizontal for a row of a horizontal container and for
+    // a column of a vertical one.
+    let horizontal = style.flex_direction_is_row() != vertical;
+    let pick = |size: Size<Option<f32>>| if horizontal { size.width } else { size.height };
+    let pick_style = |size: Size<Dimension>| if horizontal { size.width } else { size.height };
+    let definite = if horizontal {
+        inputs.known_dimensions_are_definite.width
+    } else {
+        inputs.known_dimensions_are_definite.height
+    };
+    let containing = pick(inputs.parent_size);
+    let basis = if vertical {
+        super::vertical_block::containing_inline_size(tree, idx, &inputs)
+    } else {
+        inputs.parent_size.width
+    };
+    let edges =
+        (style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis)).sum_axes();
+    let insets = if horizontal {
+        edges.width
+    } else {
+        edges.height
+    };
+    let content_box = style.box_sizing() == BoxSizing::ContentBox;
+    let outer =
+        |value: Option<f32>| value.map(|value| if content_box { value + insets } else { value });
+    let min = outer(pick_style(style.min_size().map(Into::into)).maybe_resolve(containing));
+    let max = outer(pick_style(style.max_size().map(Into::into)).maybe_resolve(containing));
+    let size = pick(inputs.known_dimensions)
+        .or_else(|| outer(pick_style(style.size()).maybe_resolve(containing)))
+        .map(|size| {
+            let size = max.map_or(size, |max| size.min(max));
+            min.map_or(size, |min| size.max(min))
+        });
+    let (Some(size), Some(min)) = (size, min) else {
+        return layout(tree, inputs);
+    };
+    let content = (size - insets).max(0.0);
+    if !definite || min <= content {
+        return layout(tree, inputs);
+    }
+    let mut inputs = inputs;
+    if horizontal {
+        inputs.known_dimensions.width = Some(size);
+    } else {
+        inputs.known_dimensions.height = Some(size);
+    }
+    let value = if content_box {
+        (content - insets).max(0.0)
+    } else {
+        content
+    };
+    let property = if horizontal {
+        P::MinWidth
+    } else {
+        P::MinHeight
+    };
+    let key = tree.nodes.box_key(idx).expect("flex container box key");
+    let entries = vec![(
+        key,
+        O::length(property, L::Px(value), true).expect("container main minimum"),
+    )];
+    with_saved_probe_caches(tree, 0, |tree, _| {
+        tree.push_local_overrides(entries);
+        layout(tree, inputs)
+    })
 }
 
 /// Lay out the wrapping column flex container `idx`, whose main size is open
@@ -694,10 +784,14 @@ fn wrapping_column_layout(
             )
         })
         .collect::<Vec<_>>();
-    entries.push((
-        key,
-        O::length(min_property, L::Px(min.unwrap_or(0.0)), true).expect("content minimum"),
-    ));
+    // An `auto` minimum stays, so a minimum Taffy derives from an aspect
+    // ratio is kept.
+    if let Some(min) = min {
+        entries.push((
+            key,
+            O::length(min_property, L::Px(min), true).expect("content minimum"),
+        ));
+    }
     if let Some(max) = max {
         entries.push((
             key,
@@ -719,32 +813,27 @@ fn wrapping_column_layout(
             *room = AvailableSpace::Definite((space - insets).max(0.0));
         }
     }
-    let content = with_saved_probe_caches(tree, 0, |tree, _| {
+    let mut measured = with_saved_probe_caches(tree, 0, |tree, _| {
         tree.push_local_overrides(entries);
         probe(tree, probe_inputs)
-    })
-    .size;
+    });
     let content = if vertical {
-        content.width
+        measured.size.width
     } else {
-        content.height
+        measured.size.height
     };
     let main = content + insets;
     // The minimum raised the size above the longest line where the content
     // box is no larger than the minimum of it.
     let raised = min.is_some_and(|min| content <= min && min > 0.0);
     if inputs.run_mode == RunMode::ComputeSize && inputs.axis == main_axis {
-        return LayoutOutput::from_outer_size(if vertical {
-            Size {
-                width: main,
-                height: 0.0,
-            }
+        // A run that measures the main axis alone returns its size only.
+        if vertical {
+            measured.size.width = main;
         } else {
-            Size {
-                width: 0.0,
-                height: main,
-            }
-        });
+            measured.size.height = main;
+        }
+        return measured;
     }
     let mut inputs = inputs;
     let (known, known_is_definite, room) = if vertical {
@@ -765,17 +854,17 @@ fn wrapping_column_layout(
         *known = Some(main);
         *known_is_definite = true;
     }
-    let entries = vec![
-        (
+    let mut entries = vec![(
+        key,
+        O::length(max_property, L::Px(in_own_box(main)), true).expect("container main limit"),
+    )];
+    if min.is_some() {
+        entries.push((
             key,
             O::length(min_property, L::Px(in_own_box(main - insets)), true)
                 .expect("container main minimum"),
-        ),
-        (
-            key,
-            O::length(max_property, L::Px(in_own_box(main)), true).expect("container main limit"),
-        ),
-    ];
+        ));
+    }
     with_saved_probe_caches(tree, 0, |tree, _| {
         tree.push_local_overrides(entries);
         layout(tree, inputs)

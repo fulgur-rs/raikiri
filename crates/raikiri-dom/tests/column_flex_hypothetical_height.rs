@@ -1354,3 +1354,41 @@ fn a_wrapping_column_breaks_its_lines_in_its_content_box() {
         ),
     ]);
 }
+
+#[test]
+fn a_wrapping_row_breaks_its_lines_in_its_content_box() {
+    // A row whose width is known breaks its lines at its content box, even
+    // where its own minimum width is larger than that box.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-wrap:wrap;box-sizing:border-box;padding:7px 10px;border:3px solid;min-width:100px;max-width:110px;",
+            &[
+                ("flex:0 0 40px", "xx"),
+                ("flex:0 0 50px", "xx"),
+                ("flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 110.0, 40.0]),
+                ("i0", [13.0, 10.0, 40.0, 10.0]),
+                ("i1", [13.0, 20.0, 50.0, 10.0]),
+                ("i2", [63.0, 20.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "",
+            "display:flex;flex-wrap:wrap;box-sizing:content-box;padding:7px 10px;border:3px solid;min-width:100px;max-width:110px;",
+            &[
+                ("flex:1 0 40px", "xx"),
+                ("flex:1 0 50px", "xx"),
+                ("flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 136.0, 40.0]),
+                ("i0", [13.0, 10.0, 50.0, 10.0]),
+                ("i1", [63.0, 10.0, 60.0, 10.0]),
+                ("i2", [13.0, 20.0, 30.0, 10.0]),
+            ],
+        ),
+    ]);
+}
