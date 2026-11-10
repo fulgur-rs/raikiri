@@ -323,3 +323,76 @@ fn positioned_column_flex_items_break_between_their_lines() {
         ),
     ]);
 }
+
+#[test]
+fn positioned_column_flex_growth_stays_in_its_column() {
+    // The items after the grown one in its column follow it; the next column
+    // beside it, however tall, neither holds them back nor moves.
+    assert_rows(&[
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column;flex-wrap:wrap;height:120px'><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px'>Z</p><p style='margin:0;width:20px'>W</p><p style='margin:0;orphans:1;widows:1;width:20px'>Y Y Y</p></div>",
+            &[
+                (1, 'W', 55),
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+                (2, 'Y', 65),
+                (2, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column;flex-wrap:wrap-reverse;height:120px'><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px'>Z</p><p style='margin:0;width:20px'>W</p><p style='margin:0;orphans:1;widows:1;width:20px'>Y Y Y</p></div>",
+            &[
+                (1, 'W', 55),
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+                (2, 'Y', 65),
+                (2, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column-reverse;flex-wrap:wrap;height:120px'><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px'>Z</p><p style='margin:0;width:20px'>W</p><p style='margin:0;orphans:1;widows:1;width:20px'>Y Y Y</p></div>",
+            &[
+                (1, 'Y', 55),
+                (1, 'Z', 55),
+                (2, 'W', 65),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'X', 65),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column;flex-wrap:wrap;height:120px'><p style='margin:0;width:20px;order:1'>Z</p><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px;order:2'>W</p><p style='margin:0;orphans:1;widows:1;width:20px;order:2'>Y Y Y</p></div>",
+            &[
+                (1, 'W', 55),
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+                (2, 'Y', 65),
+                (2, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-direction:column;flex-wrap:wrap;height:120px;align-items:center'><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px'>Z</p><p style='margin:0;width:20px'>W</p><p style='margin:0;orphans:1;widows:1;width:20px'>Y Y Y</p></div>",
+            &[
+                (1, 'W', 55),
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+                (2, 'Y', 65),
+                (2, 'Z', 65),
+            ],
+        ),
+    ]);
+}

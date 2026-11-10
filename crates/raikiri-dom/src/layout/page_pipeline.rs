@@ -11436,8 +11436,15 @@ fn place_beside_growth(
         });
     }
     let same_line = items_on_line_of(document, cascade, body_id, container, item, &placed);
+    let column = column_line_of(document, cascade, container, item, before, &placed);
     for child in placed {
-        if child.id == item {
+        // The other columns of a multi-line column flex container sit beside
+        // the grown item, and its growth moves only its own column.
+        if child.id == item
+            || column
+                .as_ref()
+                .is_some_and(|line| !line.contains(&child.id))
+        {
             continue;
         }
         // A margin above an item on the same row or line can take it below
@@ -11518,6 +11525,59 @@ struct PlacedItem {
     offset: f32,
     top: f32,
     bottom: f32,
+}
+
+/// The `placed` items on the flex line of `item` when `container` is a
+/// multi-line column flex container. The items fill a line in order until one
+/// starts over in the block axis beside an item already on it; the grown item
+/// is measured by where its margin box ended before it grew (`before`), as the
+/// items after it have not moved yet.
+fn column_line_of(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+    before: f32,
+    placed: &[PlacedItem],
+) -> Option<HashSet<usize>> {
+    let style = &cascade.computed[container];
+    if document.nodes[container].formatting_context != FormattingContext::Flex
+        || matches!(
+            style.flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        )
+        || style.flex_wrap == FlexWrapValue::NoWrap
+    {
+        return None;
+    }
+    let mut ordered: Vec<&PlacedItem> = placed.iter().collect();
+    ordered.sort_by_key(|child| cascade.computed[child.id].order);
+    let span = |child: &PlacedItem| {
+        let bottom = if child.id == item {
+            before
+        } else {
+            child.bottom
+        };
+        (child.top, bottom)
+    };
+    let mut line: Vec<&PlacedItem> = Vec::new();
+    let mut lines = Vec::new();
+    for child in ordered {
+        let (top, bottom) = span(child);
+        let starts_over = line.iter().any(|&other| {
+            let (other_top, other_bottom) = span(other);
+            top < other_bottom - 0.001 && bottom > other_top + 0.001
+        });
+        if starts_over {
+            lines.push(std::mem::take(&mut line));
+        }
+        line.push(child);
+    }
+    lines.push(line);
+    lines
+        .into_iter()
+        .find(|line| line.iter().any(|child| child.id == item))
+        .map(|line| line.into_iter().map(|child| child.id).collect())
 }
 
 /// Which of the `placed` items of `container` are known to share the flex
