@@ -1099,12 +1099,17 @@ fn wrapping_column_layout(
     } else {
         Vec::new()
     };
-    with_saved_probe_caches(tree, 0, |tree, _| {
+    // Nor is the size definite for the children of the items: the flexed
+    // main size of an item is definite there only where its flex basis is.
+    tree.context.content_sized_flex_mains.push(idx);
+    let output = with_saved_probe_caches(tree, 0, |tree, _| {
         tree.push_local_overrides(entries);
         super::column_main_limits::scoped(tree, idx, items, inputs.run_mode, |tree| {
             layout(tree, inputs)
         })
-    })
+    });
+    tree.context.content_sized_flex_mains.pop();
+    output
 }
 
 /// Read every percentage main size of the in-flow items of the container

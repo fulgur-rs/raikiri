@@ -1047,6 +1047,7 @@ impl LayoutSession<'_> {
         let inputs = orthogonal_flow::with_grid_item_room(self, usize::from(node_id), inputs);
         let inputs = with_container_page_room(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
+        let inputs = with_flexed_main_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
         if let Some(output) =
@@ -4395,6 +4396,53 @@ fn with_grid_ratio_width(
         inputs.known_dimensions.width =
             Some(width.max(floor).maybe_clamp(metrics.min.width, ceiling));
         inputs.known_dimensions_are_definite.width = true;
+    }
+    inputs
+}
+
+/// Keep the flexed main size of an item from being definite for its children
+/// where its container is laid out at a main size its content decided.
+///
+/// Such a container is given its size as definite so that its lines break
+/// against it, and Taffy then treats the flexed main size of every item as
+/// definite. A flexed main size is definite only where the container's main
+/// size is, or where the item's flex basis is (CSS Flexbox 1 §9.8), so an item
+/// whose flex basis is its content leaves the percentage main sizes of its
+/// children unresolved.
+fn with_flexed_main_not_definite(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let Some(&container) = tree.context.content_sized_flex_mains.last() else {
+        return inputs;
+    };
+    if tree.taffy_parent_of(idx) != Some(container)
+        || tree.nodes[idx].layout_position() == Position::Absolute
+    {
+        return inputs;
+    }
+    // The main axis of a column runs along the block axis of the container.
+    let main_is_width = tree.physical_style(container).flex_direction_is_row()
+        != tree.nodes[container].used_writing_mode.is_vertical();
+    let item = tree.physical_style(idx);
+    let main_size = if main_is_width {
+        item.size().width
+    } else {
+        item.size().height
+    };
+    let basis = item.flex_basis();
+    let content_basis = matches!(
+        basis.expand(),
+        ExpandedDimension::Auto | ExpandedDimension::Content
+    ) && main_size.is_auto();
+    if !content_basis || item.aspect_ratio().is_some() {
+        return inputs;
+    }
+    if main_is_width {
+        inputs.known_dimensions_are_definite.width = false;
+    } else {
+        inputs.known_dimensions_are_definite.height = false;
     }
     inputs
 }

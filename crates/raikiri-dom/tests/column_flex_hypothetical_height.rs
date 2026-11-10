@@ -2120,3 +2120,62 @@ fn a_raised_wrapping_column_of_one_line_leaves_item_percentages_of_children_unre
         ),
     ]);
 }
+
+#[test]
+fn a_bounded_wrapping_column_of_several_lines_leaves_item_percentages_of_children_unresolved() {
+    // Lines break against the maximum, but the height of the column still
+    // follows its content, so the flexed height of an item is definite for
+    // the item's children only where its flex basis is.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;padding:5px;min-height:60px;max-height:80px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 40px", "x"),
+                ("flex:0 0 40px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 30.0, 60.0]),
+                ("i0", [5.0, 5.0, 10.0, 10.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 15.0, 10.0, 40.0]),
+                ("i2", [15.0, 5.0, 10.0, 40.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;min-height:40px;max-height:60px;",
+            &[
+                ("flex:0 0 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 50px", "x"),
+                ("flex:0 0 30px", "x"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 60.0]),
+                ("i0", [0.0, 0.0, 10.0, 10.0]),
+                ("g", [0.0, 0.0, 10.0, 10.0]),
+                ("i1", [0.0, 10.0, 10.0, 50.0]),
+                ("i2", [10.0, 0.0, 10.0, 30.0]),
+                ("i3", [10.0, 30.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;min-height:60px;max-height:80px;",
+            &[
+                ("flex:1 0 30px", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 40px", "x"),
+                ("flex:0 0 40px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 70.0]),
+                ("i0", [0.0, 0.0, 10.0, 30.0]),
+                ("g", [0.0, 0.0, 10.0, 15.0]),
+                ("i1", [0.0, 30.0, 10.0, 40.0]),
+                ("i2", [10.0, 0.0, 10.0, 40.0]),
+            ],
+        ),
+    ]);
+}
