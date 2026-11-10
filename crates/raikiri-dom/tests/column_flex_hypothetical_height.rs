@@ -1171,3 +1171,55 @@ fn a_wrapping_column_takes_bounded_bases_negative_margins_and_its_padding() {
         ),
     ]);
 }
+
+#[test]
+fn a_vertical_wrapping_column_resolves_its_padding_against_the_parent_inline_size() {
+    // Percentage padding refers to the inline size of the containing block:
+    // the height of a vertical parent and the width of a horizontal one. The
+    // content-box maximum the container gets back from its found width
+    // removes the same padding.
+    let container = "display:inline-flex;flex-direction:column;writing-mode:vertical-rl;flex-wrap:wrap;box-sizing:content-box;max-width:100px;padding:0 10%;";
+    let items: &[(&str, &str)] = &[
+        ("writing-mode:horizontal-tb;flex:1 0 40px", "xxxx xxxx xxxx"),
+        ("writing-mode:horizontal-tb;flex:1 0 50px", "xx xx xx xx"),
+        ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+    ];
+    // A 300x200 parent that runs vertically: 20px of padding on each side.
+    let in_vertical_parent: &[(&str, [f32; 4])] = &[
+        ("c", [170.0, 100.0, 130.0, 30.0]),
+        ("i0", [240.0, 100.0, 40.0, 30.0]),
+        ("i1", [190.0, 100.0, 50.0, 30.0]),
+        ("i2", [250.0, 130.0, 30.0, 10.0]),
+    ];
+    assert_cases(&[
+        (
+            "writing-mode:vertical-rl;width:300px;height:200px;margin-top:100px",
+            container,
+            items,
+            in_vertical_parent,
+        ),
+        (
+            "writing-mode:vertical-rl;display:flex;align-items:flex-start;width:300px;height:200px;margin-top:100px",
+            container,
+            items,
+            in_vertical_parent,
+        ),
+        (
+            "writing-mode:vertical-rl;display:grid;align-items:start;justify-items:start;width:300px;height:200px;margin-top:100px",
+            container,
+            items,
+            in_vertical_parent,
+        ),
+        (
+            "writing-mode:vertical-rl;width:200px;height:300px;margin-top:100px",
+            container,
+            items,
+            &[
+                ("c", [50.0, 100.0, 150.0, 30.0]),
+                ("i0", [130.0, 100.0, 40.0, 30.0]),
+                ("i1", [80.0, 100.0, 50.0, 30.0]),
+                ("i2", [140.0, 130.0, 30.0, 10.0]),
+            ],
+        ),
+    ]);
+}

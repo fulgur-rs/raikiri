@@ -538,6 +538,13 @@ pub(super) fn with_hypothetical_column_main_size(
     )
     .size;
     let main = if vertical { size.width } else { size.height };
+    // Percentage edges refer to the inline size of the containing block,
+    // which is the height of a vertical parent.
+    let basis = if vertical {
+        super::vertical_block::containing_inline_size(tree, idx, &inputs)
+    } else {
+        inputs.parent_size.width
+    };
     let mut inputs = inputs;
     let (known, known_is_definite, room) = if vertical {
         (
@@ -564,7 +571,6 @@ pub(super) fn with_hypothetical_column_main_size(
         // Taffy would raise the room its lines break in to a minimum.
         let style = tree.physical_style(idx);
         let limit = if style.box_sizing() == BoxSizing::ContentBox {
-            let basis = inputs.parent_size.width;
             let edges = (style.padding().resolve_or_zero(basis)
                 + style.border().resolve_or_zero(basis))
             .sum_axes();
