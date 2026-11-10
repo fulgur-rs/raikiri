@@ -273,25 +273,29 @@ impl HeightFollowers {
 
     fn follow_static_after_block(
         &self,
-        document: &mut Document,
+        document: &mut super::super::context::LayoutSession<'_>,
         parent: usize,
         child: usize,
         delta: f32,
     ) {
-        // The static position of an absolutely positioned child of a flex or
-        // grid container is at the start of the container's content box, not
-        // after the items before it (CSS Flexbox 1 §4.1, CSS Grid 1 §10.2).
-        if document.nodes[parent].display().is_flex_or_grid_container()
-            || document
-                .ifc_layout_node(parent)
-                .and_then(|node| node.ifc_lines())
-                .is_some()
+        if document
+            .ifc_layout_node(parent)
+            .and_then(|node| node.ifc_lines())
+            .is_some()
         {
             return;
         }
+        let flex_or_grid = document.nodes[parent].display().is_flex_or_grid_container();
         if let Some(nodes) = self.static_owners.get(&parent) {
             for &node in nodes {
-                if self.source_order[node] > self.source_order[child] {
+                // The static position of an absolutely positioned child of a
+                // flex or grid container comes from the container's content
+                // box and the child's alignment, not from the items before it
+                // (CSS Flexbox 1 §4.1, CSS Grid 1 §10.2): aligned to the start
+                // it stays put.
+                if self.source_order[node] > self.source_order[child]
+                    && !(flex_or_grid && static_position_at_block_start(document, parent, node))
+                {
                     document.translate_pagination_y(node, delta);
                 }
             }
@@ -835,6 +839,42 @@ fn keep_whole_box(
         );
     }
     Ok(())
+}
+
+/// Whether the absolutely positioned child `node` of the flex or grid
+/// container `parent` has its static position at the block-start edge of the
+/// container's content box, so that it does not depend on the container's
+/// height: its block-axis alignment, or for a column flex container the
+/// distribution of the main axis, starts there.
+fn static_position_at_block_start(
+    document: &super::super::context::LayoutSession<'_>,
+    parent: usize,
+    node: usize,
+) -> bool {
+    use raikiri_layout_style::values::{AlignContentKeyword, AlignItemsKeyword};
+    let container = document.physical_style(parent);
+    if document.nodes[parent].display().is_flex_container() && !container.flex_direction_is_row() {
+        return container.flex_direction() == taffy::FlexDirection::Column
+            && matches!(
+                container.justify_content().keyword,
+                AlignContentKeyword::Normal
+                    | AlignContentKeyword::Start
+                    | AlignContentKeyword::FlexStart
+                    | AlignContentKeyword::Stretch
+            );
+    }
+    let alignment = document
+        .physical_style(node)
+        .bridge_align_self()
+        .unwrap_or_else(|| container.align_items());
+    !container.flex_lines_are_reversed()
+        && !matches!(
+            alignment.keyword,
+            AlignItemsKeyword::End
+                | AlignItemsKeyword::FlexEnd
+                | AlignItemsKeyword::SelfEnd
+                | AlignItemsKeyword::Center
+        )
 }
 
 fn grow_inside(

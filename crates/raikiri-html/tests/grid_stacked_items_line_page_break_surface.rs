@@ -231,6 +231,27 @@ fn text_items_follow_and_absolute_children_stay_at_the_grid_start() {
                 (2, 'Y', 65),
             ],
         ),
+        // A child aligned to the end of the grid follows the grid's end.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:20px;display:grid'><p style='margin:0;orphans:1;widows:1'>X X X</p><div style='height:30px'>Y</div><div style='position:absolute;align-self:end;height:30px'>E</div></div>",
+            &[
+                (1, 'X', 55),
+                (2, 'E', 65),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Y', 65),
+            ],
+        ),
+        // So does one at the end of the cross axis of a row flex container.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:20px;display:flex;align-items:end'><p style='margin:0;orphans:1;widows:1'>X X X</p><div style='position:absolute;height:30px'>E</div></div>",
+            &[(1, 'X', 55), (2, 'E', 35), (2, 'X', 5), (2, 'X', 35)],
+        ),
+        // In a column flex container the start of the main axis places it.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:20px;display:flex;flex-direction:column'><p style='margin:0;orphans:1;widows:1'>X X X</p><div style='position:absolute;align-self:end;height:30px'>E</div></div>",
+            &[(1, 'E', 55), (1, 'X', 55), (2, 'X', 5), (2, 'X', 35)],
+        ),
         // A child at the bottom of the grid moves with the grid's end.
         (
             "<div style='height:30px'></div><div style='position:absolute;top:150px;width:20px;display:grid'><p style='margin:0;orphans:1;widows:1'>X X X</p><p style='margin:0;orphans:1;widows:1'>X X X</p><div style='position:absolute;bottom:0;height:30px'>B</div></div>",
