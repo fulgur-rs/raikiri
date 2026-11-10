@@ -95,14 +95,17 @@ impl ClipBounds {
                 let own = super::clip_block_end(document, cascade, node_id, raw_y);
                 // A clip on a box whose height follows its content grows
                 // with what is pushed down inside it.
-                let own_fixed = if height_follows_content(document, node_id) {
+                let follows_content = height_follows_content(document, node_id);
+                let own_fixed = if follows_content { f32::INFINITY } else { own };
+                // Lines past the end of the box itself stay where they are,
+                // even when a clip margin keeps them visible. A box whose
+                // height follows its content grows with the lines that move
+                // inside it, so its end hides none of them.
+                let own_lines = if follows_content {
                     f32::INFINITY
                 } else {
-                    own
+                    raw_y + document.nodes[node_id].layout.size.height
                 };
-                // Lines past the end of the box itself stay where they are,
-                // even when a clip margin keeps them visible.
-                let own_lines = raw_y + document.nodes[node_id].layout.size.height;
                 (
                     inherited.min(own),
                     inherited_fixed.min(own_fixed),

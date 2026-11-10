@@ -511,6 +511,35 @@ fn a_paragraph_moved_past_its_parent_clip_shows_no_lines() {
 }
 
 #[test]
+fn lines_inside_a_clipping_parent_of_content_height_all_move() {
+    // The parent grows with the lines that move inside it, so its clip hides
+    // none of them: every later line still moves across its page end.
+    // Chromium prints the same lines.
+    let lines = [
+        (1, 5),
+        (1, 35),
+        (1, 65),
+        (2, 5),
+        (2, 35),
+        (2, 65),
+        (3, 5),
+        (3, 35),
+    ];
+    for (first, widows) in [
+        ("<p style='margin:0;height:60px'></p>", 1),
+        ("<div style='height:60px'></div>", 2),
+    ] {
+        let (pages, tops) = glyph_tops(&format!(
+            "<div id='c' style='width:20px;overflow:hidden'>{first}<p style='margin:0;orphans:2;widows:{widows}'>X X X X X X X X</p></div><div style='height:30px'>Z</div>"
+        ));
+        assert_eq!(pages, 4, "{first}");
+        let mut expected: Vec<_> = lines.iter().map(|&(page, top)| (page, 'X', top)).collect();
+        expected.push((3, 'Z', 65));
+        assert_eq!(tops, expected, "{first}");
+    }
+}
+
+#[test]
 fn lines_in_a_clip_margin_past_the_box_stay_in_place() {
     // The clip margin keeps the lines past the box visible, but they are
     // overflow of the box and do not move: in Chromium the fourth line stays
