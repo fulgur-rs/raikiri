@@ -134,6 +134,22 @@ fn a_paragraph_after_other_content_keeps_its_orphans() {
             "<div style='height:30px'></div><div style='position:absolute;top:120px;width:20px'><div style='display:contents'><div style='margin-bottom:20px'></div></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",
             &[(2, 'X', 5), (2, 'X', 35), (2, 'X', 65), (3, 'X', 5)],
         ),
+        // A block before the text in the same paragraph counts, even an empty
+        // one: the text after it sits in an anonymous block of its own.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:30px;width:20px'><div style='orphans:3;widows:1'><div style='height:30px'>Q</div>X X X X</div></div>",
+            &[
+                (0, 'Q', 35),
+                (1, 'X', 5),
+                (1, 'X', 35),
+                (1, 'X', 65),
+                (2, 'X', 5),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:30px;width:20px'><div style='orphans:3;widows:1'><div style='height:0'></div>X X X X</div></div>",
+            &[(1, 'X', 5), (1, 'X', 35), (1, 'X', 65), (2, 'X', 5)],
+        ),
         // So does an empty box whose margin puts the paragraph lower.
         (
             "<div style='height:30px'></div><div style='position:absolute;top:120px;width:20px'><div style='margin-bottom:20px'></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",

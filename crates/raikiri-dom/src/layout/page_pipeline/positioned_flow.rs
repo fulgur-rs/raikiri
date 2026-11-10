@@ -478,6 +478,21 @@ fn takes_room(document: &Document, node: usize) -> bool {
             })
 }
 
+/// Whether a block inside the inline content of `root` comes before its line
+/// `line`: the lines after it begin an anonymous block that follows it.
+fn follows_block(document: &Document, root: usize, line: usize) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(_, after)| after <= line)
+        })
+}
+
 /// The only in-flow item of the flex or grid container `node`, when nothing
 /// sits beside or after it (see [`has_no_other_item`]).
 fn sole_item(document: &super::super::context::LayoutSession<'_>, node: usize) -> Option<usize> {
@@ -582,7 +597,9 @@ fn keep_run(
             && (fit.leaves_too_few_orphans()
                 || avoids && whole_fits && fit.lines_before_break < metrics.len())
             && metrics[0].1 - metrics[0].0 <= env.page_origins.step_at(next) + 0.001
-            && (fit.lines_before_break == 0 || !begins_owner_content(document, owner, root))
+            && (fit.lines_before_break == 0
+                || follows_block(document, root, run.start)
+                || !begins_owner_content(document, owner, root))
         {
             // The ordinary paragraph splitter assumes its first line fits.
             page = next;
