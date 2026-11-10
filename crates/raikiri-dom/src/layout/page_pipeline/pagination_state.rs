@@ -615,6 +615,7 @@ impl PaginationState {
                 })
             });
         text.effective_y -= relative_offset;
+        self.reach_paragraph_page(document, env, candidate, entry, &blocks, &text)?;
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
@@ -2111,6 +2112,71 @@ impl PaginationState {
             && self.deferred_shifts.line_splits.is_empty()
             && (lines_can_shift_inside(document, cascade, block_id)
                 || lines_can_shift_above_blocks(document, cascade, block_id))
+    }
+
+    /// Takes the flow to the page the boxes of the paragraph that holds
+    /// `candidate` start on. A paragraph before it in the same block whose
+    /// last line started the next page exactly leaves the flow on the page
+    /// before, where nothing of this paragraph is: neither its lines nor the
+    /// top edges of the boxes it begins. Its lines are judged from the page
+    /// after, as a box that starts there is.
+    fn reach_paragraph_page(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &TextPosition,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            root_flow_offset,
+            ..
+        } = *env;
+        let page_end =
+            page_origins.origin(self.current_page) + page_origins.step_at(self.current_page);
+        let Some(block_id) = blocks
+            .block
+            .map(|(block, _)| block)
+            .or(blocks.flex_line.map(|(root, _)| root))
+            .or(blocks.column_paragraph)
+            .filter(|_| {
+                text.effective_y >= page_end - 0.001
+                    && !entry.uses_positioned_coordinates
+                    && !candidate.context.is_float_descendant()
+                    && !candidate.context.is_out_of_flow_descendant()
+            })
+        else {
+            return Ok(());
+        };
+        let block_top = block_effective_y(
+            document,
+            block_id,
+            candidate.raw_y,
+            text.effective_y,
+            root_flow_offset,
+            self.flow_shift,
+        );
+        // The boxes that start with the paragraph and their top edges come
+        // before its lines; a paragraph in the body starts nothing but itself.
+        let holder = first_box_ancestor_at_start(
+            document,
+            cascade,
+            block_id,
+            body_id,
+            page_origins.origin(self.current_page),
+        );
+        let lead = lead_below_ancestor(document, cascade, body_id, block_id, holder);
+        let page = page_origins.page_index_for_y(block_top - lead + 0.001);
+        if page > self.current_page {
+            reach_page(control, page)?;
+            self.current_page = page;
+        }
+        Ok(())
     }
 
     /// Pushes the fixed-height block whose first line would straddle the end
