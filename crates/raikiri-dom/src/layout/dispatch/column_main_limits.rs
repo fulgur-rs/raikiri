@@ -19,18 +19,19 @@ pub(super) fn layout(
     main_is_definite: bool,
     algorithm: impl Fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let vertical = super::block_right_to_left(tree, idx).is_some();
     // Choose one main-size correction before any probe changes the item styles.
     let fallback = |tree: &mut LayoutSession<'_>| {
-        super::intrinsic_scopes::with_hypothetical_column_height(
+        super::intrinsic_scopes::with_hypothetical_column_main_size(
             tree,
             node_id,
             inputs,
             main_is_definite,
+            vertical,
             |tree, inputs| algorithm(tree, node_id, inputs),
         )
     };
-    let idx = usize::from(node_id);
-    let vertical = super::block_right_to_left(tree, idx).is_some();
     let main_axis = if vertical {
         RequestedAxis::Horizontal
     } else {
