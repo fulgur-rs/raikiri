@@ -4060,6 +4060,7 @@ fn flex_layout_sized(
         }
         .is_some()
     };
+    let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
     column_cross_measure::layout(
         tree,
         node_id,
@@ -4075,6 +4076,55 @@ fn flex_layout_sized(
             )
         },
     )
+}
+
+/// `inputs` with the width of a vertical wrapping column container left
+/// open where its content decided it.
+///
+/// The width of such a container is its main size, the size its lines break
+/// against. One its content decided is not definite, and Taffy puts every item
+/// on one line under a main size that is not. The width the content decided
+/// is that of the longest line the items made, broken against the container's
+/// `max-width`, so the container finds it again from the room it is given:
+/// its lines break against that room and its own maximum, which keeps every
+/// line, and its items flex within the width they then fill (CSS Flexbox 1
+/// §9.3, §9.7).
+fn with_open_wrapping_column_width(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if !content_limits::is_vertical_wrapping_column_flex(tree, idx) {
+        return inputs;
+    }
+    // An absolutely positioned box that shrinks to fit, or one whose `width`
+    // is an intrinsic keyword, has the width its content gives it however it
+    // is passed down.
+    let content_decided = !inputs.known_dimensions_are_definite.width
+        || vertical_oof::has_content_decided_width(tree, idx)
+        || matches!(
+            tree.physical_style(idx).size().width.expand(),
+            ExpandedDimension::MinContent
+                | ExpandedDimension::MaxContent
+                | ExpandedDimension::FitContent
+        );
+    match inputs.known_dimensions.width {
+        Some(width) if content_decided => {
+            inputs.known_dimensions.width = None;
+            inputs.known_dimensions_are_definite.width = true;
+            inputs.available_space.width = AvailableSpace::Definite(width);
+        }
+        // The room around an open width is no limit for the lines, as the
+        // width is the block size of the container: only its `max-width`
+        // breaks them, and the container is as wide as its longest line,
+        // where Taffy would widen one of several lines to fill the room.
+        None if matches!(inputs.available_space.width, AvailableSpace::Definite(_)) => {
+            inputs.available_space.width = AvailableSpace::MaxContent;
+        }
+        _ => {}
+    }
+    inputs
 }
 
 /// [`flex_layout_sized`] once the percentage flex bases of the items that
