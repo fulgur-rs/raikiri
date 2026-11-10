@@ -195,6 +195,30 @@ fn positioned_later_rows_and_lines_follow_the_row_end() {
                 (3, 'Z', 35),
             ],
         ),
+        // Reversed wrapping puts the later lines above the earlier ones.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:150px;width:40px;display:flex;flex-wrap:wrap-reverse'><p style='margin:0;orphans:1;widows:1;width:20px'>Z Z Z</p><p style='margin:0;width:20px'>Y</p><p style='margin:0;orphans:1;widows:1;width:40px'>X X</p></div>",
+            &[
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'Y', 35),
+                (2, 'Z', 35),
+                (2, 'Z', 65),
+                (3, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:120px;width:40px;display:flex;flex-wrap:wrap-reverse'><p style='margin:0;orphans:1;widows:1;width:20px'>Z Z Z</p><p style='margin:0;width:20px'>Y</p><p style='margin:0;orphans:1;widows:1;width:40px'>X X X</p></div>",
+            &[
+                (1, 'X', 25),
+                (1, 'X', 55),
+                (2, 'X', 5),
+                (2, 'Y', 35),
+                (2, 'Z', 35),
+                (2, 'Z', 65),
+                (3, 'Z', 5),
+            ],
+        ),
     ]);
 }
 

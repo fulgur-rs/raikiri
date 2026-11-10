@@ -570,16 +570,15 @@ fn growing_items(
             }
         })
         .collect();
-    // Grid items placed on rows out of source order are kept in the order of
-    // their first rows, so that the rows above an item settle before it.
-    if display.is_grid_container() {
-        let rows = &document.nodes[node].grid_item_rows;
-        items.sort_by_key(|&item| {
-            rows.iter()
-                .find(|row| row.item == item)
-                .map_or(u16::MAX, |row| row.start)
-        });
-    }
+    // Items placed on rows or lines out of source order, by grid placement
+    // or reversed wrapping, are kept in the order of their tops, so that the
+    // rows and lines above an item settle before it.
+    items.sort_by(|&a, &b| {
+        let top = |item: usize| {
+            document.pagination_local_y(item) - document.nodes[item].layout.margin.top
+        };
+        top(a).total_cmp(&top(b))
+    });
     items
 }
 
