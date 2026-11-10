@@ -2383,7 +2383,13 @@ impl PaginationState {
             let edges_follow_moved_lines = !lines_can_move
                 || own_closing_edges <= 0.0
                 || lines_move_grows_box(document, block_id);
-            let mut page = self.current_page;
+            // The lines are judged from the page their first line starts on,
+            // which a paragraph before them in the same block may have left
+            // past the page the flow is on: its last line started the next
+            // page exactly, with nothing to move.
+            let mut page = self
+                .current_page
+                .max(page_origins.page_index_for_y(text.effective_y + line_metrics[0].0 + 0.001));
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
