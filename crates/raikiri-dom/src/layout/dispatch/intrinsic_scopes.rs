@@ -410,11 +410,13 @@ pub(super) fn with_orthogonal_percentage_main_sizes<R>(
 /// are. Otherwise, and where a negative margin could make the sum fall below
 /// the zero the size cannot go under, the main size the rigid items found is
 /// given to the container, which lays the items out at their own flex factors
-/// within it. A wrapping container is laid out by [`wrapping_column_layout`],
-/// which also settles its cross size, since that depends on how its lines
-/// break. A wrapping container with a negative margin among its items is left
-/// to the plain layout, since its lines need not break the same way in its
-/// own longest line.
+/// within it. A wrapping container with a minimum, a maximum or a negative
+/// margin among its items is laid out by [`wrapping_column_layout`], which
+/// also settles its cross size, since that depends on how its lines break.
+/// A wrapping container with none of these finds its main size from its rigid
+/// items under a max-content room and is laid out with that size, which is
+/// not definite, so its lines break where its items' hypothetical sizes put
+/// them; a measure of its cross size goes to the plain layout.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#algo-main-container>
 pub(super) fn with_hypothetical_column_main_size(
@@ -440,7 +442,7 @@ pub(super) fn with_hypothetical_column_main_size(
             inputs.parent_size.height,
         )
     };
-    let main_of = |size: Size<Dimension>| if vertical { size.width } else { size.height };
+    let style_main = |size: Size<Dimension>| if vertical { size.width } else { size.height };
     let wraps = container.flex_wraps();
     // The cross size of a wrapping container depends on how its lines break,
     // which its main size limits decide.
@@ -500,10 +502,10 @@ pub(super) fn with_hypothetical_column_main_size(
     });
     // A percentage minimum or maximum main size of the container refers to
     // the size of its containing block, and has no effect where that is open.
-    let limited = main_of(container.max_size().map(Into::into))
+    let limited = style_main(container.max_size().map(Into::into))
         .maybe_resolve(containing_main)
         .is_some()
-        || main_of(container.min_size().map(Into::into))
+        || style_main(container.min_size().map(Into::into))
             .maybe_resolve(containing_main)
             .is_some_and(|min| min > 0.0);
     let bounded = negative_margin || limited;
@@ -513,7 +515,7 @@ pub(super) fn with_hypothetical_column_main_size(
             let style = tree.physical_style(item);
             let basis = crate::layout::resolve_dimension(style.flex_basis(), None)
                 .filter(|basis| basis.is_finite() && *basis >= 0.0)?;
-            let bounded_basis = main_of(style.max_size().map(Into::into))
+            let bounded_basis = style_main(style.max_size().map(Into::into))
                 .maybe_resolve(None::<f32>)
                 .map_or(basis, |max| basis.min(max));
             let key = tree.nodes.box_key(item).expect("flex item box key");
@@ -644,9 +646,8 @@ fn cyclic_main_gap(
     })
 }
 
-/// The width of the room `size` where `horizontal` is set, and its height
-/// otherwise.
-fn main_of_space(size: Size<AvailableSpace>, horizontal: bool) -> AvailableSpace {
+/// The width of `size` where `horizontal` is set, and its height otherwise.
+fn main_of<T>(size: Size<T>, horizontal: bool) -> T {
     if horizontal { size.width } else { size.height }
 }
 
@@ -786,7 +787,7 @@ fn wrapping_column_layout(
         (padding + border).sum_axes().height
     };
     let content_box = style.box_sizing() == BoxSizing::ContentBox;
-    let main_of = |size: Size<Dimension>| if vertical { size.width } else { size.height };
+    let style_main = |size: Size<Dimension>| if vertical { size.width } else { size.height };
     // The content box size that a resolved minimum or maximum allows.
     let to_content = |value: f32| {
         if content_box {
@@ -795,10 +796,10 @@ fn wrapping_column_layout(
             (value - insets).max(0.0)
         }
     };
-    let min = main_of(style.min_size().map(Into::into))
+    let min = style_main(style.min_size().map(Into::into))
         .maybe_resolve(containing_main)
         .map(to_content);
-    let max = main_of(style.max_size().map(Into::into))
+    let max = style_main(style.max_size().map(Into::into))
         .maybe_resolve(containing_main)
         .map(to_content);
     // A length the container's own box sizing reads as the border box size
@@ -861,13 +862,7 @@ fn wrapping_column_layout(
     }
     let mut probe_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
-        // The cross size tells the lines apart where a negative margin can
-        // break a line whose total fits (see below).
-        axis: if negative_margin {
-            RequestedAxis::Both
-        } else {
-            main_axis
-        },
+        axis: main_axis,
         ..inputs
     };
     {
@@ -879,10 +874,6 @@ fn wrapping_column_layout(
         // A definite room would size the lines from the flex bases alone,
         // without the automatic minimum or a negative margin.
         *room = AvailableSpace::MaxContent;
-    }
-    if negative_margin {
-        // A cross size given to the container would hide its lines.
-        *main_mut(&mut probe_inputs.known_dimensions, !vertical) = None;
     }
     let unbroken_entries = entries
         .iter()
@@ -898,41 +889,61 @@ fn wrapping_column_layout(
             }
         })
         .collect::<Vec<_>>();
-    let mut measured = with_saved_probe_caches(tree, 0, |tree, _| {
-        tree.push_local_overrides(entries);
-        probe(tree, probe_inputs)
-    });
-    let line_content = if vertical {
-        measured.size.width
-    } else {
-        measured.size.height
+    let run_probe = |tree: &mut LayoutSession<'_>, entries: Vec<_>, inputs: LayoutInput| {
+        with_saved_probe_caches(tree, 0, |tree, _| {
+            tree.push_local_overrides(entries);
+            probe(tree, inputs)
+        })
     };
     // Where every item fits on one line, the probe has the size of the whole
     // line, and the container keeps that line at the measured size.
-    let one_line = max.is_none() || {
-        let unbroken = with_saved_probe_caches(tree, 0, |tree, _| {
-            tree.push_local_overrides(unbroken_entries);
-            probe(tree, probe_inputs)
-        });
-        if negative_margin {
+    let (mut measured, one_line) = match max {
+        None => (run_probe(tree, entries, probe_inputs), true),
+        Some(_) if negative_margin => {
             // A negative margin can make a running sum of the outer sizes
             // pass the limit inside a line whose total fits, so the line
             // breaks there although the whole line is no longer than the
-            // limit. More lines make the container larger across.
-            let cross = |size: Size<f32>| if vertical { size.height } else { size.width };
-            cross(measured.size) <= cross(unbroken.size) + 0.01
-        } else {
-            let unbroken = if vertical {
-                unbroken.size.width
+            // limit. More lines make a container of content-sized cross
+            // size larger across.
+            let (size, min_size, max_size) = if vertical {
+                (P::Height, P::MinHeight, P::MaxHeight)
             } else {
-                unbroken.size.height
+                (P::Width, P::MinWidth, P::MaxWidth)
             };
-            unbroken <= line_content + 0.01
+            let free_cross = [size, min_size, max_size].map(|property| {
+                (
+                    key,
+                    O::length(property, L::Auto, false).expect("content cross size"),
+                )
+            });
+            let mut free_inputs = LayoutInput {
+                axis: RequestedAxis::Both,
+                ..probe_inputs
+            };
+            *main_mut(&mut free_inputs.known_dimensions, !vertical) = None;
+            let across = |tree: &mut LayoutSession<'_>, entries: &[_]| {
+                let entries = entries.iter().chain(&free_cross).cloned().collect();
+                main_of(run_probe(tree, entries, free_inputs).size, !vertical)
+            };
+            let one_line = across(tree, &entries) <= across(tree, &unbroken_entries) + 0.01;
+            (run_probe(tree, entries, probe_inputs), one_line)
+        }
+        Some(max) => {
+            // Without a negative margin, the line sums only grow, so the
+            // items fit on one line where the whole line fits the limit.
+            let unbroken = run_probe(tree, unbroken_entries, probe_inputs);
+            let limit = max.max(min.unwrap_or(0.0));
+            if main_of(unbroken.size, vertical) <= limit + 0.01 {
+                (unbroken, true)
+            } else {
+                (run_probe(tree, entries, probe_inputs), false)
+            }
         }
     };
+    let line_content = main_of(measured.size, vertical);
     // Lines that break fill the room the container is given, up to its
     // maximum.
-    let given_room = main_of_space(inputs.available_space, vertical);
+    let given_room = main_of(inputs.available_space, vertical);
     let content = match (one_line, given_room, max) {
         (false, AvailableSpace::Definite(space), Some(max)) => {
             line_content.max((space - insets).max(0.0).min(max))
