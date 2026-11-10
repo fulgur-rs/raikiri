@@ -951,16 +951,32 @@ fn orthogonal_flex_container(
             != document.nodes[root].used_writing_mode.is_vertical()
 }
 
+/// Whether `node_id` is a flex container with an item whose top or bottom
+/// margin is negative, which can end the container above the bottom of an
+/// item.
+fn has_negative_item_margin(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.formatting_context == FormattingContext::Flex
+        && node.children.iter().any(|&child| {
+            let margin = document.nodes[child].layout.margin;
+            margin.top < 0.0 || margin.bottom < 0.0
+        })
+}
+
 /// How far the content of each flex item or flex container that
 /// [`update_paginated_block_heights`] may extend already reaches past the
 /// box's block-end edge before pagination moves anything, by node id.
 ///
 /// A flex item's used height comes from the flex algorithm, which may clamp
 /// or shrink it below its content; that content overflows the item rather
-/// than extending it. So does the content of a flex container whose height
-/// is its inline size (see [`orthogonal_flex_container`]). Only the growth
-/// pagination adds is enclosed. Other boxes are left out: their auto height
-/// is the one the extension measures.
+/// than extending it. So does the content of a flex container in two cases.
+/// Its height comes from its items' outer sizes, so a negative margin can end
+/// it above the bottom of an item, which then overflows it. The
+/// height of a wrapping column whose inline axis runs along the pages is its
+/// inline size, which takes its items' intrinsic contributions rather than the
+/// lines they make, so an orthogonal item can overflow its line (CSS Flexbox 1
+/// §9.9.2). Only the growth pagination adds is enclosed. Other boxes are left
+/// out: their auto height is the one the extension measures.
 fn unpaginated_content_overflow(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -971,6 +987,7 @@ fn unpaginated_content_overflow(
         .preorder(root)
         .filter(|&node_id| {
             (orthogonal_flex_container(document, root, node_id)
+                || has_negative_item_margin(document, node_id)
                 || document.taffy_parent_of(node_id).is_some_and(|parent| {
                     document.nodes[parent].formatting_context == FormattingContext::Flex
                 }))
