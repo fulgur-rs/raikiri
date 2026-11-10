@@ -1624,6 +1624,11 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
+        // The only item of a grid that stacks it as block flow breaks between
+        // the lines of its paragraphs as a block does, and does not move whole.
+        if overflow.grid_item {
+            overflow.grid_item = !holds_block_flow_paragraph(document, cascade, body_id, node_id);
+        }
         // A trailing item's later content may fragment, but its first piece
         // carries the box instead of leaving an empty strip on the old page.
         overflow.page |= candidate.context.is_flex_item()
@@ -3244,6 +3249,27 @@ impl PaginationState {
                 .max(page_origins.page_index_for_y(candidate.raw_y + self.flow_shift));
         }
     }
+}
+
+/// Whether `node_id` is or holds a paragraph whose lines the paragraph line
+/// pass breaks between as it does in plain block flow (see
+/// [`super::is_block_flow_paragraph`]).
+fn holds_block_flow_paragraph(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    let mut stack = vec![node_id];
+    while let Some(node) = stack.pop() {
+        if document.nodes[node].is_ifc_root()
+            && super::is_block_flow_paragraph(document, cascade, node, body_id)
+        {
+            return true;
+        }
+        stack.extend_from_slice(&document.nodes[node].children);
+    }
+    false
 }
 
 /// Whether `candidate` is a box of ordinary block flow: not a flex or grid
