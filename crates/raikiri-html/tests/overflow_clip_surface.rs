@@ -448,6 +448,7 @@ fn lines_inside_a_clipping_parent_move_like_visible_ones() {
         "overflow:clip",
         "overflow:hidden;display:flex;flex-direction:column",
         "overflow:hidden;display:flex",
+        "overflow:hidden;display:grid",
     ] {
         assert_eq!(
             clipped_parent_glyph_tops(30, 90, parent, "orphans:1;widows:1").1,
