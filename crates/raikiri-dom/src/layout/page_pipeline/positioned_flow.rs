@@ -384,7 +384,12 @@ pub(super) fn keep(
                             | FormattingContext::Multicol
                     )
                 {
-                    // These contexts place their children in their own flows.
+                    // These contexts place their children in their own flows,
+                    // except a flex or grid container whose only item grows it
+                    // as a block grows with its child.
+                    if let Some(item) = sole_item(document, node) {
+                        pending.push(Event::Box(item));
+                    }
                     continue;
                 }
                 let ifc = document
@@ -422,6 +427,61 @@ pub(super) fn keep(
         }
     }
     Ok(())
+}
+
+/// Whether nothing in the flow of the absolute box `owner` comes before its
+/// descendant `root`: each box from `root` up to `owner` is the first in-flow
+/// box of its parent that takes up room or holds text, and no flex or grid
+/// container on the way has padding or border above its items.
+fn begins_owner_content(document: &Document, owner: usize, root: usize) -> bool {
+    let mut child = root;
+    document
+        .layout_ancestors(root)
+        .find_map(|parent| {
+            let node = &document.nodes[parent];
+            // A flex or grid container can break between its own padding and
+            // border and its items, unlike a block, whose edges go with its
+            // first child.
+            let content_before = (node.display().is_flex_or_grid_container()
+                && node.layout.border.top + node.layout.padding.top > 0.0)
+                || node
+                    .children
+                    .iter()
+                    .take_while(|&&sibling| sibling != child)
+                    .any(|&sibling| {
+                        sibling_renders(document, sibling)
+                            && !matches!(
+                                document.nodes[sibling].position(),
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                            && (document.nodes[sibling].kind() != NodeKind::Element
+                                || document.nodes[sibling].layout.size.height > 0.0)
+                    });
+            child = parent;
+            (content_before || parent == owner).then_some(!content_before)
+        })
+        .unwrap_or(false)
+}
+
+/// The only in-flow item of the flex or grid container `node`, when nothing
+/// sits beside or after it (see [`has_no_other_item`]).
+fn sole_item(document: &super::super::context::LayoutSession<'_>, node: usize) -> Option<usize> {
+    let display = document.nodes[node].display();
+    let horizontal_container = display.is_flex_or_grid_container()
+        && !document.nodes[node].used_writing_mode.is_vertical();
+    document.nodes[node]
+        .children
+        .iter()
+        .copied()
+        .filter(|_| horizontal_container)
+        .find(|&child| {
+            if display.is_flex_container() {
+                is_in_flow_flex_child_for_pagination(document, node, child)
+            } else {
+                is_in_flow_grid_item_for_pagination(document, child)
+            }
+        })
+        .filter(|&item| has_no_other_item(document, node, item))
 }
 
 fn keep_run(
@@ -498,7 +558,11 @@ fn keep_run(
             box_avoids_page_break_inside(document, root, env.cascade.computed[root].break_inside);
         let whole_fits = metrics.last().expect("a visible run is nonempty").1 - metrics[0].0
             <= env.page_origins.step_at(next) + 0.001;
+        // A break before a paragraph that begins the content of the box would
+        // fall before the box itself, where its fragment starts: a first line
+        // that fits stays, and the box breaks between its lines.
         let prefix = if first_top > env.page_origins.origin(page) + 0.001
+            && (fit.lines_before_break == 0 || !begins_owner_content(document, owner, root))
             && (fit.leaves_too_few_orphans()
                 || avoids && whole_fits && fit.lines_before_break < metrics.len())
             && metrics[0].1 - metrics[0].0 <= env.page_origins.step_at(next) + 0.001
