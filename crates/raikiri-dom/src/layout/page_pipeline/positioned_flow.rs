@@ -449,23 +449,33 @@ fn begins_owner_content(document: &Document, owner: usize, root: usize) -> bool 
                     .children
                     .iter()
                     .take_while(|&&sibling| sibling != child)
-                    .any(|&sibling| {
-                        sibling_renders(document, sibling)
-                            && !matches!(
-                                document.nodes[sibling].position(),
-                                PositionValue::Absolute | PositionValue::Fixed
-                            )
-                            && (document.nodes[sibling].kind() != NodeKind::Element || {
-                                let layout = document.nodes[sibling].layout;
-                                layout.size.height > 0.0
-                                    || layout.margin.top != 0.0
-                                    || layout.margin.bottom != 0.0
-                            })
-                    });
+                    .any(|&sibling| takes_room(document, sibling));
             child = parent;
             (content_before || parent == owner).then_some(!content_before)
         })
         .unwrap_or(false)
+}
+
+/// Whether `node`, a sibling before the paragraph, puts anything in the flow
+/// above it: text, or a box with height or margins. An element that
+/// generates no box takes the room its children take.
+fn takes_room(document: &Document, node: usize) -> bool {
+    let box_node = &document.nodes[node];
+    sibling_renders(document, node)
+        && !matches!(
+            box_node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && (box_node.kind() != NodeKind::Element
+            || if box_node.generates_no_box() {
+                box_node
+                    .children
+                    .iter()
+                    .any(|&child| takes_room(document, child))
+            } else {
+                let layout = box_node.layout;
+                layout.size.height > 0.0 || layout.margin.top != 0.0 || layout.margin.bottom != 0.0
+            })
 }
 
 /// The only in-flow item of the flex or grid container `node`, when nothing

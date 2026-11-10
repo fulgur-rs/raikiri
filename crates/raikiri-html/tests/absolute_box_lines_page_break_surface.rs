@@ -119,6 +119,21 @@ fn a_paragraph_after_other_content_keeps_its_orphans() {
                 (2, 'X', 5),
             ],
         ),
+        // Content inside an element that generates no box counts as well.
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:30px;width:20px'><div style='display:contents'><div style='height:30px'>Q</div></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",
+            &[
+                (0, 'Q', 35),
+                (1, 'X', 5),
+                (1, 'X', 35),
+                (1, 'X', 65),
+                (2, 'X', 5),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:120px;width:20px'><div style='display:contents'><div style='margin-bottom:20px'></div></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",
+            &[(2, 'X', 5), (2, 'X', 35), (2, 'X', 65), (3, 'X', 5)],
+        ),
         // So does an empty box whose margin puts the paragraph lower.
         (
             "<div style='height:30px'></div><div style='position:absolute;top:120px;width:20px'><div style='margin-bottom:20px'></div><p style='margin:0;orphans:3;widows:1'>X X X X</p></div>",
