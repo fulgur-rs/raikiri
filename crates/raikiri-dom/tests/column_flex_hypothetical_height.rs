@@ -1607,3 +1607,459 @@ fn a_wrapping_column_of_content_height_resolves_a_percentage_gap_against_zero() 
         ),
     ]);
 }
+
+#[test]
+fn a_wrapping_column_of_open_width_sums_the_hypothetical_sizes_of_its_line() {
+    // A vertical wrapping column takes its width from its content. Its line is
+    // as long as the outer hypothetical main sizes of its items: a negative
+    // margin shortens it, and an automatic minimum raises an item past its
+    // flex basis, with or without a maximum the line fits in.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:vertical-rl;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 40px;margin-right:-50px",
+                    "xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 20.0, 10.0]),
+                ("i0", [30.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:vertical-rl;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 10px;padding-right:30px",
+                    "xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 80.0, 10.0]),
+                ("i0", [30.0, 100.0, 50.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap-reverse;writing-mode:vertical-lr;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 0px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 70.0, 10.0]),
+                ("i0", [0.0, 100.0, 40.0, 10.0]),
+                ("i1", [40.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:vertical-rl;max-width:100px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 40px;margin-right:-50px",
+                    "xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 20.0, 10.0]),
+                ("i0", [30.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap;writing-mode:vertical-lr;max-width:100px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:0 1 10px;padding-left:25px",
+                    "xxx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 85.0, 10.0]),
+                ("i0", [0.0, 100.0, 55.0, 10.0]),
+                ("i1", [55.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-direction:column;flex-wrap:wrap-reverse;writing-mode:vertical-rl;max-height:100px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 0px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 70.0, 10.0]),
+                ("i0", [30.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 100.0, 30.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;max-width:100px;box-sizing:content-box;padding:0 6px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 0px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:0 1 30px", "xxxxx"),
+                ("writing-mode:horizontal-tb;flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 102.0, 20.0]),
+                ("i0", [56.0, 100.0, 40.0, 10.0]),
+                ("i1", [6.0, 100.0, 50.0, 10.0]),
+                ("i2", [76.0, 110.0, 20.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_with_several_lines_sizes_them_from_hypothetical_sizes() {
+    // Where the lines break at a maximum, the container still sizes them from
+    // the outer hypothetical main sizes. A negative margin that makes the
+    // running sum pass the maximum inside a line breaks that line, although
+    // the whole line would fit.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;max-width:60px;padding:0 6px;border-left:3px solid;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:1 0 10px;padding-right:30px",
+                    "xx",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-left:5px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 60.0, 30.0]),
+                ("i0", [4.0, 100.0, 50.0, 10.0]),
+                ("i1", [24.0, 110.0, 30.0, 10.0]),
+                ("i2", [34.0, 120.0, 20.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-lr;max-width:60px;padding:0 6px;border-left:3px solid;",
+            &[
+                ("writing-mode:horizontal-tb;flex:1 0 0px", "xxxx"),
+                ("writing-mode:horizontal-tb;flex:0 1 30px", "xxxxx"),
+                ("writing-mode:horizontal-tb;flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 60.0, 30.0]),
+                ("i0", [9.0, 100.0, 45.0, 10.0]),
+                ("i1", [9.0, 110.0, 50.0, 10.0]),
+                ("i2", [9.0, 120.0, 20.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-lr;max-width:60px;min-width:50px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 20.0]),
+                ("i0", [0.0, 100.0, 40.0, 10.0]),
+                ("i1", [0.0, 110.0, 30.0, 10.0]),
+                ("i2", [30.0, 110.0, 20.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;max-width:60px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 40.0, 20.0]),
+                ("i0", [0.0, 100.0, 40.0, 10.0]),
+                ("i1", [10.0, 110.0, 30.0, 10.0]),
+                ("i2", [30.0, 110.0, 20.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_with_a_negative_margin_finds_its_lines_with_its_own_cross_size() {
+    // Whether a negative margin breaks the line is read from how many lines
+    // the container has, which holds with a cross size or a minimum cross size
+    // of its own as well, and with items of no cross size.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;height:50px;max-width:60px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 40.0, 50.0]),
+                ("i0", [0.0, 100.0, 40.0, 25.0]),
+                ("i1", [10.0, 125.0, 30.0, 25.0]),
+                ("i2", [30.0, 125.0, 20.0, 25.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;min-height:50px;max-width:100px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 50.0]),
+                ("i0", [10.0, 100.0, 40.0, 50.0]),
+                ("i1", [-20.0, 100.0, 30.0, 50.0]),
+                ("i2", [0.0, 100.0, 20.0, 50.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-lr;height:50px;max-width:100px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 50.0]),
+                ("i0", [0.0, 100.0, 40.0, 50.0]),
+                ("i1", [40.0, 100.0, 30.0, 50.0]),
+                ("i2", [70.0, 100.0, 20.0, 50.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-lr;min-height:50px;max-width:60px;",
+            &[
+                ("writing-mode:horizontal-tb;flex:0 0 40px", "xx"),
+                ("writing-mode:horizontal-tb;flex:0 0 30px", "xx"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 40.0, 50.0]),
+                ("i0", [0.0, 100.0, 40.0, 25.0]),
+                ("i1", [0.0, 125.0, 30.0, 25.0]),
+                ("i2", [30.0, 125.0, 20.0, 25.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;max-height:60px;",
+            &[
+                ("width:0;min-width:0;flex:0 0 40px", "xx"),
+                ("width:0;min-width:0;flex:0 0 30px", "xx"),
+                (
+                    "width:0;min-width:0;flex:0 0 20px;margin-bottom:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 0.0, 40.0]),
+                ("i0", [0.0, 100.0, 0.0, 40.0]),
+                ("i1", [0.0, 100.0, 0.0, 30.0]),
+                ("i2", [0.0, 130.0, 0.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;max-width:60px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 40px",
+                    "xx",
+                ),
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 30px",
+                    "xx",
+                ),
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 108.0, 40.0, 0.0]),
+                ("i0", [0.0, 108.0, 40.0, 0.0]),
+                ("i1", [10.0, 108.0, 30.0, 0.0]),
+                ("i2", [30.0, 108.0, 20.0, 0.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-lr;max-width:60px;row-gap:7px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 40px",
+                    "xx",
+                ),
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 30px",
+                    "xx",
+                ),
+                (
+                    "writing-mode:horizontal-tb;height:0;min-height:0;flex:0 0 20px;margin-right:-40px",
+                    "xx",
+                ),
+            ],
+            &[
+                ("c", [0.0, 108.0, 40.0, 0.0]),
+                ("i0", [0.0, 108.0, 40.0, 0.0]),
+                ("i1", [0.0, 108.0, 30.0, 0.0]),
+                ("i2", [37.0, 108.0, 20.0, 0.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_wrapping_column_with_a_negative_margin_and_items_sized_by_its_cross_size_keeps_its_lines() {
+    // The length of an item of wrapping text, and a percentage edge along the
+    // main axis, follow the cross size of the container, so the lines are
+    // found at that cross size.
+    assert_cases(&[
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;width:50px;max-height:45px;",
+            &[
+                ("flex:0 0 auto", "xx xx xx"),
+                ("flex:0 0 auto", "xx xx"),
+                ("flex:0 0 auto;margin-bottom:-10px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 30.0]),
+                ("i0", [0.0, 100.0, 50.0, 20.0]),
+                ("i1", [0.0, 120.0, 50.0, 10.0]),
+                ("i2", [0.0, 130.0, 50.0, 10.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;height:50px;max-width:60px;",
+            &[
+                ("flex:0 0 auto", "xx xx xx"),
+                ("flex:0 0 auto", "xx xx"),
+                ("flex:0 0 auto;margin-left:-10px", "xx xx"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 30.0, 50.0]),
+                ("i0", [10.0, 100.0, 20.0, 50.0]),
+                ("i1", [0.0, 100.0, 10.0, 50.0]),
+                ("i2", [-10.0, 100.0, 10.0, 50.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;width:100px;max-height:60px;",
+            &[
+                ("flex:0 0 20px;min-height:0;padding-top:50%", "x"),
+                ("flex:0 0 20px;min-height:0", "x"),
+                ("flex:0 0 20px;min-height:0;margin-bottom:-20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 100.0, 100.0, 50.0]),
+                ("i0", [0.0, 100.0, 50.0, 50.0]),
+                ("i1", [50.0, 100.0, 50.0, 20.0]),
+                ("i2", [50.0, 120.0, 50.0, 20.0]),
+            ],
+        ),
+        (
+            "margin-top:100px",
+            "display:inline-flex;flex-flow:column wrap;writing-mode:vertical-rl;height:100px;max-width:60px;",
+            &[
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;min-width:0;padding-left:50%",
+                    "x",
+                ),
+                ("writing-mode:horizontal-tb;flex:0 0 20px;min-width:0", "x"),
+                (
+                    "writing-mode:horizontal-tb;flex:0 0 20px;min-width:0;margin-left:-20px",
+                    "x",
+                ),
+            ],
+            &[
+                ("c", [0.0, 100.0, 50.0, 100.0]),
+                ("i0", [0.0, 100.0, 50.0, 50.0]),
+                ("i1", [30.0, 150.0, 20.0, 50.0]),
+                ("i2", [10.0, 150.0, 20.0, 50.0]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_raised_wrapping_column_of_one_line_leaves_item_percentages_of_children_unresolved() {
+    // A minimum makes the column taller than its one line, but its height
+    // still depends on the content, so the flexed height of an item is not
+    // definite for the item's children either.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;padding:5px;min-height:100px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 100.0]),
+                ("i0", [5.0, 5.0, 10.0, 70.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 75.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;padding:5px;min-height:100px;",
+            &[
+                ("flex:0 0 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 100.0]),
+                ("i0", [5.0, 5.0, 10.0, 10.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 15.0, 10.0, 20.0]),
+            ],
+        ),
+    ]);
+}
