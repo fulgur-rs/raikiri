@@ -834,7 +834,7 @@ impl PaginationState {
                 owner,
                 shift,
                 &mut self.subtree_shifts,
-                entry.page_before_candidate,
+                (entry.page_before_candidate, target),
             );
             self.deferred_shifts.line_splits.push(LineSplit {
                 root: owner.root,
@@ -2810,6 +2810,7 @@ impl PaginationState {
                         flex_line: None,
                         line,
                         shift,
+                        page: move_page,
                     },
                     &mut self.subtree_shifts,
                     entry.page_before_candidate,
@@ -2996,6 +2997,7 @@ impl PaginationState {
                             flex_line: None,
                             line,
                             shift,
+                            page,
                         },
                     );
                     if growth.abs() > 0.001 {
@@ -3046,6 +3048,7 @@ impl PaginationState {
                     flex_line: blocks.flex_line,
                     line,
                     shift,
+                    page,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,

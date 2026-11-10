@@ -3852,16 +3852,16 @@ fn a_flex_item_alone_on_its_line_breaks_between_earlier_lines_for_its_widows() {
 }
 
 #[test]
-fn a_flex_item_beside_another_keeps_its_natural_break() {
-    // Moving the item's lines would grow the flex line under the item
-    // beside it, so the item keeps its natural split.
+fn a_flex_item_beside_another_breaks_earlier_for_its_widows() {
+    // The item's lines move for its widows as a block's do; the item beside
+    // it keeps its place on the flex line, as in Chromium.
     let (fragments, second_top) =
         flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "", "");
     assert_eq!(
         fragments,
         [
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
         ]
     );
     assert_eq!(second_top, 15.0);
@@ -3978,7 +3978,7 @@ fn a_later_text_on_a_moved_line_follows_the_earlier_break() {
 }
 
 #[test]
-fn a_flex_item_sharing_its_line_with_a_lower_item_keeps_its_natural_break() {
+fn a_flex_item_sharing_its_line_with_a_lower_item_breaks_earlier_for_its_widows() {
     // The item beside it sits below the paragraph's box through its margin,
     // but on the same flex line, so it is not moved as a later line.
     let (fragments, second_top) =
@@ -3986,15 +3986,15 @@ fn a_flex_item_sharing_its_line_with_a_lower_item_keeps_its_natural_break() {
     assert_eq!(
         fragments,
         [
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
         ]
     );
     assert_eq!(second_top, 55.0);
 }
 
 #[test]
-fn a_flex_item_sharing_its_line_through_a_negative_margin_keeps_its_natural_break() {
+fn a_flex_item_sharing_its_line_through_a_negative_margin_breaks_earlier_for_its_widows() {
     // The second item's outer width is zero, so it fits on the line the
     // item fills; its relative offset only draws it below the item.
     let (fragments, second_top) = flex_item_paragraph_after_a_spacer(
@@ -4006,8 +4006,8 @@ fn a_flex_item_sharing_its_line_through_a_negative_margin_keeps_its_natural_brea
     assert_eq!(
         fragments,
         [
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
         ]
     );
     assert_eq!(second_top, 55.0);
@@ -4130,16 +4130,16 @@ fn a_blockified_inline_flex_item_alone_on_its_line_breaks_like_a_flex_one() {
 }
 
 #[test]
-fn a_flex_item_beside_a_display_contents_child_keeps_its_natural_break() {
-    // The items a `display: contents` child lifts onto the lines are not
-    // measured, so the item is not known to be alone on its line.
+fn a_flex_item_beside_a_display_contents_child_breaks_earlier_for_its_widows() {
+    // The items a `display: contents` child lifts onto the lines keep their
+    // places beside the item while its lines move for its widows.
     let (fragments, _) =
         flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "display:contents", "");
     assert_eq!(
         fragments,
         [
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
         ]
     );
 }

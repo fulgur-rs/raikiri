@@ -19268,7 +19268,7 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
 }
 
 #[test]
-fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_no_block() {
+fn a_paragraph_that_is_a_flex_item_alone_on_its_line_grows_as_a_block_in_block_flow() {
     // The second item wraps onto the next flex line, so the first is alone on
     // its line without being the container's only item.
     let mut doc = Document::new();
@@ -19314,8 +19314,8 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
     let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let mut checked = CheckedParagraphs::default();
 
-    // The item is not a block that moves as a unit, but its later lines can
-    // move down inside it.
+    // The item grows with lines moved down inside it, and the container grows
+    // beside it as for items that share a line.
     let blocks = pagination_state::LineBlocks::find(
         &session,
         &env,
@@ -19325,8 +19325,8 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         &mut TrailingFlexChildren::default(),
     );
     assert_eq!(blocks.paragraph_root, Some(item));
-    assert_eq!(blocks.block, None);
-    assert_eq!(blocks.flex_line, Some((item, container)));
+    assert_eq!(blocks.block, Some((item, true)));
+    assert_eq!(blocks.flex_line, None);
 
     // Not so for text inside a float or placed by positioned insets.
     let in_float = candidates::BoxContext::element(
@@ -21465,6 +21465,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             flex_line: None,
             line,
             shift: 12.0,
+            page: 0,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21540,6 +21541,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         flex_line: None,
         line: 0,
         shift: 12.0,
+        page: 0,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),
