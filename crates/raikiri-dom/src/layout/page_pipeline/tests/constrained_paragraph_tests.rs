@@ -4,10 +4,11 @@ use super::*;
 fn height_constraints_on_ancestors_keep_a_paragraph_in_plain_block_flow() {
     // The own height of the paragraph and the heights of its ancestors may be
     // constrained: moving its lines grows their boxes only as far as that
-    // allows. A box that clips at a set height, size containment, floats,
-    // absolute positioning and table layout place their content some other
-    // way. A flex container or a grid whose only item is the paragraph, or
-    // holds it, grows around the moved lines like a block.
+    // allows, and a box that clips at a set height hides the lines moved
+    // past its edge, as in Chromium. Size containment, floats, absolute
+    // positioning and table layout place their content some other way. A
+    // flex container or a grid whose only item is the paragraph, or holds
+    // it, grows around the moved lines like a block.
     let cases = [
         ("", "height:100px", true),
         ("", "min-height:125px", true),
@@ -16,10 +17,10 @@ fn height_constraints_on_ancestors_keep_a_paragraph_in_plain_block_flow() {
         ("height:100px", "height:100px", true),
         ("min-height:100px", "height:100px", true),
         ("max-height:100px", "height:100px", true),
-        ("height:100px;overflow:hidden", "height:100px", false),
-        ("max-height:100px;overflow:clip", "height:100px", false),
+        ("height:100px;overflow:hidden", "height:100px", true),
+        ("max-height:100px;overflow:clip", "height:100px", true),
         ("overflow:hidden", "height:100px", true),
-        ("height:100px;overflow-x:hidden", "height:100px", false),
+        ("height:100px;overflow-x:hidden", "height:100px", true),
         ("contain:size", "height:100px", false),
         ("height:100px;contain:size", "height:100px", false),
         ("float:left", "height:100px", false),
@@ -30,13 +31,13 @@ fn height_constraints_on_ancestors_keep_a_paragraph_in_plain_block_flow() {
         (
             "display:flex;overflow:hidden;height:100px",
             "height:100px",
-            false,
+            true,
         ),
         ("display:grid", "height:100px", true),
         (
             "display:grid;overflow:hidden;height:100px",
             "height:100px",
-            false,
+            true,
         ),
         ("display:table", "height:100px", false),
     ];
@@ -87,7 +88,7 @@ fn a_grid_with_one_item_and_content_sized_rows_keeps_its_paragraph_in_plain_bloc
         (
             "display:grid;overflow:hidden;height:100px",
             "display:none",
-            false,
+            true,
         ),
     ];
     for (ancestor_style, sibling_style, expected) in cases {

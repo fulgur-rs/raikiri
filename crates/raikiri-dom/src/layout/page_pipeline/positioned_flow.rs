@@ -615,6 +615,15 @@ pub(super) fn visible_end(
     env: &FlowEnv<'_>,
     root: usize,
 ) -> f32 {
+    clip_bounds(document, env, root).end
+}
+
+/// The clips around the lines of `root`, from the flow root down.
+pub(super) fn clip_bounds(
+    document: &super::super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    root: usize,
+) -> candidates::ClipBounds {
     let mut ancestors = Vec::new();
     for id in document.inclusive_ancestors(root) {
         ancestors.push(id);
@@ -636,7 +645,7 @@ pub(super) fn visible_end(
             id == env.roots.contents || id == env.roots.element,
         );
     }
-    clip.end
+    clip
 }
 
 // Relative offsets below the absolute owner paint after fragmentation. The
