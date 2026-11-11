@@ -1562,6 +1562,7 @@ fn layout_single_page_with_table_projection(
                 state.page_width = Some(content_width);
             }
             document.fixed_page_area = Some((content_width, content_height));
+            document.fixed_static_page_origins.clear();
             let icb = super::initial_containing_block::prepare(
                 document,
                 cascade,
@@ -4578,6 +4579,7 @@ fn paginate_flow(
         document.context.page_filled_columns_moved = true;
         return Ok(Vec::new());
     }
+    note_fixed_static_page_origins(document, cascade, &page_origins);
     place_repeated_table_footers(document, &mut state.table_headers, &page_origins);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
@@ -4607,6 +4609,37 @@ fn paginate_flow(
         &page_origins,
         &state.page_names,
     ))
+}
+
+/// Notes where the page begins that holds the static position of each fixed
+/// box placed there along the block axis, when that page is not the first.
+/// The paint draws such a box from that page on, at the same place on each,
+/// as Chromium does; a box placed by an inset repeats on every page instead.
+fn note_fixed_static_page_origins(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_origins: &PageOrigins,
+) {
+    if document.context.pagination_on_transposed_axes {
+        return;
+    }
+    let origins: Vec<(usize, f32)> = (0..document.nodes.len())
+        .filter(|&id| {
+            let node = &document.nodes[id];
+            node.kind() == NodeKind::Element
+                && node.is_in_document()
+                && node.display() != DisplayValue::None
+                && node.position() == &PositionValue::Fixed
+                && inset_is_auto(&cascade.computed[id].top)
+                && inset_is_auto(&cascade.computed[id].bottom)
+        })
+        .filter_map(|id| {
+            let origin =
+                page_origins.origin(page_origins.page_index_for_y(current_abs_y(document, id)));
+            (origin > 0.0).then_some((id, origin))
+        })
+        .collect();
+    document.fixed_static_page_origins.extend(origins);
 }
 
 /// The pages from the first through `last_page`, each starting at its origin
