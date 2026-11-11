@@ -84,28 +84,49 @@ fn a_box_that_breaks_before_itself_is_placed_without_counting_its_place() {
 /// The result `renders_before_child` had when it looked for the place of
 /// `child` first and then for a sibling that decides.
 fn renders_before_child_by_place(document: &Document, parent: usize, child: usize) -> bool {
+    fn in_flow(document: &Document, node: usize) -> bool {
+        let box_node = &document.nodes[node];
+        let positioned = matches!(
+            box_node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        );
+        sibling_renders(document, node)
+            && if box_node.kind() == NodeKind::Element
+                && box_node.display() == DisplayValue::Contents
+            {
+                box_node.children.iter().any(|&c| in_flow(document, c))
+            } else {
+                box_node.kind() != NodeKind::Element || !positioned
+            }
+    }
+    let child_node = &document.nodes[child];
+    if sibling_renders(document, child)
+        && child_node.kind() == NodeKind::Element
+        && child_node.display() != DisplayValue::Contents
+        && matches!(
+            child_node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    {
+        return true;
+    }
     let siblings = document.nodes[parent].layout_children();
     let child_index = siblings.iter().position(|&sibling| sibling == child);
     siblings.iter().enumerate().any(|(index, &sibling)| {
-        sibling_renders(document, sibling)
-            && (child_index.is_none_or(|child_index| index < child_index)
-                || document.nodes[sibling].kind() == NodeKind::Element
-                    && matches!(
-                        document.nodes[sibling].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ))
+        in_flow(document, sibling) && child_index.is_none_or(|child_index| index < child_index)
     })
 }
 
 /// A wrapper with the given kinds of children, and a box outside it.
 fn wrapper_with(kinds: &[usize]) -> (Document, usize, Vec<usize>, usize) {
-    const BOXES: [&str; 6] = [
+    const BOXES: [&str; 7] = [
         "display:block;height:5px",
         "display:none",
         "display:contents",
         "position:absolute;width:5px;height:5px",
         "position:fixed;width:5px;height:5px",
         "position:absolute;display:none",
+        "position:absolute;display:contents",
     ];
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -120,8 +141,8 @@ fn wrapper_with(kinds: &[usize]) -> (Document, usize, Vec<usize>, usize) {
     let children: Vec<usize> = kinds
         .iter()
         .map(|&kind| match kind {
-            0..=5 => doc.append_element(Some(wrapper), "div", Some(BOXES[kind])),
-            6 => doc.append_text(wrapper, "  \n "),
+            0..=6 => doc.append_element(Some(wrapper), "div", Some(BOXES[kind])),
+            7 => doc.append_text(wrapper, "  \n "),
             _ => doc.append_text(wrapper, "x"),
         })
         .collect();
@@ -144,7 +165,7 @@ fn what_renders_before_a_child_is_decided_as_it_was_by_its_place() {
     };
     let (mut yes, mut no) = (0, 0);
     for _ in 0..600 {
-        let kinds: Vec<usize> = (0..next(8)).map(|_| next(8)).collect();
+        let kinds: Vec<usize> = (0..next(9)).map(|_| next(9)).collect();
         let (doc, wrapper, children, outside) = wrapper_with(&kinds);
         // Each child, and a box that the wrapper does not hold.
         for child in children.iter().copied().chain([outside]) {
@@ -165,23 +186,27 @@ fn what_renders_before_a_child_is_decided_as_it_was_by_its_place() {
 }
 
 #[test]
-fn only_boxes_before_a_child_or_out_of_flow_ones_after_it_count() {
+fn only_boxes_in_the_flow_before_a_child_count() {
     // (kinds of the children, index of the child, whether something renders
     // before it)
     let cases: &[(&[usize], usize, bool)] = &[
         // A box before it.
         (&[0, 0], 1, true),
         // Boxes that render nothing, and blank text, before it.
-        (&[1, 6, 5], 2, false),
+        (&[1, 7, 5], 2, false),
         // Text before it.
-        (&[7, 0], 1, true),
-        // A box after it that is in the flow does not count.
+        (&[8, 0], 1, true),
+        // A box after it does not count.
         (&[0, 0], 0, false),
-        // An absolutely or fixed positioned one does, wherever it is.
-        (&[0, 3], 0, true),
-        (&[0, 4], 0, true),
-        // `display: contents` renders.
-        (&[2, 0], 1, true),
+        // Nor does an absolutely or fixed positioned one, wherever it is.
+        (&[0, 3], 0, false),
+        (&[0, 4], 0, false),
+        (&[3, 4, 0], 2, false),
+        (&[3, 0, 0], 2, true),
+        // An empty `display: contents` element renders nothing, positioned or
+        // not: it makes no box of its own.
+        (&[2, 0], 1, false),
+        (&[6, 0], 1, false),
         // The child itself, placed out of the flow.
         (&[3], 0, true),
     ];
