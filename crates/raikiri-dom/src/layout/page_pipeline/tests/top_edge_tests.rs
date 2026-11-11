@@ -470,11 +470,12 @@ fn a_container_stays_when_the_next_page_cannot_hold_the_first_piece() {
 }
 
 #[test]
-fn a_container_without_padding_or_border_above_its_items_is_left_to_its_items() {
-    // Nothing of the container stays behind alone, and the items sit one above
-    // the other or break in turn.
-    let (container, _, _) = container_after(94, "display:flex;flex-direction:column", &["", ""], 1);
-    assert_eq!(container, 94.0);
+fn a_container_without_padding_or_border_above_its_items_moves_with_its_first_line() {
+    // Nothing of the container stays behind alone: the first item breaks as a
+    // block does, and the line that begins it takes the container along.
+    let (container, first, _) =
+        container_after(94, "display:flex;flex-direction:column", &["", ""], 1);
+    assert_eq!((container, first), (100.0, 100.0));
 }
 
 #[test]

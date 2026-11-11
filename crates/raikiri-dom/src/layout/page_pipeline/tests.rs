@@ -17431,18 +17431,19 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     let overflow = measure(&breaks, plain, Default::default(), &fit);
     assert_eq!(overflow.row_group_lead, None);
 
-    // A flex item moves intact unless it is the container's trailing item,
-    // which may run on into the container's continuation. A grid item always
-    // moves. Both are judged where they sit, below their block-start margin.
+    // A column flex item breaks across the page edge as a block does: only
+    // one whose content is a single line that no text places moves intact
+    // for that line (see `a_marker_only_flex_item_follows_the_flex_rules`).
+    // The container's trailing item may run on into the container's
+    // continuation. A grid item always moves. Both are judged where they
+    // sit, below their block-start margin.
     let flex_item = context(|context| context.is_flex_item = true);
     let overflow = measure(&breaks, first, flex_item, &fit);
-    assert!(overflow.flex_item && overflow.moves_box());
-    assert!(!measure(&breaks, first, flex_item, &offset_up).flex_item);
+    assert!(!overflow.flex_item && !overflow.moves_box());
     let margin_top = BoxFit {
         margin_top: 80.0,
         ..fit
     };
-    assert!(!measure(&breaks, first, flex_item, &margin_top).flex_item);
     let overflow = measure(&breaks, last, flex_item, &fit);
     assert!(!overflow.flex_item && !overflow.moves_box());
     let grid_item = context(|context| context.is_grid_item = true);

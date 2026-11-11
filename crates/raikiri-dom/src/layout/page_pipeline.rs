@@ -5880,10 +5880,11 @@ impl AvoidedBreaks {
                     || row_group_moves(flow_y, end - raw_y, page_start, page_end)
             })
             .map(|(_, lead)| lead);
-        // A trailing flex item may extend into the containing flex box's
-        // continuation at the page edge. Earlier items still move intact when
-        // they would cross a fragmentainer, preserving the existing column
-        // flex pagination behavior.
+        // A column flex item breaks across the page end as a block does,
+        // between its lines or boxes. Only an earlier item whose content is a
+        // single line that no text places moves whole for that line; the
+        // trailing item may extend into the containing flex box's
+        // continuation at the page edge.
         let flex_item_is_last = candidate.context.is_flex_item()
             && trailing_flex_children.is_trailing(document, cascade, node_id);
         let item_overflow = || {
@@ -5897,7 +5898,10 @@ impl AvoidedBreaks {
             )
         };
         let flex_item = candidate.context.is_flex_item()
-            && (item_tail || (!flex_item_is_last && item_overflow()));
+            && (item_tail
+                || (!flex_item_is_last
+                    && item_overflow()
+                    && self::unplaced_line(document, cascade, node_id).is_some()));
         let grid_item = candidate.context.is_grid_item() && item_overflow();
         // A caption moves to the next page whole unless a break between its
         // lines leaves enough of them on either side (orphans and widows): a
@@ -11122,6 +11126,10 @@ struct BesideGrowth {
     growth: f32,
     /// The page the grown item ends on, which the flow after it is on.
     page: u32,
+    /// The page the grown item started on. An item that is not on a later
+    /// row or line, such as one in the next column of a column flex
+    /// container, keeps its place there.
+    flow_page: u32,
 }
 
 impl SubtreeShifts {
@@ -11222,6 +11230,7 @@ impl SubtreeShifts {
             false
         });
         let mut beside_page = None;
+        let mut back_page: Option<u32> = None;
         let mut finished = Vec::new();
         self.beside.retain_mut(|beside| {
             let inside = is_descendant_or_self(document, node_id, beside.container);
@@ -11233,6 +11242,11 @@ impl SubtreeShifts {
                 let shift = beside.later_shift;
                 if beside.inside_later.take().is_some() {
                     *flow_shift -= shift;
+                    if inside && item.is_none() {
+                        back_page = Some(
+                            back_page.map_or(beside.flow_page, |page| page.min(beside.flow_page)),
+                        );
+                    }
                 }
                 if let Some(item) = item {
                     beside.inside_later = Some(item);
@@ -11252,6 +11266,10 @@ impl SubtreeShifts {
         });
         for (container, row) in finished {
             stretch_row_items(document, container, &row);
+        }
+        // An item that the growth left in place is on the page it was on.
+        if let Some(back) = back_page {
+            restored_page = Some(restored_page.map_or(back, |page| page.min(back)));
         }
         // The flow after a grown item is on the page the item ends on, past
         // the earlier page that a subtree it leaves goes back to.
@@ -11341,6 +11359,7 @@ fn grow_container_beside_item(
         inside_later: None,
         growth: placed.growth,
         page,
+        flow_page,
     });
 }
 
@@ -11578,6 +11597,23 @@ fn column_line_of(
         .into_iter()
         .find(|line| line.iter().any(|child| child.id == item))
         .map(|line| line.into_iter().map(|child| child.id).collect())
+}
+
+/// Whether `container` is a horizontal multi-line column flex container,
+/// which puts its items in columns side by side.
+fn wraps_items_into_columns(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    container: usize,
+) -> bool {
+    let style = &cascade.computed[container];
+    document.nodes[container].formatting_context == FormattingContext::Flex
+        && !document.nodes[container].used_writing_mode.is_vertical()
+        && !matches!(
+            style.flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        )
+        && style.flex_wrap != FlexWrapValue::NoWrap
 }
 
 /// Which of the `placed` items of `container` are known to share the flex
@@ -12530,6 +12566,28 @@ fn grow_ancestors_below(
         // the moved box out.
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
+        }
+        if stop.is_none()
+            && flow_delta > 0.001
+            && wraps_items_into_columns(document, cascade, parent)
+            && item_of(document, parent, child) == Some(child)
+        {
+            // An item of a column flex container that wraps moves down in its
+            // own column: the items after it there follow it, and the other
+            // columns keep their places, as when the item grows.
+            let after = item_bottom_in(document, parent, child);
+            shifts.bounded.push((child, flow_delta, flow_page));
+            grow_container_beside_item(
+                document,
+                cascade,
+                body_id,
+                parent,
+                child,
+                (after - flow_delta, after),
+                shifts,
+                (flow_page, flow_page),
+            );
+            return (true, 0.0);
         }
         shift_later_block_siblings(document, parent, child, flow_delta);
         let height = document.nodes[parent].layout.size.height;
