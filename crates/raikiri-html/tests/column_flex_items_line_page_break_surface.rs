@@ -63,8 +63,10 @@ fn assert_rows(rows: &[Row]) {
 #[test]
 fn column_flex_items_break_between_their_lines() {
     // A paragraph item, an item that holds blocks, gaps, margins and borders,
-    // and fixed-height items with or without content: each breaks where a
-    // block would. Orphans that the first page cannot hold move the item.
+    // and fixed-height or scrolling items with or without content: each
+    // breaks where a block would. Orphans that the first page cannot hold
+    // move the item, and so do the padding or border that close an item of
+    // one line, which stay with that line.
     assert_rows(&[
         (
             "<div style='height:150px'></div><div style='width:20px;display:grid'><p style='margin:0;orphans:1;widows:1'>X X X</p><p style='margin:0'>Z</p></div>",
@@ -127,6 +129,22 @@ fn column_flex_items_break_between_their_lines() {
         (
             "<div style='height:150px'></div><div style='width:40px;display:flex;flex-direction:column;flex-wrap:wrap'><p style='margin:0;orphans:1;widows:1;width:20px'>X X X</p><p style='margin:0;width:20px'>Z</p></div>",
             &[(1, 'X', 55), (2, 'X', 5), (2, 'X', 35), (2, 'Z', 65)],
+        ),
+        (
+            "<div style='height:50px'></div><div style='display:flex;flex-direction:column'><div style='padding-bottom:40px;orphans:1;widows:1'>A A</div><p style='margin:0'>Z</p></div>",
+            &[(1, 'A', 5), (1, 'Z', 75)],
+        ),
+        (
+            "<div style='height:50px'></div><div style='display:flex;flex-direction:column'><div style='height:70px'>A</div><p style='margin:0'>Z</p></div>",
+            &[(0, 'A', 55), (1, 'Z', 25)],
+        ),
+        (
+            "<div style='height:50px'></div><div style='display:flex;flex-direction:column'><div style='border-bottom:40px solid'>A</div><p style='margin:0'>Z</p></div>",
+            &[(1, 'A', 5), (1, 'Z', 75)],
+        ),
+        (
+            "<div style='height:50px'></div><div style='display:flex;flex-direction:column'><div style='height:60px;overflow:auto'>A</div><p style='margin:0'>Z</p></div>",
+            &[(0, 'A', 55), (1, 'Z', 15)],
         ),
     ]);
 }
@@ -260,6 +278,18 @@ fn wrapped_column_flex_items_move_only_their_own_column() {
                 (2, 'Y', 35),
                 (2, 'Y', 65),
                 (2, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:150px'></div><div style='width:40px;display:flex;flex-direction:column;flex-wrap:wrap;height:200px'><p style='margin:0;width:20px'>Q</p><p style='margin:0;width:20px'>R</p><p style='margin:0;orphans:1;widows:1;width:20px'>S S S S</p><p style='margin:0;width:20px'>W</p></div>",
+            &[
+                (1, 'Q', 55),
+                (1, 'W', 55),
+                (2, 'R', 5),
+                (2, 'S', 35),
+                (2, 'S', 65),
+                (3, 'S', 5),
+                (3, 'S', 35),
             ],
         ),
     ]);

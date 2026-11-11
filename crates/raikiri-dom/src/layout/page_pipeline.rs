@@ -5881,10 +5881,11 @@ impl AvoidedBreaks {
             })
             .map(|(_, lead)| lead);
         // A column flex item breaks across the page end as a block does,
-        // between its lines or boxes. Only an earlier item whose content is a
-        // single line that no text places moves whole for that line; the
-        // trailing item may extend into the containing flex box's
-        // continuation at the page edge.
+        // between its lines or boxes. An earlier item moves whole only for
+        // what keeps it whole: the padding and border that close a paragraph
+        // of one line, which stay with that line, or a single line that no
+        // text places and that crosses the page end itself. The trailing item may extend into
+        // the containing flex box's continuation at the page edge.
         let flex_item_is_last = candidate.context.is_flex_item()
             && trailing_flex_children.is_trailing(document, cascade, node_id);
         let item_overflow = || {
@@ -5897,11 +5898,32 @@ impl AvoidedBreaks {
                 next_page_step,
             )
         };
+        let item_kept_whole = || {
+            let layout = &document.nodes[node_id].layout;
+            let one_line = document
+                .ifc_layout_node(node_id)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| ifc.lines.as_ref())
+                .is_some_and(|lines| lines.lines.len() == 1 && lines.block_line_starts.is_empty());
+            if one_line && layout.padding.bottom + layout.border.bottom > 0.001 {
+                return item_overflow();
+            }
+            !document.context.pagination_on_transposed_axes
+                && self::unplaced_line(document, cascade, node_id)
+                    .filter(|line| !line.atomic)
+                    .is_some_and(|line| {
+                        item_moves_past_page_end(
+                            effective_y,
+                            line.end.min(height),
+                            margin_top,
+                            page_start,
+                            page_end,
+                            next_page_step,
+                        )
+                    })
+        };
         let flex_item = candidate.context.is_flex_item()
-            && (item_tail
-                || (!flex_item_is_last
-                    && item_overflow()
-                    && self::unplaced_line(document, cascade, node_id).is_some()));
+            && (item_tail || (!flex_item_is_last && item_kept_whole()));
         let grid_item = candidate.context.is_grid_item() && item_overflow();
         // A caption moves to the next page whole unless a break between its
         // lines leaves enough of them on either side (orphans and widows): a
@@ -11104,6 +11126,9 @@ struct SubtreeShifts {
     /// Flex and grid containers with an item that grew while the items
     /// beside it kept their places.
     beside: Vec<BesideGrowth>,
+    /// Whether the last [`SubtreeShifts::leave`] took the flow out of an
+    /// item that a growth moved into one that it left in place.
+    left_later_item: bool,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -11126,10 +11151,6 @@ struct BesideGrowth {
     growth: f32,
     /// The page the grown item ends on, which the flow after it is on.
     page: u32,
-    /// The page the grown item started on. An item that is not on a later
-    /// row or line, such as one in the next column of a column flex
-    /// container, keeps its place there.
-    flow_page: u32,
 }
 
 impl SubtreeShifts {
@@ -11230,7 +11251,7 @@ impl SubtreeShifts {
             false
         });
         let mut beside_page = None;
-        let mut back_page: Option<u32> = None;
+        let mut left_later = false;
         let mut finished = Vec::new();
         self.beside.retain_mut(|beside| {
             let inside = is_descendant_or_self(document, node_id, beside.container);
@@ -11243,9 +11264,7 @@ impl SubtreeShifts {
                 if beside.inside_later.take().is_some() {
                     *flow_shift -= shift;
                     if inside && item.is_none() {
-                        back_page = Some(
-                            back_page.map_or(beside.flow_page, |page| page.min(beside.flow_page)),
-                        );
+                        left_later = true;
                     }
                 }
                 if let Some(item) = item {
@@ -11267,10 +11286,10 @@ impl SubtreeShifts {
         for (container, row) in finished {
             stretch_row_items(document, container, &row);
         }
-        // An item that the growth left in place is on the page it was on.
-        if let Some(back) = back_page {
-            restored_page = Some(restored_page.map_or(back, |page| page.min(back)));
-        }
+        // An item that the growth left in place, such as one in the next
+        // column of a column flex container, is on the page it was on, which
+        // the caller finds from where the flow now is.
+        self.left_later_item = left_later;
         // The flow after a grown item is on the page the item ends on, past
         // the earlier page that a subtree it leaves goes back to.
         if beside_page.is_some() {
@@ -11281,6 +11300,12 @@ impl SubtreeShifts {
 }
 
 impl SubtreeShifts {
+    /// Whether the last [`SubtreeShifts::leave`] took the flow into an item
+    /// that a growth left in place, clearing the answer.
+    fn take_left_later_item(&mut self) -> bool {
+        std::mem::take(&mut self.left_later_item)
+    }
+
     /// Stretches the rows of the containers the flow has not left when it
     /// ends, as leaving them would (see [`stretch_row_items`]).
     fn finish_rows(&mut self, document: &mut super::context::LayoutSession<'_>) {
@@ -11359,7 +11384,6 @@ fn grow_container_beside_item(
         inside_later: None,
         growth: placed.growth,
         page,
-        flow_page,
     });
 }
 
@@ -11559,14 +11583,7 @@ fn column_line_of(
     before: f32,
     placed: &[PlacedItem],
 ) -> Option<HashSet<usize>> {
-    let style = &cascade.computed[container];
-    if document.nodes[container].formatting_context != FormattingContext::Flex
-        || matches!(
-            style.flex_direction,
-            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-        )
-        || style.flex_wrap == FlexWrapValue::NoWrap
-    {
+    if !wraps_items_into_columns(document, cascade, container) {
         return None;
     }
     let mut ordered: Vec<&PlacedItem> = placed.iter().collect();
@@ -12570,7 +12587,7 @@ fn grow_ancestors_below(
         if stop.is_none()
             && flow_delta > 0.001
             && wraps_items_into_columns(document, cascade, parent)
-            && item_of(document, parent, child) == Some(child)
+            && document.taffy_parent_of(child) == Some(parent)
         {
             // An item of a column flex container that wraps moves down in its
             // own column: the items after it there follow it, and the other
@@ -12585,9 +12602,11 @@ fn grow_ancestors_below(
                 child,
                 (after - flow_delta, after),
                 shifts,
+                // The page the item ends on is not known here: the flow
+                // reaches it again from the next candidate's own place.
                 (flow_page, flow_page),
             );
-            return (true, 0.0);
+            return (bounded, 0.0);
         }
         shift_later_block_siblings(document, parent, child, flow_delta);
         let height = document.nodes[parent].layout.size.height;
