@@ -138,3 +138,42 @@ fn positioned_boxes_do_not_keep_a_container_on_its_page() {
         ),
     ]);
 }
+
+#[test]
+fn a_positioned_box_keeps_its_offset_from_where_its_container_starts() {
+    // A negative `top` places the box above the moved container, back on the
+    // earlier page, and a positioned box inside a `display: contents` element
+    // goes along like any other. A container with a line before the one that
+    // moves stays, and so does the box at its top, also when that line is in
+    // a `display: contents` element, positioned or not.
+    assert_rows(&[
+        (
+            "<div style='height:94px'></div><div style='position:relative'><div style='position:absolute;top:-40px;left:40px;font-size:4px;line-height:4px'>C</div><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(0, 'C', 60), (1, 'A', 5), (1, 'B', 35)],
+        ),
+        (
+            "<div style='height:50px'></div><div style='position:relative'><div style='position:absolute;top:0;left:40px;font-size:4px;line-height:4px'>C</div><p style='margin:0'>Q</p><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(0, 'C', 50), (0, 'Q', 55), (1, 'A', 5), (1, 'B', 35)],
+        ),
+        (
+            "<div style='height:94px'></div><div style='position:relative'><span style='display:contents;position:absolute'><div style='position:absolute;top:0;left:40px;font-size:4px;line-height:4px'>C</div></span><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(1, 'A', 5), (1, 'B', 35), (1, 'C', 0)],
+        ),
+        (
+            "<div style='height:94px'></div><div style='position:relative'><div style='position:absolute;top:-4px;left:40px;font-size:4px;line-height:4px'>C</div><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(0, 'C', 96), (1, 'A', 5), (1, 'B', 35)],
+        ),
+        (
+            "<div style='height:64px'></div><div style='position:relative'><div style='position:absolute;top:0;left:40px;font-size:4px;line-height:4px'>C</div><span style='display:contents;position:absolute'><div>Q</div></span><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(0, 'C', 64), (0, 'Q', 69), (1, 'A', 5), (1, 'B', 35)],
+        ),
+        (
+            "<div style='height:94px'></div><div style='position:relative'><span style='display:contents'><div style='position:absolute;top:0;left:40px;font-size:4px;line-height:4px'>C</div></span><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(1, 'A', 5), (1, 'B', 35), (1, 'C', 0)],
+        ),
+        (
+            "<div style='height:64px'></div><div style='position:relative'><div style='position:absolute;top:0;left:40px;font-size:4px;line-height:4px'>C</div><span style='display:contents'><span style='display:contents'><div>Q</div></span></span><p style='margin:0'>A</p><p style='margin:0'>B</p></div>",
+            &[(0, 'C', 64), (0, 'Q', 69), (1, 'A', 5), (1, 'B', 35)],
+        ),
+    ]);
+}

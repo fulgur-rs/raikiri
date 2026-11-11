@@ -9475,6 +9475,13 @@ fn hold_in_place(doc: &mut Document, wrapper: usize) {
 /// Returns the avoiding box's page-flow y, the wrapper's height and the
 /// page count.
 fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize) {
+    nested_avoiding_block_held(wrapper_css, avoid_css, true)
+}
+
+/// As [`nested_avoiding_block`], with the wrapper held in place by an empty
+/// box before the avoiding one only when `held`. In a flex or grid wrapper
+/// that box would be an item beside the avoiding box rather than before it.
+fn nested_avoiding_block_held(wrapper_css: &str, avoid_css: &str, held: bool) -> (f32, f32, usize) {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -9491,9 +9498,7 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
         "div",
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
-    // In a flex or grid wrapper the holder would be an item beside the
-    // avoiding box rather than a box before it.
-    if !wrapper_css.contains("flex") && !wrapper_css.contains("grid") {
+    if held {
         hold_in_place(&mut doc, wrapper);
     }
     let avoiding = doc.append_element(
@@ -9557,16 +9562,17 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
     // A multi-column grid that begins with the avoiding box's row starts the
     // next page with it, keeping its height (Chromium).
     assert_eq!(
-        nested_avoiding_block(
+        nested_avoiding_block_held(
             "display:grid;grid-template-columns:50px 50px",
-            "break-inside:avoid"
+            "break-inside:avoid",
+            false
         ),
         (100.0, 60.0, 2)
     );
     // Chromium moves the whole atomic inline-flex line onto the next page;
     // its item still does not participate in the outer block flow.
     assert_eq!(
-        nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
+        nested_avoiding_block_held("display:inline-flex", "break-inside:avoid", false).0,
         100.0
     );
     // Nor do boxes in different columns of a multi-column container.
