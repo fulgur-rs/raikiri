@@ -67,11 +67,12 @@ fn a_wrapping_column_item_breaks_its_lines_against_the_height_its_container_flex
     // container shrinks to a `max-height` of 100px make three lines; grown
     // to 400px, or to its own `max-height`, they make one or two. The
     // container states a height, a `min-height` or a `max-height`, or wraps
-    // its own items; the item has padding, a border, gaps, a distribution of
-    // its items or lines, lines in reverse, a growing item, or items in
-    // reverse order; the container floats or is inline, and is then as wide
-    // as the item's items on one line. A percentage height of an item
-    // resolves only against a container of a stated height.
+    // its own items; the item has padding (a percentage one too), a border,
+    // gaps, a distribution of its items or lines, lines in reverse, a growing
+    // item, or items in reverse order; the container floats or is inline,
+    // and is then as wide as the item's items on one line. A percentage
+    // height of an item resolves only against a container of a stated
+    // height.
     assert_rows(&[
         (
             "<div id=p style='display:flex;flex-direction:column;max-height:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;width:40px;min-height:0'><p id=a style='margin:0;height:90px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:30px;width:20px'></p><p id=d style='margin:0;height:90px;width:20px'></p></div></div>",
@@ -327,6 +328,17 @@ fn a_wrapping_column_item_breaks_its_lines_against_the_height_its_container_flex
                 ("d", [40, 0, 20, 90]),
             ],
         ),
+        (
+            "<div id=p style='display:flex;flex-direction:column;max-height:100px;width:200px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;width:60px;min-height:0;padding-top:5%'><p id=a style='margin:0;height:90px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:30px;width:20px'></p><p id=d style='margin:0;height:90px;width:20px'></p></div></div>",
+            &[
+                ("p", [0, 0, 200, 100]),
+                ("c", [0, 0, 60, 100]),
+                ("a", [0, 10, 20, 90]),
+                ("b", [20, 10, 20, 30]),
+                ("w", [20, 40, 20, 30]),
+                ("d", [40, 10, 20, 90]),
+            ],
+        ),
     ]);
 }
 
@@ -335,7 +347,8 @@ fn a_wrapping_item_breaks_its_lines_against_the_width_or_height_it_is_flexed_to_
  {
     // A column item of a column container in a vertical writing mode, whose
     // main axis is the width, and a vertical row item of a horizontal column
-    // container, whose main axis is the height.
+    // container, whose main axis is the height. A percentage padding of the
+    // column item refers to the height of its vertical container.
     assert_rows(&[
         (
             "<div id=p style='writing-mode:vertical-rl;display:flex;flex-direction:column;max-width:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:40px;min-width:0'><p id=a style='margin:0;width:90px;height:20px'></p><p id=b style='margin:0;width:30px;height:20px'></p><p id=w style='margin:0;width:30px;height:20px'></p><p id=d style='margin:0;width:90px;height:20px'></p></div></div>",
@@ -357,6 +370,17 @@ fn a_wrapping_item_breaks_its_lines_against_the_width_or_height_it_is_flexed_to_
                 ("b", [0, 0, 20, 30]),
                 ("w", [0, 30, 20, 30]),
                 ("d", [-20, 0, 20, 90]),
+            ],
+        ),
+        (
+            "<div id=p style='writing-mode:vertical-rl;display:flex;flex-direction:column;max-width:100px;height:600px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:40px;min-width:0;padding-left:5%'><p id=a style='margin:0;width:90px;height:20px'></p><p id=b style='margin:0;width:30px;height:20px'></p><p id=w style='margin:0;width:30px;height:20px'></p><p id=d style='margin:0;width:90px;height:20px'></p></div></div>",
+            &[
+                ("p", [0, 0, 100, 600]),
+                ("c", [0, 0, 100, 40]),
+                ("a", [30, 0, 70, 20]),
+                ("b", [70, 20, 30, 20]),
+                ("w", [40, 20, 30, 20]),
+                ("d", [30, 40, 70, 20]),
             ],
         ),
     ]);

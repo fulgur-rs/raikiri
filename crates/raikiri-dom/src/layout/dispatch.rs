@@ -4151,8 +4151,9 @@ fn flexed_wrapping_main_size(
         return None;
     }
     let inner = if style.box_sizing() == BoxSizing::ContentBox {
-        let edges = style.padding().resolve_or_zero(inputs.parent_size.width)
-            + style.border().resolve_or_zero(inputs.parent_size.width);
+        // Percentage edges refer to the inline size of the containing block.
+        let basis = vertical_block::containing_inline_size(tree, idx, &inputs);
+        let edges = style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis);
         let edges = if along_height {
             edges.top + edges.bottom
         } else {
