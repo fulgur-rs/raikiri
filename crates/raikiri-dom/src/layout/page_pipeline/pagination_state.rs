@@ -1140,6 +1140,7 @@ impl PaginationState {
         {
             self.current_page = page;
         }
+        self.subtree_shifts.take_left_later_item();
         let end = edges_break.raw_y + self.flow_shift;
         let page = page_origins.page_index_for_end(end);
         let page_end = page_origins.origin(page) + page_origins.step_at(page);
@@ -3281,6 +3282,12 @@ impl PaginationState {
             .leave(document, node_id, &mut self.flow_shift)
         {
             self.current_page = page;
+        }
+        // The flow goes back to the page of a box that the items moved down
+        // before it left in place, beside them.
+        if self.subtree_shifts.take_left_later_item() && in_flow {
+            let page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
+            self.current_page = self.current_page.min(page);
         }
         if let Some((delta, flow_page)) = self.float_shifts.end_pending_outside(document, node_id) {
             self.flow_shift -= delta;
