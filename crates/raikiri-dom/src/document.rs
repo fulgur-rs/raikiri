@@ -335,6 +335,10 @@ pub struct Document {
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
+    /// For each fixed box placed at its static position along the block
+    /// axis, where the page that holds that position begins in the flow,
+    /// when that is not the first page. Set by the most recent paged layout.
+    pub(crate) fixed_static_page_origins: HashMap<usize, f32>,
     /// The content-box heights that the children of the root element and of
     /// the body resolve percentages against when the quirks mode fill quirks
     /// apply to them (see [`mod@crate::layout::quirks_fill`]), keyed by the
@@ -439,6 +443,7 @@ impl Document {
         self.ifc = Some(crate::layout::ifc::root::IfcState::new(fonts, limits));
         self.layout_dirty = true;
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
     }
 
     /// The measurer of `line-height: normal` in the fonts this document lays
@@ -480,6 +485,16 @@ impl Document {
     /// included, once it has them (see [`Self::has_font_collection`]).
     pub fn font_collection(&self) -> Option<&shodo::font::FontCollection> {
         self.ifc.as_ref().map(|state| &state.fonts)
+    }
+
+    /// Where the page that holds the static position of the fixed box
+    /// `node_id` begins in the flow, when the box is placed at its static
+    /// position along the block axis and that position lies past the first
+    /// page of the most recent paged layout. Such a box is drawn from that
+    /// page on, at the same place on each (Chromium).
+    #[doc(hidden)]
+    pub fn fixed_static_page_origin(&self, node_id: usize) -> Option<f32> {
+        self.fixed_static_page_origins.get(&node_id).copied()
     }
 
     /// Width of the page area the most recent layout was made in, or `None`
@@ -595,6 +610,7 @@ impl Document {
             normal_line_height: None,
             layout_cascade_generation: None,
             fixed_page_area: None,
+            fixed_static_page_origins: HashMap::new(),
             quirks_percentage_height_bases: Vec::new(),
             quirks_body_fill: None,
             skips_quirks_fill: false,
@@ -2087,6 +2103,7 @@ impl Document {
             normal_line_height,
             layout_cascade_generation: _,
             fixed_page_area: _,
+            fixed_static_page_origins: _,
             quirks_percentage_height_bases: _,
             quirks_body_fill: _,
             skips_quirks_fill: _,
@@ -3094,6 +3111,7 @@ impl Document {
         self.compact_counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
         self.layout_dirty = true;
     }
 
@@ -3494,6 +3512,7 @@ impl Document {
         self.prepare_margin_box_images(&cascade.page, source, base_url);
         self.layout_dirty = true;
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
     }
 
     /// Pixels of image `index` (counted among the images of the `content`

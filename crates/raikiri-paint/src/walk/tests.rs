@@ -7534,6 +7534,7 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
             &cascade.computed[id],
             &layout,
             (8.0, 48.0),
+            0.0,
             false,
             800.0,
             page_origin,
@@ -7554,6 +7555,7 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
         &cascade.computed[auto_id],
         &layout,
         (-5000.0, -9000.0),
+        0.0,
         false,
         800.0,
         1000.0,
@@ -7561,6 +7563,23 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
         1000.0,
     );
     assert_eq!(off_page, Some((-5000.0, -8000.0)));
+    // A static position on the second page is measured from that page; that
+    // page and every later one draw the box in the same place.
+    let from_second_page = |page_origin: f32| {
+        fixed_position_px(
+            &cascade.computed[auto_id],
+            &layout,
+            (8.0, 1048.0),
+            1000.0,
+            false,
+            800.0,
+            page_origin,
+            784.0,
+            1000.0,
+        )
+    };
+    assert_eq!(from_second_page(1000.0), Some((8.0, 1048.0)));
+    assert_eq!(from_second_page(2000.0), Some((8.0, 2048.0)));
 }
 
 #[test]
@@ -8591,6 +8610,7 @@ fn programmatic_fixed_comparison_insets_resolve_against_the_page_area() {
             &values,
             &BoxLayout::new(),
             (8.0, 48.0),
+            0.0,
             false,
             800.0,
             1000.0,
