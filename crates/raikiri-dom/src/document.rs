@@ -443,6 +443,7 @@ impl Document {
         self.ifc = Some(crate::layout::ifc::root::IfcState::new(fonts, limits));
         self.layout_dirty = true;
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
     }
 
     /// The measurer of `line-height: normal` in the fonts this document lays
@@ -3110,6 +3111,7 @@ impl Document {
         self.compact_counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
         self.layout_dirty = true;
     }
 
@@ -3510,6 +3512,7 @@ impl Document {
         self.prepare_margin_box_images(&cascade.page, source, base_url);
         self.layout_dirty = true;
         self.oof_coordinates.clear();
+        self.fixed_static_page_origins.clear();
     }
 
     /// Pixels of image `index` (counted among the images of the `content`

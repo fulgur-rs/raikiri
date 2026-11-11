@@ -164,6 +164,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = inputs;
         let placement = self.placement(&inputs, node, layout);
+        // A fixed box at its static position is drawn from the page that
+        // holds that position on, not on the pages before it (Chromium).
+        if placement.fixed_in_viewport
+            && self
+                .document
+                .fixed_static_page_origin(node_id)
+                .is_some_and(|origin| origin > self.geometry.fixed_origin_y + 0.001)
+        {
+            return None;
+        }
         let Placement {
             cv,
             paint_padding,
@@ -477,15 +487,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_content_width,
             fixed_flow_shift_x,
             fixed_origin_y,
-            pages_follow_x_axis,
             ..
         } = self.geometry;
         // A static position past the first page is measured from the page
-        // that holds it; pages along the x axis keep their own placement.
-        let static_page_origin = pages_follow_x_axis
-            .is_none()
-            .then(|| self.document.fixed_static_page_origin(node_id))
-            .flatten()
+        // that holds it.
+        let static_page_origin = self
+            .document
+            .fixed_static_page_origin(node_id)
             .unwrap_or(0.0);
         fixed_position_px(
             cv,

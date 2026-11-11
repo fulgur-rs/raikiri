@@ -7563,9 +7563,8 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
         1000.0,
     );
     assert_eq!(off_page, Some((-5000.0, -8000.0)));
-    // A static position on the second page is measured from that page, which
-    // and every later page draws it in the same place; the first page keeps
-    // it at its place in the flow, below the page.
+    // A static position on the second page is measured from that page; that
+    // page and every later one draw the box in the same place.
     let from_second_page = |page_origin: f32| {
         fixed_position_px(
             &cascade.computed[auto_id],
@@ -7579,7 +7578,6 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
             1000.0,
         )
     };
-    assert_eq!(from_second_page(0.0), Some((8.0, 1048.0)));
     assert_eq!(from_second_page(1000.0), Some((8.0, 1048.0)));
     assert_eq!(from_second_page(2000.0), Some((8.0, 2048.0)));
 }

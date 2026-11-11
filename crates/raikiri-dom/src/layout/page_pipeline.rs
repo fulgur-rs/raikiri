@@ -3925,6 +3925,7 @@ fn layout_pages_attempt(
         session.column_rules.clear();
         session.page_projection.clear();
         session.outside_marker_leading = Default::default();
+        session.fixed_static_page_origins.clear();
         return Ok(PageAttemptResult {
             slices: vec![PageSlice {
                 page_index: 0,
@@ -4579,7 +4580,6 @@ fn paginate_flow(
         document.context.page_filled_columns_moved = true;
         return Ok(Vec::new());
     }
-    note_fixed_static_page_origins(document, cascade, &page_origins);
     place_repeated_table_footers(document, &mut state.table_headers, &page_origins);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
@@ -4604,6 +4604,7 @@ fn paginate_flow(
         control,
     )
     .and_then(|()| control.check_discovery_page_index(state.reach.max))?;
+    note_fixed_static_page_origins(document, cascade, &page_origins);
     Ok(page_slices(
         control.last_page(state.reach.max),
         &page_origins,
@@ -4623,7 +4624,10 @@ fn note_fixed_static_page_origins(
     if document.context.pagination_on_transposed_axes {
         return;
     }
-    let origins: Vec<(usize, f32)> = (0..document.nodes.len())
+    let origins: Vec<(usize, f32)> = document
+        .oof_coordinates
+        .keys()
+        .copied()
         .filter(|&id| {
             let node = &document.nodes[id];
             node.kind() == NodeKind::Element

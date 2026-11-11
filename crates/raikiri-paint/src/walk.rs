@@ -4518,9 +4518,8 @@ fn transform_translation(
 /// both `auto` (CSS 2.1 §10.3.7 / §10.6.4). The page area is the fixed
 /// containing block (CSS Paged Media 3 §3.2), so that position is measured
 /// from `static_page_origin`, where the page that holds it begins in the
-/// flow, and repeated on that page and every later one. A page before it
-/// keeps the box at its place in the flow, below the page, as Chromium
-/// draws it only from the page that holds its static position.
+/// flow, and repeated on that page and every later one. The pages before
+/// it do not draw the box (Chromium).
 #[allow(clippy::too_many_arguments)]
 fn fixed_position_px(
     cv: &raikiri_style::ComputedValues,
@@ -4581,7 +4580,7 @@ fn fixed_position_px(
             content_origin_y + page_width + content_height,
         ),
         None if static_position.1.is_finite() => {
-            content_origin_y + static_position.1 - static_page_origin.min(content_origin_y)
+            content_origin_y + static_position.1 - static_page_origin
         }
         None => content_origin_y,
     };

@@ -11,12 +11,16 @@ use raikiri_html::{
     parse_html_with_resources,
 };
 
+/// A document body and the page and top-left pixel of the blue box on each
+/// page that draws it.
+type Row = (&'static str, &'static [(u32, u32, u32)]);
+
 /// The page and top-left pixel of the blue box on each page of `body` that
 /// draws it, laid out on 100x100 pages without margins.
-fn blue_box_places(body: &str) -> Vec<(u32, u32, u32)> {
+fn blue_box_places_with(body: &str, margin: u32) -> Vec<(u32, u32, u32)> {
     let resources = RenderResources::new();
     let html = format!(
-        "<!doctype html><style>@page{{size:100px 100px;margin:0}}body{{margin:0}}</style>{body}"
+        "<!doctype html><style>@page{{size:100px 100px;margin:{margin}px}}body{{margin:0}}</style>{body}"
     );
     let doc = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -51,12 +55,16 @@ fn blue_box_places(body: &str) -> Vec<(u32, u32, u32)> {
     places
 }
 
+fn blue_box_places(body: &str) -> Vec<(u32, u32, u32)> {
+    blue_box_places_with(body, 0)
+}
+
 #[test]
 fn a_fixed_box_at_its_static_position_is_drawn_from_the_page_that_holds_it() {
     // The static position on the first page, on a later one, after a
     // paragraph pushed to the next page, across a page end, beside a margin
     // and in columns; and a box placed by `top`, which every page draws.
-    let rows: &[(&str, &[(u32, u32, u32)])] = &[
+    let rows: &[Row] = &[
         (
             "<div style='height:20px'></div><div><div style='position:fixed;left:40px;width:4px;height:4px;background:blue'></div><div style='height:30px'></div></div><div style='height:200px'></div>",
             &[(0, 40, 20), (1, 40, 20), (2, 40, 20)],
@@ -93,4 +101,16 @@ fn a_fixed_box_at_its_static_position_is_drawn_from_the_page_that_holds_it() {
     for &(body, expected) in rows {
         assert_eq!(blue_box_places(body), expected, "{body}");
     }
+}
+
+#[test]
+fn the_pages_before_a_fixed_box_leave_it_out_of_their_margins() {
+    // With 20px page margins the static position lies 5px into the second
+    // page area. The first page does not draw the box in its bottom margin,
+    // and every page from the second draws it 5px below its page area's top.
+    let body = "<div style='height:65px'></div><div><div style='position:fixed;left:40px;width:4px;height:4px;background:blue'></div><div style='height:30px'></div></div><div style='height:120px'></div>";
+    assert_eq!(
+        blue_box_places_with(body, 20),
+        [(1, 60, 25), (2, 60, 25), (3, 60, 25)]
+    );
 }
