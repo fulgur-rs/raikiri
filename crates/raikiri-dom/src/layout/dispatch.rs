@@ -4061,6 +4061,7 @@ fn flex_layout_sized(
         .is_some()
     };
     let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
+    let inputs = with_open_wrapping_column_height(tree, node_id, inputs);
     column_cross_measure::layout(
         tree,
         node_id,
@@ -4125,6 +4126,52 @@ fn with_open_wrapping_column_width(
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
         _ => {}
+    }
+    inputs
+}
+
+/// `inputs` with the height of a wrapping flex container whose main axis is
+/// vertical left open where its content decided it: a column container in a
+/// horizontal writing mode, or a row container in a vertical one.
+///
+/// That height is the size its lines break against. An absolutely positioned
+/// container with an `auto` height is laid out at the height its content gave
+/// it, which is not definite, and Taffy puts every item on one line under a
+/// main size that is not. Where a `max-height` limits it, that height is the
+/// longest line the items made, broken against the `max-height`, so the
+/// container finds the same lines again when they break against that height
+/// as room (CSS Flexbox 1 §9.3). Percentages of the items stay unresolved, as
+/// the height is still open. A height a flex container gave its item, or one
+/// no `max-height` limits, is left as it is.
+fn with_open_wrapping_column_height(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let style = tree.physical_style(idx);
+    let main_is_height = style.flex_direction_is_row() == tree.has_vertical_writing_mode(idx);
+    let limited = style
+        .max_size()
+        .maybe_resolve(inputs.parent_size)
+        .height
+        .is_some();
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || !style.flex_wraps()
+        || !main_is_height
+        || !limited
+        || !positioned_height_follows_content(tree, idx, inputs.parent_size)
+    {
+        return inputs;
+    }
+    if let Some(height) = inputs
+        .known_dimensions
+        .height
+        .filter(|_| !inputs.known_dimensions_are_definite.height)
+    {
+        inputs.known_dimensions.height = None;
+        inputs.known_dimensions_are_definite.height = true;
+        inputs.available_space.height = AvailableSpace::Definite(height);
     }
     inputs
 }
@@ -4413,27 +4460,34 @@ fn with_content_height_not_definite(
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    if inputs.known_dimensions.height.is_none()
-        || !inputs.known_dimensions_are_definite.height
-        || tree.nodes[idx].layout_position() != Position::Absolute
-    {
+    if inputs.known_dimensions.height.is_none() || !inputs.known_dimensions_are_definite.height {
         return inputs;
     }
-    let follows_content = {
-        let style = tree.physical_style(idx);
-        let min = style.min_size().maybe_resolve(inputs.parent_size).height;
-        let max = style.max_size().maybe_resolve(inputs.parent_size).height;
-        let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
-        let inset = style.inset();
-        style.size().height.is_auto()
-            && style.aspect_ratio().is_none()
-            && !pinned
-            && (inset.top.is_auto() || inset.bottom.is_auto())
-    };
-    if follows_content {
+    if positioned_height_follows_content(tree, idx, inputs.parent_size) {
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
+}
+
+/// Whether the box `idx` is absolutely positioned with a height that follows
+/// from its content (see [`with_content_height_not_definite`]).
+fn positioned_height_follows_content(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+) -> bool {
+    if tree.nodes[idx].layout_position() != Position::Absolute {
+        return false;
+    }
+    let style = tree.physical_style(idx);
+    let min = style.min_size().maybe_resolve(parent_size).height;
+    let max = style.max_size().maybe_resolve(parent_size).height;
+    let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
+    let inset = style.inset();
+    style.size().height.is_auto()
+        && style.aspect_ratio().is_none()
+        && !pinned
+        && (inset.top.is_auto() || inset.bottom.is_auto())
 }
 
 /// Offer a box sized by `fit-content(<length-percentage>)` its limit as the
