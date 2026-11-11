@@ -88,12 +88,22 @@ pub(super) fn changed_owners(
         .collect()
 }
 
+/// A flex or grid container and the items on a row or line of it that grew,
+/// with whether each stretches to the row and its relative offset.
+type GrownRow = (usize, Vec<(usize, bool, f32)>);
+
 pub(super) struct HeightFollowers {
     owners: HashMap<usize, Vec<usize>>,
     static_owners: HashMap<usize, Vec<usize>>,
     source_order: Vec<usize>,
     dirty: std::cell::RefCell<std::collections::BTreeMap<usize, std::collections::BTreeSet<usize>>>,
     reflowed: std::cell::RefCell<HashSet<usize>>,
+    /// How far the growth of an item beside others moved each item on the
+    /// rows or lines after it, away from the grid area layout gave it.
+    beside_moves: std::cell::RefCell<HashMap<usize, f32>>,
+    /// The rows of flex or grid containers whose items grew, to stretch once
+    /// the box is kept (see [`stretch_row_items`]).
+    grown_rows: std::cell::RefCell<Vec<GrownRow>>,
 }
 
 impl HeightFollowers {
@@ -126,6 +136,8 @@ impl HeightFollowers {
             source_order,
             dirty: Default::default(),
             reflowed: Default::default(),
+            beside_moves: Default::default(),
+            grown_rows: Default::default(),
         }
     }
 
@@ -393,11 +405,10 @@ pub(super) fn keep(
                     )
                 {
                     // These contexts place their children in their own flows,
-                    // except a flex or grid container whose items grow it as
-                    // a block grows with its children: its only item, or grid
-                    // items each alone in their rows, stacked in order.
+                    // except a horizontal flex or grid container, whose items
+                    // grow it and move the items after them.
                     pending.extend(
-                        stacked_items(document, node)
+                        growing_items(document, env.cascade, env.body_id, node)
                             .into_iter()
                             .rev()
                             .map(Event::Box),
@@ -436,6 +447,26 @@ pub(super) fn keep(
             Event::Lines(root, run) => {
                 keep_run(document, env, owner, root, run, reach, followers)?;
             }
+        }
+    }
+    // The items stretched to a row that grew stretch with it once nothing
+    // inside the box grows any more, as they do when the flow leaves the
+    // container in the normal flow.
+    for (container, row) in followers.grown_rows.take() {
+        let heights: Vec<f32> = row
+            .iter()
+            .map(|&(item, _, _)| document.nodes[item].layout.size.height)
+            .collect();
+        stretch_row_items(document, container, &row);
+        // The boxes placed against a stretched item follow its new height.
+        for (&(item, _, _), height) in row.iter().zip(heights) {
+            let layout = document.nodes[item].layout;
+            followers.resize(
+                document,
+                item,
+                height - layout.border.top - layout.border.bottom,
+                layout.size.height - height,
+            );
         }
     }
     Ok(())
@@ -505,25 +536,31 @@ fn follows_block(document: &Document, root: usize, line: usize) -> bool {
         })
 }
 
-/// The in-flow items of the flex or grid container `node` that grow it as a
-/// block's children grow the block: its only item, when nothing sits beside
-/// or after it (see [`has_no_other_item`]), or the items of a grid that are
-/// each alone in their rows, in order (see [`stacks_item_alone_in_its_rows`]).
-/// Otherwise none.
-fn stacked_items(document: &super::super::context::LayoutSession<'_>, node: usize) -> Vec<usize> {
+/// The in-flow items of the horizontal flex or grid container `node`, in
+/// the order of their rows or lines, whose growth the container follows: an
+/// item alone in it, or in its rows, grows it as a block's child grows the
+/// block, and an item beside others moves the items that begin below it (see
+/// [`grow_inside`]). None for other containers, or when a `display:
+/// contents` child holds items.
+fn growing_items(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node: usize,
+) -> Vec<usize> {
     let display = document.nodes[node].display();
     let horizontal_container = display.is_flex_or_grid_container()
         && !document.nodes[node].used_writing_mode.is_vertical();
-    let children = &document.nodes[node].children;
     // A `display: contents` child may hold several items.
     if !horizontal_container
-        || children
+        || document.nodes[node]
+            .children
             .iter()
             .any(|&child| document.nodes[child].display() == DisplayValue::Contents)
     {
         return Vec::new();
     }
-    let items: Vec<usize> = children
+    let mut items: Vec<usize> = pagination_child_order_borrowed(document, cascade, node)
         .iter()
         .copied()
         .filter(|&child| {
@@ -534,11 +571,19 @@ fn stacked_items(document: &super::super::context::LayoutSession<'_>, node: usiz
             }
         })
         .collect();
-    let stacked = match items.as_slice() {
-        [item] => has_no_other_item(document, node, *item),
-        _ => display.is_grid_container() && grid_items_stack(document, node),
-    };
-    if stacked { items } else { Vec::new() }
+    // Items placed on rows or lines out of source order, by grid placement
+    // or reversed wrapping, are kept in the order of their tops in normal
+    // flow, so that the rows and lines above an item settle before it: a
+    // relative offset only moves the paint of an item.
+    items.sort_by(|&a, &b| {
+        let top = |item: usize| {
+            document.pagination_local_y(item)
+                - document.nodes[item].layout.margin.top
+                - layout_relative_offset_y(document, cascade, body_id, item)
+        };
+        top(a).total_cmp(&top(b))
+    });
+    items
 }
 
 fn keep_run(
@@ -720,6 +765,7 @@ fn keep_run(
         grow_inside(
             document,
             env.cascade,
+            env.body_id,
             owner,
             root,
             ContentChange {
@@ -828,6 +874,7 @@ fn keep_whole_box(
         grow_inside(
             document,
             env.cascade,
+            env.body_id,
             owner,
             node,
             ContentChange {
@@ -877,9 +924,11 @@ fn static_position_at_block_start(
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn grow_inside(
     document: &mut super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     owner: usize,
     mut child: usize,
     change: ContentChange,
@@ -901,6 +950,54 @@ fn grow_inside(
             continue;
         }
         let height = document.nodes[parent].layout.size.height;
+        if document.nodes[parent].display().is_flex_or_grid_container()
+            && !has_no_other_item(document, parent, child)
+            && !stacks_item_alone_in_its_rows(document, parent, child)
+        {
+            // An item beside others moves the rows or lines after its own,
+            // and the items stretched to its row stretch with it once the
+            // box is kept.
+            let after = item_bottom_in(document, parent, child);
+            let placed = place_beside_growth(
+                document,
+                cascade,
+                body_id,
+                parent,
+                child,
+                (after - size_delta, after),
+                position_delta,
+                |id| {
+                    followers
+                        .beside_moves
+                        .borrow()
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(0.0)
+                },
+            );
+            let growth = placed.map_or(0.0, |placed| {
+                let mut moves = followers.beside_moves.borrow_mut();
+                for &item in &placed.later {
+                    *moves.entry(item).or_default() += placed.later_shift;
+                }
+                followers.grown_rows.borrow_mut().push((parent, placed.row));
+                placed.growth
+            });
+            followers.follow_static_after_block(document, parent, child, growth);
+            let border = document.nodes[parent].layout.border;
+            followers.resize(
+                document,
+                parent,
+                height - border.top - border.bottom,
+                growth,
+            );
+            (flow_delta, size_delta, float_delta, position_delta) = (growth, growth, 0.0, 0.0);
+            child = parent;
+            if growth <= 0.001 {
+                break;
+            }
+            continue;
+        }
         let child_height = document.nodes[child].layout.size.height;
         let top =
             pagination_child_parent_y(document, parent, child, document.pagination_local_y(child));
