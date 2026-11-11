@@ -3591,11 +3591,11 @@ fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
 }
 
 #[test]
-fn a_nested_paragraph_moved_for_its_orphans_leaves_a_later_positioned_box_behind() {
+fn a_nested_paragraph_moved_for_its_orphans_takes_its_section_and_positioned_box_along() {
     // `body > (spacer, section[relative] > (paragraph, abs[top:0]))`: the
-    // positioned box is placed at the section's top on page 0. The
-    // paragraph moves to page 1 for its orphans; the section, and the box
-    // placed against it, stay where they are.
+    // paragraph moves to page 1 for its orphans. The positioned box is not
+    // in the flow, so the section moves with the paragraph that begins it,
+    // and the box placed against the section's top goes with it (Chromium).
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -3632,8 +3632,8 @@ fn a_nested_paragraph_moved_for_its_orphans_leaves_a_later_positioned_box_behind
         text_fragments(&doc, &cascade, page, &slices, text),
         whole_on_page_1()
     );
-    assert_eq!(absolute_rect(&doc, section).1, 15.0);
-    assert_eq!(absolute_rect(&doc, positioned).1, 15.0);
+    assert_eq!(absolute_rect(&doc, section).1, 40.0);
+    assert_eq!(absolute_rect(&doc, positioned).1, 40.0);
 }
 
 /// Each text's fragments, as `text_fragments` reports them.

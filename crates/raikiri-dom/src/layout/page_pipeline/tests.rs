@@ -9463,16 +9463,12 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
-/// Places a zero-size absolutely positioned box in `wrapper`. Something placed
-/// against a block keeps it from moving to the next page with the box that
-/// begins it (see `first_box_ancestor_at_start`), so the tests of how a
-/// wrapper grows around a moved box can keep the wrapper where it is.
+/// Places an empty block of no height first in `wrapper`. A box before the
+/// one that begins a block keeps the block from moving to the next page with
+/// it (see `first_box_ancestor_at_start`), so the tests of how a wrapper grows
+/// around a moved box can keep the wrapper where it is.
 fn hold_in_place(doc: &mut Document, wrapper: usize) {
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Some("position:absolute;width:0;height:0"),
-    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:0"));
 }
 
 /// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
@@ -9495,7 +9491,11 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
         "div",
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
-    hold_in_place(&mut doc, wrapper);
+    // In a flex or grid wrapper the holder would be an item beside the
+    // avoiding box rather than a box before it.
+    if !wrapper_css.contains("flex") && !wrapper_css.contains("grid") {
+        hold_in_place(&mut doc, wrapper);
+    }
     let avoiding = doc.append_element(
         Some(wrapper),
         "div",
@@ -9554,14 +9554,14 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
         ),
         (100.0, 110.0, 2)
     );
-    // Items of a multi-column grid or a row flex container do not follow
-    // each other in block flow.
+    // A multi-column grid that begins with the avoiding box's row starts the
+    // next page with it, keeping its height (Chromium).
     assert_eq!(
         nested_avoiding_block(
             "display:grid;grid-template-columns:50px 50px",
             "break-inside:avoid"
         ),
-        (60.0, 60.0, 2)
+        (100.0, 60.0, 2)
     );
     // Chromium moves the whole atomic inline-flex line onto the next page;
     // its item still does not participate in the outer block flow.

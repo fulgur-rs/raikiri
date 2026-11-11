@@ -84,16 +84,22 @@ fn a_box_that_breaks_before_itself_is_placed_without_counting_its_place() {
 /// The result `renders_before_child` had when it looked for the place of
 /// `child` first and then for a sibling that decides.
 fn renders_before_child_by_place(document: &Document, parent: usize, child: usize) -> bool {
+    let out_of_flow = |node: usize| {
+        document.nodes[node].kind() == NodeKind::Element
+            && matches!(
+                document.nodes[node].position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+    };
+    if sibling_renders(document, child) && out_of_flow(child) {
+        return true;
+    }
     let siblings = document.nodes[parent].layout_children();
     let child_index = siblings.iter().position(|&sibling| sibling == child);
     siblings.iter().enumerate().any(|(index, &sibling)| {
         sibling_renders(document, sibling)
-            && (child_index.is_none_or(|child_index| index < child_index)
-                || document.nodes[sibling].kind() == NodeKind::Element
-                    && matches!(
-                        document.nodes[sibling].position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ))
+            && !out_of_flow(sibling)
+            && child_index.is_none_or(|child_index| index < child_index)
     })
 }
 
@@ -165,7 +171,7 @@ fn what_renders_before_a_child_is_decided_as_it_was_by_its_place() {
 }
 
 #[test]
-fn only_boxes_before_a_child_or_out_of_flow_ones_after_it_count() {
+fn only_boxes_in_the_flow_before_a_child_count() {
     // (kinds of the children, index of the child, whether something renders
     // before it)
     let cases: &[(&[usize], usize, bool)] = &[
@@ -175,11 +181,13 @@ fn only_boxes_before_a_child_or_out_of_flow_ones_after_it_count() {
         (&[1, 6, 5], 2, false),
         // Text before it.
         (&[7, 0], 1, true),
-        // A box after it that is in the flow does not count.
+        // A box after it does not count.
         (&[0, 0], 0, false),
-        // An absolutely or fixed positioned one does, wherever it is.
-        (&[0, 3], 0, true),
-        (&[0, 4], 0, true),
+        // Nor does an absolutely or fixed positioned one, wherever it is.
+        (&[0, 3], 0, false),
+        (&[0, 4], 0, false),
+        (&[3, 4, 0], 2, false),
+        (&[3, 0, 0], 2, true),
         // `display: contents` renders.
         (&[2, 0], 1, true),
         // The child itself, placed out of the flow.

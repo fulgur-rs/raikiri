@@ -5998,31 +5998,39 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     y
 }
 
-/// Whether something that `parent` holds renders before `child`, or may be
-/// placed against `parent` later: a float beside a paragraph, a block, text,
-/// or an absolutely positioned box. It already sits on this page, so moving
-/// `parent` would take it along.
+/// Whether something that `parent` holds renders before `child` in its flow:
+/// a float beside a paragraph, a block, or text. It already sits on this page,
+/// so moving `parent` would take it along. A box placed out of the flow is
+/// not part of it: the page does not break around it, and it moves with the
+/// box that it is placed against, as in Chromium. An
+/// out-of-flow `child` itself is placed against `parent`, so it never moves
+/// `parent` either.
 fn renders_before_child(document: &Document, parent: usize, child: usize) -> bool {
-    // A sibling counts if it comes before `child` (every sibling does when the
-    // parent does not list `child`), or if it is placed out of the flow and may
-    // be placed against `parent` later. One pass, so that the cost follows how
-    // far the first of those is rather than where `child` sits.
-    let mut before_child = true;
+    if sibling_renders(document, child) && is_out_of_flow_element(document, child) {
+        return true;
+    }
+    // Every sibling comes before `child` when the parent does not list it. One
+    // pass that stops at `child`, so that the cost follows how far the first
+    // sibling that renders is rather than where `child` sits.
     document.nodes[parent]
         .layout_children()
         .iter()
+        .take_while(|&&sibling| sibling != child)
         .any(|&sibling| {
             #[cfg(test)]
             tests::PARENT_CHILD_STEPS.with(|count| count.set(count.get() + 1));
-            before_child &= sibling != child;
-            sibling_renders(document, sibling)
-                && (before_child
-                    || document.nodes[sibling].kind() == NodeKind::Element
-                        && matches!(
-                            document.nodes[sibling].position(),
-                            PositionValue::Absolute | PositionValue::Fixed
-                        ))
+            sibling_renders(document, sibling) && !is_out_of_flow_element(document, sibling)
         })
+}
+
+/// Whether `node` is an element that is absolutely or fixed positioned.
+fn is_out_of_flow_element(document: &Document, node: usize) -> bool {
+    let node = &document.nodes[node];
+    node.kind() == NodeKind::Element
+        && matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
 }
 
 /// Whether a child of a box renders something: an element that is in the
