@@ -3920,6 +3920,7 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_block_size_content_main(tree, node_id, inputs);
     // Only a container that runs on the axes of its vertical writing mode fits
     // its lines in the room; one in a multicol container or a table runs on
     // horizontal axes.
@@ -4092,6 +4093,46 @@ fn flex_layout_sized(
             layout(tree, inputs)
         }
     }
+}
+
+/// `inputs` with a min-content request for the main size of a flex container
+/// that wraps its items onto lines along its block axis made a max-content one.
+///
+/// The min-content block size of a box is the block size it lays out to
+/// (CSS Sizing 3 §5), which for such a container is that of its items on a
+/// single line, as with no limit on its main size (Chromium: a column of items
+/// 90px, 30px, 30px and 90px tall is 240px tall at min-content). Taffy breaks
+/// the lines of a min-content main size after every item instead.
+fn with_block_size_content_main(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let style = tree.physical_style(idx);
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || style.flex_direction_is_row()
+        || !style.flex_wraps()
+    {
+        return inputs;
+    }
+    // A container in a multicol container or a table runs on horizontal axes
+    // whatever its writing mode.
+    let (known, room) = if block_right_to_left(tree, idx).is_some() {
+        (
+            inputs.known_dimensions.width,
+            &mut inputs.available_space.width,
+        )
+    } else {
+        (
+            inputs.known_dimensions.height,
+            &mut inputs.available_space.height,
+        )
+    };
+    if known.is_none() && *room == AvailableSpace::MinContent {
+        *room = AvailableSpace::MaxContent;
+    }
+    inputs
 }
 
 /// The inputs and the limits that lay out a wrapping flex item at the main
