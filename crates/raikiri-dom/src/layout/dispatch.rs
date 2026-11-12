@@ -4111,13 +4111,10 @@ fn with_settled_positioned_inline_height(
     mut inputs: LayoutInput,
 ) -> LayoutInput {
     let idx = usize::from(node_id);
-    let style = tree.physical_style(idx);
     if inputs.known_dimensions.height.is_some()
         || inputs.axis == RequestedAxis::Vertical
-        || tree.nodes[idx].layout_position() != Position::Absolute
         || !tree.has_vertical_writing_mode(idx)
-        || !style.size().height.is_auto()
-        || style.aspect_ratio().is_some()
+        || !positioned_height_from_content(tree, idx, inputs.parent_size)
     {
         return inputs;
     }
@@ -4710,9 +4707,18 @@ fn positioned_height_follows_content(
     // In a vertical writing mode the height is the inline size of the box,
     // which is definite once its content settles it, as a shrink-to-fit width
     // is in a horizontal one.
-    if tree.nodes[idx].layout_position() != Position::Absolute
-        || tree.has_vertical_writing_mode(idx)
-    {
+    !tree.has_vertical_writing_mode(idx) && positioned_height_from_content(tree, idx, parent_size)
+}
+
+/// Whether the box `idx` is absolutely positioned with a height that its
+/// content decides: an `auto` height that neither its insets, an aspect
+/// ratio, nor equal limits fix.
+fn positioned_height_from_content(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+) -> bool {
+    if tree.nodes[idx].layout_position() != Position::Absolute {
         return false;
     }
     let style = tree.physical_style(idx);
