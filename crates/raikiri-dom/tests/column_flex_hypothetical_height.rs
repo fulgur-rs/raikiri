@@ -2190,6 +2190,20 @@ fn a_height_that_a_minimum_and_a_smaller_maximum_decide_leaves_percentages_unres
     assert_cases(&[
         (
             "",
+            "display:inline-flex;flex-flow:column nowrap;box-sizing:content-box;min-height:80px;max-height:80px;padding:5px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 90.0]),
+                ("i0", [5.0, 5.0, 10.0, 60.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 65.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
             "display:inline-flex;flex-flow:column nowrap;min-height:80px;max-height:80px;",
             &[
                 ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
