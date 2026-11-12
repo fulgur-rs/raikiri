@@ -581,8 +581,18 @@ fn a_stated_size_the_parent_fixed_is_not_moved_by_a_bound_of_the_other_side() {
 
 #[test]
 fn a_size_the_parent_fixed_on_an_auto_side_still_follows_a_bound_of_the_other_side() {
+    // The parent is a block: a flex container holds the sizes it settles to
+    // the bounds the item states alone.
     let mut tree = Document::new();
-    let root = ratio_box(&mut tree, "max-width:30px;min-height:0px");
+    let parent = tree.append_element(Some(0), "div", Some("display:block".to_owned()));
+    let root = tree.append_element(
+        Some(parent),
+        "div",
+        Some(
+            "display:flow-root;box-sizing:border-box;aspect-ratio:2;max-width:30px;min-height:0px"
+                .to_owned(),
+        ),
+    );
     assert_eq!(
         laid_out_size_fixed_by_parent(&mut tree, root, Some(30.0), Some(50.0)),
         Size {

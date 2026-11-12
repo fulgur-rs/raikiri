@@ -77,9 +77,10 @@ impl Metrics {
     }
 
     /// As [`Self::resolve`], for a flex item whose size on the axes `flexed`
-    /// names is the main size the flex algorithm settled. That size is held to
-    /// the maximum the box states, not to one carried over from the other
-    /// axis, whatever the minimum of the axis is.
+    /// names is one the flex algorithm settles: the main size it flexes to and
+    /// the cross size it lays the item out at, stretched or measured. A size
+    /// it settled is held to the limits the box states, not to ones carried
+    /// over from the other axis: the flex algorithm already took those.
     pub(crate) fn resolve_flexed(
         style: &Style,
         width_stands_in: bool,
@@ -176,11 +177,25 @@ impl Metrics {
             [own_min.height, own_max.height],
             [carried_min.height, carried_max.height],
         );
+        // A size the flex algorithm settled for an item, the main size it flexed
+        // to or the cross size it laid the item out at, is held only to the
+        // minimum the item states: the flex algorithm already floored it with
+        // the automatic minimum, and Chromium carries no minimum across the
+        // ratio onto it.
+        let own_min_box = own_min.maybe_add(adjustment);
+        let settled = |flexed: bool, known: Option<f32>| flexed && known.is_some();
         let min = Size {
-            width: min_width,
-            height: min_height,
-        }
-        .maybe_add(adjustment);
+            width: if settled(flexed.width, inputs.known_dimensions.width) {
+                own_min_box.width
+            } else {
+                min_width.maybe_add(adjustment.width)
+            },
+            height: if settled(flexed.height, inputs.known_dimensions.height) {
+                own_min_box.height
+            } else {
+                min_height.maybe_add(adjustment.height)
+            },
+        };
         let max = Size {
             width: max_width,
             height: max_height,
@@ -224,8 +239,8 @@ impl Metrics {
         );
         // A size the parent imposed on such an axis was settled with that
         // minimum in mind, so only the maximum the box states caps it, not
-        // one carried over from the other axis. So is the main size of a flex
-        // item, which the flex algorithm settled with its own bounds.
+        // one carried over from the other axis. So is a size the flex
+        // algorithm settled for an item, which it did with its own bounds.
         let limit = Size {
             width: if inputs.known_dimensions.width.is_some() && (width_eligible || flexed.width) {
                 own_max.width
