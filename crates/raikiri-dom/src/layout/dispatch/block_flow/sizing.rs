@@ -30,15 +30,21 @@ pub(crate) struct Metrics {
 /// The minimum and maximum size of one axis from the ones the box states,
 /// `[min, max]`, and the ones carried over from the other axis through the
 /// aspect ratio. A carried minimum never overrides a maximum the box states,
-/// nor a carried maximum a minimum it states.
+/// nor a carried maximum a minimum it states. Otherwise the tighter of the two
+/// holds: the size the ratio gives the axis from the bounds of the other axis
+/// also binds an axis that states bounds of its own, as Chromium lays it out.
 fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Option<f32>) {
     let [own_min, own_max] = own;
     let carried_min = carried[0].map(|size| own_max.map_or(size, |max| size.min(max)));
     let carried_max = carried[1].map(|size| own_min.map_or(size, |min| size.max(min)));
-    // A bound is only carried into an axis that states none of its own, so at
-    // most one of each pair is set.
-    let min = own_min.or(carried_min);
-    let max = own_max.or(carried_max);
+    let min = match (own_min, carried_min) {
+        (Some(own), Some(carried)) => Some(own.max(carried)),
+        (own, carried) => own.or(carried),
+    };
+    let max = match (own_max, carried_max) {
+        (Some(own), Some(carried)) => Some(own.min(carried)),
+        (own, carried) => own.or(carried),
+    };
     (min, max)
 }
 
@@ -126,14 +132,28 @@ impl Metrics {
             height: matches!(style.size.height.expand(), ExpandedDimension::Stretch)
                 && inputs.known_dimensions.height.is_some(),
         };
-        // A minimum or maximum carries across the aspect ratio only into an
-        // axis whose preferred size is `auto`. Under `ContentSize` the
-        // authored size is ignored, so every axis is `auto`, except one the
-        // parent has fixed where the box states a size: the parent fixed the
-        // size the box states, which the bounds of the other axis do not move.
-        // A width that stands in for `auto` is no authored one either.
+        // A minimum or maximum carries across the aspect ratio into an axis
+        // whose preferred size is `auto`, alongside any it states itself.
+        // Under `ContentSize` the authored size is ignored, so every axis is
+        // `auto`, except one the parent has fixed where the box states a size:
+        // the parent fixed the size the box states, which the bounds of the
+        // other axis do not move. A width that stands in for `auto` is no
+        // authored one either.
         let carried = |own: Size<Option<f32>>| {
-            let across = across_ratio(own);
+            // Each axis takes the bound the other axis states, whether or not
+            // it states one of its own.
+            let across = Size {
+                width: across_ratio(Size {
+                    width: None,
+                    height: own.height,
+                })
+                .width,
+                height: across_ratio(Size {
+                    width: own.width,
+                    height: None,
+                })
+                .height,
+            };
             let auto = |preferred: Option<f32>, fixed: Option<f32>, stands_in: bool| {
                 stands_in
                     || preferred.is_none()
@@ -141,8 +161,7 @@ impl Metrics {
             };
             Size {
                 width: across.width.filter(|_| {
-                    own.width.is_none()
-                        && !stretched.width
+                    !stretched.width
                         && auto(
                             specified.width,
                             inputs.known_dimensions.width,
@@ -150,8 +169,7 @@ impl Metrics {
                         )
                 }),
                 height: across.height.filter(|_| {
-                    own.height.is_none()
-                        && !stretched.height
+                    !stretched.height
                         && auto(specified.height, inputs.known_dimensions.height, false)
                 }),
             }

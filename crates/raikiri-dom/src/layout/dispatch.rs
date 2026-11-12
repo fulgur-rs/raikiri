@@ -3165,6 +3165,50 @@ fn border_box_width_bounds(
     (min, max.max(min))
 }
 
+/// Put in `style` the minimum and maximum sizes of an empty, non-replaced box
+/// with a preferred aspect ratio as block flow resolves them, with the bounds
+/// that the ratio carries over from one axis to the other. Taffy's leaf
+/// algorithm carries a minimum only into an axis whose own minimum is `auto`,
+/// past any maximum the axis states, and in the border box whatever box the
+/// ratio relates. Chromium binds each axis by the tighter of its own bounds
+/// and the carried ones: `aspect-ratio: 1; min-height: 100px; min-width: 0`
+/// is 100px wide, and with `max-width: 60px` it is 60px wide.
+fn carry_ratio_bounds(style: &mut Style, content_box_ratio: bool, inputs: LayoutInput) {
+    if style.aspect_ratio.is_none() {
+        return;
+    }
+    let metrics = block_flow::Metrics::resolve(style, false, content_box_ratio, inputs);
+    // The bounds hold the border box; the style states them in the box
+    // `box-sizing` names.
+    let adjustment = if style.box_sizing == BoxSizing::ContentBox {
+        (metrics.padding + metrics.border).sum_axes()
+    } else {
+        Size::ZERO
+    };
+    let min = metrics.min.maybe_sub(adjustment);
+    let max = metrics.max.maybe_sub(adjustment);
+    let overrides: Vec<_> = [
+        (min.width, LengthProperty::MinWidth),
+        (min.height, LengthProperty::MinHeight),
+        (max.width, LengthProperty::MaxWidth),
+        (max.height, LengthProperty::MaxHeight),
+    ]
+    .into_iter()
+    .filter_map(|(size, property)| {
+        let size = size?;
+        Some(
+            OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(size.max(0.0)),
+                true,
+            )
+            .expect("resolved pixel bound"),
+        )
+    })
+    .collect();
+    apply_local_sizing(style, &overrides);
+}
+
 /// Shrink-to-fit layout for a width:auto inline-block.
 ///
 /// A width:auto inline-block sizes to its fit-content size: the preferred
@@ -3244,6 +3288,13 @@ fn compute_inline_block_shrink_wrap(
     let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx])
         .filter(|_| !empty)
         .or(contain_natural);
+    if is_leaf && leaf_intrinsic.is_none() && !tree.physical_style(idx).is_replaced() {
+        carry_ratio_bounds(
+            &mut leaf_style,
+            tree.nodes[idx].ratio_in_content_box,
+            inputs,
+        );
+    }
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
