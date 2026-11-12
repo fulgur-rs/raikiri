@@ -1111,11 +1111,27 @@ impl LayoutSession<'_> {
             // Size containment may give the box a width the request did not
             // have; whether the request stretched it is read before that.
             let stretched_width = inputs.known_dimensions.width.is_some();
+            let open_height = inputs.known_dimensions.height.is_none();
             let inputs = if empty {
                 inputs
             } else {
                 size_contained_inputs(tree, node_id, inputs)
             };
+            // A height its parent measured it at and passes down as not
+            // definite is the one containment gave it as well, except the
+            // main size a flex container flexed its item to.
+            let flexed_height = tree
+                .taffy_parent_of(idx)
+                .filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex)
+                .is_some_and(|parent| {
+                    tree.physical_style(parent).flex_direction_is_row()
+                        == tree.has_vertical_writing_mode(parent)
+                });
+            let contained_height = !empty
+                && (open_height
+                    || (!inputs.known_dimensions_are_definite.height && !flexed_height))
+                && tree.nodes[idx].size_containment.height
+                && inputs.known_dimensions.height.is_some();
             let formatting_context = tree.nodes[idx].formatting_context;
             match formatting_context {
                 FormattingContext::None => return LayoutOutput::HIDDEN,
@@ -1448,6 +1464,9 @@ impl LayoutSession<'_> {
                 output
             } else {
                 match formatting_context {
+                    FormattingContext::Flex if contained_height => {
+                        contained_height_flex_layout(tree, node_id, inputs)
+                    }
                     FormattingContext::Flex => flex_layout(tree, node_id, inputs),
                     FormattingContext::Grid => grid_layout(tree, node_id, inputs),
                     // A block container, including a paragraph or multicol
@@ -3742,6 +3761,34 @@ fn size_contained_inputs(
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
+}
+
+/// Lay out a flex container whose height size containment settled, at the
+/// height `inputs` carry for it.
+///
+/// Where that height is the main size of the container, its items flex within
+/// the main size their content gives it, within its `min-height` and
+/// `max-height`, as if it had no containment, and overflow the height it
+/// takes (Chromium: items 60px and 30px tall keep their heights in a column
+/// container 50px tall by containment). Taffy would flex them into the
+/// contained height instead. A container whose height is its cross size lays
+/// its lines out in that height as it is.
+fn contained_height_flex_layout(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let main_is_height =
+        tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx);
+    let Some(height) = inputs.known_dimensions.height.filter(|_| main_is_height) else {
+        return flex_layout(tree, node_id, inputs);
+    };
+    let mut open = inputs;
+    open.known_dimensions.height = None;
+    let mut output = flex_layout(tree, node_id, open);
+    output.size.height = height;
+    output
 }
 
 /// The absolutely positioned boxes that `idx` is the containing block of and
