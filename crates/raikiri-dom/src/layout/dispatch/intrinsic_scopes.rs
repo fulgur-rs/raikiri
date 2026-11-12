@@ -1123,7 +1123,7 @@ fn unresolved_item_percentages(
 }
 
 /// Read every percentage height of the in-flow items of the row container
-/// `idx` as their content height, and every percentage minimum and maximum
+/// `idx` whose writing mode is horizontal as their content height, and every percentage minimum and maximum
 /// height as `auto`: the cross size of the container they would refer to is
 /// not definite.
 pub(super) fn unresolved_item_cross_heights(
@@ -1158,6 +1158,12 @@ fn item_percentages_left_unresolved(
         {
             continue;
         }
+        // The height of an orthogonal item is its inline size, and a
+        // percentage inline size resolves against the container even when
+        // the container's height is not definite.
+        if !with_basis && tree.has_vertical_writing_mode(child) {
+            continue;
+        }
         let basis = style.flex_basis();
         let (size, min, max) = (style.size(), style.min_size(), style.max_size());
         let (size, min, max) = if vertical {
@@ -1165,11 +1171,13 @@ fn item_percentages_left_unresolved(
         } else {
             (size.height, min.height, max.height)
         };
+        // Only a percentage refers to the container's size: a keyword such
+        // as `min-content` keeps its own meaning.
         let unresolved = [
-            with_basis && !basis.is_auto() && basis.maybe_resolve(None::<f32>).is_none(),
-            !size.is_auto() && size.maybe_resolve(None::<f32>).is_none(),
-            !min.is_auto() && min.maybe_resolve(None::<f32>).is_none(),
-            !max.is_auto() && max.maybe_resolve(None::<f32>).is_none(),
+            with_basis && basis.uses_percentage(),
+            size.uses_percentage(),
+            min.uses_percentage(),
+            max.uses_percentage(),
         ];
         for (property, unresolved) in properties.into_iter().zip(unresolved) {
             if unresolved {
