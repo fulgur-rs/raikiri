@@ -77,7 +77,7 @@ pub(crate) struct LayoutContext {
     pub(crate) size_contained_measure: Vec<usize>,
     /// The flex containers laid out with their items in their own main size,
     /// with the border-box height size containment gives each (see
-    /// `dispatch::contained_height_flex_layout`).
+    /// `contained_height_flex_layout` in [`crate::layout::dispatch`]).
     pub(crate) contained_flex_heights: Vec<(usize, f32)>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`

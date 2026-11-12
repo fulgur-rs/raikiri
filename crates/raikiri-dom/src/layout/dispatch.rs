@@ -4517,10 +4517,26 @@ fn flex_layout_items(
         .filter(|(contained, _)| *contained == idx)
     {
         // The boxes it is the containing block of are placed in its padding
-        // box at that height.
+        // box at that height, and those it lays out itself are aligned in its
+        // content box at that height where their insets are `auto`.
+        let grown = height - output.size.height;
         if let Some(area) = output.oof_positioning_area.as_mut() {
-            area.size.height = (area.size.height + height - output.size.height).max(0.0);
+            area.size.height = (area.size.height + grown).max(0.0);
         }
+        let style = tree.physical_style(idx);
+        let basis = inputs.parent_size.width;
+        let content_end = output.size.height
+            - style.padding().resolve_or_zero(basis).bottom
+            - style.border().resolve_or_zero(basis).bottom;
+        output.oof_candidates.for_each_mut(|candidate| {
+            let area = &mut candidate.static_position.y.area;
+            let own = tree.taffy_parent_of(usize::from(candidate.node)) == Some(idx);
+            area.end += if own && (area.end - content_end).abs() < 0.01 {
+                grown
+            } else {
+                0.0
+            };
+        });
         output.size.height = height;
     }
     let in_flow_overflow = output.scrollable_overflow_rect;

@@ -404,3 +404,70 @@ fn a_size_contained_flex_container_places_its_positioned_boxes_in_its_own_height
         ),
     ]);
 }
+
+#[test]
+fn a_size_contained_flex_container_aligns_its_positioned_boxes_in_its_own_height() {
+    // A box with `auto` insets that the container positions itself takes its
+    // static position in the content box at the contained height, whether the
+    // container centres its items or puts them at its end, and with padding;
+    // a box a nested item positions keeps its own containing block, and so does one whose containing
+    // block is further out.
+    assert_rows(&[
+        (
+            "<div style='width:600px;position:relative;height:300px'><div id=c style='contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:center'><div id=n style='height:40px'><p id=o style='position:absolute;margin:0;bottom:0;height:10px;width:10px'></p></div><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("n", [0, 0, 600, 40]),
+                ("o", [0, 290, 10, 10]),
+                ("a", [0, 40, 20, 60]),
+                ("b", [0, 100, 20, 30]),
+            ],
+        ),
+        (
+            "<div style='width:600px;position:relative;height:300px'><div id=c style='contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:flex-end'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 40, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:center'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 20, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:flex-end'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 40, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:flex-end;padding:5px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 60]),
+                ("a", [5, 5, 20, 60]),
+                ("b", [5, 65, 20, 30]),
+                ("o", [5, 45, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;justify-content:center'><div id=n style='position:relative;height:40px'><p id=o style='position:absolute;margin:0;bottom:0;height:10px;width:10px'></p></div><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("n", [0, 0, 600, 40]),
+                ("o", [0, 30, 10, 10]),
+                ("a", [0, 40, 20, 60]),
+                ("b", [0, 100, 20, 30]),
+            ],
+        ),
+    ]);
+}
