@@ -4322,7 +4322,8 @@ fn with_open_wrapping_column_width(
 /// Taffy puts every item on one line under it, so the container finds the
 /// same lines again when they break against that height as room. Percentages
 /// of the items stay unresolved, as the height is still open. A definite
-/// height, such as one a flex container flexed its item to, is left as it is.
+/// height, such as one a flex container flexed its item to, and the height
+/// size containment gives the box are left as they are.
 fn with_open_wrapping_column_height(
     tree: &LayoutSession<'_>,
     node_id: NodeId,
@@ -4330,10 +4331,12 @@ fn with_open_wrapping_column_height(
 ) -> LayoutInput {
     let idx = usize::from(node_id);
     let style = tree.physical_style(idx);
+    // Size containment gives the box a height that is no content's.
     if tree.nodes[idx].formatting_context != FormattingContext::Flex
         || !style.flex_wraps()
         || style.flex_direction_is_row()
         || tree.has_vertical_writing_mode(idx)
+        || tree.nodes[idx].size_containment.height
     {
         return inputs;
     }

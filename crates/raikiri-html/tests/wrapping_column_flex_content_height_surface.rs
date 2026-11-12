@@ -319,3 +319,109 @@ fn a_wrapping_column_is_as_tall_as_its_longest_line() {
         ),
     ]);
 }
+
+#[test]
+fn a_wrapping_column_keeps_the_height_it_is_given() {
+    // The same items. A column its own column flex container flexes, a
+    // `fit-content` or `max-content` height, a vertical column in a table
+    // cell and an in-flow column in a block with a definite height break their
+    // lines as Chromium does; a column measured inside a float stays on one
+    // line where its container gives it no height to break against.
+    assert_rows(&[
+        (
+            "<div style='width:600px'><div id=f style='float:left;display:flex;flex-direction:column'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;flex-basis:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div></div>",
+            &[
+                ("f", [0, 0, 20, 170]),
+                ("c", [0, 0, 20, 170]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("w", [0, 90, 20, 20]),
+                ("d", [0, 110, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=f style='float:left;display:flex;flex-direction:column;height:80px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div></div>",
+            &[
+                ("f", [0, 0, 20, 80]),
+                ("c", [0, 0, 20, 170]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("w", [0, 90, 20, 20]),
+                ("d", [0, 110, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=f style='float:left;display:flex;flex-direction:column;max-height:80px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;min-height:0'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div></div>",
+            &[
+                ("f", [0, 0, 20, 80]),
+                ("c", [0, 0, 20, 80]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [20, 0, 20, 30]),
+                ("w", [20, 30, 20, 20]),
+                ("d", [40, 0, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='position:relative;width:600px;height:400px'><div id=c style='position:absolute;display:flex;flex-direction:column;flex-wrap:wrap;height:fit-content;max-height:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 60, 60]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [20, 0, 20, 30]),
+                ("w", [20, 30, 20, 20]),
+                ("d", [40, 0, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px;height:300px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:fit-content;max-height:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 60]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [200, 0, 20, 30]),
+                ("w", [200, 30, 20, 20]),
+                ("d", [400, 0, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px;height:300px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:max-content;max-height:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 60]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [200, 0, 20, 30]),
+                ("w", [200, 30, 20, 20]),
+                ("d", [400, 0, 20, 60]),
+            ],
+        ),
+        (
+            "<table><tr><td id=t><div id=c style='writing-mode:vertical-rl;display:flex;flex-direction:column;flex-wrap:wrap;max-height:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></td></tr></table>",
+            &[
+                ("t", [2, 2, 82, 62]),
+                ("c", [3, 3, 80, 60]),
+                ("a", [63, 3, 20, 60]),
+                ("b", [43, 3, 20, 30]),
+                ("w", [23, 3, 20, 20]),
+                ("d", [3, 3, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px;height:300px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;max-height:80px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 60]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [200, 0, 20, 30]),
+                ("w", [200, 30, 20, 20]),
+                ("d", [400, 0, 20, 60]),
+            ],
+        ),
+        (
+            "<div style='width:600px;'><div id=f style='display:flex;flex-direction:column;height:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;flex:1'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:20px;width:20px'></p><p id=d style='margin:0;height:60px;width:20px'></p></div></div></div>",
+            &[
+                ("f", [0, 0, 600, 100]),
+                ("c", [0, 0, 600, 170]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("w", [0, 90, 20, 20]),
+                ("d", [0, 110, 20, 60]),
+            ],
+        ),
+    ]);
+}
