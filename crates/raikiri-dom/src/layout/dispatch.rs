@@ -4039,6 +4039,7 @@ fn flex_layout_sized(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_block_size_content_main(tree, node_id, inputs);
     // A size the container was laid out at after its content settled it is
     // not one its percentages refer to: only a size its style gives, or one
     // its parent passes down as definite, is.
@@ -4091,6 +4092,33 @@ fn flex_layout_sized(
             layout(tree, inputs)
         }
     }
+}
+
+/// `inputs` with a min-content request for the main size of a flex container
+/// that wraps its items onto lines along its block axis made a max-content one.
+///
+/// The min-content block size of a box is the block size it lays out to
+/// (CSS Sizing 3 §5), which for such a container is that of its items on a
+/// single line, as with no limit on its main size (Chromium: a column of items
+/// 90px, 30px, 30px and 90px tall is 240px tall at min-content). Taffy breaks
+/// the lines of a min-content main size after every item instead.
+fn with_block_size_content_main(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let (known, room) = if content_limits::is_wrapping_column_flex(tree, idx) {
+        (inputs.known_dimensions.height, &mut inputs.available_space.height)
+    } else if content_limits::is_vertical_wrapping_column_flex(tree, idx) {
+        (inputs.known_dimensions.width, &mut inputs.available_space.width)
+    } else {
+        return inputs;
+    };
+    if known.is_none() && *room == AvailableSpace::MinContent {
+        *room = AvailableSpace::MaxContent;
+    }
+    inputs
 }
 
 /// The inputs and the limits that lay out a wrapping flex item at the main
