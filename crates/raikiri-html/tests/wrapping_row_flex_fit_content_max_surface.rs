@@ -345,3 +345,75 @@ fn a_vertical_wrapping_row_fits_its_height_to_its_items_within_its_limits() {
         ),
     ]);
 }
+
+#[test]
+fn a_wrapping_row_measured_for_its_content_puts_its_items_on_one_line() {
+    // Items 30px long. A flex item, or the content of a float, is measured with
+    // its items on one line: 90px, 100px with padding. The float then takes
+    // the `max-width` of 80px, while a flex item starts from 90px or 100px and
+    // shrinks with its sibling. A vertical row measured for a column flex
+    // container is 90px tall and takes its `max-height` of 50px alike, whether
+    // or not it has a `float`, which a flex item ignores. A percentage
+    // `max-height` of an absolutely positioned row resolves against its
+    // containing block, and a border-box `max-width` below the padding leaves
+    // the box as wide as the padding.
+    assert_rows(&[
+        (
+            "<div style='position:relative;width:200px;height:200px'><div id=c style='position:absolute;writing-mode:vertical-rl;display:flex;flex-wrap:wrap;max-height:25%'><p id=a style='margin:0;height:30px;width:10px'></p><p id=b style='margin:0;height:30px;width:10px'></p><p id=d style='margin:0;height:30px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 30, 50]),
+                ("a", [20, 0, 10, 30]),
+                ("b", [10, 0, 10, 30]),
+                ("d", [0, 0, 10, 30]),
+            ],
+        ),
+        (
+            "<div style='position:relative;width:200px;height:200px'><div id=c style='position:absolute;display:flex;flex-wrap:wrap;box-sizing:border-box;padding:0 30px;max-width:40px'><p id=a style='margin:0;width:30px;height:10px'></p><p id=b style='margin:0;width:30px;height:10px'></p><p id=d style='margin:0;width:30px;height:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 60, 30]),
+                ("a", [30, 0, 0, 10]),
+                ("b", [30, 10, 0, 10]),
+                ("d", [30, 20, 0, 10]),
+            ],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column;width:200px;height:200px'><div id=c style='float:left;writing-mode:vertical-rl;display:flex;flex-wrap:wrap;max-height:50px'><p id=a style='margin:0;height:30px;width:10px'></p><p id=b style='margin:0;height:30px;width:10px'></p><p id=d style='margin:0;height:30px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 200, 50]),
+                ("a", [190, 0, 10, 30]),
+                ("b", [123, 0, 10, 30]),
+                ("d", [57, 0, 10, 30]),
+            ],
+        ),
+        (
+            "<div style='display:flex;width:150px'><div id=c style='display:flex;flex-wrap:wrap;max-width:80px'><p id=a style='margin:0;width:30px;height:10px'></p><p id=b style='margin:0;width:30px;height:10px'></p><p id=d style='margin:0;width:30px;height:10px'></p></div><div id=s style='width:100px;height:10px'></div></div>",
+            &[
+                ("c", [0, 0, 71, 20]),
+                ("a", [0, 0, 30, 10]),
+                ("b", [30, 0, 30, 10]),
+                ("d", [0, 10, 30, 10]),
+                ("s", [71, 0, 79, 10]),
+            ],
+        ),
+        (
+            "<div style='display:flex;width:150px'><div id=c style='display:flex;flex-wrap:wrap;max-width:80px;padding:0 5px'><p id=a style='margin:0;width:30px;height:10px'></p><p id=b style='margin:0;width:30px;height:10px'></p><p id=d style='margin:0;width:30px;height:10px'></p></div><div id=s style='width:100px;height:10px'></div></div>",
+            &[
+                ("c", [0, 0, 76, 20]),
+                ("a", [5, 0, 30, 10]),
+                ("b", [35, 0, 30, 10]),
+                ("d", [5, 10, 30, 10]),
+                ("s", [76, 0, 74, 10]),
+            ],
+        ),
+        (
+            "<div style='width:300px'><div style='float:left' id=f><div id=c style='display:flex;flex-wrap:wrap;max-width:80px;padding:0 5px;box-sizing:border-box'><p id=a style='margin:0;width:30px;height:10px'></p><p id=b style='margin:0;width:30px;height:10px'></p><p id=d style='margin:0;width:30px;height:10px'></p></div></div></div>",
+            &[
+                ("f", [0, 0, 80, 20]),
+                ("c", [0, 0, 80, 20]),
+                ("a", [5, 0, 30, 10]),
+                ("b", [35, 0, 30, 10]),
+                ("d", [5, 10, 30, 10]),
+            ],
+        ),
+    ]);
+}

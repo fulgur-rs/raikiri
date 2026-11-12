@@ -315,25 +315,26 @@ pub(super) fn stretches_to_grid_row(tree: &LayoutSession<'_>, idx: usize) -> boo
 }
 
 /// The border-box `height` of the box `idx` within its `min-height` and
-/// `max-height`, where they are lengths. `width_basis` is what its percentage
-/// padding refers to.
+/// `max-height`. `basis` is the size of its containing block: its height is
+/// what the percentages of the limits refer to, and its width what those of
+/// the padding do.
 pub(super) fn clamp_to_height_limits(
     tree: &LayoutSession<'_>,
     idx: usize,
-    width_basis: Option<f32>,
+    basis: Size<Option<f32>>,
     height: f32,
 ) -> f32 {
     let style = tree.physical_style(idx);
-    let adjustment = box_sizing_height_adjustment(tree, idx, width_basis.unwrap_or(0.0));
+    let adjustment = box_sizing_height_adjustment(tree, idx, basis.width.unwrap_or(0.0));
     let max = style
         .max_size()
         .height
-        .maybe_resolve(None::<f32>)
+        .maybe_resolve(basis.height)
         .map(|max| max + adjustment);
     let min = style
         .min_size()
         .height
-        .maybe_resolve(None::<f32>)
+        .maybe_resolve(basis.height)
         .map(|min| min + adjustment);
     let height = max.map_or(height, |max| height.min(max));
     min.map_or(height, |min| height.max(min))
