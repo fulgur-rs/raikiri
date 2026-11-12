@@ -66,6 +66,11 @@ pub(crate) struct LayoutContext {
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
+    /// The flex containers being laid out at a main size that is definite
+    /// for breaking their lines only: the size follows from their content,
+    /// so the flexed main size of an item whose flex basis is not definite is
+    /// not definite for the item's children either.
+    pub(crate) content_sized_flex_mains: Vec<usize>,
     /// Original column contribution constraints and their isolated cache domains.
     pub(crate) column_cross_constraints:
         Vec<crate::layout::dispatch::column_cross_measure::Constraints>,
