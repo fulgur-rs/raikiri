@@ -2143,8 +2143,9 @@ fn ratio_minimum(
         return None;
     }
     // A scroll container has no content-based minimum size, nor does an item
-    // with size containment along the main axis.
-    if super::is_scroll_container(item.overflow()) || tree.contained_main_axis(idx).is_some() {
+    // with size containment along the main axis, which the zero minimum along
+    // the main axis covers.
+    if super::is_scroll_container(item.overflow()) || tree.zero_min_main_axis(idx).is_some() {
         return None;
     }
     let width = tree.physical_style(container).flex_direction_is_row();

@@ -522,8 +522,8 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
             context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
-            context.contained_main_axis = self
-                .contained_main_axis(idx)
+            context.zero_min_main_axis = self
+                .zero_min_main_axis(idx)
                 .filter(|_| !self.container_is_vertical(idx));
         }
         if matches!(role, ReadRole::GridItem) {
@@ -635,18 +635,29 @@ impl LayoutSession<'_> {
         }
     }
 
-    /// The main axis of the flex item `idx` when its size containment applies
-    /// along it, in the axes of the container: the width for a row, the height
-    /// for a column, whichever physical axis the container's writing mode turns
-    /// them into.
+    /// The main axis of the flex item `idx` when its automatic minimum size
+    /// is zero along it and the view reports an `auto` minimum there as zero,
+    /// in the axes of the container: the width for a row, the height for a
+    /// column, whichever physical axis the container's writing mode turns them
+    /// into.
     ///
-    /// The content size suggestion of such an item is not its contained size:
-    /// Chromium shrinks it below `contain-intrinsic-size` like an item without
-    /// content, down to its padding and border.
-    pub(crate) fn contained_main_axis(&self, idx: usize) -> Option<raikiri_layout_style::Axis> {
+    /// The content size suggestion of an item with size containment along the
+    /// main axis is not its contained size: Chromium shrinks it below
+    /// `contain-intrinsic-size` like an item without content, down to its
+    /// padding and border.
+    ///
+    /// A scroll container with an aspect ratio has no automatic minimum
+    /// either. The library would carry the minimum of the
+    /// other axis across the ratio onto its `auto` one and keep the item from
+    /// shrinking below that, which Chromium does not.
+    pub(crate) fn zero_min_main_axis(&self, idx: usize) -> Option<raikiri_layout_style::Axis> {
         use raikiri_layout_style::Axis;
         let contained = self.nodes[idx].size_containment;
-        if (!contained.width && !contained.height)
+        let item = self.physical_style(idx);
+        let overflow = item.overflow();
+        let scrolling_ratio = item.stated_aspect_ratio().is_some()
+            && (overflow.x.is_scroll_container() || overflow.y.is_scroll_container());
+        if (!contained.width && !contained.height && !scrolling_ratio)
             || self.nodes[idx].layout_position() == Position::Absolute
         {
             return None;
@@ -657,12 +668,13 @@ impl LayoutSession<'_> {
         }
         let row = self.physical_style(container).flex_direction_is_row();
         let main_is_width = row != self.container_is_vertical(idx);
-        let contained = if main_is_width {
-            contained.width
+        let (contained, scrolls) = if main_is_width {
+            (contained.width, overflow.x.is_scroll_container())
         } else {
-            contained.height
+            (contained.height, overflow.y.is_scroll_container())
         };
-        contained.then_some(if row { Axis::X } else { Axis::Y })
+        let zero = contained || (scrolling_ratio && scrolls);
+        zero.then_some(if row { Axis::X } else { Axis::Y })
     }
 
     /// The limits on the cross size of the flex item `idx` that its stated cross

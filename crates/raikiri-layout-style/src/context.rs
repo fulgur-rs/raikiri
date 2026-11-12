@@ -377,10 +377,10 @@ pub struct ViewContext {
     pub held_cross_size: Option<HeldCrossSize>,
     /// Whether a grid item's ratio-dependent sizes are measured by the item itself.
     pub grid_item_ratio: GridItemRatio,
-    /// The main axis of a flex item whose size containment applies along it.
-    /// Such an item has no content-based automatic minimum there: an `auto`
-    /// minimum is reported as zero, as Chromium resolves it.
-    pub contained_main_axis: Option<Axis>,
+    /// The main axis of a flex item whose automatic minimum size is zero along
+    /// it, from size containment along it or as a scroll container: an `auto`
+    /// minimum is reported as zero there, as Chromium resolves it.
+    pub zero_min_main_axis: Option<Axis>,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -395,7 +395,7 @@ impl Default for ViewContext {
             flex_item_ratio: FlexItemRatio::Declared,
             held_cross_size: None,
             grid_item_ratio: GridItemRatio::Declared,
-            contained_main_axis: None,
+            zero_min_main_axis: None,
         }
     }
 }
