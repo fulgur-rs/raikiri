@@ -4933,6 +4933,8 @@ fn with_fit_content_width(
     {
         return inputs;
     }
+    let idx = usize::from(node_id);
+    let wraps = wraps_along(tree, idx, false);
     // The ratio relates the width the container ends up with to its height; it
     // gives the width no content size, which is what the probes measure.
     let mut measure = |space: AvailableSpace| {
@@ -4940,18 +4942,26 @@ fn with_fit_content_width(
         probe.run_mode = RunMode::ComputeSize;
         probe.axis = RequestedAxis::Horizontal;
         probe.available_space.width = space;
-        without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe))
-            .size
-            .width
+        without_main_max(
+            tree,
+            idx,
+            wraps.then_some(LengthProperty::MaxWidth),
+            |tree| without_container_ratio(tree, node_id, |tree| sized(tree, node_id, probe)),
+        )
+        .size
+        .width
     };
     // A container whose items fit the room is as wide as they are, whatever
     // they need at their least.
     let max_content = measure(AvailableSpace::MaxContent);
-    let width = if max_content <= room {
+    let mut width = if max_content <= room {
         max_content
     } else {
         max_content.min(measure(AvailableSpace::MinContent).max(room))
     };
+    if wraps {
+        width = clamp_to_width_limits(tree, idx, inputs.parent_size.width, width);
+    }
     inputs.known_dimensions.width = Some(width);
     inputs.known_dimensions_are_definite.width = true;
     inputs
@@ -4982,11 +4992,13 @@ fn with_orthogonal_fit_content_height(
     if inputs.known_dimensions.height.is_some()
         || !tree.physical_style(idx).flex_direction_is_row()
         || !tree.physical_style(idx).size().height.is_auto()
-        || !orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+        || !(orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+            || out_of_flow_wrapping_row(tree, idx))
         || ratio_gives_height
     {
         return inputs;
     }
+    let wraps = wraps_along(tree, idx, true);
     let height = if orthogonal_flow::stretches_to_grid_row(tree, idx) {
         room
     } else {
@@ -4995,7 +5007,14 @@ fn with_orthogonal_fit_content_height(
             probe.run_mode = RunMode::ComputeSize;
             probe.axis = RequestedAxis::Vertical;
             probe.available_space.height = space;
-            flex_layout_sized(tree, node_id, probe).size.height
+            without_main_max(
+                tree,
+                idx,
+                wraps.then_some(LengthProperty::MaxHeight),
+                |tree| flex_layout_sized(tree, node_id, probe),
+            )
+            .size
+            .height
         };
         // A container whose items fit the room is as tall as they are, whatever
         // they need at their least.
@@ -5014,6 +5033,70 @@ fn with_orthogonal_fit_content_height(
     ));
     inputs.known_dimensions_are_definite.height = true;
     inputs
+}
+
+/// Whether the box `idx` is a flex container that wraps its items onto lines
+/// along its physical height (`along_height`) or width.
+fn wraps_along(tree: &LayoutSession<'_>, idx: usize, along_height: bool) -> bool {
+    let style = tree.physical_style(idx);
+    tree.nodes[idx].formatting_context == FormattingContext::Flex
+        && style.flex_wraps()
+        && (style.flex_direction_is_row() == block_right_to_left(tree, idx).is_some())
+            == along_height
+}
+
+/// Whether the box `idx` is an absolutely positioned or floating flex
+/// container that wraps its items onto lines along its inline axis, which it
+/// sizes to fit, as it does its width in a horizontal writing mode.
+fn out_of_flow_wrapping_row(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    (tree.nodes[idx].layout_position() == Position::Absolute || style.float() != Float::None)
+        && style.flex_direction_is_row()
+        && wraps_along(tree, idx, true)
+}
+
+/// Run `f` with the maximum `property` of the box `idx` lifted, where one is
+/// given.
+///
+/// Taffy breaks the lines of a wrapping container whose main size is not
+/// definite against its border-box maximum, as if that were the room of its
+/// content box, and sizes it to the longest of those lines. The size of the
+/// content of such a container is that of its items on one line, which the
+/// maximum then clamps.
+fn without_main_max<R>(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    property: Option<LengthProperty>,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let Some(property) = property else {
+        return f(tree);
+    };
+    let lifted = OwnedPropertyOverride::length(
+        property,
+        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+        false,
+    )
+    .expect("lifted maximum");
+    column_main_limits::scoped(tree, idx, vec![(idx, lifted)], RunMode::ComputeSize, f)
+}
+
+/// The border-box `width` of the box `idx` within its `min-width` and
+/// `max-width`. `basis` is the width its percentages refer to.
+fn clamp_to_width_limits(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    basis: Option<f32>,
+    width: f32,
+) -> f32 {
+    let style = tree.physical_style(idx);
+    let adjustment =
+        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, basis.unwrap_or(0.0));
+    let limits = (style.min_size().width, style.max_size().width);
+    let max = limits.1.maybe_resolve(basis).map(|max| max + adjustment);
+    let min = limits.0.maybe_resolve(basis).map(|min| min + adjustment);
+    let width = max.map_or(width, |max| width.min(max));
+    min.map_or(width, |min| width.max(min))
 }
 
 /// Settle the width of a flex or grid container whose `width` is `min-content`
