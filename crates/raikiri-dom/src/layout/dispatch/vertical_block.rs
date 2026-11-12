@@ -274,6 +274,12 @@ pub(super) fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut Tran
     };
     block.container_view = Some(FrozenViewInput::capture(tree, block.container, context));
     for &child in &block.children {
+        // The frame holds the container's axes, which are the ones the main
+        // axis of a contained flex item is given in.
+        let context = ViewContext {
+            contained_main_axis: tree.contained_main_axis(child),
+            ..context
+        };
         let input = FrozenViewInput::capture(tree, child, context);
         block.child_views.insert(child, input);
     }

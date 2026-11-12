@@ -94,6 +94,7 @@ impl FrozenViewInput {
         }
         input.context.bridge_projection = context.bridge_projection;
         input.context.layout_wm = context.layout_wm;
+        input.context.contained_main_axis = context.contained_main_axis;
         tree.retain_snapshot_calcs(owners);
         input
     }

@@ -522,6 +522,9 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
             context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            context.contained_main_axis = self
+                .contained_main_axis(idx)
+                .filter(|_| !self.container_is_vertical(idx));
         }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);
@@ -630,6 +633,36 @@ impl LayoutSession<'_> {
             align_self: alignment,
             justify_self: justify,
         }
+    }
+
+    /// The main axis of the flex item `idx` when its size containment applies
+    /// along it, in the axes of the container: the width for a row, the height
+    /// for a column, whichever physical axis the container's writing mode turns
+    /// them into.
+    ///
+    /// The content size suggestion of such an item is not its contained size:
+    /// Chromium shrinks it below `contain-intrinsic-size` like an item without
+    /// content, down to its padding and border.
+    pub(crate) fn contained_main_axis(&self, idx: usize) -> Option<raikiri_layout_style::Axis> {
+        use raikiri_layout_style::Axis;
+        let contained = self.nodes[idx].size_containment;
+        if (!contained.width && !contained.height)
+            || self.nodes[idx].layout_position() == Position::Absolute
+        {
+            return None;
+        }
+        let container = self.taffy_parent_of(idx)?;
+        if self.nodes[container].formatting_context != FormattingContext::Flex {
+            return None;
+        }
+        let row = self.physical_style(container).flex_direction_is_row();
+        let main_is_width = row != self.container_is_vertical(idx);
+        let contained = if main_is_width {
+            contained.width
+        } else {
+            contained.height
+        };
+        contained.then_some(if row { Axis::X } else { Axis::Y })
     }
 
     /// The limits on the cross size of the flex item `idx` that its stated cross
