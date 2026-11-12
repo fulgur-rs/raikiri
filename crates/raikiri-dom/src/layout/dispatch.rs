@@ -4310,19 +4310,20 @@ fn with_open_wrapping_column_width(
     inputs
 }
 
-/// `inputs` with the height of a wrapping flex container whose main axis is
-/// vertical left open where its content decided it: a column container in a
-/// horizontal writing mode, or a row container in a vertical one.
+/// `inputs` with the height of a wrapping column flex container in a
+/// horizontal writing mode left open where its content decides it.
 ///
-/// That height is the size its lines break against. An absolutely positioned
-/// container with an `auto` height is laid out at the height its content gave
-/// it, which is not definite, and Taffy puts every item on one line under a
-/// main size that is not. Where a `max-height` limits it, that height is the
-/// longest line the items made, broken against the `max-height`, so the
-/// container finds the same lines again when they break against that height
-/// as room (CSS Flexbox 1 §9.3). Percentages of the items stay unresolved, as
-/// the height is still open. A height a flex container gave its item, or one
-/// no `max-height` limits, is left as it is.
+/// That height is the main size of the container, the size its lines break
+/// against, and its block size: only its `max-height` breaks the lines, and
+/// it is as tall as its longest line (CSS Flexbox 1 §9.3, §9.4). The room
+/// around it is no limit, where Taffy breaks the lines against that room and
+/// stretches one of several lines to fill it. A height its parent laid it out
+/// at, which is not definite, is that of the longest line the items made, and
+/// Taffy puts every item on one line under it, so the container finds the
+/// same lines again when they break against that height as room. Percentages
+/// of the items stay unresolved, as the height is still open. A definite
+/// height, such as one a flex container flexed its item to, and the height
+/// size containment gives the box are left as they are.
 fn with_open_wrapping_column_height(
     tree: &LayoutSession<'_>,
     node_id: NodeId,
@@ -4330,28 +4331,25 @@ fn with_open_wrapping_column_height(
 ) -> LayoutInput {
     let idx = usize::from(node_id);
     let style = tree.physical_style(idx);
-    let main_is_height = style.flex_direction_is_row() == tree.has_vertical_writing_mode(idx);
-    let limited = style
-        .max_size()
-        .maybe_resolve(inputs.parent_size)
-        .height
-        .is_some();
+    // Size containment gives the box a height that is no content's.
     if tree.nodes[idx].formatting_context != FormattingContext::Flex
         || !style.flex_wraps()
-        || !main_is_height
-        || !limited
-        || !positioned_height_follows_content(tree, idx, inputs.parent_size)
+        || style.flex_direction_is_row()
+        || tree.has_vertical_writing_mode(idx)
+        || tree.nodes[idx].size_containment.height
     {
         return inputs;
     }
-    if let Some(height) = inputs
-        .known_dimensions
-        .height
-        .filter(|_| !inputs.known_dimensions_are_definite.height)
-    {
-        inputs.known_dimensions.height = None;
-        inputs.known_dimensions_are_definite.height = true;
-        inputs.available_space.height = AvailableSpace::Definite(height);
+    match inputs.known_dimensions.height {
+        Some(height) if !inputs.known_dimensions_are_definite.height => {
+            inputs.known_dimensions.height = None;
+            inputs.known_dimensions_are_definite.height = true;
+            inputs.available_space.height = AvailableSpace::Definite(height);
+        }
+        None if matches!(inputs.available_space.height, AvailableSpace::Definite(_)) => {
+            inputs.available_space.height = AvailableSpace::MaxContent;
+        }
+        _ => {}
     }
     inputs
 }
