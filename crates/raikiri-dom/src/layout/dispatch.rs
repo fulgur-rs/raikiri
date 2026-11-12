@@ -1047,6 +1047,7 @@ impl LayoutSession<'_> {
         let inputs = orthogonal_flow::with_grid_item_room(self, usize::from(node_id), inputs);
         let inputs = with_container_page_room(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
+        let inputs = with_pinned_flex_height_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_flexed_main_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
@@ -4040,6 +4041,30 @@ fn flex_layout_sized(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let height_is_definite =
+        inputs.known_dimensions.height.is_some() && inputs.known_dimensions_are_definite.height;
+    if !height_is_definite
+        && tree.physical_style(idx).flex_direction_is_row()
+        && pinned_flex_height(tree, idx, inputs.parent_size).is_some()
+    {
+        // Taffy resolves the percentage cross sizes of the items against
+        // any height the container is given, definite or not.
+        let entries = intrinsic_scopes::unresolved_item_cross_heights(tree, idx);
+        return column_main_limits::scoped(tree, idx, entries, inputs.run_mode, |tree| {
+            flex_layout_at_height(tree, node_id, inputs)
+        });
+    }
+    flex_layout_at_height(tree, node_id, inputs)
+}
+
+/// [`flex_layout_sized`] once the percentage heights of the items that a
+/// height that is not definite leaves unresolved are read as `auto`.
+fn flex_layout_at_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
     // A size the container was laid out at after its content settled it is
     // not one its percentages refer to: only a size its style gives, or one
     // its parent passes down as definite, is.
@@ -4057,7 +4082,11 @@ fn flex_layout_sized(
         if vertical {
             stated.width
         } else {
-            stated.height
+            stated.height.filter(|_| {
+                pinned_flex_height(tree, usize::from(node_id), inputs.parent_size).is_none()
+                    || inputs.known_dimensions_are_definite.height
+                        && inputs.known_dimensions.height.is_some()
+            })
         }
         .is_some()
     };
@@ -4267,7 +4296,7 @@ fn with_open_wrapping_column_height(
         || !style.flex_wraps()
         || !main_is_height
         || !limited
-        || !positioned_height_follows_content(tree, idx, inputs.parent_size)
+        || !positioned_height_follows_content(tree, idx)
     {
         return inputs;
     }
@@ -4600,6 +4629,70 @@ fn with_flexed_main_not_definite(
     inputs
 }
 
+/// The border-box height that the `min-height` of the flex container `idx`
+/// decides because its `max-height` does not exceed it, where its `height`
+/// is `auto` and it runs horizontally.
+///
+/// Taffy takes that height as definite, but browsers do not count it as
+/// definite (CSS Flexbox 1 §9.8): the height is still `auto`.
+fn pinned_flex_height(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    // The height of a vertical container is its inline size.
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || tree.has_vertical_writing_mode(idx)
+    {
+        return None;
+    }
+    let style = tree.physical_style(idx);
+    if !style.size().height.is_auto() || style.aspect_ratio().is_some() {
+        return None;
+    }
+    let min = style.min_size().maybe_resolve(parent_size).height?;
+    let max = style.max_size().maybe_resolve(parent_size).height?;
+    if max > min {
+        return None;
+    }
+    let edges = (style.padding().resolve_or_zero(parent_size.width)
+        + style.border().resolve_or_zero(parent_size.width))
+    .sum_axes()
+    .height;
+    Some(if style.box_sizing() == BoxSizing::ContentBox {
+        min + edges
+    } else {
+        min.max(edges)
+    })
+}
+
+/// Give a flex container the height its `min-height` decides (see
+/// [`pinned_flex_height`]) as a height that is not definite, so that the
+/// percentage heights of its items, and of the children of items that flex,
+/// do not resolve against it.
+///
+/// A wrapping column is left open: its lines break against the height, and
+/// it sizes them from its content (see `with_hypothetical_column_main_size`).
+fn with_pinned_flex_height_not_definite(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.known_dimensions.height.is_some() {
+        return inputs;
+    }
+    let Some(height) = pinned_flex_height(tree, idx, inputs.parent_size) else {
+        return inputs;
+    };
+    let style = tree.physical_style(idx);
+    if !style.flex_direction_is_row() && style.flex_wraps() {
+        return inputs;
+    }
+    inputs.known_dimensions.height = Some(height);
+    inputs.known_dimensions_are_definite.height = false;
+    inputs
+}
+
 /// Keep the height Taffy settles an absolutely positioned box at from being a
 /// definite height for its children.
 ///
@@ -4607,8 +4700,9 @@ fn with_flexed_main_not_definite(
 /// both sizes definite. A box with an `auto` height and a `top` or `bottom`
 /// of `auto` has a height that follows from its content, and so a percentage
 /// height of a child is `auto` (CSS 2.1 10.5). A `height` of the box's own, a
-/// `top` and `bottom` that fix it, an aspect ratio that gives it one, or a
-/// `min-height` that its `max-height` does not exceed, make it definite.
+/// `top` and `bottom` that fix it, or an aspect ratio that gives it one, make
+/// it definite. A `min-height` that its `max-height` does not exceed decides
+/// the height all the same, but browsers do not count it as definite.
 fn with_content_height_not_definite(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -4617,7 +4711,7 @@ fn with_content_height_not_definite(
     if inputs.known_dimensions.height.is_none() || !inputs.known_dimensions_are_definite.height {
         return inputs;
     }
-    if positioned_height_follows_content(tree, idx, inputs.parent_size) {
+    if positioned_height_follows_content(tree, idx) {
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
@@ -4625,22 +4719,14 @@ fn with_content_height_not_definite(
 
 /// Whether the box `idx` is absolutely positioned with a height that follows
 /// from its content (see [`with_content_height_not_definite`]).
-fn positioned_height_follows_content(
-    tree: &LayoutSession<'_>,
-    idx: usize,
-    parent_size: Size<Option<f32>>,
-) -> bool {
+fn positioned_height_follows_content(tree: &LayoutSession<'_>, idx: usize) -> bool {
     if tree.nodes[idx].layout_position() != Position::Absolute {
         return false;
     }
     let style = tree.physical_style(idx);
-    let min = style.min_size().maybe_resolve(parent_size).height;
-    let max = style.max_size().maybe_resolve(parent_size).height;
-    let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
     let inset = style.inset();
     style.size().height.is_auto()
         && style.aspect_ratio().is_none()
-        && !pinned
         && (inset.top.is_auto() || inset.bottom.is_auto())
 }
 
