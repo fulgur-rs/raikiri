@@ -3919,6 +3919,7 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_block_size_content_main(tree, node_id, inputs);
     // Only a container that runs on the axes of its vertical writing mode fits
     // its lines in the room; one in a multicol container or a table runs on
     // horizontal axes.
@@ -4039,7 +4040,6 @@ fn flex_layout_sized(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
-    let inputs = with_block_size_content_main(tree, node_id, inputs);
     // A size the container was laid out at after its content settled it is
     // not one its percentages refer to: only a size its style gives, or one
     // its parent passes down as definite, is.
@@ -4108,12 +4108,25 @@ fn with_block_size_content_main(
     mut inputs: LayoutInput,
 ) -> LayoutInput {
     let idx = usize::from(node_id);
-    let (known, room) = if content_limits::is_wrapping_column_flex(tree, idx) {
-        (inputs.known_dimensions.height, &mut inputs.available_space.height)
-    } else if content_limits::is_vertical_wrapping_column_flex(tree, idx) {
-        (inputs.known_dimensions.width, &mut inputs.available_space.width)
-    } else {
+    let style = tree.physical_style(idx);
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || style.flex_direction_is_row()
+        || !style.flex_wraps()
+    {
         return inputs;
+    }
+    // A container in a multicol container or a table runs on horizontal axes
+    // whatever its writing mode.
+    let (known, room) = if block_right_to_left(tree, idx).is_some() {
+        (
+            inputs.known_dimensions.width,
+            &mut inputs.available_space.width,
+        )
+    } else {
+        (
+            inputs.known_dimensions.height,
+            &mut inputs.available_space.height,
+        )
     };
     if known.is_none() && *room == AvailableSpace::MinContent {
         *room = AvailableSpace::MaxContent;

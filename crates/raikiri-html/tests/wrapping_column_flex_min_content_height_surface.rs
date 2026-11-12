@@ -72,7 +72,9 @@ fn a_wrapping_column_contributes_its_items_on_one_line_to_the_height_of_its_trac
     // `minmax(0, auto)` row) lets the row shrink and the column wrap, as do
     // the column's own `min-height` and `max-height`. The same holds for an
     // inline column that fills its grid area, a column whose height is
-    // `min-content`, and a grid stretched in a row flex container.
+    // `min-content`, a grid stretched in a row flex container, and a column
+    // flex container 100px tall, which leaves the column's automatic minimum
+    // height at its items on one line unless `min-height` is 0.
     assert_rows(&[
         (
             "<div id=g style='display:grid;height:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;width:40px'><p id=a style='margin:0;height:90px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:30px;width:20px'></p><p id=d style='margin:0;height:90px;width:20px'></p></div><div id=n style='height:5px'></div></div>",
@@ -227,14 +229,36 @@ fn a_wrapping_column_contributes_its_items_on_one_line_to_the_height_of_its_trac
                 ("n", [0, 150, 1280, 5]),
             ],
         ),
+        (
+            "<div id=g style='display:flex;flex-direction:column;height:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;width:40px'><p id=a style='margin:0;height:90px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:30px;width:20px'></p><p id=d style='margin:0;height:90px;width:20px'></p></div></div>",
+            &[
+                ("g", [0, 0, 1280, 100]),
+                ("c", [0, 0, 40, 240]),
+                ("a", [0, 0, 20, 90]),
+                ("b", [0, 90, 20, 30]),
+                ("w", [0, 120, 20, 30]),
+                ("d", [0, 150, 20, 90]),
+            ],
+        ),
+        (
+            "<div id=g style='display:flex;flex-direction:column;height:100px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;width:40px;min-height:0'><p id=a style='margin:0;height:90px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=w style='margin:0;height:30px;width:20px'></p><p id=d style='margin:0;height:90px;width:20px'></p></div></div>",
+            &[
+                ("g", [0, 0, 1280, 100]),
+                ("c", [0, 0, 40, 100]),
+                ("a", [0, 0, 20, 90]),
+                ("b", [20, 0, 20, 30]),
+                ("w", [20, 30, 20, 30]),
+                ("d", [40, 0, 20, 90]),
+            ],
+        ),
     ]);
 }
 
 #[test]
 fn a_vertical_wrapping_column_contributes_its_items_on_one_line_to_the_width_of_its_track() {
-    // In vertical-rl, the column of items 90px, 30px, 30px and 90px wide is
-    // 240px wide in a grid only 100px wide, and wraps against its own
-    // `max-width` of 150px.
+    // In vertical-rl and vertical-lr, the column of items 90px, 30px, 30px
+    // and 90px wide is 240px wide in a grid only 100px wide, and wraps
+    // against its own `max-width` of 150px.
     assert_rows(&[
         (
             "<div id=g style='writing-mode:vertical-rl;display:grid;width:100px;height:300px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:40px'><p id=a style='margin:0;width:90px;height:20px'></p><p id=b style='margin:0;width:30px;height:20px'></p><p id=w style='margin:0;width:30px;height:20px'></p><p id=d style='margin:0;width:90px;height:20px'></p></div><div id=n style='width:5px'></div></div>",
@@ -258,6 +282,18 @@ fn a_vertical_wrapping_column_contributes_its_items_on_one_line_to_the_width_of_
                 ("w", [-50, 0, 30, 20]),
                 ("d", [10, 20, 90, 20]),
                 ("n", [-55, 0, 5, 300]),
+            ],
+        ),
+        (
+            "<div id=g style='writing-mode:vertical-lr;display:grid;width:100px;height:300px'><div id=c style='display:flex;flex-direction:column;flex-wrap:wrap;height:40px'><p id=a style='margin:0;width:90px;height:20px'></p><p id=b style='margin:0;width:30px;height:20px'></p><p id=w style='margin:0;width:30px;height:20px'></p><p id=d style='margin:0;width:90px;height:20px'></p></div><div id=n style='width:5px'></div></div>",
+            &[
+                ("g", [0, 0, 100, 300]),
+                ("c", [0, 0, 240, 40]),
+                ("a", [0, 0, 90, 20]),
+                ("b", [90, 0, 30, 20]),
+                ("w", [120, 0, 30, 20]),
+                ("d", [150, 0, 90, 20]),
+                ("n", [240, 0, 5, 300]),
             ],
         ),
     ]);
