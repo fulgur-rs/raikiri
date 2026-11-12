@@ -4381,69 +4381,71 @@ fn flex_layout_items(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     tree.context.flex_item_percent_bases.push((idx, basis));
-    let mut output = content_limits::with_flex_line_item_limits(
-        tree,
-        node_id,
-        inputs,
-        basis,
-        |tree, node_id, inputs| {
-            column_main_limits::layout(
-                tree,
-                node_id,
-                inputs,
-                main_size_is_definite,
-                |tree, node_id, inputs| {
-                    if block_right_to_left(tree, idx).is_some() {
-                        // The container runs its algorithm on the axes of its own
-                        // writing mode.
-                        tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
-                            let inputs = vertical_block::with_atomic_fit_content(
+    let mut output = wrapping_row_max_content_size(tree, idx, &inputs, |tree| {
+        content_limits::with_flex_line_item_limits(
+            tree,
+            node_id,
+            inputs,
+            basis,
+            |tree, node_id, inputs| {
+                column_main_limits::layout(
+                    tree,
+                    node_id,
+                    inputs,
+                    main_size_is_definite,
+                    |tree, node_id, inputs| {
+                        if block_right_to_left(tree, idx).is_some() {
+                            // The container runs its algorithm on the axes of its own
+                            // writing mode.
+                            tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                                let inputs = vertical_block::with_atomic_fit_content(
+                                    tree,
+                                    node_id,
+                                    inputs,
+                                    compute_flexbox_layout,
+                                );
+                                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                            })
+                        } else if tree.context.flex_intrinsic_probe == Some(idx)
+                            || measures_intrinsic_width(&inputs)
+                        {
+                            let cross_room = item_cross_room(basis.height, &inputs);
+                            let min_content = inputs.run_mode == RunMode::ComputeSize
+                                && inputs.available_space.width == AvailableSpace::MinContent
+                                && inputs.known_dimensions.width.is_none();
+                            with_flex_item_basis_bounds(
                                 tree,
                                 node_id,
-                                inputs,
-                                compute_flexbox_layout,
-                            );
+                                cross_room,
+                                inputs.available_space.width,
+                                |tree| {
+                                    let layout = |tree: &mut LayoutSession<'_>| {
+                                        table_items::layout(
+                                            tree,
+                                            node_id,
+                                            inputs,
+                                            compute_flexbox_layout,
+                                        )
+                                    };
+                                    if min_content {
+                                        with_compressible_item_widths(tree, node_id, layout)
+                                    } else {
+                                        layout(tree)
+                                    }
+                                },
+                            )
+                        } else if inputs.known_dimensions.height.is_none() {
+                            with_column_item_content_height(tree, node_id, basis.width, |tree| {
+                                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
+                            })
+                        } else {
                             table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                        })
-                    } else if tree.context.flex_intrinsic_probe == Some(idx)
-                        || measures_intrinsic_width(&inputs)
-                    {
-                        let cross_room = item_cross_room(basis.height, &inputs);
-                        let min_content = inputs.run_mode == RunMode::ComputeSize
-                            && inputs.available_space.width == AvailableSpace::MinContent
-                            && inputs.known_dimensions.width.is_none();
-                        with_flex_item_basis_bounds(
-                            tree,
-                            node_id,
-                            cross_room,
-                            inputs.available_space.width,
-                            |tree| {
-                                let layout = |tree: &mut LayoutSession<'_>| {
-                                    table_items::layout(
-                                        tree,
-                                        node_id,
-                                        inputs,
-                                        compute_flexbox_layout,
-                                    )
-                                };
-                                if min_content {
-                                    with_compressible_item_widths(tree, node_id, layout)
-                                } else {
-                                    layout(tree)
-                                }
-                            },
-                        )
-                    } else if inputs.known_dimensions.height.is_none() {
-                        with_column_item_content_height(tree, node_id, basis.width, |tree| {
-                            table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                        })
-                    } else {
-                        table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                    }
-                },
-            )
-        },
-    );
+                        }
+                    },
+                )
+            },
+        )
+    });
     if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
         let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
         output.size.width = width.clamp(min, max);
@@ -4982,11 +4984,13 @@ fn with_orthogonal_fit_content_height(
     if inputs.known_dimensions.height.is_some()
         || !tree.physical_style(idx).flex_direction_is_row()
         || !tree.physical_style(idx).size().height.is_auto()
-        || !orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+        || !(orthogonal_flow::fits_lines_in_offered_height(tree, idx)
+            || out_of_flow_wrapping_row(tree, idx))
         || ratio_gives_height
     {
         return inputs;
     }
+    let wraps = wraps_along(tree, idx, true);
     let height = if orthogonal_flow::stretches_to_grid_row(tree, idx) {
         room
     } else {
@@ -4995,7 +4999,15 @@ fn with_orthogonal_fit_content_height(
             probe.run_mode = RunMode::ComputeSize;
             probe.axis = RequestedAxis::Vertical;
             probe.available_space.height = space;
-            flex_layout_sized(tree, node_id, probe).size.height
+            if wraps {
+                without_main_max(tree, idx, true, |tree| {
+                    flex_layout_sized(tree, node_id, probe)
+                })
+            } else {
+                flex_layout_sized(tree, node_id, probe)
+            }
+            .size
+            .height
         };
         // A container whose items fit the room is as tall as they are, whatever
         // they need at their least.
@@ -5009,11 +5021,112 @@ fn with_orthogonal_fit_content_height(
     inputs.known_dimensions.height = Some(orthogonal_flow::clamp_to_height_limits(
         tree,
         idx,
-        inputs.parent_size.width,
+        inputs.parent_size,
         height,
     ));
     inputs.known_dimensions_are_definite.height = true;
     inputs
+}
+
+/// Whether the box `idx` is a flex container that wraps its items onto lines
+/// along its physical height (`along_height`) or width.
+fn wraps_along(tree: &LayoutSession<'_>, idx: usize, along_height: bool) -> bool {
+    let style = tree.physical_style(idx);
+    tree.nodes[idx].formatting_context == FormattingContext::Flex
+        && style.flex_wraps()
+        && (style.flex_direction_is_row() == block_right_to_left(tree, idx).is_some())
+            == along_height
+}
+
+/// Whether the box `idx` is an absolutely positioned or floating flex
+/// container that wraps its items onto lines along its inline axis, which it
+/// sizes to fit, as it does its width in a horizontal writing mode. A flex or
+/// grid item does not float, whatever its `float`.
+fn out_of_flow_wrapping_row(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    let floats = style.float() != Float::None
+        && !tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.nodes[parent].display().is_flex_or_grid_container());
+    (tree.nodes[idx].layout_position() == Position::Absolute || floats)
+        && style.flex_direction_is_row()
+        && wraps_along(tree, idx, true)
+}
+
+/// Run `f` with the `max-height` (`along_height`) or `max-width` of the
+/// wrapping flex container `idx` lifted, where it has one.
+///
+/// Taffy breaks the lines of a wrapping container whose main size is not
+/// definite against its border-box maximum, as if that were the room of its
+/// content box, and sizes it to the longest of those lines. The size of the
+/// content of such a container is that of its items on one line, which the
+/// maximum then clamps.
+fn without_main_max<R>(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    along_height: bool,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let max = tree.physical_style(idx).max_size();
+    let (max, property) = if along_height {
+        (max.height, LengthProperty::MaxHeight)
+    } else {
+        (max.width, LengthProperty::MaxWidth)
+    };
+    if max.is_auto() {
+        return f(tree);
+    }
+    let lifted = OwnedPropertyOverride::length(
+        property,
+        raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+        false,
+    )
+    .expect("lifted maximum");
+    column_main_limits::scoped(tree, idx, vec![(idx, lifted)], RunMode::ComputeSize, f)
+}
+
+/// The max-content size of a row flex container that wraps its items: that of
+/// its items on one line, which its limits along the line then clamp, where
+/// they apply to the size asked for. `None` for any other query, which
+/// `layout` answers as Taffy does.
+fn wrapping_row_max_content_size(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> LayoutOutput,
+) -> LayoutOutput {
+    let along_height = block_right_to_left(tree, idx).is_some();
+    let (known, available) = if along_height {
+        (
+            inputs.known_dimensions.height,
+            inputs.available_space.height,
+        )
+    } else {
+        (inputs.known_dimensions.width, inputs.available_space.width)
+    };
+    if !(inputs.run_mode == RunMode::ComputeSize
+        && known.is_none()
+        && available == AvailableSpace::MaxContent
+        && tree.physical_style(idx).flex_direction_is_row()
+        && wraps_along(tree, idx, along_height))
+    {
+        return layout(tree);
+    }
+    let mut output = without_main_max(tree, idx, along_height, layout);
+    if inputs.sizing_mode == SizingMode::InherentSize {
+        if along_height {
+            output.size.height = orthogonal_flow::clamp_to_height_limits(
+                tree,
+                idx,
+                inputs.parent_size,
+                output.size.height,
+            );
+        } else {
+            let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+            output.size.width = output.size.width.clamp(min, max);
+        }
+    }
+    output
 }
 
 /// Settle the width of a flex or grid container whose `width` is `min-content`
