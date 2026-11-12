@@ -3921,6 +3921,7 @@ pub(crate) fn flex_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_block_size_content_main(tree, node_id, inputs);
+    let inputs = with_settled_positioned_inline_height(tree, node_id, inputs);
     // Only a container that runs on the axes of its vertical writing mode fits
     // its lines in the room; one in a multicol container or a table runs on
     // horizontal axes.
@@ -4093,6 +4094,37 @@ fn flex_layout_sized(
             layout(tree, inputs)
         }
     }
+}
+
+/// `inputs` with the height of an absolutely positioned flex container in a
+/// vertical writing mode settled before its width, where its content decides
+/// that height.
+///
+/// The height is the inline size of such a box: it is settled first, from the
+/// content, and is then definite for the layout that decides the width, its
+/// block size (CSS Writing Modes 4 §7.3). Percentage heights of the items
+/// resolve against it, and its lines break against it. Taffy measures both at
+/// once, so the width would be that of items whose percentages read as `auto`.
+fn with_settled_positioned_inline_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.height.is_some()
+        || inputs.axis == RequestedAxis::Vertical
+        || !tree.has_vertical_writing_mode(idx)
+        || !positioned_height_from_content(tree, idx, inputs.parent_size)
+    {
+        return inputs;
+    }
+    let mut probe = inputs;
+    probe.run_mode = RunMode::ComputeSize;
+    probe.axis = RequestedAxis::Vertical;
+    let height = flex_layout(tree, node_id, probe).size.height;
+    inputs.known_dimensions.height = Some(height);
+    inputs.known_dimensions_are_definite.height = true;
+    inputs
 }
 
 /// `inputs` with a min-content request for the main size of a flex container
@@ -4647,7 +4679,8 @@ fn with_flexed_main_not_definite(
 /// Taffy lays such a box out a second time at the size it measured, and calls
 /// both sizes definite. A box with an `auto` height and a `top` or `bottom`
 /// of `auto` has a height that follows from its content, and so a percentage
-/// height of a child is `auto` (CSS 2.1 10.5). A `height` of the box's own, a
+/// height of a child is `auto` (CSS 2.1 10.5), where the height is the block
+/// size of the box. A `height` of the box's own, a
 /// `top` and `bottom` that fix it, an aspect ratio that gives it one, or a
 /// `min-height` that its `max-height` does not exceed, make it definite.
 fn with_content_height_not_definite(
@@ -4667,6 +4700,20 @@ fn with_content_height_not_definite(
 /// Whether the box `idx` is absolutely positioned with a height that follows
 /// from its content (see [`with_content_height_not_definite`]).
 fn positioned_height_follows_content(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+) -> bool {
+    // In a vertical writing mode the height is the inline size of the box,
+    // which is definite once its content settles it, as a shrink-to-fit width
+    // is in a horizontal one.
+    !tree.has_vertical_writing_mode(idx) && positioned_height_from_content(tree, idx, parent_size)
+}
+
+/// Whether the box `idx` is absolutely positioned with a height that its
+/// content decides: an `auto` height that neither its insets, an aspect
+/// ratio, nor equal limits fix.
+fn positioned_height_from_content(
     tree: &LayoutSession<'_>,
     idx: usize,
     parent_size: Size<Option<f32>>,
