@@ -340,3 +340,67 @@ fn a_size_contained_flex_container_flexes_its_items_in_their_own_main_size() {
         ),
     ]);
 }
+
+#[test]
+fn a_size_contained_flex_container_places_its_positioned_boxes_in_its_own_height() {
+    // The same items in a column container that containment makes 50px tall,
+    // or a `max-height` 40px: a box it positions at its bottom, halfway down
+    // or at its start is placed in that height, inside its padding, whatever
+    // the height its items overflow to. A positioned container with a column
+    // flex parent is no item of it and keeps its items' heights.
+    assert_rows(&[
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;bottom:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 40, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;top:50%;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 25, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px;display:flex;flex-direction:column;position:relative;height:300px'><div id=c style='position:absolute;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p></div></div>",
+            &[
+                ("c", [0, 0, 0, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 50]),
+                ("a", [0, 0, 20, 60]),
+                ("b", [0, 60, 20, 30]),
+                ("o", [0, 0, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;padding:5px;border:2px solid'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;bottom:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 64]),
+                ("a", [7, 7, 20, 60]),
+                ("b", [7, 67, 20, 30]),
+                ("o", [7, 52, 10, 10]),
+            ],
+        ),
+        (
+            "<div style='width:600px'><div id=c style='position:relative;contain:size;contain-intrinsic-height:50px;display:flex;flex-direction:column;max-height:40px'><p id=a style='margin:0;height:60px;width:20px'></p><p id=b style='margin:0;height:30px;width:20px'></p><p id=o style='position:absolute;margin:0;bottom:0;height:10px;width:10px'></p></div></div>",
+            &[
+                ("c", [0, 0, 600, 40]),
+                ("a", [0, 0, 20, 27]),
+                ("b", [0, 27, 20, 13]),
+                ("o", [0, 30, 10, 10]),
+            ],
+        ),
+    ]);
+}
