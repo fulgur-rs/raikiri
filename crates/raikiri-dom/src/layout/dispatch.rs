@@ -1111,11 +1111,20 @@ impl LayoutSession<'_> {
             // Size containment may give the box a width the request did not
             // have; whether the request stretched it is read before that.
             let stretched_width = inputs.known_dimensions.width.is_some();
+            let open_height = inputs.known_dimensions.height.is_none();
             let inputs = if empty {
                 inputs
             } else {
                 size_contained_inputs(tree, node_id, inputs)
             };
+            // A height its parent measured it at and passes down as not
+            // definite is the one containment gave it as well, except the
+            // main size a flex container flexed its item to.
+            let contained_height = !empty
+                && tree.nodes[idx].size_containment.height
+                && (open_height
+                    || (!inputs.known_dimensions_are_definite.height
+                        && !is_flexed_along_height(tree, idx)));
             let formatting_context = tree.nodes[idx].formatting_context;
             match formatting_context {
                 FormattingContext::None => return LayoutOutput::HIDDEN,
@@ -1448,6 +1457,9 @@ impl LayoutSession<'_> {
                 output
             } else {
                 match formatting_context {
+                    FormattingContext::Flex if contained_height => {
+                        contained_height_flex_layout(tree, node_id, inputs)
+                    }
                     FormattingContext::Flex => flex_layout(tree, node_id, inputs),
                     FormattingContext::Grid => grid_layout(tree, node_id, inputs),
                     // A block container, including a paragraph or multicol
@@ -3744,6 +3756,55 @@ fn size_contained_inputs(
     inputs
 }
 
+/// Whether the flex container `idx` runs its main axis along its height: a
+/// row in a vertical writing mode or a column in a horizontal one.
+fn flex_main_is_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx)
+}
+
+/// Whether the box `idx` is an in-flow item of a flex container whose main
+/// axis runs along its height, which flexes the item's height.
+fn is_flexed_along_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].layout_position() != Position::Absolute
+        && tree
+            .taffy_parent_of(idx)
+            .filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex)
+            .is_some_and(|parent| flex_main_is_height(tree, parent))
+}
+
+/// Lay out a flex container whose height size containment settled, at the
+/// height `inputs` carry for it.
+///
+/// Where that height is the main size of the container, its items flex within
+/// the main size their content gives it, within its `min-height` and
+/// `max-height`, as if it had no containment, and overflow the height it
+/// takes (Chromium: items 60px and 30px tall keep their heights in a column
+/// container 50px tall by containment). Taffy would flex them into the
+/// contained height instead. The box itself, and the boxes it is the
+/// containing block of, take the contained height. A container whose height
+/// is its cross size lays its lines out in that height as it is.
+fn contained_height_flex_layout(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let Some(height) = inputs
+        .known_dimensions
+        .height
+        .filter(|_| flex_main_is_height(tree, idx))
+    else {
+        return flex_layout(tree, node_id, inputs);
+    };
+    let mut open = inputs;
+    open.known_dimensions.height = None;
+    tree.context.contained_flex_heights.push((idx, height));
+    let mut output = flex_layout(tree, node_id, open);
+    tree.context.contained_flex_heights.pop();
+    output.size.height = height;
+    output
+}
+
 /// The absolutely positioned boxes that `idx` is the containing block of and
 /// that generate a box, as the last positioning pass hoisted them.
 fn hoisted_children(tree: &LayoutSession<'_>, idx: usize) -> Vec<usize> {
@@ -4184,9 +4245,7 @@ fn flexed_wrapping_main_size(
     mut inputs: LayoutInput,
 ) -> Option<(LayoutInput, Vec<(usize, OwnedPropertyOverride)>)> {
     let idx = usize::from(node_id);
-    let main_is_height = |idx: usize| {
-        tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx)
-    };
+    let main_is_height = |idx: usize| flex_main_is_height(tree, idx);
     let style = tree.physical_style(idx);
     let container = tree
         .taffy_parent_of(idx)
@@ -4450,6 +4509,35 @@ fn flex_layout_items(
     }
     if let Some(width) = max_content_floor {
         output.size.width = output.size.width.max(width);
+    }
+    if let Some(&(_, height)) = tree
+        .context
+        .contained_flex_heights
+        .last()
+        .filter(|(contained, _)| *contained == idx)
+    {
+        // The boxes it is the containing block of are placed in its padding
+        // box at that height, and those it lays out itself are aligned in its
+        // content box at that height where their insets are `auto`.
+        let grown = height - output.size.height;
+        if let Some(area) = output.oof_positioning_area.as_mut() {
+            area.size.height = (area.size.height + grown).max(0.0);
+        }
+        let style = tree.physical_style(idx);
+        let basis = inputs.parent_size.width;
+        let content_end = output.size.height
+            - style.padding().resolve_or_zero(basis).bottom
+            - style.border().resolve_or_zero(basis).bottom;
+        output.oof_candidates.for_each_mut(|candidate| {
+            let area = &mut candidate.static_position.y.area;
+            let own = tree.taffy_parent_of(usize::from(candidate.node)) == Some(idx);
+            area.end += if own && (area.end - content_end).abs() < 0.01 {
+                grown
+            } else {
+                0.0
+            };
+        });
+        output.size.height = height;
     }
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
