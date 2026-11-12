@@ -81,7 +81,7 @@ pub(crate) struct WptDocumentHost {
     /// document came from; otherwise the document's base URL stands in.
     page_url: Option<raikiri::Url>,
     page_scene: Option<raikiri::PageScene>,
-    computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
+    computed_styles: Option<raikiri_style::ComputedStyles>,
     /// `<style>` sources connected at the last flush, in tree order.
     style_sources: Vec<raikiri_html::StylesheetSource>,
     /// Descendant content extents per arena index, rebuilt on every `flush`.

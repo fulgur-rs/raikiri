@@ -73,7 +73,7 @@ fn peak_rss_kb() -> Option<u64> {
 fn report_pipeline_sizes(label: &str, dom: &Document, tree: &RuleTree, result: &CascadeResult) {
     let peak = peak_rss_kb().map_or("n/a".to_string(), |kb| format!("{kb} kB"));
     eprintln!(
-        "pipeline[{label}]: nodes={} rules={} computed_bytes={} peak_rss={}",
+        "pipeline[{label}]: nodes={} rules={} computed_bytes_if_unshared={} peak_rss={}",
         dom.node_count(),
         tree.style_rules().len(),
         result.computed.len() * std::mem::size_of::<ComputedValues>(),

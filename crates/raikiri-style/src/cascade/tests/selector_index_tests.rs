@@ -44,7 +44,7 @@ fn indexed_selector_positions_bound_actual_cascade_matching_work() {
         )
         .unwrap();
         assert_eq!(grouped.computed, separate.computed);
-        for cv in &grouped.computed[1..] {
+        for cv in grouped.computed.iter().skip(1) {
             assert_eq!(cv.color, RED);
         }
         assert_eq!(grouped.counts.selector_tests, (n * s) as u64);
@@ -77,7 +77,7 @@ fn selector_index_scaling_probe() {
             WalkOptions::default(),
         )
         .unwrap();
-        assert!(output.computed[1..].iter().all(|cv| cv.color == RED));
+        assert!(output.computed.iter().skip(1).all(|cv| cv.color == RED));
         last = Some(std::hint::black_box(output));
     }
     let elapsed = started.elapsed();

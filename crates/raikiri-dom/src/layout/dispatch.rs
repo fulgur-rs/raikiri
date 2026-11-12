@@ -4061,22 +4061,129 @@ fn flex_layout_sized(
         }
         .is_some()
     };
-    let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
-    column_cross_measure::layout(
-        tree,
-        node_id,
-        inputs,
-        main_size_is_definite,
-        |tree, node_id, inputs| {
-            intrinsic_scopes::with_orthogonal_percentage_main_sizes(
-                tree,
-                node_id,
-                main_size_is_definite,
-                inputs.run_mode,
-                |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
-            )
-        },
-    )
+    let layout = |tree: &mut LayoutSession<'_>, inputs: LayoutInput| {
+        column_cross_measure::layout(
+            tree,
+            node_id,
+            inputs,
+            main_size_is_definite,
+            |tree, node_id, inputs| {
+                intrinsic_scopes::with_orthogonal_percentage_main_sizes(
+                    tree,
+                    node_id,
+                    main_size_is_definite,
+                    inputs.run_mode,
+                    |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
+                )
+            },
+        )
+    };
+    match flexed_wrapping_main_size(tree, node_id, inputs) {
+        Some((inputs, limits)) => column_main_limits::scoped(
+            tree,
+            usize::from(node_id),
+            limits,
+            inputs.run_mode,
+            |tree| layout(tree, inputs),
+        ),
+        None => {
+            let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
+            let inputs = with_open_wrapping_column_height(tree, node_id, inputs);
+            layout(tree, inputs)
+        }
+    }
+}
+
+/// The inputs and the limits that lay out a wrapping flex item at the main
+/// size its flex container flexed it to, where both share a main axis.
+///
+/// That size is the main size of the item, the size its lines break against
+/// (CSS Flexbox 1 §9.3), but where the container's own main size is not
+/// definite it is not definite either, so that percentages of the item's
+/// items stay unresolved (§9.8), and Taffy then puts every item on one line.
+/// The item is laid out with that size left open and its minimum and maximum
+/// in that axis fixed to it instead: its lines break against it, it keeps
+/// that size for its alignment, and its items' percentages still find no
+/// definite size to refer to.
+fn flexed_wrapping_main_size(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> Option<(LayoutInput, Vec<(usize, OwnedPropertyOverride)>)> {
+    let idx = usize::from(node_id);
+    let main_is_height = |idx: usize| {
+        tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx)
+    };
+    let style = tree.physical_style(idx);
+    let container = tree
+        .taffy_parent_of(idx)
+        .filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex)?;
+    let along_height = main_is_height(idx);
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || tree.nodes[idx].layout_position() == Position::Absolute
+        || !style.flex_wraps()
+        || main_is_height(container) != along_height
+    {
+        return None;
+    }
+    let (known, definite) = if along_height {
+        (
+            inputs.known_dimensions.height,
+            inputs.known_dimensions_are_definite.height,
+        )
+    } else {
+        (
+            inputs.known_dimensions.width,
+            inputs.known_dimensions_are_definite.width,
+        )
+    };
+    let size = known.filter(|_| !definite)?;
+    // The intrinsic cross size of the item is that of its items on a single
+    // line, as Chromium measures it, whatever lines they then break into.
+    let (cross_known, cross_room) = if along_height {
+        (inputs.known_dimensions.width, inputs.available_space.width)
+    } else {
+        (
+            inputs.known_dimensions.height,
+            inputs.available_space.height,
+        )
+    };
+    if cross_known.is_none() && !matches!(cross_room, AvailableSpace::Definite(_)) {
+        return None;
+    }
+    let inner = if style.box_sizing() == BoxSizing::ContentBox {
+        // Percentage edges refer to the inline size of the containing block.
+        let basis = vertical_block::containing_inline_size(tree, idx, &inputs);
+        let edges = style.padding().resolve_or_zero(basis) + style.border().resolve_or_zero(basis);
+        let edges = if along_height {
+            edges.top + edges.bottom
+        } else {
+            edges.left + edges.right
+        };
+        (size - edges).max(0.0)
+    } else {
+        size
+    };
+    let limit = |property| {
+        OwnedPropertyOverride::length(
+            property,
+            raikiri_style::ComputedLengthPercentageOrAuto::Px(inner),
+            true,
+        )
+        .expect("resolved main size limit")
+    };
+    let limits = if along_height {
+        inputs.known_dimensions.height = None;
+        inputs.known_dimensions_are_definite.height = true;
+        inputs.available_space.height = AvailableSpace::Definite(size);
+        [LengthProperty::MinHeight, LengthProperty::MaxHeight]
+    } else {
+        inputs.known_dimensions.width = None;
+        inputs.known_dimensions_are_definite.width = true;
+        inputs.available_space.width = AvailableSpace::Definite(size);
+        [LengthProperty::MinWidth, LengthProperty::MaxWidth]
+    };
+    Some((inputs, limits.map(|property| (idx, limit(property))).into()))
 }
 
 /// `inputs` with the width of a vertical wrapping column container left
@@ -4126,6 +4233,52 @@ fn with_open_wrapping_column_width(
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
         _ => {}
+    }
+    inputs
+}
+
+/// `inputs` with the height of a wrapping flex container whose main axis is
+/// vertical left open where its content decided it: a column container in a
+/// horizontal writing mode, or a row container in a vertical one.
+///
+/// That height is the size its lines break against. An absolutely positioned
+/// container with an `auto` height is laid out at the height its content gave
+/// it, which is not definite, and Taffy puts every item on one line under a
+/// main size that is not. Where a `max-height` limits it, that height is the
+/// longest line the items made, broken against the `max-height`, so the
+/// container finds the same lines again when they break against that height
+/// as room (CSS Flexbox 1 §9.3). Percentages of the items stay unresolved, as
+/// the height is still open. A height a flex container gave its item, or one
+/// no `max-height` limits, is left as it is.
+fn with_open_wrapping_column_height(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let style = tree.physical_style(idx);
+    let main_is_height = style.flex_direction_is_row() == tree.has_vertical_writing_mode(idx);
+    let limited = style
+        .max_size()
+        .maybe_resolve(inputs.parent_size)
+        .height
+        .is_some();
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || !style.flex_wraps()
+        || !main_is_height
+        || !limited
+        || !positioned_height_follows_content(tree, idx, inputs.parent_size)
+    {
+        return inputs;
+    }
+    if let Some(height) = inputs
+        .known_dimensions
+        .height
+        .filter(|_| !inputs.known_dimensions_are_definite.height)
+    {
+        inputs.known_dimensions.height = None;
+        inputs.known_dimensions_are_definite.height = true;
+        inputs.available_space.height = AvailableSpace::Definite(height);
     }
     inputs
 }
@@ -4461,27 +4614,34 @@ fn with_content_height_not_definite(
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    if inputs.known_dimensions.height.is_none()
-        || !inputs.known_dimensions_are_definite.height
-        || tree.nodes[idx].layout_position() != Position::Absolute
-    {
+    if inputs.known_dimensions.height.is_none() || !inputs.known_dimensions_are_definite.height {
         return inputs;
     }
-    let follows_content = {
-        let style = tree.physical_style(idx);
-        let min = style.min_size().maybe_resolve(inputs.parent_size).height;
-        let max = style.max_size().maybe_resolve(inputs.parent_size).height;
-        let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
-        let inset = style.inset();
-        style.size().height.is_auto()
-            && style.aspect_ratio().is_none()
-            && !pinned
-            && (inset.top.is_auto() || inset.bottom.is_auto())
-    };
-    if follows_content {
+    if positioned_height_follows_content(tree, idx, inputs.parent_size) {
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
+}
+
+/// Whether the box `idx` is absolutely positioned with a height that follows
+/// from its content (see [`with_content_height_not_definite`]).
+fn positioned_height_follows_content(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+) -> bool {
+    if tree.nodes[idx].layout_position() != Position::Absolute {
+        return false;
+    }
+    let style = tree.physical_style(idx);
+    let min = style.min_size().maybe_resolve(parent_size).height;
+    let max = style.max_size().maybe_resolve(parent_size).height;
+    let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
+    let inset = style.inset();
+    style.size().height.is_auto()
+        && style.aspect_ratio().is_none()
+        && !pinned
+        && (inset.top.is_auto() || inset.bottom.is_auto())
 }
 
 /// Offer a box sized by `fit-content(<length-percentage>)` its limit as the

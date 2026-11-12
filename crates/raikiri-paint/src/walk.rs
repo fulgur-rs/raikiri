@@ -4517,12 +4517,15 @@ fn transform_translation(
 /// which layout leaves at the static position on an axis whose insets are
 /// both `auto` (CSS 2.1 §10.3.7 / §10.6.4). The page area is the fixed
 /// containing block (CSS Paged Media 3 §3.2), so that position is measured
-/// from the first page and repeated on every page.
+/// from `static_page_origin`, where the page that holds it begins in the
+/// flow, and repeated on that page and every later one. The pages before
+/// it do not draw the box (Chromium).
 #[allow(clippy::too_many_arguments)]
 fn fixed_position_px(
     cv: &raikiri_style::ComputedValues,
     layout: &BoxLayout,
     static_position: (f32, f32),
+    static_page_origin: f32,
     rtl: bool,
     page_width: f32,
     content_origin_y: f32,
@@ -4576,7 +4579,9 @@ fn fixed_position_px(
             content_origin_y - page_width,
             content_origin_y + page_width + content_height,
         ),
-        None if static_position.1.is_finite() => content_origin_y + static_position.1,
+        None if static_position.1.is_finite() => {
+            content_origin_y + static_position.1 - static_page_origin
+        }
         None => content_origin_y,
     };
     Some((x, y))

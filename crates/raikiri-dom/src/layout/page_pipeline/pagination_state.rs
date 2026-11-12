@@ -615,6 +615,7 @@ impl PaginationState {
                 })
             });
         text.effective_y -= relative_offset;
+        self.reach_paragraph_page(document, env, candidate, entry, &blocks, &text)?;
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
@@ -833,7 +834,7 @@ impl PaginationState {
                 owner,
                 shift,
                 &mut self.subtree_shifts,
-                entry.page_before_candidate,
+                (entry.page_before_candidate, target),
             );
             self.deferred_shifts.line_splits.push(LineSplit {
                 root: owner.root,
@@ -1139,6 +1140,7 @@ impl PaginationState {
         {
             self.current_page = page;
         }
+        self.subtree_shifts.take_left_later_item();
         let end = edges_break.raw_y + self.flow_shift;
         let page = page_origins.page_index_for_end(end);
         let page_end = page_origins.origin(page) + page_origins.step_at(page);
@@ -2113,6 +2115,71 @@ impl PaginationState {
                 || lines_can_shift_above_blocks(document, cascade, block_id))
     }
 
+    /// Takes the flow to the page the boxes of the paragraph that holds
+    /// `candidate` start on. A paragraph before it in the same block whose
+    /// last line started the next page exactly leaves the flow on the page
+    /// before, where nothing of this paragraph is: neither its lines nor the
+    /// top edges of the boxes it begins. Its lines are judged from the page
+    /// after, as a box that starts there is.
+    fn reach_paragraph_page(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &TextPosition,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            root_flow_offset,
+            ..
+        } = *env;
+        let page_end =
+            page_origins.origin(self.current_page) + page_origins.step_at(self.current_page);
+        let Some(block_id) = blocks
+            .block
+            .map(|(block, _)| block)
+            .or(blocks.flex_line.map(|(root, _)| root))
+            .or(blocks.column_paragraph)
+            .filter(|_| {
+                text.effective_y >= page_end - 0.001
+                    && !entry.uses_positioned_coordinates
+                    && !candidate.context.is_float_descendant()
+                    && !candidate.context.is_out_of_flow_descendant()
+            })
+        else {
+            return Ok(());
+        };
+        let block_top = block_effective_y(
+            document,
+            block_id,
+            candidate.raw_y,
+            text.effective_y,
+            root_flow_offset,
+            self.flow_shift,
+        );
+        // The boxes that start with the paragraph and their top edges come
+        // before its lines; a paragraph in the body starts nothing but itself.
+        let holder = first_box_ancestor_at_start(
+            document,
+            cascade,
+            block_id,
+            body_id,
+            page_origins.origin(self.current_page),
+        );
+        let lead = lead_below_ancestor(document, cascade, body_id, block_id, holder);
+        let page = page_origins.page_index_for_y(block_top - lead + 0.001);
+        if page > self.current_page {
+            reach_page(control, page)?;
+            self.current_page = page;
+        }
+        Ok(())
+    }
+
     /// Pushes the fixed-height block whose first line would straddle the end
     /// of the page `text` is on to the next page as a unit. This matches
     /// normal block fragmentation for monolithic content while leaving
@@ -2744,6 +2811,7 @@ impl PaginationState {
                         flex_line: None,
                         line,
                         shift,
+                        page: move_page,
                     },
                     &mut self.subtree_shifts,
                     entry.page_before_candidate,
@@ -2930,6 +2998,7 @@ impl PaginationState {
                             flex_line: None,
                             line,
                             shift,
+                            page,
                         },
                     );
                     if growth.abs() > 0.001 {
@@ -2980,6 +3049,7 @@ impl PaginationState {
                     flex_line: blocks.flex_line,
                     line,
                     shift,
+                    page,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -3212,6 +3282,12 @@ impl PaginationState {
             .leave(document, node_id, &mut self.flow_shift)
         {
             self.current_page = page;
+        }
+        // The flow goes back to the page of a box that the items moved down
+        // before it left in place, beside them.
+        if self.subtree_shifts.take_left_later_item() && in_flow {
+            let page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
+            self.current_page = self.current_page.min(page);
         }
         if let Some((delta, flow_page)) = self.float_shifts.end_pending_outside(document, node_id) {
             self.flow_shift -= delta;

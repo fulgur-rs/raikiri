@@ -164,6 +164,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = inputs;
         let placement = self.placement(&inputs, node, layout);
+        // A fixed box at its static position is drawn from the page that
+        // holds that position on, not on the pages before it (Chromium).
+        if placement.fixed_in_viewport
+            && self
+                .document
+                .fixed_static_page_origin(node_id)
+                .is_some_and(|origin| origin > self.geometry.fixed_origin_y + 0.001)
+        {
+            return None;
+        }
         let Placement {
             cv,
             paint_padding,
@@ -344,7 +354,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let establishes_fixed_containing_block =
             raikiri_dom::establishes_fixed_containing_block(document, node_id, cv);
         let (fixed_dx, fixed_dy) = if fixed_in_viewport {
-            self.fixed_offset(cv, &layout, (abs_x, abs_y))
+            self.fixed_offset(node_id, cv, &layout, (abs_x, abs_y))
         } else {
             (0.0, 0.0)
         };
@@ -462,10 +472,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         (placed_in_column, offset)
     }
 
-    /// How far a viewport-fixed box laid out as `layout` at (`abs_x`,
-    /// `abs_y`) moves to stand at its fixed position on the page.
+    /// How far the viewport-fixed box `node_id`, laid out as `layout` at
+    /// (`abs_x`, `abs_y`), moves to stand at its fixed position on the page.
     fn fixed_offset(
         &self,
+        node_id: usize,
         cv: &ComputedValues,
         layout: &BoxLayout,
         (abs_x, abs_y): (f32, f32),
@@ -478,10 +489,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_origin_y,
             ..
         } = self.geometry;
+        // A static position past the first page is measured from the page
+        // that holds it.
+        let static_page_origin = self
+            .document
+            .fixed_static_page_origin(node_id)
+            .unwrap_or(0.0);
         fixed_position_px(
             cv,
             layout,
             (abs_x, abs_y),
+            static_page_origin,
             fixed_rtl,
             self.page_box.width,
             fixed_origin_y,

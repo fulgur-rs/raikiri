@@ -195,7 +195,7 @@ pub(super) fn move_line(
     owner: LeadingInlineLine,
     shift: f32,
     shifts: &mut SubtreeShifts,
-    page: u32,
+    (flow_page, page): (u32, u32),
 ) -> f32 {
     let lines = document
         .ifc_layout_node(owner.root)
@@ -216,9 +216,10 @@ pub(super) fn move_line(
             flex_line: None,
             line: owner.line,
             shift,
+            page,
         },
         shifts,
-        page,
+        flow_page,
     );
     for node in boxes {
         document.translate_pagination_y(node, shift);

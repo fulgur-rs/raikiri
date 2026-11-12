@@ -1,3 +1,4 @@
+mod computed_styles_tests;
 mod grid_area_tests;
 mod layer_tests;
 mod nesting_tests;

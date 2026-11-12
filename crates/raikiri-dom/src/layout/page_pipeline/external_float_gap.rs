@@ -50,6 +50,7 @@ pub(super) fn discard(
             flex_line: None,
             line: 0,
             shift: -removed,
+            page: 0,
         },
     );
     for node in boxes {

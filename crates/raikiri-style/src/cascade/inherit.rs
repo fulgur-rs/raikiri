@@ -264,7 +264,7 @@ impl Default for WalkOptions<'_> {
 /// What one [`walk`] produces, indexed by node like
 /// [`super::CascadeResult::computed`].
 pub(crate) struct WalkOutputs {
-    pub(crate) computed: Vec<ComputedValues>,
+    pub(crate) computed: super::ComputedStyles,
     pub(crate) authored_writing_modes: Vec<Option<WritingMode>>,
     pub(crate) page_values: Vec<crate::property::PageValue>,
     pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoValueArc<ComputedValues>>,
@@ -297,12 +297,11 @@ impl WalkOutputs {
     fn allocate(node_count: usize, budget: &mut ResultBudget) -> Result<Self, CascadeError> {
         budget.output((node_count as u64).saturating_mul(NODE_OUTPUT_BYTES as u64))?;
         // Reserve capacity only, rather than filling every slot with
-        // initial() up front: `ComputedValues` is large and cloning it is not
-        // cheap, and the walk overwrites almost every slot.
-        let mut computed = Vec::new();
+        // initial() up front: the walk overwrites almost every slot.
+        let mut computed = super::ComputedStyles::new();
         computed
             .try_reserve_exact(node_count)
-            .map_err(|_| exhausted::<ComputedValues>(node_count))?;
+            .map_err(|_| exhausted::<triomphe::Arc<ComputedValues>>(node_count))?;
         Ok(Self {
             computed,
             authored_writing_modes: try_filled(node_count, None)?,
@@ -801,7 +800,8 @@ pub(crate) fn walk_from<D: StyleDom>(
                 budget.retained(entry_bytes(&out.first_line_contexts, 0))?;
                 try_insert(&mut out.first_line_contexts, id, context)?;
             }
-            let computed = out.computed[src].clone();
+            // The node holds `source`'s values, not a copy of them.
+            let computed = PseudoValueArc::clone(out.computed.shared(src));
             // Counted as resolving the node would count it, so that the
             // count does not depend on sharing.
             budget.output(own_heap_bytes(&computed, parent_computed))?;
@@ -1057,6 +1057,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     try_insert(&mut out.pseudo, (id, pseudo), pseudo_computed)?;
                 }
             }
+            let computed = try_pseudo_arc_with(computed, PseudoValueArc::try_new)?;
             (computed, custom_properties, child_ctx, id)
         };
 
@@ -1151,12 +1152,13 @@ pub(crate) fn walk_from<D: StyleDom>(
             )?;
         }
 
+        // A shared node met the same conditions as its source, whose values
+        // have `display: none` already, so it keeps sharing them.
         let mut computed = computed;
-        if unboxes_to_none && computed.display == crate::property::DisplayValue::Contents {
-            computed.display = crate::property::DisplayValue::None;
-        }
-        if hidden_by_details {
-            computed.display = crate::property::DisplayValue::None;
+        if (unboxes_to_none && computed.display == crate::property::DisplayValue::Contents)
+            || (hidden_by_details && computed.display != crate::property::DisplayValue::None)
+        {
+            PseudoValueArc::make_mut(&mut computed).display = crate::property::DisplayValue::None;
         }
 
         // `computed` may be shorter than node_count(): only capacity was
@@ -1164,12 +1166,13 @@ pub(crate) fn walk_from<D: StyleDom>(
         // Ids usually arrive in increasing order, which makes this a plain
         // push; any gap left by an unvisited id is filled with initial().
         if out.computed.len() < idx {
-            out.computed.resize(idx, ComputedValues::initial());
+            out.computed
+                .resize_shared(idx, PseudoValueArc::new(ComputedValues::initial()));
         }
         if out.computed.len() == idx {
-            out.computed.push(computed);
+            out.computed.push_shared(computed);
         } else {
-            out.computed[idx] = computed;
+            out.computed.set_shared(idx, computed);
         }
 
         // Push children onto the stack, looking up their already-written
@@ -1201,7 +1204,8 @@ pub(crate) fn walk_from<D: StyleDom>(
     }
     // Every node gets a slot, visited or not.
     if out.computed.len() < node_count {
-        out.computed.resize(node_count, ComputedValues::initial());
+        out.computed
+            .resize_shared(node_count, PseudoValueArc::new(ComputedValues::initial()));
     }
     if out.first_letter_inputs.is_empty() && out.first_line_contexts.is_empty() {
         out.typographic_inheritance.clear();
@@ -1952,7 +1956,7 @@ fn inherit_ancestor_paint(
     declarers: PaintingDeclarers,
     ancestors: &[StyleNodeId],
     exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
-    computed: &[ComputedValues],
+    computed: &super::ComputedStyles,
     font_size_px: f32,
 ) {
     // A property the root sets itself, in a declaration or by an attribute,
@@ -2128,7 +2132,7 @@ fn absolutize_inherited_lengths(
     properties: &mut [SvgStyleProperty],
     parent_declarers: StrokeDeclarers,
     exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
-    computed: &[ComputedValues],
+    computed: &super::ComputedStyles,
     font_size_px: f32,
 ) {
     for property in properties.iter_mut().filter(|property| property.inherited) {

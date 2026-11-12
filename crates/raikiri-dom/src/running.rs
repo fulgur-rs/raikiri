@@ -464,7 +464,7 @@ pub fn layout_running_element(
         // What the ancestor passes down by inheritance, without its own box.
         let mut boxless = ComputedValues::inherit_from(&cascade.computed[ancestor]);
         boxless.display = DisplayValue::Block;
-        cascade.computed[ancestor] = boxless;
+        cascade.computed.set(ancestor, boxless);
     }
     {
         let element = &mut cascade.computed[index];

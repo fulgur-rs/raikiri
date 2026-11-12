@@ -9463,22 +9463,25 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
-/// Places a zero-size absolutely positioned box in `wrapper`. Something placed
-/// against a block keeps it from moving to the next page with the box that
-/// begins it (see `first_box_ancestor_at_start`), so the tests of how a
-/// wrapper grows around a moved box can keep the wrapper where it is.
+/// Places an empty block of no height first in `wrapper`. A box before the
+/// one that begins a block keeps the block from moving to the next page with
+/// it (see `first_box_ancestor_at_start`), so the tests of how a wrapper grows
+/// around a moved box can keep the wrapper where it is.
 fn hold_in_place(doc: &mut Document, wrapper: usize) {
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Some("position:absolute;width:0;height:0"),
-    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:0"));
 }
 
 /// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
 /// Returns the avoiding box's page-flow y, the wrapper's height and the
 /// page count.
 fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize) {
+    nested_avoiding_block_held(wrapper_css, avoid_css, true)
+}
+
+/// As [`nested_avoiding_block`], with the wrapper held in place by an empty
+/// box before the avoiding one only when `held`. In a flex or grid wrapper
+/// that box would be an item beside the avoiding box rather than before it.
+fn nested_avoiding_block_held(wrapper_css: &str, avoid_css: &str, held: bool) -> (f32, f32, usize) {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -9495,7 +9498,9 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
         "div",
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
-    hold_in_place(&mut doc, wrapper);
+    if held {
+        hold_in_place(&mut doc, wrapper);
+    }
     let avoiding = doc.append_element(
         Some(wrapper),
         "div",
@@ -9554,19 +9559,20 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
         ),
         (100.0, 110.0, 2)
     );
-    // Items of a multi-column grid or a row flex container do not follow
-    // each other in block flow.
+    // A multi-column grid that begins with the avoiding box's row starts the
+    // next page with it, keeping its height (Chromium).
     assert_eq!(
-        nested_avoiding_block(
+        nested_avoiding_block_held(
             "display:grid;grid-template-columns:50px 50px",
-            "break-inside:avoid"
+            "break-inside:avoid",
+            false
         ),
-        (60.0, 60.0, 2)
+        (100.0, 60.0, 2)
     );
     // Chromium moves the whole atomic inline-flex line onto the next page;
     // its item still does not participate in the outer block flow.
     assert_eq!(
-        nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
+        nested_avoiding_block_held("display:inline-flex", "break-inside:avoid", false).0,
         100.0
     );
     // Nor do boxes in different columns of a multi-column container.
@@ -17431,18 +17437,20 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     let overflow = measure(&breaks, plain, Default::default(), &fit);
     assert_eq!(overflow.row_group_lead, None);
 
-    // A flex item moves intact unless it is the container's trailing item,
-    // which may run on into the container's continuation. A grid item always
-    // moves. Both are judged where they sit, below their block-start margin.
+    // A column flex item breaks across the page edge as a block does: an
+    // empty one has nothing that keeps it whole, so it stays, and so does
+    // the container's trailing item, which may run on into the container's
+    // continuation. Items kept whole by a single line no text places are
+    // covered by `a_marker_only_flex_item_follows_the_flex_rules`. A grid
+    // item always moves, judged where it sits, below its block-start
+    // margin.
     let flex_item = context(|context| context.is_flex_item = true);
     let overflow = measure(&breaks, first, flex_item, &fit);
-    assert!(overflow.flex_item && overflow.moves_box());
-    assert!(!measure(&breaks, first, flex_item, &offset_up).flex_item);
+    assert!(!overflow.flex_item && !overflow.moves_box());
     let margin_top = BoxFit {
         margin_top: 80.0,
         ..fit
     };
-    assert!(!measure(&breaks, first, flex_item, &margin_top).flex_item);
     let overflow = measure(&breaks, last, flex_item, &fit);
     assert!(!overflow.flex_item && !overflow.moves_box());
     let grid_item = context(|context| context.is_grid_item = true);
@@ -19268,7 +19276,7 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
 }
 
 #[test]
-fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_no_block() {
+fn a_paragraph_that_is_a_flex_item_alone_on_its_line_grows_as_a_block_in_block_flow() {
     // The second item wraps onto the next flex line, so the first is alone on
     // its line without being the container's only item.
     let mut doc = Document::new();
@@ -19314,8 +19322,8 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
     let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let mut checked = CheckedParagraphs::default();
 
-    // The item is not a block that moves as a unit, but its later lines can
-    // move down inside it.
+    // The item grows with lines moved down inside it, and the container grows
+    // beside it as for items that share a line.
     let blocks = pagination_state::LineBlocks::find(
         &session,
         &env,
@@ -19325,8 +19333,8 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         &mut TrailingFlexChildren::default(),
     );
     assert_eq!(blocks.paragraph_root, Some(item));
-    assert_eq!(blocks.block, None);
-    assert_eq!(blocks.flex_line, Some((item, container)));
+    assert_eq!(blocks.block, Some((item, true)));
+    assert_eq!(blocks.flex_line, None);
 
     // Not so for text inside a float or placed by positioned insets.
     let in_float = candidates::BoxContext::element(
@@ -21465,6 +21473,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             flex_line: None,
             line,
             shift: 12.0,
+            page: 0,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21540,6 +21549,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         flex_line: None,
         line: 0,
         shift: 12.0,
+        page: 0,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),

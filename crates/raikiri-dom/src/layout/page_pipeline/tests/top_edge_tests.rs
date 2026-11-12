@@ -441,11 +441,12 @@ fn a_container_moves_when_the_orphans_of_every_item_do_not_fit() {
 }
 
 #[test]
-fn a_grid_stays_while_one_item_has_its_first_line_on_the_page() {
-    // The first item is pushed down by its padding, the second one is not.
+fn a_grid_row_moves_whole_while_one_item_has_its_first_line_on_the_page() {
+    // The first item is pushed down by its padding, the second one is not: the
+    // items of the row are cut together, below the border that stays.
     assert_eq!(
         container_after(80, GRID, &["padding-top:30px", ""], 1),
-        (80.0, 86.0, 2)
+        (80.0, 100.0, 2)
     );
 }
 
@@ -469,16 +470,25 @@ fn a_container_stays_when_the_next_page_cannot_hold_the_first_piece() {
 }
 
 #[test]
-fn a_container_without_padding_or_border_above_its_items_is_left_to_its_items() {
-    // Nothing of the container stays behind alone, and the items sit one above
-    // the other or break in turn.
-    for css in [
+fn a_container_without_padding_or_border_above_its_items_moves_with_its_first_line() {
+    // Nothing of the container stays behind alone: the first item breaks as a
+    // block does, and the line that begins it takes the container along.
+    let (container, first, _) =
+        container_after(94, "display:flex;flex-direction:column", &["", ""], 1);
+    assert_eq!((container, first), (100.0, 100.0));
+}
+
+#[test]
+fn a_grid_without_edges_above_its_items_moves_with_its_first_row() {
+    // The items share their row, which moves whole, and the grid has nothing
+    // to leave behind above it.
+    let (container, first, _) = container_after(
+        94,
         "display:grid;grid-template-columns:30px 30px",
-        "display:flex;flex-direction:column",
-    ] {
-        let (container, _, _) = container_after(94, css, &["", ""], 1);
-        assert_eq!(container, 94.0, "{css}");
-    }
+        &["", ""],
+        1,
+    );
+    assert_eq!((container, first), (100.0, 100.0));
 }
 
 #[test]
