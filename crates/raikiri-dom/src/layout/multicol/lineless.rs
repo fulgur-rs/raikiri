@@ -2162,16 +2162,14 @@ pub(super) fn layout(
     let mut overflows = Vec::with_capacity(children.len());
     for &child in children {
         tree.nodes[child].cache.clear();
-        let output = tree.compute_child_layout(
-            NodeId::from(child),
-            super::column_child_layout_input(
-                tree,
-                child,
-                context.column_width,
-                definite_height,
-                AvailableSpace::MaxContent,
-            ),
+        let input = super::column_child_layout_input(
+            tree,
+            child,
+            context.column_width,
+            definite_height,
+            AvailableSpace::MaxContent,
         );
+        let output = tree.compute_child_layout(NodeId::from(child), input);
         sizes.push(output.size);
         overflows.push(output.scrollable_overflow_rect);
     }
@@ -2418,11 +2416,19 @@ pub(super) fn layout(
                 });
         }
         previous_column = pieces.last()?.column;
+        // `justify-self` places a box in its column.
+        let justified = crate::layout::dispatch::block_flow::justified_offset(
+            tree,
+            child,
+            context.rtl,
+            context.column_width - size.width,
+        )
+        .unwrap_or(0.0);
         let mut layout = tree.nodes[child].layout;
         layout.order = order as u32;
         layout.size = size;
         layout.location = Point {
-            x: origin.x + context.column_offset_x(first.column),
+            x: origin.x + context.column_offset_x(first.column) + justified,
             y: origin.y + first.top,
         };
         tree.set_unrounded_layout(NodeId::from(child), &layout);
@@ -2454,7 +2460,12 @@ pub(super) fn layout(
         };
         // A box that stays in one column is not cut, so has no clip.
         let clip_extents = if pieces.len() > 1 {
-            let wide = size.width.max(context.column_width).max(held_right);
+            // The clip ends where the column does, which a box `justify-self`
+            // moves along leaves nearer to it.
+            let wide = size
+                .width
+                .max(context.column_width - justified)
+                .max(held_right);
             piece_clip_extents(pieces.len(), (held_left, wide), absolute)
         } else {
             Vec::new()
@@ -2462,7 +2473,7 @@ pub(super) fn layout(
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
             shifts.push(if sliced { taken } else { 0.0 });
-            let x = origin.x + context.column_offset_x(piece.column);
+            let x = origin.x + context.column_offset_x(piece.column) + justified;
             let record = tree.fragment_tree.try_push(LayoutFragment {
                 node_id: child,
                 parent: Some(container),

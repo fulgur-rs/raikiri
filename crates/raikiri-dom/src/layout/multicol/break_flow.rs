@@ -384,7 +384,12 @@ fn collect(
     // A wrapper with an inline box of its own is as wide as block flow makes
     // it within its parent, which its margins, size limits and authored width
     // decide. Its padding and border then narrow what it holds.
-    let inline_box = !monolithic && has_inline_constraints(tree, id);
+    // A box that `justify-self` places at a position fits its content, so it
+    // is sized and placed like one too.
+    let justified = !floated
+        && auto_width
+        && crate::layout::dispatch::block_flow::justify_fits_content(tree, id);
+    let inline_box = !monolithic && (justified || has_inline_constraints(tree, id));
     let input = if inline_box {
         super::column_child_layout_input(
             tree,
@@ -404,7 +409,19 @@ fn collect(
             && auto_width
             && tree.nodes[id].image_intrinsic_box().is_none()
             && tree.nodes[id].tag_name() != Some("img"))
-        .then_some(content.width);
+        .then(|| {
+            if justified {
+                super::column_fit_content_width(
+                    tree,
+                    id,
+                    content.width,
+                    context.available_height,
+                    content.width,
+                )
+            } else {
+                content.width
+            }
+        });
         super::column_child_input(
             known_width,
             content.width,
@@ -433,13 +450,17 @@ fn collect(
                 + match float {
                     Float::Right => content.width - output.size.width,
                     Float::Left => 0.0,
-                    Float::None => {
-                        if parent_rtl {
-                            content.width - output.size.width
-                        } else {
-                            0.0
-                        }
-                    }
+                    Float::None => crate::layout::dispatch::block_flow::justified_offset(
+                        tree,
+                        id,
+                        parent_rtl,
+                        content.width - output.size.width,
+                    )
+                    .unwrap_or(if parent_rtl {
+                        content.width - output.size.width
+                    } else {
+                        0.0
+                    }),
                 },
             before,
             after,
@@ -511,8 +532,17 @@ fn wrapper_boxes(
     let style = style_of(tree, id);
     let (margin_left, margin_right) =
         super::column_horizontal_margins(&style, content.width, width);
-    // A right-to-left parent aligns a narrower box to its right edge.
-    let offset = if parent_rtl {
+    let justified = crate::layout::dispatch::block_flow::justified_offset(
+        tree,
+        id,
+        parent_rtl,
+        content.width - margin_left - margin_right - width,
+    );
+    // `justify-self` places a box whose margins are not auto, and a
+    // right-to-left parent otherwise aligns a narrower box to its right edge.
+    let offset = if let Some(justified) = justified {
+        content.start + margin_left + justified
+    } else if parent_rtl {
         content.start + content.width - width - margin_right
     } else {
         content.start + margin_left

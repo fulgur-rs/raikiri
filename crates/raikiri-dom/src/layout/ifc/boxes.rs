@@ -10,6 +10,7 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::dispatch::block_flow;
 use crate::layout::dispatch::block_flow::context::{
     BlockContext, BlockFormattingContext, BoxProbe,
 };
@@ -2792,7 +2793,17 @@ fn layout_block_child(
     let room = geometry.width - width - margin.left - margin.right;
     let free = room.max(0.0);
     let (left_auto, right_auto) = (style_margin.left.is_auto(), style_margin.right.is_auto());
-    if geometry.axes.direction() == Direction::Rtl && (room < 0.0 || (!left_auto && !right_auto)) {
+    if let Some(offset) = block_flow::justified_offset(
+        tree,
+        node,
+        geometry.axes.direction() == Direction::Rtl,
+        room,
+    ) {
+        // `justify-self` places a block whose margins are not auto.
+        margin.left += offset;
+    } else if geometry.axes.direction() == Direction::Rtl
+        && (room < 0.0 || (!left_auto && !right_auto))
+    {
         // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
         // its used left margin, and a block that overflows counts auto margins
         // as zero. Apply it before creating the child BFC.
@@ -3293,18 +3304,27 @@ fn layout_vertical_block_child_with_edges(
         }
     }
     let inline_insets = geometry.inline_axis_insets();
+    // `justify-self` places a child whose margins are not auto along the
+    // inline axis, measured here from its start, or from the start of the
+    // room a float leaves.
+    let justified =
+        block_flow::justified_offset_along(tree, node, true, false, inline_free).unwrap_or(0.0);
     let inline_start = slot.map_or_else(
-        || match geometry.axes.direction() {
-            Direction::Ltr => margin.top,
-            Direction::Rtl => margin.bottom,
+        || {
+            justified
+                + match geometry.axes.direction() {
+                    Direction::Ltr => margin.top,
+                    Direction::Rtl => margin.bottom,
+                }
         },
         |slot| {
             let slot_start = slot.x - inline_insets.0;
-            match geometry.axes.direction() {
-                Direction::Ltr => slot_start + auto_top,
-                // RTL inline-start is the slot's far edge; its auto margin moves inward.
-                Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
-            }
+            justified
+                + match geometry.axes.direction() {
+                    Direction::Ltr => slot_start + auto_top,
+                    // RTL inline-start is the slot's far edge; its auto margin moves inward.
+                    Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
+                }
         },
     );
     let mut guess = if origin_resolved && collapse_top {
@@ -3724,7 +3744,17 @@ fn layout_formatting_context_child(
     } else {
         0.0
     };
-    let extra_left = if beside_floats {
+    let rtl = geometry.axes.direction() == Direction::Rtl;
+    let justified = block_flow::justified_offset(tree, node, rtl, stretch - output.size.width);
+    let extra_left = if let Some(offset) = justified {
+        // `justify-self` places a box whose margins are not auto, in the
+        // room the floats leave it, where the slot already holds the margins.
+        if beside_floats {
+            offset
+        } else {
+            margin.left + offset
+        }
+    } else if beside_floats {
         auto_left
     } else if (autos == 0 || output.size.width > stretch)
         && geometry.axes.direction() == Direction::Rtl
@@ -4013,8 +4043,11 @@ fn content_keyword_width(
     };
     let room = fit_content_room(tree, node, keyword.expand(), basis, horizontal);
     // The `auto` width of a button is its fit-content width, where it is
-    // block-level too.
-    let button = horizontal && tree.nodes[node].is_html_button();
+    // block-level too, as is the `auto` inline size of a block that
+    // `justify-self` places at a position (CSS Box Alignment 3 §6.1).
+    let fits_auto = keyword.expand() == ExpandedDimension::Auto
+        && (horizontal && tree.nodes[node].is_html_button()
+            || block_flow::justify_fits_content(tree, node));
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -4048,7 +4081,7 @@ fn content_keyword_width(
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),
-        ExpandedDimension::Auto if button => Some(OwnWidth::Fit {
+        ExpandedDimension::Auto if fits_auto => Some(OwnWidth::Fit {
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),

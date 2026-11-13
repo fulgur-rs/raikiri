@@ -104,7 +104,20 @@ pub(super) fn line_relative_justify_self(
                 raikiri_layout_style::line_relative_alignment(value, false)
             }
         }
-        _ => line_relative(value, cascade, container),
+        // A block inside an inline box is aligned in the block container that
+        // holds the inline, whose direction can differ from the inline's.
+        _ => line_relative(
+            value,
+            cascade,
+            std::iter::successors(Some(container), |&node| doc.parent_of(node))
+                .find(|&node| {
+                    !matches!(
+                        doc.nodes[node].display(),
+                        DisplayValue::Inline | DisplayValue::Contents
+                    )
+                })
+                .unwrap_or(container),
+        ),
     };
     Some(own_alignment(cv, AlignSelfValue::Value(resolved)))
 }
