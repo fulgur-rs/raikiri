@@ -597,6 +597,65 @@ impl LayoutSession<'_> {
             })
     }
 
+    /// Whether the grid item `idx`, a block, flex or grid container with
+    /// in-flow content, no size containment and an aspect ratio, that is no
+    /// scroll container and states no size and no `min-width`, measures itself
+    /// because the library would let a minimum or maximum its ratio carries
+    /// over undercut its content (CSS Grid 1 §6.6):
+    ///
+    /// - With a length `min-height`, its minimum width is the larger of the
+    ///   min-content width of its content and the width the ratio carries
+    ///   over. The library takes the carried width as the minimum
+    ///   contribution and never asks for the content: Chromium sizes
+    ///   `aspect-ratio: 1; min-height: 100px` around a 150px wide child at
+    ///   150px by 150px in an `auto` column of a 50px grid.
+    /// - With an `auto` `min-height` and a `max-width`, its height is at
+    ///   least that of its content. The library holds it to the maximum
+    ///   height the ratio carries over from the `max-width`: Chromium sizes
+    ///   `aspect-ratio: 1; max-width: 50px` around a 200px high child at
+    ///   50px by 200px.
+    ///
+    /// A grid whose columns have a `min-content` or `max-content` minimum
+    /// takes the contribution of the item instead, so it leaves the item to
+    /// the library.
+    fn grid_item_content_outweighs_carried_minimum(
+        &self,
+        idx: usize,
+        item: &LayoutStyleView<'_>,
+    ) -> bool {
+        use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
+        let node = &self.nodes[idx];
+        let overflow = item.overflow();
+        matches!(
+            node.formatting_context,
+            FormattingContext::Block
+                | FormattingContext::Inline
+                | FormattingContext::Flex
+                | FormattingContext::Grid
+        ) && !node.size_containment.width
+            && !node.size_containment.height
+            && node
+                .children
+                .iter()
+                .any(|&child| self.nodes[child].layout_position() != Position::Absolute)
+            && !overflow.x.is_scroll_container()
+            && !overflow.y.is_scroll_container()
+            && item.stated_aspect_ratio().is_some()
+            && item.size().width.is_auto()
+            && item.size().height.is_auto()
+            && item.min_size().width.is_auto()
+            && match item.min_size().height.expand() {
+                ExpandedLengthPercentageAuto::Length(_) => true,
+                ExpandedLengthPercentageAuto::Auto => !item.max_size().width.is_auto(),
+                _ => false,
+            }
+            && self.taffy_parent_of(idx).is_some_and(|container| {
+                crate::layout::taffy_adapter::columns_have_no_content_minimum(
+                    &self.physical_style(container),
+                )
+            })
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -673,7 +732,9 @@ impl LayoutSession<'_> {
         ) && (percentage_sized || auto_with_minimum);
         // A size-contained box measures itself for the height that
         // `contain-intrinsic-size` holds it to past a carried maximum.
-        let measured = measured || crate::layout::dispatch::contained_ratio_item(self, idx);
+        let measured = measured
+            || crate::layout::dispatch::contained_ratio_item(self, idx)
+            || self.grid_item_content_outweighs_carried_minimum(idx, &item);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
@@ -740,6 +801,9 @@ impl LayoutSession<'_> {
         else {
             return None;
         };
+        if self.grid_item_content_outweighs_carried_minimum(idx, &item) {
+            return None;
+        }
         let justify = self.grid_item_justify_self(idx);
         if justify.keyword == AlignItemsKeyword::Stretch {
             return None;
