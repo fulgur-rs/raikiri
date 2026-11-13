@@ -3305,10 +3305,10 @@ fn layout_vertical_block_child_with_edges(
     }
     let inline_insets = geometry.inline_axis_insets();
     // `justify-self` places a child whose margins are not auto along the
-    // inline axis, measured here from its start.
-    let justified = block_flow::justified_offset_along(tree, node, true, false, inline_free)
-        .filter(|_| slot.is_none())
-        .unwrap_or(0.0);
+    // inline axis, measured here from its start, or from the start of the
+    // room a float leaves.
+    let justified =
+        block_flow::justified_offset_along(tree, node, true, false, inline_free).unwrap_or(0.0);
     let inline_start = slot.map_or_else(
         || {
             justified
@@ -3319,11 +3319,12 @@ fn layout_vertical_block_child_with_edges(
         },
         |slot| {
             let slot_start = slot.x - inline_insets.0;
-            match geometry.axes.direction() {
-                Direction::Ltr => slot_start + auto_top,
-                // RTL inline-start is the slot's far edge; its auto margin moves inward.
-                Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
-            }
+            justified
+                + match geometry.axes.direction() {
+                    Direction::Ltr => slot_start + auto_top,
+                    // RTL inline-start is the slot's far edge; its auto margin moves inward.
+                    Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
+                }
         },
     );
     let mut guess = if origin_resolved && collapse_top {

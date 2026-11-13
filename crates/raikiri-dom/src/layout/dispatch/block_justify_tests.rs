@@ -368,3 +368,33 @@ fn left_and_right_inside_an_inline_follow_the_block_container() {
         assert_eq!((left, width), (x, 20.0), "{item}");
     }
 }
+
+#[test]
+fn a_vertical_block_beside_a_float_is_placed_in_the_room_the_float_leaves() {
+    let vertical = "display:block;width:100px;height:200px;writing-mode:vertical-rl";
+    for (direction, side, item, y) in [
+        ("ltr", "left", "justify-self:end", 180.0),
+        ("ltr", "left", "justify-self:center", 115.0),
+        ("ltr", "right", "justify-self:end", 130.0),
+        ("rtl", "left", "justify-self:end", 50.0),
+        ("rtl", "right", "justify-self:start", 130.0),
+        ("ltr", "left", "justify-self:end;margin-top:auto", 180.0),
+        ("rtl", "right", "justify-self:start;margin-bottom:auto", 0.0),
+    ] {
+        let (_, top, _, height) = block_rect(
+            &format!("{vertical};direction:{direction}"),
+            &format!("display:flow-root;{item}"),
+            |doc, root| {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    Some(&format!(
+                        "display:block;float:{side};width:50px;height:50px"
+                    )),
+                );
+                root
+            },
+        );
+        assert_eq!((top, height), (y, 20.0), "{direction} {side} | {item}");
+    }
+}
