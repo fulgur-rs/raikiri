@@ -128,11 +128,12 @@ impl InlinePosition {
 
 /// The position `justify-self` gives the in-flow block `child` in the block
 /// container that lays it out, read from the style views, and whether its
-/// margins are auto (see [`position_of`]), with the direction of that
-/// container.
+/// margins along its inline axis, its height when `vertical_inline_axis`,
+/// are auto (see [`position_of`]), with the direction of that container.
 fn justify_position_of(
     tree: &LayoutSession<'_>,
     child: usize,
+    vertical_inline_axis: bool,
 ) -> Option<((InlinePosition, bool), bool, Direction)> {
     use crate::layout::style_views::ReadRole;
     // The parent box, past `display: contents`, and the block container that
@@ -157,18 +158,20 @@ fn justify_position_of(
     };
     let position = position_of(alignment, style.direction(), container.direction())?;
     let margin = style.margin();
-    Some((
-        position,
-        margin.left.is_auto() || margin.right.is_auto(),
-        container.direction(),
-    ))
+    // The inline axis of a box in a vertical root lies along its height.
+    let auto_margins = if vertical_inline_axis {
+        margin.top.is_auto() || margin.bottom.is_auto()
+    } else {
+        margin.left.is_auto() || margin.right.is_auto()
+    };
+    Some((position, auto_margins, container.direction()))
 }
 
 /// Whether `justify-self` places the in-flow block `child` at a position,
 /// which gives an `auto` width the fit-content width, even where an auto
 /// margin then places the box.
 pub(crate) fn justify_fits_content(tree: &LayoutSession<'_>, child: usize) -> bool {
-    justify_position_of(tree, child).is_some()
+    justify_position_of(tree, child, false).is_some()
 }
 
 /// Where `justify-self` puts the in-flow block `child` in a room `free` wider
@@ -181,7 +184,19 @@ pub(crate) fn justified_offset(
     rtl: bool,
     free: f32,
 ) -> Option<f32> {
-    match justify_position_of(tree, child)? {
+    justified_offset_along(tree, child, false, rtl, free)
+}
+
+/// [`justified_offset`] for a box whose inline axis lies along its height when
+/// `vertical_inline_axis`, whose auto margins are then the top and bottom.
+pub(crate) fn justified_offset_along(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    vertical_inline_axis: bool,
+    rtl: bool,
+    free: f32,
+) -> Option<f32> {
+    match justify_position_of(tree, child, vertical_inline_axis)? {
         (_, true, _) => None,
         ((position, safe), false, _) => Some(position.offset(safe, free, rtl)),
     }
@@ -752,7 +767,7 @@ pub(super) fn layout(
         // The position comes from the block container that holds the child,
         // which an inline box between them does not change; it is turned
         // into one along the direction this container lays the child out in.
-        let justify = justify_position_of(tree, usize::from(child)).map(
+        let justify = justify_position_of(tree, usize::from(child), false).map(
             |((position, safe), _, direction)| {
                 let position = match position {
                     InlinePosition::Start if direction != container.direction => {

@@ -3306,7 +3306,7 @@ fn layout_vertical_block_child_with_edges(
     let inline_insets = geometry.inline_axis_insets();
     // `justify-self` places a child whose margins are not auto along the
     // inline axis, measured here from its start.
-    let justified = block_flow::justified_offset(tree, node, false, inline_free)
+    let justified = block_flow::justified_offset_along(tree, node, true, false, inline_free)
         .filter(|_| slot.is_none())
         .unwrap_or(0.0);
     let inline_start = slot.map_or_else(

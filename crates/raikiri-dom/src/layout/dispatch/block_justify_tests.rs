@@ -335,3 +335,24 @@ fn start_inside_an_inline_of_another_direction_is_the_containers_start() {
         assert_eq!((left, width), (x, 20.0), "{item}");
     }
 }
+
+#[test]
+fn an_auto_margin_along_a_vertical_inline_axis_takes_the_room_first() {
+    let vertical = "display:block;width:100px;height:200px;writing-mode:vertical-rl";
+    for (margin, y) in [
+        ("margin-top:auto", 180.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin-left:auto", 90.0),
+    ] {
+        let (_, top, _, _) = block_rect(
+            vertical,
+            &format!("display:block;justify-self:center;{margin}"),
+            |doc, root| {
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
+                doc.append_text(span, "a");
+                span
+            },
+        );
+        assert_eq!(top, y, "{margin}");
+    }
+}
