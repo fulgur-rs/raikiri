@@ -108,8 +108,6 @@ pub(crate) struct UnplacedLine {
     /// Whether the line holds atomic inlines and no text, as opposed to
     /// generated text or a glyphless line.
     pub(crate) atomic: bool,
-    /// Whether the line has neither generated text nor atomic inlines.
-    pub(crate) glyphless: bool,
 }
 
 /// The line of the paragraph rooted at `root` when the paragraph is a single
@@ -164,7 +162,6 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<Unplac
             bottom: top + block_size,
         },
         atomic,
-        glyphless,
     })
 }
 

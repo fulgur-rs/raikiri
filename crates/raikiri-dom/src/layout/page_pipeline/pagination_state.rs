@@ -806,11 +806,17 @@ impl PaginationState {
             forced_target_page(self.current_page, natural)
         } else if flow_top > start + 0.001
             && flow_top + height > end + 0.001
+            // A line taller than the next page moves too, as Chromium moves
+            // it, but only past content before it: a line that starts the
+            // flow, below nothing but margins, has no break before it, and
+            // runs over the pages from where it is (css/printing
+            // fragmented-inline-block-002).
             && (candidate.context.leading_block_piece_end().is_some()
                 || block_fits_page_step(
                     height,
                     env.page_origins.step_at(natural.saturating_add(1)),
-                ))
+                )
+                || follows_flow_content(document, env.cascade, env.body_id, candidate.node_id))
         {
             natural.saturating_add(1)
         } else {
@@ -2286,8 +2292,9 @@ impl PaginationState {
     /// is moved as a unit instead when its natural split would leave too few
     /// orphans. A block taller than a
     /// page is moved as a unit only when its break would leave too few
-    /// orphans, content comes before it on a page it does not start, and its
-    /// first line fits a page; otherwise it keeps its natural break. A
+    /// orphans and content comes before it on a page it does not start, even
+    /// when its first line is taller than a page; otherwise it keeps its
+    /// natural break. A
     /// paragraph that is a flex item alone on its row, or that ends an
     /// eligible column flex box, cannot move as a unit here, but its later
     /// lines can move down inside it. The padding and border
@@ -2510,11 +2517,11 @@ impl PaginationState {
                 }
                 // A block taller than a page moves whole only to keep its
                 // orphans, as it fragments on the next page anyway. That
-                // takes content before it on a page it does not start, and a
-                // first line that fits a page. Edges above the lines that end
-                // this page move it whatever its height: the page breaks
-                // before the block, not between its edges and its lines, even
-                // when they run over a page.
+                // takes content before it on a page it does not start, even
+                // when its first line is taller than a page. Edges above the
+                // lines that end this page move it whatever its height: the
+                // page breaks before the block, not between its edges and its
+                // lines, even when they run over a page.
                 // The page already begins with the holder's leading edges,
                 // after nothing but empty boxes. Keep a fitting first line
                 // instead of breaking before the first child again to satisfy
@@ -2541,10 +2548,7 @@ impl PaginationState {
                         || line_fit.top_edges_end_page
                         || (block_effective_y > page_start + 0.001
                             && follows_flow_content(document, cascade, body_id, block_id)
-                            && line_fit.gains_from_moving_tall_block(
-                                text.effective_y - block_effective_y + line_metrics[0].1,
-                                page_step,
-                            )));
+                            && line_fit.leaves_too_few_orphans()));
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
@@ -2752,9 +2756,7 @@ impl PaginationState {
             // when content comes before it on this page.
             let can_move_block = !moved
                 && (block_fits_page_step(run_height, page_step)
-                    || (run_top > page_start + 0.001
-                        && fit
-                            .gains_from_moving_tall_block(metrics[0].1 - metrics[0].0, page_step)));
+                    || (run_top > page_start + 0.001 && fit.leaves_too_few_orphans()));
             // The padding and border below the last line do not fit, and the
             // page cannot give up the widows and keep the orphans: the break
             // inside the lines would leave too few of them on one side. The

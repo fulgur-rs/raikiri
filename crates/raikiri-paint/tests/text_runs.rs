@@ -529,21 +529,23 @@ fn proportional_font_runs_match_paint() {
 }
 
 /// A line taller than the page area is drawn on every page it reaches, so
-/// each of those pages lists its runs.
+/// each of those pages lists its runs. Below other content, the line starts
+/// the next page, so the first page has none of its runs.
 #[test]
 fn a_line_taller_than_the_page_is_in_the_runs_of_every_page_it_reaches() {
     let result = lay_out(
         "<p>before</p><p style=\"line-height: 250px; margin: 0\">tall</p><p>after</p>",
         "",
     );
-    assert_eq!(result.page_count(), 2);
+    assert_eq!(result.page_count(), 3);
     for page in result.pages() {
         let tall = page
             .text_runs()
             .iter()
             .filter(|run| run.text == "tall")
             .count();
-        assert_eq!(tall, 1, "page {}", page.index());
+        let expected = usize::from(page.index() > 0);
+        assert_eq!(tall, expected, "page {}", page.index());
     }
     assert!(assert_runs_match_paint(&result) > 0);
 }
