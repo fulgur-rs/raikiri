@@ -548,7 +548,7 @@ impl LayoutSession<'_> {
     /// `idx` carries over to its width needs the grid area to resolve: the
     /// item states no size and no `min-width`, a `min-height`, and a
     /// percentage in that `min-height`, in its padding or in its
-    /// `max-width`, and its inline alignment is `normal`. A column whose
+    /// `max-width`, and its inline alignment is not `stretch`. A column whose
     /// minimum is `min-content` or `max-content` takes the content
     /// contribution of the item instead, so a grid with such a column leaves
     /// the item to the library.
@@ -582,7 +582,7 @@ impl LayoutSession<'_> {
                 .into_iter()
                 .any(percent);
         needs_area
-            && self.grid_item_justify_self(idx).keyword == AlignItemsKeyword::Normal
+            && self.grid_item_justify_self(idx).keyword != AlignItemsKeyword::Stretch
             && self.taffy_parent_of(idx).is_some_and(|container| {
                 crate::layout::taffy_adapter::columns_have_no_content_minimum(
                     &self.physical_style(container),
@@ -694,15 +694,20 @@ impl LayoutSession<'_> {
     /// The minimum width, in the box `box-sizing` names, that the aspect ratio
     /// of the grid item `idx` carries over from the length its `min-height`
     /// states, when the item states no size and no `min-width` and its inline
-    /// alignment is `normal`.
+    /// alignment is not `stretch`.
     ///
     /// The library fills an `auto` minimum with the padding and border before
     /// it carries minimums across the ratio, so a `min-height` never becomes a
     /// minimum width, and it stretches a `normal` item to the width of its
-    /// area. Chromium takes the width the ratio relates to the `min-height`
-    /// past a narrower area: `aspect-ratio: 1; min-height: 100px` in a 50px
-    /// column is 100px wide. An item that asks for `stretch` keeps the width
-    /// of its area, and a `max-width` the item states caps the carried width.
+    /// area, from which the ratio then gives the height. Chromium takes the
+    /// width the ratio relates to the `min-height` past a narrower area:
+    /// `aspect-ratio: 1; min-height: 100px` in a 50px column is 100px wide,
+    /// and in a 200px column 200px by 200px. An item aligned to the start, center or end
+    /// takes its width from the ratio too, and from a height that `min-height`
+    /// holds above a shorter row it stretches to: `align-self: stretch` in a
+    /// 60px row is 100px by 100px. An item that asks for `stretch` inline
+    /// keeps the width of its area, and a `max-width` the item states caps the
+    /// carried width.
     /// Percentages that only the grid area resolves are left to the item,
     /// which measures itself once the area is known (`grid_item_percent_carry`).
     fn grid_item_carried_min_width(&self, idx: usize) -> Option<f32> {
@@ -726,7 +731,7 @@ impl LayoutSession<'_> {
             return None;
         };
         let justify = self.grid_item_justify_self(idx);
-        if justify.keyword != AlignItemsKeyword::Normal {
+        if justify.keyword == AlignItemsKeyword::Stretch {
             return None;
         }
         // The padding and border, which only lengths give before the width of
