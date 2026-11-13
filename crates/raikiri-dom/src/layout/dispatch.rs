@@ -3091,7 +3091,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         {
             stack.push((
                 child,
-                doc.nodes[child].layout.location.y,
+                normal_flow_top(doc, child),
                 (f32::NEG_INFINITY, f32::INFINITY),
             ));
         }
@@ -3102,7 +3102,33 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         // Clamping a value to this box and then to the boxes around it is
         // clamping it to this box's edges, each clamped to the outer range.
         let is_text = node.kind() == raikiri_traits::NodeKind::Text;
+        // A box whose lines run across those of the inline-block has none it
+        // could sit on, and neither does anything inside it.
+        if !is_text && node.used_writing_mode.is_vertical() {
+            continue;
+        }
         let style = (!is_text).then(|| doc.physical_style(idx));
+        // A block container that is a scroll container has, for the last
+        // baseline an inline-block sits on, its block-end margin edge,
+        // whatever lines it holds (CSS Box Alignment 3 §9.1). A flex or grid
+        // container around it aligns its items by their own baselines.
+        // spec: https://www.w3.org/TR/css-align-3/#baseline-export
+        let block_flow = |idx: usize| {
+            matches!(
+                doc.nodes[idx].formatting_context,
+                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Multicol
+            )
+        };
+        if style
+            .as_ref()
+            .is_some_and(|style| is_scroll_container(style.overflow()))
+            && block_flow(idx)
+            && doc.taffy_parent_of(idx).is_none_or(block_flow)
+        {
+            let edge = offset_y + node.layout.size.height + node.layout.margin.bottom;
+            last_baseline = Some(edge.max(outer_clip.0).min(outer_clip.1));
+            continue;
+        }
         let clip = if style
             .as_ref()
             .is_some_and(|style| is_scroll_container(style.overflow()))
@@ -3151,11 +3177,43 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
                 && !doc.nodes[child].is_display_none()
                 && doc.nodes[child].layout_position() != Position::Absolute
             {
-                stack.push((child, offset_y + doc.nodes[child].layout.location.y, clip));
+                stack.push((child, offset_y + normal_flow_top(doc, child), clip));
             }
         }
     }
     last_baseline
+}
+
+/// The top of the box `idx` in normal flow, from the top of its parent's
+/// border box: where layout placed it, less the offset its relative
+/// positioning moved it by. A baseline is found where the box would be,
+/// as a relative offset moves the box without moving the boxes it is
+/// aligned with (CSS 2.1 §9.4.3).
+fn normal_flow_top(doc: &LayoutSession<'_>, idx: usize) -> f32 {
+    let top = doc.nodes[idx].layout.location.y;
+    // A relative offset that layout leaves to the painter is not in the
+    // location.
+    if doc.physical_style(idx).position() != Position::Relative
+        || doc.nodes[idx].needs_relative_block_paint_offset
+    {
+        return top;
+    }
+    let inset = doc.physical_style(idx).inset();
+    let basis = doc.taffy_parent_of(idx).and_then(|parent| {
+        let style = doc.physical_style(parent);
+        let height = style.size().height;
+        (!height.is_auto() && !height.uses_percentage()).then(|| {
+            let layout = &doc.nodes[parent].layout;
+            layout.size.height
+                - layout.padding.top
+                - layout.padding.bottom
+                - layout.border.top
+                - layout.border.bottom
+        })
+    });
+    let start = inset.top.maybe_resolve(basis);
+    let end = inset.bottom.maybe_resolve(basis).map(|end| -end);
+    top - start.or(end).unwrap_or(0.0)
 }
 
 /// Whether `idx` is a block-level `<button>` that is a direct child of a
