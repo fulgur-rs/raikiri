@@ -1503,52 +1503,35 @@ pub(crate) fn parse_border_axis(
     input: &mut Parser<'_, '_>,
     key: PropertyKey,
 ) -> Option<StartEnd<Border>> {
-    let initial = Border::default();
-    let sides = match key {
+    /// The two edges, each the initial border with one part replaced.
+    fn edges<T: Clone>(pair: StartEnd<T>, set: fn(&mut Border, T)) -> StartEnd<Border> {
+        let edge = |part: T| {
+            let mut border = Border::default();
+            set(&mut border, part);
+            border
+        };
+        StartEnd {
+            start: edge(pair.start),
+            end: edge(pair.end),
+        }
+    }
+    Some(match key {
         PropertyKey::BorderBlock | PropertyKey::BorderInline => {
             StartEnd::both(parse_border_top_shorthand(input)?)
         }
-        PropertyKey::BorderBlockWidth | PropertyKey::BorderInlineWidth => {
-            let pair = parse_border_axis_pair(input, parse_border_width_side)?;
-            StartEnd {
-                start: Border {
-                    width: pair.start,
-                    ..initial
-                },
-                end: Border {
-                    width: pair.end,
-                    ..initial
-                },
-            }
-        }
-        PropertyKey::BorderBlockStyle | PropertyKey::BorderInlineStyle => {
-            let pair = parse_border_axis_pair(input, parse_border_style_side)?;
-            StartEnd {
-                start: Border {
-                    style: pair.start,
-                    ..initial
-                },
-                end: Border {
-                    style: pair.end,
-                    ..initial
-                },
-            }
-        }
-        _ => {
-            let pair = parse_border_axis_pair(input, parse_border_color)?;
-            StartEnd {
-                start: Border {
-                    color: pair.start,
-                    ..initial
-                },
-                end: Border {
-                    color: pair.end,
-                    ..initial
-                },
-            }
-        }
-    };
-    Some(sides)
+        PropertyKey::BorderBlockWidth | PropertyKey::BorderInlineWidth => edges(
+            parse_border_axis_pair(input, parse_border_width_side)?,
+            |border, width| border.width = width,
+        ),
+        PropertyKey::BorderBlockStyle | PropertyKey::BorderInlineStyle => edges(
+            parse_border_axis_pair(input, parse_border_style_side)?,
+            |border, style| border.style = style,
+        ),
+        _ => edges(
+            parse_border_axis_pair(input, parse_border_color)?,
+            |border, color| border.color = color,
+        ),
+    })
 }
 
 /// [`parse_border_axis`] wrapped in the [`PropertyValue`] variant of `key`.

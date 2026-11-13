@@ -14090,3 +14090,73 @@ fn applying_flow_relative_border_shorthands_directly_sets_their_longhands() {
         crate::property::BorderStyle::Dashed
     );
 }
+
+#[test]
+fn flow_relative_border_keeps_currentcolor_symbolic_on_its_mapped_side() {
+    let mix = BorderColor::Resolved(PINK);
+    let current = BorderColor::CurrentColor;
+    for declaration in [
+        format!("border-block-start-color: {MIX}"),
+        format!("border-block-start: 1px solid {MIX}"),
+        format!("border-block: 1px solid {MIX}; border-block-end-color: currentcolor"),
+        format!("border-block-color: {MIX} currentcolor"),
+    ] {
+        let values = cascade_doc(
+            "",
+            "div",
+            Some(&format!(
+                "color: red; writing-mode: vertical-rl; {declaration}"
+            )),
+        );
+        let [top, right, bottom, left, ..] = line_colors(&values);
+        assert_eq!(
+            [top, right, bottom, left],
+            [current, mix, current, current],
+            "{declaration}"
+        );
+    }
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(&format!(
+            "color: red; direction: rtl; border-inline-color: currentcolor {MIX}"
+        )),
+    );
+    let [_, right, _, left, ..] = line_colors(&values);
+    assert_eq!([right, left], [current, mix]);
+}
+
+#[test]
+fn inherited_flow_relative_border_width_marks_its_mapped_side() {
+    // At a device scale of 1.5, the parent's computed right width is
+    // 74 / 1.5px. The child inherits it on its right side (its
+    // block-start side in `vertical-rl`) without snapping it again, and its
+    // own top width is still snapped (49.75px is 74.625 device pixels).
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 49.75px solid"));
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some(
+            "writing-mode: vertical-rl; border-top: 49.75px solid; \
+             border-block-start-width: inherit; border-block-start-style: solid",
+        ),
+    );
+    let tree = RuleTree::empty();
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+    let snapped = ComputedLength(74.0 / 1.5);
+    assert_eq!(result.computed[parent].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.top.width, snapped);
+}

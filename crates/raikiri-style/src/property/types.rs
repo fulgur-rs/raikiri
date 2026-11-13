@@ -12590,7 +12590,7 @@ pub enum PropertyKey {
     BorderWidth,
     BorderColor,
     // Flow-relative border shorthands of one axis (CSS Logical Properties
-    // and Values 1 §4.5; semantics on PropertyValue::BorderAxis).
+    // and Values 1 §4.5; semantics on PropertyValue::BorderBlock).
     BorderBlock,
     BorderInline,
     BorderBlockWidth,

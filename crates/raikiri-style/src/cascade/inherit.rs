@@ -1901,7 +1901,9 @@ pub(crate) fn apply_winners(
                                 | crate::property::PropertyKey::ColumnRuleWidth
                         ))
                 {
-                    let index = match winner_key {
+                    // A flow-relative width was applied to the side its slot
+                    // names.
+                    let index = match candidates.decls()[winner.idx].slot(flow) {
                         crate::property::PropertyKey::BorderTopWidth => Some(0),
                         crate::property::PropertyKey::BorderRightWidth => Some(1),
                         crate::property::PropertyKey::BorderBottomWidth => Some(2),

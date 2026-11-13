@@ -238,6 +238,17 @@ impl FlowMapping {
                 PhysicalSide::Bottom => PropertyValue::BorderBottomColorCssWide(k),
                 PhysicalSide::Left => PropertyValue::BorderLeftColorCssWide(k),
             },
+            // A border color that keeps `currentcolor` symbolic names its
+            // longhand in its key.
+            PropertyValue::ContextualColor(mut color)
+                if matches!(
+                    BoxProperty::of_key(color.key),
+                    Some(BoxProperty::BorderColor)
+                ) =>
+            {
+                color.key = BoxProperty::BorderColor.key(to);
+                PropertyValue::ContextualColor(color)
+            }
             PropertyValue::ContainIntrinsicWidth(v) | PropertyValue::ContainIntrinsicHeight(v) => {
                 match self.physical_of(BoxProperty::ContainIntrinsic, side) {
                     PhysicalSide::Left | PhysicalSide::Right => {
@@ -429,7 +440,12 @@ pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
     ];
     // Every declaration passes through here; most names are shorter or
     // longer than any of the thirty, so their length rules them out first.
-    if !matches!(name.len(), 15..=25 | 28..=29) {
+    // Only border names are 21 to 25 bytes long among them.
+    let border = || {
+        name.get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("border-"))
+    };
+    if !(matches!(name.len(), 15..=20 | 28..=29) || (matches!(name.len(), 21..=25) && border())) {
         return None;
     }
     LONGHANDS

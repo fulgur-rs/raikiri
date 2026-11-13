@@ -1481,9 +1481,10 @@ fn border_axis_longhand_side(shorthand: PropertyKey, longhand: PropertyKey) -> O
 
 /// Expand a flow-relative border shorthand of one axis into the longhands of
 /// the edges the axis has in `horizontal-tb` with `direction: ltr`, each with
-/// the flow-relative side the cascade maps it by. Only the parts the
-/// shorthand names are pushed: all three for `border-block` and
-/// `border-inline`, one for the `-width`, `-style` and `-color` forms.
+/// the flow-relative side the cascade maps it by ([`border_axis_longhand_side`]).
+/// Only the parts the shorthand names are pushed ([`classify`]): all three
+/// for `border-block` and `border-inline`, one for the `-width`, `-style` and
+/// `-color` forms.
 #[inline(never)]
 pub(crate) fn expand_border_axis(
     value: &PropertyValue,
@@ -1503,62 +1504,32 @@ pub(crate) fn expand_border_axis(
         return;
     };
     let key = value.key();
-    let block = matches!(
-        key,
-        K::BorderBlock | K::BorderBlockWidth | K::BorderBlockStyle | K::BorderBlockColor
-    );
-    let (width, style, color) = match key {
-        K::BorderBlock | K::BorderInline => (true, true, true),
-        K::BorderBlockWidth | K::BorderInlineWidth => (true, false, false),
-        K::BorderBlockStyle | K::BorderInlineStyle => (false, true, false),
-        _ => (false, false, true),
+    let KeyClass::Shorthand { longhands } = classify(key) else {
+        return;
     };
-    let edges = if block {
-        [
-            (sides.start, LogicalSide::BlockStart),
-            (sides.end, LogicalSide::BlockEnd),
-        ]
-    } else {
-        [
-            (sides.start, LogicalSide::InlineStart),
-            (sides.end, LogicalSide::InlineEnd),
-        ]
-    };
-    for (border, side) in edges {
-        // The block-axis edges are stored as top and bottom, the inline-axis
-        // ones as left and right (`horizontal-tb`, `ltr`).
-        let start = matches!(side, LogicalSide::BlockStart | LogicalSide::InlineStart);
-        let (w, s, c) = match (block, start) {
-            (true, true) => (
-                PropertyValue::BorderTopWidth(border.width),
-                PropertyValue::BorderTopStyle(border.style),
-                PropertyValue::BorderTopColor(border.color),
-            ),
-            (true, false) => (
-                PropertyValue::BorderBottomWidth(border.width),
-                PropertyValue::BorderBottomStyle(border.style),
-                PropertyValue::BorderBottomColor(border.color),
-            ),
-            (false, true) => (
-                PropertyValue::BorderLeftWidth(border.width),
-                PropertyValue::BorderLeftStyle(border.style),
-                PropertyValue::BorderLeftColor(border.color),
-            ),
-            (false, false) => (
-                PropertyValue::BorderRightWidth(border.width),
-                PropertyValue::BorderRightStyle(border.style),
-                PropertyValue::BorderRightColor(border.color),
-            ),
+    for &longhand in longhands {
+        let Some(side) = border_axis_longhand_side(key, longhand) else {
+            continue;
         };
-        if width {
-            push(w, side);
-        }
-        if style {
-            push(s, side);
-        }
-        if color {
-            push(c, side);
-        }
+        let edge = match side {
+            LogicalSide::BlockStart | LogicalSide::InlineStart => sides.start,
+            LogicalSide::BlockEnd | LogicalSide::InlineEnd => sides.end,
+        };
+        let value = match longhand {
+            K::BorderTopWidth => V::BorderTopWidth(edge.width),
+            K::BorderTopStyle => V::BorderTopStyle(edge.style),
+            K::BorderTopColor => V::BorderTopColor(edge.color),
+            K::BorderBottomWidth => V::BorderBottomWidth(edge.width),
+            K::BorderBottomStyle => V::BorderBottomStyle(edge.style),
+            K::BorderBottomColor => V::BorderBottomColor(edge.color),
+            K::BorderLeftWidth => V::BorderLeftWidth(edge.width),
+            K::BorderLeftStyle => V::BorderLeftStyle(edge.style),
+            K::BorderLeftColor => V::BorderLeftColor(edge.color),
+            K::BorderRightWidth => V::BorderRightWidth(edge.width),
+            K::BorderRightStyle => V::BorderRightStyle(edge.style),
+            _ => V::BorderRightColor(edge.color),
+        };
+        push(value, side);
     }
 }
 
