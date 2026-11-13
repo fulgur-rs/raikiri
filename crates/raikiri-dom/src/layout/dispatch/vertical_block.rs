@@ -378,9 +378,10 @@ fn next_transposed_frame_id(tree: &mut LayoutSession<'_>) -> u64 {
 /// vertical axes: `Some(true)` for `vertical-rl` and `sideways-rl`,
 /// `Some(false)` for `vertical-lr` and `sideways-lr`.
 ///
-/// A multicol container and its contents run vertical writing on
-/// horizontal axes, as their sizing properties do, and so do the boxes the
-/// table algorithm lays out; they are left to the horizontal block path.
+/// A vertical multicol container and the vertical boxes in it run vertical
+/// writing on horizontal axes, as their sizing properties do, and so do the
+/// boxes the table algorithm lays out; they are left to the horizontal block
+/// path.
 pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     let right_to_left = match used_writing_mode(tree, idx) {
         WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
@@ -394,13 +395,14 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     {
         return None;
     }
-    if tree
+    // A vertical box below a horizontal one is the root of an orthogonal
+    // flow, which a horizontal multicol container around it does not break
+    // into columns (CSS Writing Modes 4 section 7.3).
+    let in_vertical_multicol = tree
         .inclusive_ancestors(idx)
-        .any(|id| tree.nodes[id].multicol.is_some())
-    {
-        return None;
-    }
-    Some(right_to_left)
+        .take_while(|&id| used_writing_mode(tree, id).is_vertical())
+        .any(|id| tree.nodes[id].multicol.is_some());
+    (!in_vertical_multicol).then_some(right_to_left)
 }
 
 /// Run the final physical layout of a vertical table cell on vertical axes.
