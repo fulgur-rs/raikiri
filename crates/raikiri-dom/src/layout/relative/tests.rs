@@ -645,8 +645,6 @@ fn a_vertical_containing_block_takes_a_block_size_that_layout_makes_definite() {
         Some("display:flex;flex-direction:column;width:100px"),
     );
     let item = document.append_element(Some(flex), "div", Some("writing-mode:vertical-rl"));
-    // Text makes the item a paragraph, whose width layout settles.
-    document.append_text(item, "x");
     document.append_element(
         Some(item),
         "div",

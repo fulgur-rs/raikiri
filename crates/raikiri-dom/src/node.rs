@@ -728,6 +728,10 @@ pub struct Node {
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
     pub(crate) percent_basis_height: Option<f32>,
+    /// The content-box width of this box at its last final layout when its
+    /// container fixed it as definite or its own `width` gave it, `None`
+    /// otherwise: the definite block size of a vertical box.
+    pub(crate) percent_basis_width: Option<f32>,
     /// The border-box height the block flow of this box found for its content
     /// in its last layout, with its minimum and maximum applied: the height
     /// `auto` gives it, whatever height it was given. `None` for a box that
@@ -880,6 +884,7 @@ impl Node {
             ifc: None,
             layout: BoxLayout::with_order(0),
             percent_basis_height: None,
+            percent_basis_width: None,
             auto_block_size: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
