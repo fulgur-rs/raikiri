@@ -1585,13 +1585,13 @@ fn left_and_right_take_an_overflow_position_in_the_justify_axis() {
     assert_eq!(
         parse_entire("safe left", "justify-items"),
         Some(PropertyValue::JustifyItems(SelfAlignmentValue::Safe(
-            SelfPosition::Start
+            SelfPosition::Left
         )))
     );
     assert_eq!(
         parse_entire("unsafe right", "justify-self"),
         Some(PropertyValue::JustifySelf(AlignSelfValue::Value(
-            SelfAlignmentValue::Unsafe(SelfPosition::End)
+            SelfAlignmentValue::Unsafe(SelfPosition::Right)
         )))
     );
 }
@@ -1655,26 +1655,26 @@ fn left_and_right_align_only_in_the_justify_axis() {
     assert_eq!(parse("right", "place-self"), None);
     assert_eq!(
         parse("left", "justify-items"),
-        Some(PropertyValue::JustifyItems(SelfAlignmentValue::Start))
+        Some(PropertyValue::JustifyItems(SelfAlignmentValue::Left))
     );
     assert_eq!(
         parse("right", "justify-self"),
         Some(PropertyValue::JustifySelf(AlignSelfValue::Value(
-            SelfAlignmentValue::End
+            SelfAlignmentValue::Right
         )))
     );
     assert_eq!(
         parse("center right", "place-items"),
         Some(PropertyValue::PlaceItems(PlaceItemsShorthand {
             align: SelfAlignmentValue::Center,
-            justify: SelfAlignmentValue::End,
+            justify: SelfAlignmentValue::Right,
         }))
     );
     assert_eq!(
         parse("auto left", "place-self"),
         Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
             align: AlignSelfValue::Auto,
-            justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Left),
         }))
     );
 }

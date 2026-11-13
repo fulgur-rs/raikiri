@@ -56,6 +56,40 @@ fn own_alignment(cv: &ComputedValues, value: AlignSelfValue) -> Option<AlignItem
     }
 }
 
+/// The alignment that a `justify-self: left` or `right` of a box with the
+/// computed values `cv` gives it in an alignment container with the values
+/// `container`, or `None` when `justify-self` names neither edge.
+///
+/// `left` and `right` are the line-left and line-right edges of the alignment
+/// container, so its direction turns them into `start` or `end`. Upright text
+/// in a vertical writing mode is laid out left to right whatever `direction`
+/// says (CSS Writing Modes 4 §5.1).
+// spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-left
+pub(super) fn line_relative_justify_self(
+    cv: &ComputedValues,
+    container: &ComputedValues,
+) -> Option<Option<AlignItems>> {
+    let AlignSelfValue::Value(value) = cv.justify_self else {
+        return None;
+    };
+    if !matches!(
+        value.position(),
+        Some(SelfPosition::Left | SelfPosition::Right)
+    ) {
+        return None;
+    }
+    let upright = container.text_orientation == TextOrientation::Upright
+        && matches!(
+            container.cssom_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
+    let rtl = container.direction == Direction::Rtl && !upright;
+    Some(own_alignment(
+        cv,
+        AlignSelfValue::Value(raikiri_layout_style::line_relative_alignment(value, rtl)),
+    ))
+}
+
 /// The `align-items` or `justify-items` of a container with these values.
 fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
     self_alignment_to_taffy(value).unwrap_or(AlignItems::NORMAL)

@@ -105,9 +105,13 @@ impl LayoutStyleView<'_> {
     pub fn align_content(&self) -> values::AlignContent {
         self.bridge_align_content()
     }
-    /// The default inline alignment of the items of a container.
+    /// The default inline alignment of the items of a container, with `left`
+    /// and `right` resolved against the container's own direction.
     pub fn justify_items(&self) -> values::AlignItems {
-        crate::flex::items(self.prepared.values.justify_items)
+        crate::flex::items(crate::flex::line_relative(
+            self.prepared.values.justify_items,
+            self.line_left_is_inline_end(),
+        ))
     }
     /// The set of baselines the in-flow box aligns to along an axis of its
     /// container `parent`, if it asks for baseline alignment there: `justify`

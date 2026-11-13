@@ -62,19 +62,30 @@ impl LayoutStyleView<'_> {
             values::BoxSizing::ContentBox
         }
     }
-    /// The used inline direction of the box.
+    /// Whether the line-left edge of the box is its inline end: its used
+    /// `direction` is `rtl`, which upright vertical text forces to `ltr` (CSS
+    /// Writing Modes 4 §5.1).
     #[inline]
-    pub fn direction(&self) -> values::Direction {
+    pub fn line_left_is_inline_end(&self) -> bool {
         let c = &*self.prepared.values;
-        let vertical =
-            self.vertical() || self.flags().contains(StyleFlags::SOURCE_VERTICAL_DIRECTION);
-        let upright = vertical
+        let upright = self.uses_vertical_direction()
             && c.text_orientation == TextOrientation::Upright
             && matches!(
                 c.cssom_writing_mode,
                 WritingMode::VerticalRl | WritingMode::VerticalLr
             );
-        let rtl = c.direction == Direction::Rtl && !upright;
+        c.direction == Direction::Rtl && !upright
+    }
+    #[inline]
+    fn uses_vertical_direction(&self) -> bool {
+        self.vertical() || self.flags().contains(StyleFlags::SOURCE_VERTICAL_DIRECTION)
+    }
+    /// The used inline direction of the box.
+    #[inline]
+    pub fn direction(&self) -> values::Direction {
+        let c = &*self.prepared.values;
+        let vertical = self.uses_vertical_direction();
+        let rtl = self.line_left_is_inline_end();
         let reversed = vertical && c.cssom_writing_mode == WritingMode::SidewaysLr;
         if rtl != reversed {
             values::Direction::Rtl

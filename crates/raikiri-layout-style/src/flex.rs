@@ -5,7 +5,7 @@ use raikiri_style::{
     ComputedFlexBasis,
     property::{
         AlignSelfValue, ContentAlignmentValue as C, FlexDirectionValue as D, FlexWrapValue as W,
-        PositionValue, SelfAlignmentValue as A,
+        PositionValue, SelfAlignmentValue as A, SelfPosition as P,
     },
 };
 
@@ -43,6 +43,12 @@ pub fn items(value: A) -> values::AlignItems {
         A::FlexEnd => values::AlignItems::FLEX_END,
         A::SelfStart => values::AlignItems::SELF_START,
         A::SelfEnd => values::AlignItems::SELF_END,
+        // Only a caller that knows the alignment container can tell which
+        // inline edge is the line-left one (see [`line_relative`]); read
+        // without it, `left` and `right` are the edges of a left-to-right
+        // container.
+        A::Left => values::AlignItems::START,
+        A::Right => values::AlignItems::END,
         A::Safe(position) => values::AlignItems {
             safety: values::AlignmentSafety::Safe,
             ..items(position.alignment())
@@ -53,6 +59,30 @@ pub fn items(value: A) -> values::AlignItems {
         },
         A::Baseline | A::LastBaseline => values::AlignItems::BASELINE,
         _ => values::AlignItems::NORMAL,
+    }
+}
+/// The self alignment `value` with `left` and `right` resolved to `start` and
+/// `end` in an alignment container whose inline start is its line-right edge
+/// when `rtl` (CSS Box Alignment 3 §6.1: `left` aligns with the line-left edge
+/// of the alignment container). Line-left is the inline start of a
+/// left-to-right line in every writing mode, so only the direction decides.
+// spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-left
+#[must_use]
+pub fn line_relative(value: A, rtl: bool) -> A {
+    let resolve = |position| match position {
+        P::Left if rtl => P::End,
+        P::Left => P::Start,
+        P::Right if rtl => P::Start,
+        P::Right => P::End,
+        other => other,
+    };
+    match value {
+        A::Safe(position) => A::Safe(resolve(position)),
+        A::Unsafe(position) => A::Unsafe(resolve(position)),
+        A::Left | A::Right => value
+            .position()
+            .map_or(value, |position| resolve(position).alignment()),
+        other => other,
     }
 }
 impl LayoutStyleView<'_> {

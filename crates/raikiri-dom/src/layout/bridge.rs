@@ -462,6 +462,23 @@ fn apply_computed_to_style_in_session_inner(
                     raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(value)),
                 );
             }
+            // The alignment container of an absolutely positioned box is its
+            // containing block; that of any other box is its container.
+            let alignment_container = match cv.position {
+                PositionValue::Absolute | PositionValue::Fixed => {
+                    settled::positioning_container(doc, idx, cv.position == PositionValue::Fixed)
+                }
+                _ => container,
+            };
+            if let Some(value) =
+                settled::line_relative_justify_self(cv, &cascade.computed[alignment_container])
+            {
+                settled.justify_self = value;
+                doc.record_pass_override(
+                    idx,
+                    raikiri_layout_style::OwnedPropertyOverride::justify_self(value),
+                );
+            }
         }
         if is_contents {
             // A `display: contents` element generates no box (CSS Display 3
