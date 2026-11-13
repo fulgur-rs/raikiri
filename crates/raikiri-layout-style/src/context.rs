@@ -381,9 +381,11 @@ pub struct ViewContext {
     /// it, from size containment along it or as a scroll container: an `auto`
     /// minimum is reported as zero there, as Chromium resolves it.
     pub zero_min_main_axis: Option<Axis>,
-    /// The minimum width, in the box `box-sizing` names, that the aspect
-    /// ratio of a grid item carries over from its `min-height`, reported in
-    /// place of an `auto` minimum width.
+    /// The minimum width, in the box `box-sizing` names, reported in place of
+    /// an `auto` minimum width: for a grid item, the minimum its ratio carries
+    /// over from its `min-height`; for an out-of-flow box, its `max-width`,
+    /// where the minimum its ratio carries over from its `min-height` would
+    /// exceed it.
     pub carried_min_width: Option<f32>,
     /// Whether an out-of-flow box whose top and bottom insets are both set
     /// takes its width from the height they leave it, through its ratio, and
@@ -392,6 +394,11 @@ pub struct ViewContext {
     /// an `auto` or `normal` block alignment as `start`, which does not
     /// stretch the box. An explicit `stretch` still stretches its height.
     pub oof_height_follows_width: bool,
+    /// The minimum height, in the box `box-sizing` names, reported in place
+    /// of an `auto` minimum height: for an out-of-flow box, its `max-height`,
+    /// where the minimum its ratio carries over from its `min-width` would
+    /// exceed it.
+    pub carried_min_height: Option<f32>,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -409,6 +416,7 @@ impl Default for ViewContext {
             zero_min_main_axis: None,
             carried_min_width: None,
             oof_height_follows_width: false,
+            carried_min_height: None,
         }
     }
 }
