@@ -74,6 +74,10 @@ pub(crate) struct TableObjects {
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
     pub(crate) materialized_parts: HashSet<usize>,
+    /// The cells whose collapsed border line on the top (`.0`) or bottom
+    /// (`.1`) a fragmentation break splits, found when pagination moved
+    /// the rows (see [`super::row_moves::mark_split_lines`]).
+    pub(crate) split_lines: HashMap<usize, (bool, bool)>,
 }
 
 impl TableObjects {

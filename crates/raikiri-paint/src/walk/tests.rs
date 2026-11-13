@@ -8682,6 +8682,52 @@ fn a_centered_cell_border_can_reach_the_page_before_its_logical_box() {
 }
 
 #[test]
+fn a_row_moved_to_the_next_page_takes_its_half_of_the_collapsed_line() {
+    // The second row ends at y=85, where the 10px blue line between it and
+    // the third row is centered. The third row does not fit and starts the
+    // next page: the upper half of the line stays below the second row, and
+    // the lower half moves to the top of the next page.
+    // White space between the tags is not a cell and moves nothing.
+    let markup = "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'>\n<tbody style='border:10px solid lime'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid blue'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid yellow'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n</table></body></html>";
+    let first = paint_ahem_page(markup, square_page(100.0), 0);
+    let pixel = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..3].to_vec();
+    assert_eq!(pixel(&first, 20, 82), [0, 0, 255]);
+    assert_eq!(pixel(&first, 20, 87), [255, 255, 255]);
+    assert_eq!(pixel(&first, 20, 97), [255, 255, 255]);
+    let second = paint_ahem_page(markup, square_page(100.0), 1);
+    assert_eq!(pixel(&second, 20, 2), [0, 0, 255]);
+    assert_eq!(pixel(&second, 20, 7), [255, 255, 255]);
+}
+
+#[test]
+fn an_empty_row_on_one_page_leaves_the_collapsed_lines_around_it_whole() {
+    // The empty row has a height but no cells: no break separates the rows
+    // around it, so both lines keep their full 10px.
+    let markup = "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tr><td style='padding:0;width:40px;height:20px;border:10px solid blue'></td></tr><tr style='height:20px'></tr><tr><td style='padding:0;width:40px;height:20px;border:10px solid lime'></td></tr></table></body></html>";
+    let rgba = paint_ahem_page(markup, square_page(200.0), 0);
+    let column = |y: usize| rgba[(y * 200 + 20) * 4..][..3].to_vec();
+    // The blue cell's bottom line ends 10px below its 20px of content, and
+    // the lime cell's top line starts 20px further down.
+    let blue: Vec<usize> = (0..120).filter(|&y| column(y) == [0, 0, 255]).collect();
+    let lime: Vec<usize> = (0..120).filter(|&y| column(y) == [0, 255, 0]).collect();
+    assert_eq!(blue.len(), 20, "{blue:?}");
+    assert_eq!(lime.len(), 20, "{lime:?}");
+}
+
+#[test]
+fn an_anonymous_row_moved_to_the_next_page_takes_its_half_of_the_collapsed_line() {
+    let markup = "<!doctype html><html><body style='margin:0'><div style='display:table;border-collapse:collapse;font:30px/30px Ahem;color:white'><div style='display:table-row;border:10px solid lime'>a</div><div style='display:table-row;border:10px solid blue'>a</div><div style='display:table-row;border:10px solid yellow'>a</div></div></body></html>";
+    let first = paint_ahem_page(markup, square_page(100.0), 0);
+    let pixel = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..3].to_vec();
+    assert_eq!(pixel(&first, 2, 82), [0, 0, 255]);
+    assert_eq!(pixel(&first, 2, 87), [255, 255, 255]);
+    assert_eq!(pixel(&first, 2, 97), [255, 255, 255]);
+    // The lower half of the line starts the next page.
+    let second = paint_ahem_page(markup, square_page(100.0), 1);
+    assert_ne!(pixel(&second, 2, 2), [255, 255, 255]);
+}
+
+#[test]
 fn an_anonymous_cell_border_can_reach_the_page_before_its_logical_box() {
     let rgba = paint_ahem_page(
         "<!doctype html><html><body style='margin:0'><div style='position:absolute;top:98px;left:0;display:table;border-collapse:collapse;font:10px/10px Ahem'><div style='display:table-row;border:4px solid red'>a</div></div></body></html>",

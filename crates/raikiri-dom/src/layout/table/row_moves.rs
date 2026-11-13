@@ -27,6 +27,55 @@ pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
     })
 }
 
+/// Records the collapsed border lines that pagination split by moving the
+/// rows in `moved_rows` to a later page.
+///
+/// A row moves by more than the row before it only when it opens a page.
+/// The line between the two is then split at the break: the half above it
+/// stays with the cells that end at the earlier row, and the half below
+/// moves with the cells of the later row (CSS Fragmentation 3 §5.4 and
+/// CSS 2.1 §17.6.2, which centers the line between the rows).
+pub(crate) fn mark_split_lines(document: &mut Document, moved_rows: &HashMap<usize, f32>) {
+    let tables: BTreeSet<usize> = moved_rows
+        .keys()
+        .filter_map(|&row| document.table_of_row(row))
+        .filter(|&table| {
+            document
+                .ifc_layout_node(table)
+                .is_some_and(|node| node.border_collapse == BorderCollapseValue::Collapse)
+        })
+        .collect();
+    let mut split_lines = std::mem::take(&mut document.table_objects.split_lines);
+    for rows in tables
+        .iter()
+        .filter_map(|table| document.table_objects.rows.get(table))
+    {
+        // The cells whose rows end at each row.
+        let mut ending: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
+        for (index, row) in rows.iter().enumerate() {
+            for &cell in &row.cells {
+                let span = usize::from(super::get_rowspan(document, cell));
+                let end = span
+                    .checked_sub(1)
+                    .map_or(rows.len() - 1, |more| index + more);
+                ending[end.min(rows.len() - 1)].push(cell);
+            }
+        }
+        let delta = |index: usize| moved_rows.get(&rows[index].marker).copied().unwrap_or(0.0);
+        for index in 1..rows.len() {
+            if delta(index) > delta(index - 1) + 0.001 {
+                for &cell in &rows[index].cells {
+                    split_lines.entry(cell).or_default().0 = true;
+                }
+                for &cell in &ending[index - 1] {
+                    split_lines.entry(cell).or_default().1 = true;
+                }
+            }
+        }
+    }
+    document.table_objects.split_lines = split_lines;
+}
+
 /// Brings each table box in line with the rows that pagination moved by the
 /// distances in `moved_rows`. A row group, or a table, whose first row moved
 /// starts with that row on its new page, so no empty fragment of its top edge

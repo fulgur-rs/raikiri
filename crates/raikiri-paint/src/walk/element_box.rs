@@ -719,10 +719,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // A hidden table must not paint its own collapsed border.
         let visibility_hidden_table = raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
         let border = node.collapsed_border().unwrap_or(&cv.border);
+        let splits = raikiri_dom::paint_rules::collapsed_line_splits(self.document, node_id);
         let border_reach = collapsed_block_border_paint_rect(
             node,
             raikiri_traits::PaintRect::new(paint_x, abs_y, layout.size.width, layout.size.height),
             border,
+            splits,
         );
         !visibility_hidden_table
             && (node_id == self.root_id
@@ -749,6 +751,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                                     own_box.0, own_box.1, own_box.2, own_box.3,
                                 ),
                                 border,
+                                splits,
                             );
                             band.holds_box(
                                 scene_transform,

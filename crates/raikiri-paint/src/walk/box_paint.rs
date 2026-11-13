@@ -90,17 +90,57 @@ fn page_area_clip(
 }
 
 /// The full winning lines paint around the cell's logical border centers.
+///
+/// A line that a fragmentation break splits (`splits`, top and bottom, see
+/// [`raikiri_dom::paint_rules::collapsed_line_splits`]) paints only
+/// its half inside the cell: the row on the other side of the break paints
+/// the other half.
 pub(super) fn collapsed_block_border_paint_rect(
     node: &raikiri_dom::Node,
     rect: PaintRect,
     border: &Sides<ComputedBorder>,
+    (split_top, split_bottom): (bool, bool),
 ) -> PaintRect {
     if !node.centered_collapsed_block_borders() || rect.height <= 0.0 {
         return rect;
     }
-    let top = border.top.width().px() / 2.0;
-    let bottom = border.bottom.width().px() / 2.0;
+    let half = |split: bool, side: &ComputedBorder| {
+        if split { 0.0 } else { side.width().px() / 2.0 }
+    };
+    let top = half(split_top, &border.top);
+    let bottom = half(split_bottom, &border.bottom);
     PaintRect::new(rect.x, rect.y - top, rect.width, rect.height + top + bottom)
+}
+
+/// Cut what `scene` paints next at the top and bottom `edges` of a table
+/// cell's box where a fragmentation break splits the collapsed border line
+/// (`splits`, top and bottom; see [`collapsed_block_border_paint_rect`]), and
+/// return whether a clip was pushed.
+pub(super) fn push_split_line_clip(
+    scene: &mut impl PaintScene,
+    (top, bottom): (f32, f32),
+    (split_top, split_bottom): (bool, bool),
+) -> bool {
+    const UNBOUNDED: f64 = 1.0e7;
+    if !split_top && !split_bottom {
+        return false;
+    }
+    let clip = Rect::new(
+        -UNBOUNDED,
+        if split_top {
+            f64::from(top)
+        } else {
+            -UNBOUNDED
+        },
+        UNBOUNDED,
+        if split_bottom {
+            f64::from(bottom)
+        } else {
+            UNBOUNDED
+        },
+    );
+    scene.push_clip_layer(Affine::IDENTITY, &clip);
+    true
 }
 
 /// The clip that the content of the replaced element `element` paints inside.
@@ -697,7 +737,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             element.node,
             PaintRect::new(own_paint_x, own_paint_y, own_paint_width, own_paint_height),
             painted_border,
+            (false, false),
         );
+        let split_lines = paints_own_box
+            && self.push_split_line_clip(
+                own,
+                raikiri_dom::paint_rules::collapsed_line_splits(self.document, element.node_id),
+            );
         let (own_paint_y, own_paint_height) = (border_box.y, border_box.height);
         // The border is cut at the page area where it leaves it.
         let clipped_to_page_content = paints_own_box
@@ -751,6 +797,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if clipped_to_page_content {
             scene.pop_layer();
         }
+        if split_lines {
+            scene.pop_layer();
+        }
+    }
+
+    /// Cut the border of a table cell at the edges of its box `own` where a
+    /// fragmentation break splits the collapsed border line (`splits`, top
+    /// and bottom), and return whether a clip was pushed.
+    fn push_split_line_clip(&mut self, own: &OwnBox, splits: (bool, bool)) -> bool {
+        push_split_line_clip(self.scene, (own.y, own.y + own.height), splits)
     }
 
     /// Leave out the block-start border of a `fieldset` in the `gap` its
