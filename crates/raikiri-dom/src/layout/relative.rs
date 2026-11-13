@@ -119,6 +119,16 @@ fn relative_insets_with_box_tree(
         })
     };
     let grid_area = block.and_then(|block| grid_item_area(document, boxes, block.key, node_id));
+    // A containing block that lays out vertical lines has its inline size,
+    // its height, before its content is laid out; its width is its block
+    // size, definite only where layout found it so (CSS Writing Modes 4
+    // §7.1). An anonymous table or cell keeps horizontal axes.
+    let vertical = || {
+        block.is_some_and(|block| {
+            block.key == block.source
+                && crate::layout::bridge::uses_vertical_axes(cascade, block.source)
+        })
+    };
     let width = || {
         if is_root() {
             return Some(document.fixed_page_area.unwrap_or_default().0);
@@ -127,6 +137,14 @@ fn relative_insets_with_box_tree(
             return Some(area.width);
         }
         let block = document.ifc_layout_node(block?.key)?;
+        if vertical() {
+            // The width layout found definite for the paragraph, else the one
+            // it found definite for a box without lines.
+            if let Some(root) = block.ifc.as_ref() {
+                return root.vertical_width;
+            }
+            return block.percent_basis_width;
+        }
         Some(if is_spanner_in(document, cascade, node_id) {
             block.layout.content_box_width()
         } else {
@@ -140,7 +158,11 @@ fn relative_insets_with_box_tree(
         if let Some(area) = grid_area {
             return Some(area.height);
         }
-        document.ifc_layout_node(block?.key)?.percent_basis_height
+        let block = document.ifc_layout_node(block?.key)?;
+        if vertical() {
+            return Some(block.layout.content_box_height());
+        }
+        block.percent_basis_height
     };
     let pick = |start: Option<f32>, end: Option<f32>, end_wins: bool| {
         if end_wins {

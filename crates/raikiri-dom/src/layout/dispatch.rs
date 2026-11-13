@@ -1062,6 +1062,7 @@ impl LayoutSession<'_> {
         if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
+            self.nodes[idx].percent_basis_width = self.block_percent_basis_width(idx, &inputs);
         }
         // Taffy's cache does not key on the parent size, so a flex item whose
         // edges take their basis from the flex container instead is measured
@@ -7215,6 +7216,18 @@ impl LayoutSession<'_> {
             .filter(|_| inputs.known_dimensions_are_definite.height)
             .or(style_height)
             .map(|height| height - inset.height)
+    }
+
+    /// The content-box width of block container `idx` laid out with
+    /// `inputs` when it is definite: the definite width it is given, else its
+    /// own `width`, else `None`.
+    fn block_percent_basis_width(&self, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+        let given = inputs.known_dimensions.width;
+        if given.is_some() && !inputs.known_dimensions_are_definite.width {
+            return None;
+        }
+        let (size, inset, _) = self.block_definite_size(idx, inputs);
+        size.width.map(|width| width - inset.width)
     }
 
     /// The border-box size of block container `idx` that taffy's block
