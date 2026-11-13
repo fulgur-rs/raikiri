@@ -202,9 +202,10 @@ impl fmt::Debug for Declaration {
 pub(crate) struct ParsedDeclaration {
     pub(crate) value: PropertyValue,
     pub(crate) important: bool,
-    /// The flow-relative side of a margin, padding, inset or intrinsic size
-    /// longhand, whose `value` the parser stored under its `horizontal-tb`,
-    /// `ltr` physical side.
+    /// The flow-relative side of a margin, padding, inset, border or
+    /// intrinsic size longhand, or of a single-edge border shorthand, whose
+    /// `value` the parser stored under its `horizontal-tb`, `ltr` physical
+    /// side.
     pub(crate) logical: Option<LogicalSide>,
 }
 
@@ -298,6 +299,30 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
             BorderBottomColor,
             BorderLeftColor,
         ],
+        // The flow-relative axis shorthands list the start edge's longhands
+        // first, then the end edge's ([`border_axis_longhand_side`]).
+        BorderBlock => &[
+            BorderTopWidth,
+            BorderTopStyle,
+            BorderTopColor,
+            BorderBottomWidth,
+            BorderBottomStyle,
+            BorderBottomColor,
+        ],
+        BorderInline => &[
+            BorderLeftWidth,
+            BorderLeftStyle,
+            BorderLeftColor,
+            BorderRightWidth,
+            BorderRightStyle,
+            BorderRightColor,
+        ],
+        BorderBlockWidth => &[BorderTopWidth, BorderBottomWidth],
+        BorderBlockStyle => &[BorderTopStyle, BorderBottomStyle],
+        BorderBlockColor => &[BorderTopColor, BorderBottomColor],
+        BorderInlineWidth => &[BorderLeftWidth, BorderRightWidth],
+        BorderInlineStyle => &[BorderLeftStyle, BorderRightStyle],
+        BorderInlineColor => &[BorderLeftColor, BorderRightColor],
         ListStyle => &[ListStyleType, ListStylePosition, ListStyleImage],
         Overflow => &[OverflowX, OverflowY],
         TextDecoration => &[
@@ -810,6 +835,18 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, push_longhand),
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, push_longhand),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, push_longhand),
+        PropertyValue::BorderBlock(_)
+        | PropertyValue::BorderInline(_)
+        | PropertyValue::BorderBlockWidth(_)
+        | PropertyValue::BorderBlockStyle(_)
+        | PropertyValue::BorderBlockColor(_)
+        | PropertyValue::BorderInlineWidth(_)
+        | PropertyValue::BorderInlineStyle(_)
+        | PropertyValue::BorderInlineColor(_) => {
+            expand_border_axis(&d.value, |value, side| {
+                push(Declaration::with_side(value, d.important, Some(side)))
+            })
+        }
         PropertyValue::Overflow(pair) => expand_overflow(pair, push_longhand),
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, push_longhand)
@@ -1280,15 +1317,26 @@ fn expand_deferred(
     if let Some(keyword) = deferred.css_wide_keyword()
         && matches!(
             deferred.key,
-            PropertyKey::BorderColor | PropertyKey::BorderStyle | PropertyKey::BorderWidth
+            PropertyKey::BorderColor
+                | PropertyKey::BorderStyle
+                | PropertyKey::BorderWidth
+                | PropertyKey::BorderBlock
+                | PropertyKey::BorderInline
+                | PropertyKey::BorderBlockWidth
+                | PropertyKey::BorderBlockStyle
+                | PropertyKey::BorderBlockColor
+                | PropertyKey::BorderInlineWidth
+                | PropertyKey::BorderInlineStyle
+                | PropertyKey::BorderInlineColor
         )
     {
-        // The four sides carry the keyword in variants of their own.
-        for value in longhands
-            .iter()
-            .filter_map(|&longhand| border_side_css_wide(longhand, keyword))
-        {
-            push(Declaration::with_side(value, important, None));
+        // The sides carry the keyword in variants of their own; those of a
+        // flow-relative shorthand keep their flow-relative sides.
+        for &longhand in longhands {
+            if let Some(value) = border_side_css_wide(longhand, keyword) {
+                let side = border_axis_longhand_side(deferred.key, longhand);
+                push(Declaration::with_side(value, important, side));
+            }
         }
         return;
     }
@@ -1304,7 +1352,14 @@ fn expand_deferred(
     for (index, key) in longhands.iter().enumerate() {
         let mut value = deferred.clone();
         value.key = *key;
-        let side = sides.get(index).copied().flatten();
+        // A single-edge border shorthand written for a flow-relative edge
+        // (`border-block-start`) gives its side to every longhand.
+        let side = sides
+            .get(index)
+            .copied()
+            .flatten()
+            .or_else(|| border_axis_longhand_side(deferred.key, *key))
+            .or(d.logical);
         push(Declaration::with_side(
             PropertyValue::Deferred(value),
             important,
@@ -1391,6 +1446,120 @@ fn logical_longhand(
     };
     let mut sides = [start, end].into_iter();
     move |value| push(Declaration::with_side(value, important, sides.next()))
+}
+
+/// The flow-relative side of `longhand` in the expansion of the flow-relative
+/// border shorthand `shorthand` (`border-block`, `border-inline-width`, ...):
+/// the longhands are those of the `horizontal-tb`, `ltr` edges, so a top or
+/// left one is the axis's start and a bottom or right one its end. `None`
+/// for any other shorthand.
+fn border_axis_longhand_side(shorthand: PropertyKey, longhand: PropertyKey) -> Option<LogicalSide> {
+    use PropertyKey as K;
+    let block = match shorthand {
+        K::BorderBlock | K::BorderBlockWidth | K::BorderBlockStyle | K::BorderBlockColor => true,
+        K::BorderInline | K::BorderInlineWidth | K::BorderInlineStyle | K::BorderInlineColor => {
+            false
+        }
+        _ => return None,
+    };
+    let start = matches!(
+        longhand,
+        K::BorderTopWidth
+            | K::BorderTopStyle
+            | K::BorderTopColor
+            | K::BorderLeftWidth
+            | K::BorderLeftStyle
+            | K::BorderLeftColor
+    );
+    Some(match (block, start) {
+        (true, true) => LogicalSide::BlockStart,
+        (true, false) => LogicalSide::BlockEnd,
+        (false, true) => LogicalSide::InlineStart,
+        (false, false) => LogicalSide::InlineEnd,
+    })
+}
+
+/// Expand a flow-relative border shorthand of one axis into the longhands of
+/// the edges the axis has in `horizontal-tb` with `direction: ltr`, each with
+/// the flow-relative side the cascade maps it by. Only the parts the
+/// shorthand names are pushed: all three for `border-block` and
+/// `border-inline`, one for the `-width`, `-style` and `-color` forms.
+#[inline(never)]
+pub(crate) fn expand_border_axis(
+    value: &PropertyValue,
+    mut push: impl FnMut(PropertyValue, LogicalSide),
+) {
+    use PropertyKey as K;
+    use PropertyValue as V;
+    let (V::BorderBlock(sides)
+    | V::BorderInline(sides)
+    | V::BorderBlockWidth(sides)
+    | V::BorderBlockStyle(sides)
+    | V::BorderBlockColor(sides)
+    | V::BorderInlineWidth(sides)
+    | V::BorderInlineStyle(sides)
+    | V::BorderInlineColor(sides)) = value
+    else {
+        return;
+    };
+    let key = value.key();
+    let block = matches!(
+        key,
+        K::BorderBlock | K::BorderBlockWidth | K::BorderBlockStyle | K::BorderBlockColor
+    );
+    let (width, style, color) = match key {
+        K::BorderBlock | K::BorderInline => (true, true, true),
+        K::BorderBlockWidth | K::BorderInlineWidth => (true, false, false),
+        K::BorderBlockStyle | K::BorderInlineStyle => (false, true, false),
+        _ => (false, false, true),
+    };
+    let edges = if block {
+        [
+            (sides.start, LogicalSide::BlockStart),
+            (sides.end, LogicalSide::BlockEnd),
+        ]
+    } else {
+        [
+            (sides.start, LogicalSide::InlineStart),
+            (sides.end, LogicalSide::InlineEnd),
+        ]
+    };
+    for (border, side) in edges {
+        // The block-axis edges are stored as top and bottom, the inline-axis
+        // ones as left and right (`horizontal-tb`, `ltr`).
+        let start = matches!(side, LogicalSide::BlockStart | LogicalSide::InlineStart);
+        let (w, s, c) = match (block, start) {
+            (true, true) => (
+                PropertyValue::BorderTopWidth(border.width),
+                PropertyValue::BorderTopStyle(border.style),
+                PropertyValue::BorderTopColor(border.color),
+            ),
+            (true, false) => (
+                PropertyValue::BorderBottomWidth(border.width),
+                PropertyValue::BorderBottomStyle(border.style),
+                PropertyValue::BorderBottomColor(border.color),
+            ),
+            (false, true) => (
+                PropertyValue::BorderLeftWidth(border.width),
+                PropertyValue::BorderLeftStyle(border.style),
+                PropertyValue::BorderLeftColor(border.color),
+            ),
+            (false, false) => (
+                PropertyValue::BorderRightWidth(border.width),
+                PropertyValue::BorderRightStyle(border.style),
+                PropertyValue::BorderRightColor(border.color),
+            ),
+        };
+        if width {
+            push(w, side);
+        }
+        if style {
+            push(s, side);
+        }
+        if color {
+            push(c, side);
+        }
+    }
 }
 
 /// Cold helper expanding `margin-inline` into two longhands, `margin-left`/

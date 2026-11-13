@@ -1472,3 +1472,89 @@ fn parse_clip_margin_box(input: &mut Parser<'_, '_>) -> Result<VisualBox, ()> {
         _ => Err(()),
     }
 }
+
+/// Parse one or two values with `parse_one`: the start edge and the end edge
+/// of a flow-relative two-value border shorthand. One value sets both edges
+/// (CSS Logical Properties and Values 1 §4.5, `<'border-top-width'>{1,2}`
+/// and its style and color counterparts).
+fn parse_border_axis_pair<T: Clone>(
+    input: &mut Parser<'_, '_>,
+    parse_one: fn(&mut Parser<'_, '_>) -> Option<T>,
+) -> Option<StartEnd<T>> {
+    let start = parse_one(input)?;
+    let end = input
+        .try_parse(|i| -> Result<T, ParseError<'_, ()>> {
+            parse_one(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok();
+    Some(match end {
+        Some(end) => StartEnd { start, end },
+        None => StartEnd::both(start),
+    })
+}
+
+/// Parse a flow-relative border shorthand of one axis, written for `key`:
+/// `border-block` and `border-inline` take one `<line-width> || <line-style>
+/// || <color>` value for both edges, and the `-width`, `-style` and `-color`
+/// forms take one or two values of their part (CSS Logical Properties and
+/// Values 1 §4.5 <https://www.w3.org/TR/css-logical-1/#border-shorthands>).
+/// The parts a shorthand does not name keep their initial values.
+pub(crate) fn parse_border_axis(
+    input: &mut Parser<'_, '_>,
+    key: PropertyKey,
+) -> Option<StartEnd<Border>> {
+    let initial = Border::default();
+    let sides = match key {
+        PropertyKey::BorderBlock | PropertyKey::BorderInline => {
+            StartEnd::both(parse_border_top_shorthand(input)?)
+        }
+        PropertyKey::BorderBlockWidth | PropertyKey::BorderInlineWidth => {
+            let pair = parse_border_axis_pair(input, parse_border_width_side)?;
+            StartEnd {
+                start: Border {
+                    width: pair.start,
+                    ..initial
+                },
+                end: Border {
+                    width: pair.end,
+                    ..initial
+                },
+            }
+        }
+        PropertyKey::BorderBlockStyle | PropertyKey::BorderInlineStyle => {
+            let pair = parse_border_axis_pair(input, parse_border_style_side)?;
+            StartEnd {
+                start: Border {
+                    style: pair.start,
+                    ..initial
+                },
+                end: Border {
+                    style: pair.end,
+                    ..initial
+                },
+            }
+        }
+        _ => {
+            let pair = parse_border_axis_pair(input, parse_border_color)?;
+            StartEnd {
+                start: Border {
+                    color: pair.start,
+                    ..initial
+                },
+                end: Border {
+                    color: pair.end,
+                    ..initial
+                },
+            }
+        }
+    };
+    Some(sides)
+}
+
+/// [`parse_border_axis`] wrapped in the [`PropertyValue`] variant of `key`.
+pub(crate) fn parse_border_axis_value(
+    input: &mut Parser<'_, '_>,
+    key: PropertyKey,
+) -> Option<PropertyValue> {
+    PropertyValue::border_axis(key, parse_border_axis(input, key)?)
+}

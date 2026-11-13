@@ -822,6 +822,22 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BorderTop(border) => {
             PropertyValue::BorderTop(basis.border(border, border_width_is_computed[0]))
         }
+        // The flow-relative axis shorthands are expanded before the page
+        // cascade; a value that reaches here gates each edge on its own style.
+        PropertyValue::BorderBlock(ref sides)
+        | PropertyValue::BorderInline(ref sides)
+        | PropertyValue::BorderBlockWidth(ref sides)
+        | PropertyValue::BorderBlockStyle(ref sides)
+        | PropertyValue::BorderBlockColor(ref sides)
+        | PropertyValue::BorderInlineWidth(ref sides)
+        | PropertyValue::BorderInlineStyle(ref sides)
+        | PropertyValue::BorderInlineColor(ref sides) => {
+            let sides = crate::property::StartEnd {
+                start: basis.border(sides.start, false),
+                end: basis.border(sides.end, false),
+            };
+            PropertyValue::border_axis(value.key(), sides).unwrap_or(value)
+        }
         PropertyValue::BorderRight(border) => {
             PropertyValue::BorderRight(basis.border(border, border_width_is_computed[1]))
         }
