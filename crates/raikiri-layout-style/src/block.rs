@@ -77,23 +77,43 @@ impl LayoutStyleView<'_> {
     /// (see [`Self::with_swapped_oof_alignment`]).
     #[inline]
     pub(crate) fn oof_align_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment(self.swapped_oof_alignment)
-            .map(|mut alignment| {
-                // The projected auto height asks for measurement, not a second
-                // stretch-fit floor. Start keeps stretch's placement and safety.
-                if self.table_owns_measured_height()
-                    && alignment.keyword == values::AlignItemsKeyword::Stretch
-                {
-                    alignment.keyword = values::AlignItemsKeyword::Start;
-                }
-                alignment
-            })
+        let alignment = self.self_alignment(self.swapped_oof_alignment);
+        // The height follows the width the ratio gives the box, so an `auto`
+        // or `normal` alignment does not stretch it to the insets; the box
+        // still sits at the start of them.
+        if self.context.oof_height_follows_width
+            && matches!(alignment, None | Some(values::AlignSelf::NORMAL))
+        {
+            return Some(values::AlignSelf::START);
+        }
+        alignment.map(|mut alignment| {
+            // The projected auto height asks for measurement, not a second
+            // stretch-fit floor. Start keeps stretch's placement and safety.
+            if self.table_owns_measured_height()
+                && alignment.keyword == values::AlignItemsKeyword::Stretch
+            {
+                alignment.keyword = values::AlignItemsKeyword::Start;
+            }
+            alignment
+        })
     }
     /// The alignment of an out-of-flow box along the physical horizontal axis
     /// (see [`Self::with_swapped_oof_alignment`]).
     #[inline]
     pub(crate) fn oof_justify_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment(!self.swapped_oof_alignment)
+        let alignment = self.self_alignment(!self.swapped_oof_alignment);
+        // A box whose height follows its width and is stretched to its insets
+        // all the same takes its width from that height, so an `auto` or
+        // `normal` alignment does not stretch the width to its insets either.
+        if self.context.oof_height_follows_width
+            && matches!(alignment, None | Some(values::AlignSelf::NORMAL))
+            && self
+                .self_alignment(self.swapped_oof_alignment)
+                .is_some_and(|block| block.keyword == values::AlignItemsKeyword::Stretch)
+        {
+            return Some(values::AlignSelf::START);
+        }
+        alignment
     }
     /// Content alignment read by project block primitives.
     #[inline]

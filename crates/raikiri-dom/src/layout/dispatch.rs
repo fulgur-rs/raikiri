@@ -1263,6 +1263,8 @@ impl LayoutSession<'_> {
                         &mut leaf_style,
                         &[OwnedPropertyOverride::aspect_ratio(None)],
                     );
+                    let inputs =
+                        ContainedRatioFloor::oof_width_from_insets(floor, tree, idx, inputs);
                     // Given its width, the box takes the height the ratio
                     // relates to it within its bounds, also while a parent
                     // measures it for its content: the leaf algorithm would
@@ -3341,17 +3343,43 @@ pub(crate) fn contained_row_item_follows_width(tree: &LayoutSession<'_>, idx: us
     !stretched
 }
 
-/// Whether the size-contained out-of-flow box `idx` derives its height from
-/// its width (see [`contained_ratio_item`]): unless its `top` and `bottom`
-/// insets give it a height, from which the ratio gives its width. Chromium
-/// sizes `position: absolute; contain: size; contain-intrinsic-size: 200px
-/// 200px; aspect-ratio: 1; max-width: 50px` at 50px by 200px, and with `top:
-/// 0; bottom: 0` and no `max-width` in a 300px high box at 300px by 300px.
-pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    contained_ratio_item(tree, idx) && {
-        let inset = tree.physical_style(idx).inset();
-        inset.top.is_auto() || inset.bottom.is_auto()
+/// How a size-contained out-of-flow box (see [`contained_ratio_item`])
+/// relates its sizes through its ratio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContainedOof {
+    /// Its `top` or `bottom` inset is `auto`, which leaves its height open:
+    /// it derives its height from its width. Chromium sizes `position:
+    /// absolute; contain: size; contain-intrinsic-size: 200px 200px;
+    /// aspect-ratio: 1; max-width: 50px` at 50px by 200px.
+    HeightFromWidth,
+    /// Both its `top` and `bottom` insets are set. Its height is still the
+    /// axis the ratio depends on: the box takes its width from the height the
+    /// insets leave it, through its ratio and within its own width bounds,
+    /// and unless it aligns to `stretch`, its height from that width, with
+    /// the contained height as its floor. With `top: 0; bottom: 0` in a
+    /// 300px high containing block, Chromium sizes the box above at 50px by
+    /// 200px, at 300px by 300px without the `max-width`, and at 50px by
+    /// 300px with `align-self: stretch`.
+    WidthFromInsets,
+}
+
+/// How the size-contained out-of-flow box `idx` relates its sizes through
+/// its ratio, if it keeps one (see [`ContainedOof`]). A box laid out in the
+/// transposed axes of a vertical block, or whose alignment axes are swapped,
+/// keeps the sizes the out-of-flow algorithm gives it when both insets are
+/// set.
+pub(crate) fn contained_oof(tree: &LayoutSession<'_>, idx: usize) -> Option<ContainedOof> {
+    if !contained_ratio_item(tree, idx) {
+        return None;
     }
+    let inset = tree.physical_style(idx).inset();
+    if inset.top.is_auto() || inset.bottom.is_auto() {
+        return Some(ContainedOof::HeightFromWidth);
+    }
+    (tree.nodes[idx].layout_position() == Position::Absolute
+        && !tree.oof_alignment_swapped(idx)
+        && tree.transposed_child_view(idx).is_none())
+    .then_some(ContainedOof::WidthFromInsets)
 }
 
 /// The height a size-contained box takes from its preferred aspect ratio once
@@ -3365,9 +3393,51 @@ pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) 
 struct ContainedRatioFloor {
     ratio: f32,
     inset: Size<f32>,
+    /// The bounds of the border-box width, the minimum winning.
+    min_width: f32,
+    max_width: Option<f32>,
 }
 
 impl ContainedRatioFloor {
+    /// The border-box width the ratio relates to the border-box `height`,
+    /// within the bounds of the width.
+    fn width_from_height(self, height: f32) -> f32 {
+        ((height - self.inset.height).max(0.0) * self.ratio + self.inset.width)
+            .maybe_min(self.max_width)
+            .max(self.min_width)
+    }
+
+    /// `inputs` with the width a size-contained out-of-flow box takes from
+    /// the height its insets leave it, when they ask for its size without its
+    /// width (see [`ContainedOof::WidthFromInsets`]). That height is the
+    /// one they stretch the box to, or else the space the out-of-flow
+    /// algorithm offers it, which is that height too.
+    fn oof_width_from_insets(
+        floor: Option<Self>,
+        tree: &LayoutSession<'_>,
+        idx: usize,
+        inputs: LayoutInput,
+    ) -> LayoutInput {
+        let height = inputs
+            .known_dimensions
+            .height
+            .or(inputs.available_space.height.into_option());
+        match (floor, inputs.known_dimensions.width, height) {
+            (Some(floor), None, Some(height))
+                if contained_oof(tree, idx) == Some(ContainedOof::WidthFromInsets) =>
+            {
+                LayoutInput {
+                    known_dimensions: Size {
+                        width: Some(floor.width_from_height(height)),
+                        ..inputs.known_dimensions
+                    },
+                    ..inputs
+                }
+            }
+            _ => inputs,
+        }
+    }
+
     fn raise(self, output: &mut LayoutOutput) {
         let height =
             (output.size.width - self.inset.width).max(0.0) / self.ratio + self.inset.height;
@@ -3407,8 +3477,9 @@ fn carry_contained_ratio_bounds(
     let content_floor = (style.min_size.height.is_auto()
         && !style.overflow.y.is_scroll_container())
     .then(|| (natural.height + edges.height).maybe_min(metrics.own_max.height));
+    let min_width = metrics.min.width.unwrap_or(edges.width);
     let min = Size {
-        width: Some(metrics.min.width.unwrap_or(edges.width)),
+        width: Some(min_width),
         height: metrics
             .min
             .height
@@ -3447,6 +3518,8 @@ fn carry_contained_ratio_bounds(
         } else {
             Size::ZERO
         },
+        min_width,
+        max_width: metrics.max.width,
     })
 }
 
