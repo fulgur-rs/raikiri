@@ -262,3 +262,135 @@ fn an_out_of_flow_box_caps_the_minimum_its_ratio_carries_at_its_own_maximum() {
         ),
     ]);
 }
+
+#[test]
+fn an_out_of_flow_box_caps_a_percentage_minimum_its_ratio_carries() {
+    // The same cap where the carried minimum or the maximum is a percentage
+    // or a `calc()` of the containing block: `min-height: 50%` of a 300px
+    // tall containing block gives a box with `max-width: 50px` a width of
+    // 50px, not 150px, and `max-width: 20%` caps a `min-height: 150px` at
+    // 100px. Either way round, with padding, `box-sizing`, insets, another
+    // ratio, a grid area, a vertical writing mode in the box or its
+    // containing block, a box that is a grid container, and an image. A
+    // carried minimum below the maximum still holds, a border-box maximum
+    // below the border still gives way to it, and a stated width keeps the
+    // box out of the cap.
+    assert_rows(&[
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:20%;min-height:150px'></div></div>",
+            &[("c", [0, 0, 100, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:20%;min-height:50%'></div></div>",
+            &[("c", [0, 0, 100, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;min-width:40%;max-height:50px'></div></div>",
+            &[("c", [0, 0, 200, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;min-width:100px;max-height:10%'></div></div>",
+            &[("c", [0, 0, 100, 30])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:10%'></div></div>",
+            &[("c", [0, 0, 30, 30])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:calc(50% + 10px)'></div></div>",
+            &[("c", [0, 0, 50, 160])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;padding:5px'></div></div>",
+            &[("c", [0, 0, 60, 160])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;padding:5px;box-sizing:border-box'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;aspect-ratio:2;max-width:150px;min-height:50%'></div></div>",
+            &[("c", [0, 0, 150, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;left:0;right:0'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;top:0;bottom:0'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:10%;min-height:100px'></div></div>",
+            &[("c", [0, 0, 50, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;min-width:100px;max-height:10%;top:0;bottom:0'></div></div>",
+            &[("c", [0, 0, 100, 30])],
+        ),
+        (
+            "<div style='display:grid;width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='display:grid;grid-template-columns:100px 400px;grid-template-rows:100px 200px;width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;grid-row:2;grid-column:2;max-width:50px;min-height:50%'></div></div>",
+            &[("c", [100, 100, 50, 100])],
+        ),
+        (
+            "<div style='display:grid;grid-template-columns:100px 400px;grid-template-rows:100px 200px;width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;grid-row:2;grid-column:2;max-width:10%;min-height:100px'></div></div>",
+            &[("c", [100, 100, 40, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative;writing-mode:vertical-rl'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%'></div></div>",
+            &[("c", [450, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative;writing-mode:vertical-rl'><div id=c style='aspect-ratio:1;position:absolute;max-height:50px;min-width:40%'></div></div>",
+            &[("c", [300, 0, 200, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;padding:10%'></div></div>",
+            &[("c", [0, 0, 150, 250])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative;display:flex'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%'></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:50%;display:grid'><span>x</span></div></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50%;min-height:100%'></div></div>",
+            &[("c", [0, 0, 250, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;min-width:50%;max-height:calc(10% + 5px)'></div></div>",
+            &[("c", [0, 0, 250, 35])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='position:absolute;left:0;right:0;aspect-ratio:2/1;box-sizing:border-box;border:25px solid;max-height:10%;min-width:10px'></div></div>",
+            &[("c", [0, 0, 100, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><img id=c style='position:absolute;aspect-ratio:1;max-width:50px;min-height:50%' src='data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"/>'></div>",
+            &[("c", [0, 0, 50, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='position:absolute;aspect-ratio:1;max-width:50px;min-height:50%;width:30px'></div></div>",
+            &[("c", [0, 0, 30, 150])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='position:absolute;aspect-ratio:1;box-sizing:border-box;border:40px solid;max-width:10%;min-height:150px'></div></div>",
+            &[("c", [0, 0, 80, 150])],
+        ),
+    ]);
+}

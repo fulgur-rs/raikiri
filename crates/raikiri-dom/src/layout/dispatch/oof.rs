@@ -398,8 +398,9 @@ struct GridAreaBasis {
 /// from being sized under their content: those of
 /// [`super::content_limits::table_size_overrides`], the sizes of
 /// [`super::content_limits::ratio_stated_size_clamps`], the minimum width of
-/// [`super::content_limits::ratio_width_floors`] and the bounds of
-/// [`super::content_limits::ratio_bound_overrides`].
+/// [`super::content_limits::ratio_width_floors`], the bounds of
+/// [`super::content_limits::ratio_bound_overrides`] and the minimums of
+/// [`super::content_limits::ratio_carried_minimum_caps`].
 fn size_overrides_in(
     tree: &mut LayoutSession<'_>,
     candidates: &[NodeId],
@@ -418,6 +419,9 @@ fn size_overrides_in(
         tree, candidates, size,
     ));
     overrides.extend(super::content_limits::ratio_bound_overrides(
+        tree, candidates, size,
+    ));
+    overrides.extend(super::content_limits::ratio_carried_minimum_caps(
         tree, candidates, size,
     ));
     overrides
