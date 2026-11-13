@@ -253,11 +253,34 @@ impl BorderState {
         node: usize,
         side: CellBorderSide,
     ) -> Option<CollapsedBorderCandidate> {
+        self.candidate_of(doc, node, side, true)
+    }
+
+    /// The authored border of a row, row group or other table part, even
+    /// once its paint has been suppressed: a later resolution of the grid
+    /// without its collapsed rows needs it again for the cells that then lie
+    /// on the part's edge.
+    pub(super) fn part_candidate(
+        &self,
+        doc: &LayoutSession<'_>,
+        node: usize,
+        side: CellBorderSide,
+    ) -> Option<CollapsedBorderCandidate> {
+        self.candidate_of(doc, node, side, false)
+    }
+
+    fn candidate_of(
+        &self,
+        doc: &LayoutSession<'_>,
+        node: usize,
+        side: CellBorderSide,
+        with_paint: bool,
+    ) -> Option<CollapsedBorderCandidate> {
         let (mut paint, widths) = if let Some(cell) = self.cell(node) {
             (cell.paint.or(cell.authored)?, cell.widths)
         } else if let Some(&slot) = self.row_slots.get(&node) {
             (
-                self.rows[slot].1.or_else(|| {
+                self.rows[slot].1.filter(|_| with_paint).or_else(|| {
                     let authored = doc.ifc_layout_node(node)?.computed_border;
                     if self.flipped {
                         authored.map(mirrored_sides)

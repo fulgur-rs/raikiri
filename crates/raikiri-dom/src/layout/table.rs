@@ -7204,7 +7204,7 @@ fn resolve_collapsed_part_borders(
     let column = |col: usize| columns.get(col).and_then(|part| part.0);
     let column_group = |col: usize| columns.get(col).and_then(|part| part.1);
     let candidate =
-        |part: Option<usize>, side| part.and_then(|part| state.candidate(doc, part, side));
+        |part: Option<usize>, side| part.and_then(|part| state.part_candidate(doc, part, side));
     // The border on the line before track `index`, where two boxes of
     // `parts` meet or one ends: the box before the line wins a tie, as the
     // upper or left of two boxes of a kind does. `far` and `near` are the

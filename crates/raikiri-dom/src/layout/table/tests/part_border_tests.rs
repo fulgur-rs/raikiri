@@ -321,3 +321,25 @@ fn a_spanning_col_makes_a_line_between_its_columns() {
     assert_eq!(widths(&doc, cells[0]), [4.0, 4.0, 4.0, 4.0]);
     assert_eq!(widths(&doc, cells[1]), [4.0, 4.0, 4.0, 4.0]);
 }
+
+#[test]
+fn a_collapsed_first_row_hands_the_group_top_to_the_next_row() {
+    // With the first row collapsed, the second row lies on the group's top
+    // edge and takes its border, as Chromium draws it.
+    let (doc, cells) = layout_markup("", |doc, table| {
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Some("display:table-row-group;border:4px solid"),
+        );
+        let row = doc.append_element(
+            Some(group),
+            "tr",
+            Some("display:table-row;visibility:collapse"),
+        );
+        doc.append_element(Some(row), "td", Some(CELL));
+        let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+        doc.append_element(Some(row), "td", Some(CELL));
+    });
+    assert_eq!(widths(&doc, cells[1]), [4.0, 4.0, 4.0, 4.0]);
+}
