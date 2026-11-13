@@ -263,9 +263,11 @@ fn revert_layer_rolls_back_to_the_layer_below_on_the_mapped_axis() {
 
 #[test]
 fn a_vertical_child_of_a_table_or_multicol_box_keeps_its_own_axes() {
-    // Block layout places these children on horizontal axes, which the flow-relative margins
-    // follow, but an intrinsic size is physical and follows the writing mode the box has.
-    for parent in ["display: table", "column-count: 2"] {
+    // Table layout places these children on horizontal axes, which the flow-relative margins
+    // follow, but an intrinsic size is physical and follows the writing mode the box has. A
+    // vertical child of a horizontal multicol container is the root of an orthogonal flow,
+    // which lays out on its own axes, so its margins follow its own writing mode too.
+    for (parent, inline_start_is_top) in [("display: table", false), ("column-count: 2", true)] {
         let values = child_in(
             parent,
             "",
@@ -274,7 +276,12 @@ fn a_vertical_child_of_a_table_or_multicol_box_keeps_its_own_axes() {
         );
         assert_eq!(sizes_of(&values), (length(100.0), length(50.0)), "{parent}");
         let px = ComputedLengthPercentageOrAuto::Px;
-        assert_eq!(values.margin.left, px(7.0), "{parent}");
-        assert_eq!(values.margin.top, px(0.0), "{parent}");
+        let (left, top) = if inline_start_is_top {
+            (0.0, 7.0)
+        } else {
+            (7.0, 0.0)
+        };
+        assert_eq!(values.margin.left, px(left), "{parent}");
+        assert_eq!(values.margin.top, px(top), "{parent}");
     }
 }

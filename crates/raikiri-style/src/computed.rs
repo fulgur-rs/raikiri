@@ -962,7 +962,10 @@ pub struct ComputedValues {
     /// Whether the element is a multicol container or inside one. Block
     /// layout runs such boxes on horizontal axes in every writing mode, so
     /// the flow-relative margins and padding of their children keep the
-    /// `horizontal-tb` mapping. Not a CSS property.
+    /// `horizontal-tb` mapping. A vertical box whose parent is horizontal is
+    /// the root of an orthogonal flow, which the multicol container does not
+    /// break into columns, so it and its contents are not in the flow. Not a
+    /// CSS property.
     pub multicol_flow: bool,
     /// The keyword that the `height` that wins, or the `block-size` that maps onto it, was
     /// declared with: `min-content`, `max-content` or `fit-content`. [`Self::height`] is

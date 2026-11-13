@@ -965,7 +965,8 @@ pub(crate) fn pick_winners(
 /// containers and their contents place their children on horizontal axes in
 /// every writing mode ([`ComputedValues::horizontal_children`], which looks
 /// through `display: contents` parents), so those children map through
-/// `horizontal-tb`. `text-orientation: upright` makes
+/// `horizontal-tb`, except a vertical child of a horizontal multicol flow,
+/// the root of an orthogonal flow on its own axes. `text-orientation: upright` makes
 /// the used direction `ltr` in vertical writing modes (CSS Writing Modes 4
 /// §5.1).
 pub(crate) fn flow_mapping(
@@ -1065,7 +1066,12 @@ pub(crate) fn flow_mapping(
     // below: unlike the sides, they do not depend on how block layout places the box (see
     // `FlowMapping::size_writing_mode`).
     let size_writing_mode = writing_mode;
-    let writing_mode = if inherited.horizontal_children {
+    // A vertical box in a horizontal multicol flow is the root of an
+    // orthogonal flow, which lays out on its own axes.
+    let orthogonal_multicol_root = inherited.multicol_flow
+        && writing_mode.is_vertical()
+        && !inherited.cssom_writing_mode.is_vertical();
+    let writing_mode = if inherited.horizontal_children && !orthogonal_multicol_root {
         WritingMode::HorizontalTb
     } else {
         writing_mode

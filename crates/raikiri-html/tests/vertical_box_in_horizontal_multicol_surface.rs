@@ -1,7 +1,8 @@
 //! A box in a vertical writing mode inside a horizontal multicol container
 //! is the root of an orthogonal flow. The multicol container does not break
 //! it into columns, and it lays its own content out on its vertical axes as
-//! it would anywhere else (CSS Writing Modes 4 section 7.3). Where each box
+//! it would anywhere else (CSS Writing Modes 4 section 7.3): its flow-relative
+//! sizes, margins, padding and insets map onto those axes too. Where each box
 //! falls is what Chromium lays out for the same documents.
 
 use raikiri_html::{
@@ -157,6 +158,100 @@ fn a_vertical_box_in_a_horizontal_multicol_keeps_its_own_axes() {
                 ("o", [0, 0, 30, 70]),
                 ("m", [10, 10, 10, 20]),
                 ("i", [7, 33, 16, 30]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_vertical_box_in_a_horizontal_multicol_maps_its_flow_relative_properties_on_its_own_axes() {
+    assert_rows(&[
+        (
+            r#"<div style="columns:2"><div id=o style="writing-mode:vertical-rl;inline-size:50px;block-size:20px"><div id=m>x</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="display:flex;writing-mode:vertical-rl;inline-size:50px;block-size:20px"><div id=m>x</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [0, 0, 20, 10]),
+                ("i", [0, 10, 20, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="display:flex;writing-mode:sideways-lr"><div id=m>a</div><div id=i>b</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 20]),
+                ("m", [0, 10, 10, 10]),
+                ("i", [0, 0, 10, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="writing-mode:vertical-rl"><div id=m style="margin-block-start:10px">x</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 30, 10]),
+                ("m", [10, 0, 10, 10]),
+                ("i", [0, 0, 10, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="display:flex;writing-mode:vertical-rl"><div id=m style="margin-block-start:10px;margin-inline-start:5px">x</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 25]),
+                ("m", [0, 5, 10, 10]),
+                ("i", [0, 15, 20, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="writing-mode:vertical-rl;position:relative;height:80px"><div id=m style="position:absolute;top:0;bottom:auto">x</div><div id=i style="position:absolute;inset-inline-start:20px">x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 0, 80]),
+                ("m", [-10, 0, 10, 10]),
+                ("i", [-10, 20, 10, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="display:flex;writing-mode:vertical-rl;direction:rtl;height:80px"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 80]),
+                ("m", [0, 70, 10, 10]),
+                ("i", [0, 50, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;columns:2;height:100px"><div style="writing-mode:horizontal-tb"><div id=o style="writing-mode:vertical-rl;display:flex"><div id=m>xx</div><div id=i>x</div></div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 30]),
+                ("m", [0, 0, 10, 20]),
+                ("i", [0, 20, 10, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="display:flex;writing-mode:vertical-rl;padding-block-start:7px;padding-inline-end:3px"><div id=m>xx</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 17, 33]),
+                ("m", [0, 0, 10, 20]),
+                ("i", [0, 20, 10, 10]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="writing-mode:vertical-rl;margin-block-start:7px;padding-inline-start:4px"><div id=m>xx</div><div id=i>x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 24]),
+                ("m", [10, 4, 10, 20]),
+                ("i", [0, 4, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="columns:2"><table><tr><td><div id=o style="writing-mode:vertical-rl;padding-block-start:5px"><div id=m>xx</div><div id=i>x</div></div></td></tr></table></div>"#,
+            &[
+                ("o", [3, 3, 25, 20]),
+                ("m", [13, 3, 10, 20]),
+                ("i", [3, 3, 10, 20]),
             ],
         ),
     ]);

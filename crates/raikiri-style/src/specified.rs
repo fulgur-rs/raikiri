@@ -780,6 +780,9 @@ pub struct SpecifiedValues {
     /// Whether an ancestor is a multicol container or inside one, copied from
     /// the parent's [`ComputedValues::multicol_flow`]. Not a CSS property.
     pub(crate) inside_multicol: bool,
+    /// Whether the parent's computed `writing-mode` is vertical. Not a CSS
+    /// property.
+    pub(crate) parent_vertical: bool,
     /// The parent's [`ComputedValues::horizontal_children`]. Not a CSS
     /// property.
     pub(crate) parent_horizontal_children: bool,
@@ -1244,6 +1247,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: false,
+            parent_vertical: false,
             parent_horizontal_children: false,
             parent_ruby_writing_mode: WritingMode::HorizontalTb,
         }
@@ -1409,6 +1413,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: parent.multicol_flow,
+            parent_vertical: parent.cssom_writing_mode.is_vertical(),
             parent_horizontal_children: parent.horizontal_children,
             parent_ruby_writing_mode: parent.ruby_writing_mode,
             // CSS Text 3 §5.3: hyphens is inherited.
@@ -2327,7 +2332,12 @@ impl SpecifiedValues {
         let display = resolve_display_for_float(self.display, self.float);
         // A `display: contents` element has no box to be a multicol container.
         let generates_box = !matches!(display, DisplayValue::Contents | DisplayValue::None);
-        let multicol_flow = self.inside_multicol
+        // A vertical box in a horizontal flow is the root of an orthogonal
+        // flow, which a multicol container around it does not break into
+        // columns (CSS Writing Modes 4 section 7.3): it and its contents lay
+        // out on their own axes again.
+        let orthogonal_root = self.writing_mode.is_vertical() && !self.parent_vertical;
+        let multicol_flow = (self.inside_multicol && !orthogonal_root)
             || (generates_box
                 && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
                     || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0)));
