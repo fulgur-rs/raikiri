@@ -79,9 +79,8 @@ pub fn line_relative(value: A, rtl: bool) -> A {
     match value {
         A::Safe(position) => A::Safe(resolve(position)),
         A::Unsafe(position) => A::Unsafe(resolve(position)),
-        A::Left | A::Right => value
-            .position()
-            .map_or(value, |position| resolve(position).alignment()),
+        A::Left => resolve(P::Left).alignment(),
+        A::Right => resolve(P::Right).alignment(),
         other => other,
     }
 }

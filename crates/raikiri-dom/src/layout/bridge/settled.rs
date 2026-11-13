@@ -56,19 +56,24 @@ fn own_alignment(cv: &ComputedValues, value: AlignSelfValue) -> Option<AlignItem
     }
 }
 
-/// The alignment that a `justify-self: left` or `right` of a box with the
-/// computed values `cv` gives it in an alignment container with the values
-/// `container`, or `None` when `justify-self` names neither edge.
+/// The alignment that `justify-self: left` or `right` gives the box `idx`,
+/// held by the box `container`, or `None` when its `justify-self` names
+/// neither edge.
 ///
 /// `left` and `right` are the line-left and line-right edges of the alignment
-/// container, so its direction turns them into `start` or `end`. Upright text
-/// in a vertical writing mode is laid out left to right whatever `direction`
-/// says (CSS Writing Modes 4 §5.1).
+/// container, so its direction turns them into `start` or `end`. The alignment
+/// container of an absolutely positioned box is its containing block, except
+/// where both its inline insets are `auto`: the box is then aligned in its
+/// static-position rectangle in the box that holds it (CSS Box Alignment 3
+/// §6.1).
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-left
 pub(super) fn line_relative_justify_self(
-    cv: &ComputedValues,
-    container: &ComputedValues,
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+    container: usize,
 ) -> Option<Option<AlignItems>> {
+    let cv = &cascade.computed[idx];
     let AlignSelfValue::Value(value) = cv.justify_self else {
         return None;
     };
@@ -78,16 +83,46 @@ pub(super) fn line_relative_justify_self(
     ) {
         return None;
     }
-    let upright = container.text_orientation == TextOrientation::Upright
-        && matches!(
-            container.cssom_writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
-        );
-    let rtl = container.direction == Direction::Rtl && !upright;
-    Some(own_alignment(
-        cv,
-        AlignSelfValue::Value(raikiri_layout_style::line_relative_alignment(value, rtl)),
-    ))
+    let resolved = match cv.position {
+        PositionValue::Absolute | PositionValue::Fixed => {
+            let containing_block =
+                positioning_container(doc, idx, cv.position == PositionValue::Fixed);
+            let (start, end) = if uses_vertical_axes(cascade, containing_block) {
+                (&cv.top, &cv.bottom)
+            } else {
+                (&cv.left, &cv.right)
+            };
+            if !(crate::layout::page::inset_is_auto(start)
+                && crate::layout::page::inset_is_auto(end))
+            {
+                line_relative(value, cascade, containing_block)
+            } else if container_laid_out_as(doc, cascade, container, Display::Grid).is_some() {
+                line_relative(value, cascade, container)
+            } else {
+                // In the static position of a block container, Chromium reads
+                // `left` as `start` and `right` as `end` of that container.
+                raikiri_layout_style::line_relative_alignment(value, false)
+            }
+        }
+        _ => line_relative(value, cascade, container),
+    };
+    Some(own_alignment(cv, AlignSelfValue::Value(resolved)))
+}
+
+/// The self alignment `value` with `left` and `right` resolved against the
+/// direction of the alignment container `container`.
+fn line_relative(
+    value: SelfAlignmentValue,
+    cascade: &CascadeResult,
+    container: usize,
+) -> SelfAlignmentValue {
+    raikiri_layout_style::line_relative_alignment(
+        value,
+        super::line_left_is_inline_end(
+            &cascade.computed[container],
+            uses_vertical_axes(cascade, container),
+        ),
+    )
 }
 
 /// The `align-items` or `justify-items` of a container with these values.
@@ -432,6 +467,7 @@ pub(super) fn keyword_height_insets(
         values.align_self
     };
     if let AlignSelfValue::Value(value) = alignment
+        && let value = line_relative(value, cascade, containing_block)
         && (matches!(
             value,
             SelfAlignmentValue::LastBaseline | SelfAlignmentValue::AnchorCenter

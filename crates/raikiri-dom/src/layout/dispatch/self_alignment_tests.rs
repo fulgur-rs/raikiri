@@ -567,3 +567,55 @@ fn left_follows_the_direction_of_the_alignment_container() {
         }
     }
 }
+
+#[test]
+fn left_in_a_static_position_follows_the_box_that_holds_it() {
+    for (direction, other) in [("ltr", "rtl"), ("rtl", "ltr")] {
+        // A grid aligns its static-position area with its own direction.
+        for (alignment, x) in [("left", 0.0), ("right", 150.0)] {
+            let (left, ..) = wrapped_item_rect(
+                &format!(
+                    "position:relative;display:grid;width:200px;height:200px;direction:{direction}"
+                ),
+                &format!("display:grid;width:200px;direction:{other}"),
+                &format!("position:absolute;{SMALL};justify-self:{alignment}"),
+            );
+            assert_eq!(left, x, "grid {direction} | {alignment}");
+        }
+        // A block container reads them as its start and end.
+        let (start_x, end_x) = if other == "rtl" {
+            (150.0, 0.0)
+        } else {
+            (0.0, 150.0)
+        };
+        for (alignment, x) in [("left", start_x), ("right", end_x)] {
+            let (left, ..) = wrapped_item_rect(
+                &format!("position:relative;width:200px;height:200px;direction:{direction}"),
+                &format!("width:200px;direction:{other}"),
+                &format!("position:absolute;{SMALL};justify-self:{alignment}"),
+            );
+            assert_eq!(left, x, "block {direction} | {alignment}");
+        }
+    }
+}
+
+#[test]
+fn right_keeps_both_insets_of_a_vertical_keyword_height_box() {
+    // In a vertical containing block, `justify-self` aligns along the height:
+    // `right` (line-right, the bottom) keeps both insets and ends at the
+    // bottom, `left` drops the bottom one.
+    for direction in ["ltr", "rtl"] {
+        for (alignment, bottom_aligned) in [("left", false), ("right", true)] {
+            let (_, top, _, height) = item_rect(
+                &format!(
+                    "position:relative;width:200px;height:200px;writing-mode:vertical-rl;direction:{direction}"
+                ),
+                &format!(
+                    "position:absolute;top:0;bottom:0;width:50px;height:max-content;justify-self:{alignment}"
+                ),
+            );
+            let y = if bottom_aligned { 200.0 - height } else { 0.0 };
+            assert_eq!(top, y, "{direction} | {alignment}");
+        }
+    }
+}

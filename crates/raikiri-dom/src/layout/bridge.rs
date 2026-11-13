@@ -462,17 +462,7 @@ fn apply_computed_to_style_in_session_inner(
                     raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(value)),
                 );
             }
-            // The alignment container of an absolutely positioned box is its
-            // containing block; that of any other box is its container.
-            let alignment_container = match cv.position {
-                PositionValue::Absolute | PositionValue::Fixed => {
-                    settled::positioning_container(doc, idx, cv.position == PositionValue::Fixed)
-                }
-                _ => container,
-            };
-            if let Some(value) =
-                settled::line_relative_justify_self(cv, &cascade.computed[alignment_container])
-            {
+            if let Some(value) = settled::line_relative_justify_self(doc, cascade, idx, container) {
                 settled.justify_self = value;
                 doc.record_pass_override(
                     idx,
@@ -819,19 +809,27 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// §3.1), the reverse of `vertical-lr`, whose axes the box lays out on; its
 /// direction is flipped so that the inline start stays at the bottom.
 pub(super) fn direction_for_axes(cv: &ComputedValues, vertical_axes: bool) -> LayoutDirection {
-    let upright = vertical_axes
-        && cv.text_orientation == TextOrientation::Upright
-        && matches!(
-            cv.cssom_writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
-        );
-    let rtl = matches!(cv.direction, Direction::Rtl) && !upright;
+    let rtl = line_left_is_inline_end(cv, vertical_axes);
     let bottom_to_top = vertical_axes && cv.cssom_writing_mode == WritingMode::SidewaysLr;
     if rtl != bottom_to_top {
         LayoutDirection::Rtl
     } else {
         LayoutDirection::Ltr
     }
+}
+
+/// Whether the line-left edge of a box with the computed values `cv`, laid
+/// out on vertical axes when `vertical_axes`, is its inline end: its
+/// `direction` is `rtl`, which upright text in `vertical-rl` or `vertical-lr`
+/// turns to `ltr` (see [`direction_for_axes`]).
+pub(super) fn line_left_is_inline_end(cv: &ComputedValues, vertical_axes: bool) -> bool {
+    let upright = vertical_axes
+        && cv.text_orientation == TextOrientation::Upright
+        && matches!(
+            cv.cssom_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
+    matches!(cv.direction, Direction::Rtl) && !upright
 }
 
 /// The computed values the layout of element `idx` reads: `vertical_sized` when
