@@ -1825,8 +1825,12 @@ fn compute_ifc_root(
     let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
     let ratio_height_follows =
         ratio.is_some() && inputs.known_dimensions.height.is_none() && stated.height.is_none();
-    if ratio.is_some() {
-        let metrics = block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, inputs);
+    // The bounds the box states and those its ratio carries over from one axis
+    // to the other, resolved before the ratio is taken out of the style.
+    let ratio_metrics = layout_style
+        .aspect_ratio
+        .map(|_| block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, inputs));
+    if let Some(metrics) = ratio_metrics.filter(|_| ratio.is_some()) {
         if inputs.known_dimensions.width.is_none()
             && stated.width.is_none()
             && let Some(width) = metrics.preferred.width
@@ -1916,17 +1920,37 @@ fn compute_ifc_root(
         });
     let block_start_inset = ifc_block_edge_inset(&style, parent_inline_size, writing_mode, true);
     let block_end_inset = ifc_block_edge_inset(&style, parent_inline_size, writing_mode, false);
+    // A box with a ratio and neither size stated shrinks to its lines within
+    // the bounds the ratio carries over from the other axis as well as its
+    // own: `aspect-ratio: 1; max-height: 50px` is no more than 50px wide
+    // whatever its lines are, and `min-height: 150px` no less than 150px
+    // (CSS Sizing 4 §5.1).
+    let mut width_bounds =
+        ifc_content_width_bounds(&style, inputs.parent_size.width, parent_inline_size);
+    if let Some(metrics) = ratio_metrics.filter(|_| {
+        !vertical_paragraph
+            && inputs.known_dimensions.width.is_none()
+            && inputs.known_dimensions.height.is_none()
+            && stated.width.is_none()
+            && stated.height.is_none()
+    }) {
+        let (left, right) = ifc_horizontal_edges(&style, parent_inline_size);
+        let content = |border_box: f32| (border_box - left - right).max(0.0);
+        if let Some(max) = metrics.max.width {
+            width_bounds.1 = width_bounds.1.min(content(max));
+        }
+        if let Some(min) = metrics.min.width {
+            width_bounds.0 = width_bounds.0.max(content(min));
+        }
+        width_bounds.1 = width_bounds.1.max(width_bounds.0);
+    }
     let measure = IfcMeasure {
         run_mode: inputs.run_mode,
         stretched_width,
         definite_width,
         margins_collapsible: inputs.vertical_margins_are_collapsible,
         stretched_height,
-        width_bounds: ifc_content_width_bounds(
-            &style,
-            inputs.parent_size.width,
-            parent_inline_size,
-        ),
+        width_bounds,
         height_bounds: ifc_content_height_bounds(
             &style,
             inputs.parent_size.height,
