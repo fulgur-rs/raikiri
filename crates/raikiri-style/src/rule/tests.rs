@@ -1733,3 +1733,24 @@ fn white_space_expansion_counts_against_the_declaration_limit() {
         );
     }
 }
+
+#[test]
+fn only_flow_relative_border_axis_values_expand_by_axis() {
+    use crate::property::{Border, StartEnd};
+    // A value that is not an axis shorthand pushes nothing.
+    expand_border_axis(&PropertyValue::Opacity(0.5), |value, side| {
+        panic!("unexpected {value:?} for {side:?}")
+    });
+    assert!(
+        PropertyValue::border_axis(PropertyKey::Color, StartEnd::both(Border::default())).is_none()
+    );
+    assert!(
+        classify(PropertyKey::Color)
+            .shorthand_longhands()
+            .is_empty()
+    );
+    assert_eq!(
+        classify(PropertyKey::BorderInlineWidth).shorthand_longhands(),
+        &[PropertyKey::BorderLeftWidth, PropertyKey::BorderRightWidth]
+    );
+}

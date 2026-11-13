@@ -228,6 +228,16 @@ pub(crate) enum KeyClass {
     Retained,
 }
 
+impl KeyClass {
+    /// The longhands a shorthand expands into; none for a cascade slot.
+    pub(crate) const fn shorthand_longhands(self) -> &'static [PropertyKey] {
+        match self {
+            Self::Shorthand { longhands } => longhands,
+            Self::Longhand | Self::Retained => &[],
+        }
+    }
+}
+
 /// The [`KeyClass`] of `key`.
 ///
 /// The match has no wildcard arm, so a new [`PropertyKey`] needs an explicit
@@ -1504,13 +1514,10 @@ pub(crate) fn expand_border_axis(
         return;
     };
     let key = value.key();
-    let KeyClass::Shorthand { longhands } = classify(key) else {
-        return;
-    };
+    // Every longhand of these shorthands has a side.
+    let longhands = classify(key).shorthand_longhands();
     for &longhand in longhands {
-        let Some(side) = border_axis_longhand_side(key, longhand) else {
-            continue;
-        };
+        let side = border_axis_longhand_side(key, longhand).unwrap_or(LogicalSide::InlineEnd);
         let edge = match side {
             LogicalSide::BlockStart | LogicalSide::InlineStart => sides.start,
             LogicalSide::BlockEnd | LogicalSide::InlineEnd => sides.end,
