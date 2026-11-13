@@ -1095,16 +1095,36 @@ pub(super) fn with_atomic_fit_content(
         return inputs;
     }
     let margin = inline_margin_off_available(tree, idx, &inputs);
+    // A row container that wraps its items breaks its lines at its inline
+    // size, its physical height. Taffy breaks them at the `max-height` while
+    // that size is measured, as if it were the room of the content box, so the
+    // probes lift it: the max-content size is that of the items on one line,
+    // which the limits then clamp.
+    let wrapping_row = super::wraps_along(tree, idx, true);
     let width = fit_content_size(
         tree,
         inputs.available_space.width,
         margin,
         |tree, available| {
-            algorithm(tree, node_id, probe_inputs(inputs, available))
-                .size
-                .width
+            let probe = |tree: &mut LayoutSession<'_>| {
+                algorithm(tree, node_id, probe_inputs(inputs, available))
+                    .size
+                    .width
+            };
+            if wrapping_row {
+                super::without_main_max(tree, idx, true, probe)
+            } else {
+                probe(tree)
+            }
         },
     );
+    // The limits of the inline size are those of the physical height, whose
+    // percentages refer to the height of the containing block.
+    let width = if wrapping_row {
+        super::orthogonal_flow::clamp_to_height_limits(tree, idx, swap(inputs.parent_size), width)
+    } else {
+        width
+    };
     LayoutInput {
         known_dimensions: Size {
             width: Some(width),

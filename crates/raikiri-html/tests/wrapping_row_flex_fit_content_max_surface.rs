@@ -417,3 +417,73 @@ fn a_wrapping_row_measured_for_its_content_puts_its_items_on_one_line() {
         ),
     ]);
 }
+
+#[test]
+fn a_vertical_inline_wrapping_row_fits_its_height_to_its_items_within_its_limits() {
+    // Items 80px and 50px long in an inline vertical row that wraps: on one
+    // line they are 130px long, which a `max-height` of 90px clamps, and the
+    // lines then break against it; a larger maximum or a `min-height` sets the
+    // height, the padding adds to a border-box maximum's room no more, and a
+    // container that does not wrap or that is offered less room is unchanged.
+    let items = "<p id=a style='margin:0;flex:0 0 80px;width:30px'></p><p id=b style='margin:0;flex:0 0 50px;width:20px'></p>";
+    let two_lines: &[(&str, [i32; 4])] = &[("a", [20, 0, 30, 80]), ("b", [0, 0, 20, 50])];
+    for (style, size) in [
+        (
+            "writing-mode:vertical-rl;flex-wrap:wrap;max-height:90px",
+            90,
+        ),
+        (
+            "writing-mode:vertical-rl;flex-wrap:wrap;max-height:120px",
+            120,
+        ),
+        (
+            "writing-mode:vertical-lr;flex-wrap:wrap-reverse;max-height:90px",
+            90,
+        ),
+        (
+            "writing-mode:vertical-rl;flex-wrap:wrap;max-height:90px;min-height:110px",
+            110,
+        ),
+    ] {
+        let body = format!("<div id=c style='display:inline-flex;{style}'>{items}</div>");
+        let mut expected = vec![("c".to_owned(), [0, 0, 50, size])];
+        expected.extend(two_lines.iter().map(|&(id, rect)| (id.to_owned(), rect)));
+        assert_eq!(boxes(&body), expected, "{body}");
+    }
+    let padded = format!(
+        "<div id=c style='display:inline-flex;writing-mode:vertical-rl;flex-wrap:wrap;max-height:90px;padding:5px;box-sizing:border-box'>{items}</div>"
+    );
+    assert_eq!(
+        boxes(&padded),
+        [
+            ("c".to_owned(), [0, 0, 60, 90]),
+            ("a".to_owned(), [25, 5, 30, 80]),
+            ("b".to_owned(), [5, 5, 20, 50]),
+        ],
+        "{padded}"
+    );
+    let offered = format!(
+        "<div style='height:100px'><div id=c style='display:inline-flex;writing-mode:vertical-rl;flex-wrap:wrap'>{items}</div></div>"
+    );
+    assert_eq!(
+        boxes(&offered),
+        [
+            ("c".to_owned(), [0, 0, 50, 100]),
+            ("a".to_owned(), [20, 0, 30, 80]),
+            ("b".to_owned(), [0, 0, 20, 50]),
+        ],
+        "{offered}"
+    );
+    let one_line = format!(
+        "<div id=c style='display:inline-flex;writing-mode:vertical-rl;max-height:90px'>{items}</div>"
+    );
+    assert_eq!(
+        boxes(&one_line),
+        [
+            ("c".to_owned(), [0, 0, 30, 90]),
+            ("a".to_owned(), [0, 0, 30, 80]),
+            ("b".to_owned(), [10, 80, 20, 50]),
+        ],
+        "{one_line}"
+    );
+}
