@@ -664,6 +664,9 @@ impl LayoutSession<'_> {
             self.nodes[idx].formatting_context,
             FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
         ) && (percentage_sized || auto_with_minimum);
+        // A size-contained box measures itself for the height that
+        // `contain-intrinsic-size` holds it to past a carried maximum.
+        let measured = measured || crate::layout::dispatch::contained_ratio_item(self, idx);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
@@ -970,9 +973,17 @@ impl LayoutSession<'_> {
             }
             _ => false,
         };
+        // A size-contained item of a row derives its height from the width
+        // it flexes to as well, held to the height `contain-intrinsic-size`
+        // names, which a maximum the library carries across the ratio from
+        // the width would undercut. An item the container stretches to a
+        // definite height takes that height instead, and its width from it.
+        let contained_row_item = is_row
+            && crate::layout::dispatch::contained_ratio_item(self, idx)
+            && !self.flex_item_stretches_to_definite_height(idx);
         if item.aspect_ratio().is_some()
             && cross.is_auto()
-            && main_is_stated
+            && (main_is_stated || contained_row_item)
             && derives_cross_from_ratio
         {
             FlexItemRatio::CrossFollowsMain
@@ -983,6 +994,29 @@ impl LayoutSession<'_> {
         } else {
             FlexItemRatio::Declared
         }
+    }
+
+    /// Whether the row flex container being laid out stretches its item `idx`
+    /// to a definite height: the item aligns to `stretch` and the container
+    /// has a definite height on a single line. A container that wraps its
+    /// items stretches them to the height of their line, which their content
+    /// makes.
+    fn flex_item_stretches_to_definite_height(&self, idx: usize) -> bool {
+        use raikiri_layout_style::values::AlignItemsKeyword;
+        let Some(container) = self.taffy_parent_of(idx) else {
+            return false;
+        };
+        let container_style = self.physical_style(container);
+        let alignment = self
+            .physical_style(idx)
+            .bridge_align_self()
+            .unwrap_or_else(|| container_style.align_items());
+        matches!(
+            alignment.keyword,
+            AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+        ) && !container_style.flex_wraps()
+            && crate::layout::dispatch::flex_item_percent_basis(self, idx)
+                .is_some_and(|basis| basis.height.is_some())
     }
 
     /// The physical view of a laid-out box as the paginator reads it.

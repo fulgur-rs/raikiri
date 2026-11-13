@@ -336,7 +336,10 @@ fn ifc_parent_inline_size(
 
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
-fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size<Option<f32>>> {
+pub(crate) fn flex_item_percent_basis(
+    tree: &LayoutSession<'_>,
+    node: usize,
+) -> Option<Size<Option<f32>>> {
     tree.context
         .flex_item_percent_bases
         .last()
@@ -3211,6 +3214,27 @@ fn keeps_contained_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && style.size().height.is_auto()
         && !style.is_replaced()
         && !tree.has_vertical_writing_mode(idx)
+}
+
+/// Whether the size-contained box `idx` keeps its preferred aspect ratio (see
+/// [`keeps_contained_ratio`]) with an automatic minimum height and no maximum
+/// height of its own, so that the height `contain-intrinsic-size` names is a
+/// floor the ratio does not lower.
+///
+/// The flex and grid algorithms carry a `max-width` across the ratio into a
+/// maximum height and hold the item to it, which drops that floor: Chromium
+/// sizes `contain: size; contain-intrinsic-size: 200px 200px; aspect-ratio:
+/// 1; max-width: 50px` at 50px by 200px as a flex or grid item, as it does
+/// in block flow. Such an item is left to derive its height itself.
+pub(crate) fn contained_ratio_item(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let node = &tree.nodes[idx];
+    let style = tree.physical_style(idx);
+    node.size_containment.width
+        && node.size_containment.height
+        && contain_intrinsic_natural(node).is_some()
+        && style.min_size().height.is_auto()
+        && style.max_size().height.is_auto()
+        && keeps_contained_ratio(tree, idx)
 }
 
 /// The height a size-contained box takes from its preferred aspect ratio once
