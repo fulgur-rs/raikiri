@@ -214,7 +214,8 @@ fn a_scroll_container_in_an_inline_block_gives_its_bottom_margin_edge() {
 fn a_box_in_another_writing_mode_gives_an_inline_block_no_baseline() {
     // A vertical box holds no line the inline-block could sit on: the
     // line before it gives the baseline, and without one the inline-block
-    // sits on its bottom margin edge.
+    // sits on its bottom margin edge. A vertical `display: contents` element
+    // generates no box, so the horizontal box inside it still gives one.
     assert_rows(&[
         (
             "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div id=i style='writing-mode:vertical-rl;height:30px;width:20px'>X</div></div>B</div>",
@@ -241,6 +242,24 @@ fn a_box_in_another_writing_mode_gives_an_inline_block_no_baseline() {
                 ("a", [0, 300, 10, 10]),
                 ("f", [10, 300, 40, 45]),
                 ("i", [10, 310, 40, 35]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div style='display:contents;writing-mode:vertical-rl'><div id=i style='writing-mode:horizontal-tb'>X<br>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 30]),
+                ("a", [0, 320, 10, 10]),
+                ("f", [10, 300, 40, 30]),
+                ("i", [10, 310, 40, 20]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div style='display:contents;writing-mode:vertical-rl'><div id=i>X<br>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 20]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 20]),
+                ("i", [10, 310, 20, 10]),
             ],
         ),
     ]);
@@ -377,6 +396,70 @@ fn an_inline_flex_column_sits_on_its_shrunk_size_contained_item() {
                 ("a", [0, 302, 10, 10]),
                 ("f", [10, 300, 300, 10]),
                 ("i", [10, 300, 300, 10]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn a_float_gives_an_inline_block_no_baseline() {
+    // A float, scrolling or not, directly in the inline-block or in a block
+    // inside it, gives no baseline even with lines of its own: the line
+    // before it does, and without one the inline-block sits on its bottom
+    // margin edge. A flex item that declares a float does not float.
+    assert_rows(&[
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div id=i style='float:left;overflow:hidden;height:50px;width:5px'></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 60]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 60]),
+                ("i", [10, 310, 5, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div id=i style='float:left;overflow:hidden;height:50px;width:15px'>X</div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 60]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 60]),
+                ("i", [10, 310, 15, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div id=i style='float:left;height:50px;width:15px'><br>X</div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 60]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 60]),
+                ("i", [10, 310, 15, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div id=i style='float:left;height:50px;width:15px'><br>X</div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 52]),
+                ("a", [0, 342, 10, 10]),
+                ("f", [10, 300, 40, 50]),
+                ("i", [10, 300, 15, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div><div id=i style='float:left;height:50px;width:15px'><br>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 60]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 60]),
+                ("i", [10, 310, 15, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div style='display:flex'><div id=i style='float:left;overflow:hidden;height:30px'>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 30]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 30]),
+                ("i", [10, 300, 10, 30]),
             ],
         ),
     ]);

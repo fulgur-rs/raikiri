@@ -3108,12 +3108,25 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
     while let Some((idx, offset_y, outer_clip)) = stack.pop() {
         let node = &doc.nodes[idx];
         let is_text = node.kind() == raikiri_traits::NodeKind::Text;
-        // A box whose lines run across those of the inline-block has none it
-        // could sit on, and neither does anything inside it.
-        if !is_text && node.used_writing_mode.is_vertical() {
+        let style = (!is_text).then(|| doc.physical_style(idx));
+        // A float is out of flow: neither it nor its lines give the baseline.
+        // A flex or grid item does not float, whatever it declares.
+        if style
+            .as_ref()
+            .is_some_and(|style| style.float() != Float::None)
+            && doc.taffy_parent_of(idx).is_none_or(block_flow)
+        {
             continue;
         }
-        let style = (!is_text).then(|| doc.physical_style(idx));
+        // A box whose lines run across those of the inline-block has none it
+        // could sit on, and neither does anything inside it. An element that
+        // generates no box hands its children on whatever its writing mode.
+        if !is_text
+            && node.used_writing_mode.is_vertical()
+            && node.display() != DisplayValue::Contents
+        {
+            continue;
+        }
         let scrolls = style
             .as_ref()
             .is_some_and(|style| is_scroll_container(style.overflow()));
