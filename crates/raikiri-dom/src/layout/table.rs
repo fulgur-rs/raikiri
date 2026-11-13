@@ -6836,6 +6836,9 @@ impl CellBorderSide {
 struct CollapsedBorderCandidate {
     border: ComputedBorder,
     taffy_width: LengthPercentage,
+    /// The kind and the order in the table of the box the border comes
+    /// from, which decides between equal lines where they meet.
+    origin: u32,
 }
 
 fn border_candidate(
@@ -6856,9 +6859,15 @@ fn border_candidate(
         CellBorderSide::Bottom => (borders.bottom, widths.bottom),
         CellBorderSide::Left => (borders.left, widths.left),
     };
+    let origin = match node.display() {
+        DisplayValue::TableColumn => border_state::COLUMN_ORIGIN,
+        DisplayValue::TableColumnGroup => border_state::COLUMN_GROUP_ORIGIN,
+        _ => border_state::TABLE_ORIGIN,
+    };
     Some(CollapsedBorderCandidate {
         border,
         taffy_width,
+        origin,
     })
 }
 
@@ -7065,7 +7074,7 @@ fn keep_stronger_side(
         Some(current) => collapsed_border_winner(winner, current),
         None => winner, // cov:ignore: the pair's own candidate came from this side.
     };
-    state.set_side(node_id, side, stronger.border, stronger.taffy_width);
+    state.take_side(node_id, side, stronger);
 }
 
 /// Resolve each cell's sides against the borders of the rows they lie on
@@ -7116,7 +7125,7 @@ fn resolve_collapsed_row_borders(
                 continue;
             };
             let winner = collapsed_border_winner(own, row_border);
-            state.set_side(node_id, side, winner.border, winner.taffy_width);
+            state.take_side(node_id, side, winner);
         }
     }
     for &row in &grid.rows {
@@ -7283,7 +7292,7 @@ fn resolve_collapsed_part_borders(
                 continue;
             };
             let winner = collapsed_border_winner(own, border);
-            state.set_side(node_id, side, winner.border, winner.taffy_width);
+            state.take_side(node_id, side, winner);
         }
     }
     for group in groups.into_iter().flatten() {
@@ -7344,6 +7353,162 @@ fn resolve_collapsed_table_edges(
     }
 }
 
+/// Decide which side paints each corner of every cell of `grid`, once the
+/// borders are resolved. Where border lines meet, the strongest of them takes
+/// the whole junction rather than each cell cutting its corner along the
+/// diagonal: the widest line, then the one with the stronger style (CSS 2.1
+/// §17.6.2.1), then the one whose border comes from the more specific kind
+/// of box, and then from the box earlier in the table, as Chromium paints
+/// it. Between lines of the same box, the line after the junction comes
+/// before the one before it, and a horizontal line before a vertical one.
+fn resolve_collapsed_corners(
+    state: &mut BorderState,
+    grid: &TableGrid,
+    index: &CellIndex,
+) -> Option<()> {
+    use crate::paint_rules::{CollapsedCorners, CornerOwner};
+    use CellBorderSide::{Bottom, Left, Right, Top};
+    // The lines are found among the boundary segments, so the work follows
+    // the number of cells rather than the area of the grid. A table too large
+    // for them keeps the default corners.
+    let segments = index.boundary_segments(grid)?;
+    let (n_rows, n_cols) = (grid.rows.len(), usize::from(grid.n_cols));
+    // The cells along the top and bottom edges of the grid, as column ranges
+    // in column order.
+    let edge = |on_edge: &dyn Fn(&CellPlacement) -> bool| {
+        let mut cells: Vec<(usize, usize, usize)> = grid
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| on_edge(cell))
+            .map(|(slot, cell)| {
+                let start = usize::from(cell.col_start);
+                (start, start + usize::from(cell.col_span), slot)
+            })
+            .collect();
+        cells.sort_unstable_by_key(|&(start, _, slot)| (start, slot));
+        cells
+    };
+    let top_edge = edge(&|cell| cell.row == 0);
+    let bottom_edge = edge(&|cell| usize::from(cell.row) + usize::from(cell.row_span) >= n_rows);
+    let edge_cell = |cells: &[(usize, usize, usize)], col: usize| {
+        let after = cells.partition_point(|&(start, _, _)| start <= col);
+        after
+            .checked_sub(1)
+            .map(|found| cells[found])
+            .filter(|&(_, end, _)| col < end)
+            .map(|(_, _, slot)| slot)
+    };
+    // The segment of `list` on `boundary` that covers track `track`.
+    let segment = |list: &[boundaries::Segment], boundary: usize, track: usize| {
+        let after =
+            list.partition_point(|segment| (segment.boundary, segment.start) <= (boundary, track));
+        after
+            .checked_sub(1)
+            .map(|found| list[found])
+            .filter(|segment| segment.boundary == boundary && track < segment.end)
+    };
+    // The line painted on `first`'s `first_side` or else on `second`'s
+    // `second_side`; none where it would run inside a spanning cell.
+    let line = |(first, second): (Option<usize>, Option<usize>), first_side, second_side| {
+        if first.is_some() && first == second {
+            return None;
+        }
+        first
+            .and_then(|cell| state.painted_side(grid.cells[cell].node_id, first_side))
+            .or_else(|| {
+                second.and_then(|cell| state.painted_side(grid.cells[cell].node_id, second_side))
+            })
+            .filter(|(border, _)| border.width().px() > 0.0)
+    };
+    // The cells above and below the horizontal line on grid row line `row`
+    // over column `col`.
+    let across = |row: usize, col: Option<usize>| {
+        let col = col.filter(|&col| col < n_cols)?;
+        Some(if row == 0 {
+            (None, edge_cell(&top_edge, col))
+        } else if row == n_rows {
+            (edge_cell(&bottom_edge, col), None)
+        } else {
+            let found = segment(&segments.horizontal, row, col)?;
+            (Some(found.leading), Some(found.trailing))
+        })
+    };
+    // The cells left and right of the vertical line on grid column line
+    // `col` beside row `row`.
+    let beside = |col: usize, row: Option<usize>| {
+        let row = row.filter(|&row| row < n_rows)?;
+        let found = segment(&segments.vertical, col, row)?;
+        Some(if col == 0 {
+            (None, Some(found.trailing))
+        } else if col == n_cols {
+            (Some(found.leading), None)
+        } else {
+            (Some(found.leading), Some(found.trailing))
+        })
+    };
+    // The lines that meet at grid point (`row`, `col`), in tie order:
+    // horizontal after, vertical after, horizontal before, vertical before.
+    let junction = |row: u16, col: u16| {
+        let (row, col) = (usize::from(row), usize::from(col));
+        let (up, left) = (row.checked_sub(1), col.checked_sub(1));
+        [
+            across(row, Some(col)).and_then(|cells| line(cells, Bottom, Top)),
+            beside(col, Some(row)).and_then(|cells| line(cells, Right, Left)),
+            across(row, left).and_then(|cells| line(cells, Bottom, Top)),
+            beside(col, up).and_then(|cells| line(cells, Right, Left)),
+        ]
+    };
+    let winner = |lines: [Option<(ComputedBorder, u32)>; 4]| {
+        lines
+            .iter()
+            .enumerate()
+            .filter_map(|(rank, line)| line.map(|line| (rank, line)))
+            .min_by(|(rank_a, (a, origin_a)), (rank_b, (b, origin_b))| {
+                b.width()
+                    .px()
+                    .total_cmp(&a.width().px())
+                    .then(border_style_rank(b.style()).cmp(&border_style_rank(a.style())))
+                    .then(origin_a.cmp(origin_b))
+                    .then(rank_a.cmp(rank_b))
+            })
+            .map(|(rank, (border, _))| (rank, border))
+    };
+    // The owner of a corner whose horizontal side is line `horizontal` and
+    // vertical side line `vertical` of its junction.
+    let owner =
+        |row: u16, col: u16, horizontal: usize, vertical: usize| match winner(junction(row, col)) {
+            Some((rank, _)) if rank == horizontal => CornerOwner::Horizontal,
+            Some((rank, _)) if rank == vertical => CornerOwner::Vertical,
+            Some((_, border)) => CornerOwner::Neither(border),
+            None => CornerOwner::Horizontal,
+        };
+    let last_row = u16::try_from(grid.rows.len()).unwrap_or(u16::MAX);
+    let mut corners = Vec::with_capacity(grid.cells.len());
+    for cell in &grid.cells {
+        let top = cell.row;
+        let bottom = cell.row.saturating_add(cell.row_span).min(last_row);
+        let left = cell.col_start;
+        let right = cell
+            .col_start
+            .saturating_add(cell.col_span)
+            .min(grid.n_cols);
+        corners.push((
+            cell.node_id,
+            CollapsedCorners {
+                top_left: owner(top, left, 0, 1),
+                top_right: owner(top, right, 2, 1),
+                bottom_right: owner(bottom, right, 2, 3),
+                bottom_left: owner(bottom, left, 0, 3),
+            },
+        ));
+    }
+    for (node_id, corners) in corners {
+        state.set_corners(node_id, corners);
+    }
+    Some(())
+}
+
 /// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
 /// cells, adjoining cells against each other, the cells against their row
 /// groups, columns and column groups, and edge cells against the table. With
@@ -7363,6 +7528,9 @@ fn resolve_collapsed_borders(
     let columns = column_parts(doc, table_idx, columns_removed);
     resolve_collapsed_part_borders(doc, state, grid, &columns);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
+    if !table_writing_mode(doc, table_idx).is_vertical() {
+        let _ = resolve_collapsed_corners(state, grid, index);
+    }
 }
 
 fn resolve_centered_block_borders(
@@ -7380,6 +7548,7 @@ fn resolve_centered_block_borders(
     resolve_collapsed_part_borders(doc, state, grid, &column_parts(doc, table_idx, false));
     let metrics = state.block_metrics_before_table_edges(doc, grid, table_idx, basis);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
+    let _ = resolve_collapsed_corners(state, grid, index);
     state.install_block_metrics(metrics);
 }
 

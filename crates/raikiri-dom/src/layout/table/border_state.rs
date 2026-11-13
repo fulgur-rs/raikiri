@@ -1,10 +1,23 @@
 use super::*;
 use crate::node::arena::BoxKey;
+use crate::paint_rules::CollapsedCorners;
 use raikiri_layout_geometry::Edges;
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+/// The bits of an origin that hold a box's order in the table; the bits
+/// above them hold its kind. Where collapsed borders of equal width and
+/// style meet, the one from the more specific kind of box covers the
+/// junction: cell, row, row group, column, column group, then table, as in
+/// the conflict resolution of CSS 2.1 §17.6.2.1.
+pub(super) const ORIGIN_ORDER_MASK: u32 = (1 << 28) - 1;
+const ROW_ORIGIN: u32 = 1 << 28;
+const ROW_GROUP_ORIGIN: u32 = 2 << 28;
+pub(super) const COLUMN_ORIGIN: u32 = 3 << 28;
+pub(super) const COLUMN_GROUP_ORIGIN: u32 = 4 << 28;
+pub(super) const TABLE_ORIGIN: u32 = 5 << 28;
 
 #[derive(Debug)]
 pub(super) struct BlockMetrics {
@@ -19,6 +32,11 @@ pub(super) struct CellBorderState {
     pub(super) widths: Edges<LengthPercentage>,
     pub(super) paint: Option<Sides<ComputedBorder>>,
     authored: Option<Sides<ComputedBorder>>,
+    /// The table order of the box each side's border comes from, which
+    /// decides between equal lines where they meet.
+    pub(super) origins: Sides<u32>,
+    /// Which side paints each corner, once the junctions are resolved.
+    pub(super) corners: Option<CollapsedCorners>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +46,9 @@ pub(super) struct BorderState {
     slots: HashMap<usize, usize>,
     row_slots: HashMap<usize, usize>,
     row_widths: HashMap<usize, Edges<LengthPercentage>>,
+    /// The table order of each row and row group, as [`Self::origin_of`]
+    /// gives it for a cell.
+    part_origins: HashMap<usize, u32>,
     block_metrics: Option<Rc<BlockMetrics>>,
     /// The state keeps the left and right sides swapped, so that the first
     /// column of a table whose columns run from right to left is resolved on
@@ -57,7 +78,11 @@ impl BorderState {
         let cells: Vec<_> = grid
             .cells
             .iter()
-            .map(|cell| Self::authored_cell(doc, cell.node_id, flipped))
+            .map(|cell| {
+                let mut state = Self::authored_cell(doc, cell.node_id, flipped);
+                state.origins = Sides::all(Self::origin_of(grid, cell.row, Some(cell.col_start)));
+                state
+            })
             .collect();
         let slots = cells
             .iter()
@@ -77,9 +102,14 @@ impl BorderState {
             })
             .map(|row| (row, None))
             .collect();
-        let mut groups = std::collections::HashSet::new();
-        for group in grid.rows.iter().filter_map(|&row| row_group_of(doc, row)) {
-            if groups.insert(group) {
+        let mut part_origins = HashMap::new();
+        for (index, &row) in grid.rows.iter().enumerate() {
+            let origin = Self::origin_of(grid, u16::try_from(index).unwrap_or(u16::MAX), None);
+            part_origins.entry(row).or_insert(origin | ROW_ORIGIN);
+            if let Some(group) = row_group_of(doc, row)
+                && !part_origins.contains_key(&group)
+            {
+                part_origins.insert(group, origin | ROW_GROUP_ORIGIN);
                 rows.push((group, None));
             }
         }
@@ -108,6 +138,7 @@ impl BorderState {
             rows,
             row_slots,
             row_widths,
+            part_origins,
             block_metrics: None,
             flipped,
         }
@@ -134,7 +165,20 @@ impl BorderState {
             widths,
             paint: None,
             authored,
+            origins: Sides::all(0),
+            corners: None,
         }
+    }
+
+    /// The order in the table of a box that starts at `row`, and at `col`
+    /// for a cell: a row comes just before its first cell. The kind of box
+    /// is added on top by the caller, and outranks this order.
+    fn origin_of(grid: &TableGrid, row: u16, col: Option<u16>) -> u32 {
+        let stride = u32::from(grid.n_cols) + 1;
+        (u32::from(row) + 1)
+            .saturating_mul(stride)
+            .saturating_add(col.map_or(0, |col| u32::from(col) + 1))
+            .min(ORIGIN_ORDER_MASK)
     }
 
     /// Whether the state keeps the left and right sides swapped.
@@ -151,6 +195,18 @@ impl BorderState {
             paint.map(mirrored_sides)
         } else {
             paint
+        }
+    }
+
+    /// The corners `corners` of this state as the box paints them.
+    pub(super) fn physical_corners(
+        &self,
+        corners: Option<CollapsedCorners>,
+    ) -> Option<CollapsedCorners> {
+        if self.flipped {
+            corners.map(CollapsedCorners::mirrored)
+        } else {
+            corners
         }
     }
 
@@ -276,8 +332,12 @@ impl BorderState {
         side: CellBorderSide,
         with_paint: bool,
     ) -> Option<CollapsedBorderCandidate> {
-        let (mut paint, widths) = if let Some(cell) = self.cell(node) {
-            (cell.paint.or(cell.authored)?, cell.widths)
+        let (mut paint, widths, origin) = if let Some(cell) = self.cell(node) {
+            (
+                cell.paint.or(cell.authored)?,
+                cell.widths,
+                *side_of(&cell.origins, side),
+            )
         } else if let Some(&slot) = self.row_slots.get(&node) {
             (
                 self.rows[slot].1.filter(|_| with_paint).or_else(|| {
@@ -289,6 +349,7 @@ impl BorderState {
                     }
                 })?,
                 *self.row_widths.get(&node)?,
+                self.part_origins.get(&node).copied().unwrap_or(ROW_ORIGIN),
             )
         } else {
             let physical = if self.flipped { side.flipped() } else { side };
@@ -303,7 +364,38 @@ impl BorderState {
         Some(CollapsedBorderCandidate {
             border: *border_side(&mut paint, side),
             taffy_width: width,
+            origin,
         })
+    }
+
+    /// Give `node`'s `side` the border `winner`, and the box it comes from.
+    pub(super) fn take_side(
+        &mut self,
+        node: usize,
+        side: CellBorderSide,
+        winner: CollapsedBorderCandidate,
+    ) {
+        self.set_side(node, side, winner.border, winner.taffy_width);
+        let cell = &mut self.cells[self.slots[&node]];
+        *side_of_mut(&mut cell.origins, side) = winner.origin;
+    }
+
+    /// The border `node`'s `side` paints, with the box it comes from, for a
+    /// cell of this state.
+    pub(super) fn painted_side(
+        &self,
+        node: usize,
+        side: CellBorderSide,
+    ) -> Option<(ComputedBorder, u32)> {
+        let cell = self.cell(node)?;
+        let paint = cell.paint.or(cell.authored)?;
+        Some((*side_of(&paint, side), *side_of(&cell.origins, side)))
+    }
+
+    /// Record which side paints each corner of `node`.
+    pub(super) fn set_corners(&mut self, node: usize, corners: CollapsedCorners) {
+        let slot = self.slots[&node];
+        self.cells[slot].corners = Some(corners);
     }
 
     pub(super) fn set_side(
@@ -430,5 +522,25 @@ impl BorderState {
             *paint = doc.nodes[*row].collapsed_border;
         }
         state
+    }
+}
+
+/// The value of `sides` on `side`.
+fn side_of<T>(sides: &Sides<T>, side: CellBorderSide) -> &T {
+    match side {
+        CellBorderSide::Top => &sides.top,
+        CellBorderSide::Right => &sides.right,
+        CellBorderSide::Bottom => &sides.bottom,
+        CellBorderSide::Left => &sides.left,
+    }
+}
+
+/// The value of `sides` on `side`, to change.
+fn side_of_mut<T>(sides: &mut Sides<T>, side: CellBorderSide) -> &mut T {
+    match side {
+        CellBorderSide::Top => &mut sides.top,
+        CellBorderSide::Right => &mut sides.right,
+        CellBorderSide::Bottom => &mut sides.bottom,
+        CellBorderSide::Left => &mut sides.left,
     }
 }

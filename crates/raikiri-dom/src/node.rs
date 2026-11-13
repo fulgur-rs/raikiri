@@ -505,6 +505,9 @@ pub struct Node {
     /// Border sides a collapsed-border table cell paints after conflict
     /// resolution (CSS 2.1 §17.6.2.1); `None` outside the collapsing model.
     pub(crate) collapsed_border: Option<Sides<ComputedBorder>>,
+    /// Which side of a collapsed-border table cell paints each corner of its
+    /// border; `None` outside the collapsing model.
+    pub(crate) collapsed_corners: Option<crate::paint_rules::CollapsedCorners>,
     /// Computed `border-spacing` used by the separate-border table layout.
     pub(crate) border_spacing: ComputedBorderSpacing,
     /// Computed alignment used by the native table cell placement pass.
@@ -823,6 +826,7 @@ impl Node {
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
+            collapsed_corners: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -1002,6 +1006,13 @@ impl Node {
     #[doc(hidden)]
     pub fn collapsed_border(&self) -> Option<&Sides<ComputedBorder>> {
         self.collapsed_border.as_ref()
+    }
+
+    /// Which side paints each corner of this table cell's collapsed border,
+    /// when its table uses `border-collapse: collapse`.
+    #[doc(hidden)]
+    pub fn collapsed_corners(&self) -> Option<crate::paint_rules::CollapsedCorners> {
+        self.collapsed_corners
     }
 
     /// Whether this cell's top/bottom borders paint around horizontal row tracks.

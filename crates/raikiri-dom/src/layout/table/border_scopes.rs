@@ -7,6 +7,8 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
     for cell in &state.cells {
         tree.table_layout_node_mut(cell.node_id).collapsed_border =
             state.physical_paint(cell.paint);
+        tree.table_layout_node_mut(cell.node_id).collapsed_corners =
+            state.physical_corners(cell.corners);
         tree.table_layout_node_mut(cell.node_id).flags.set(
             NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS,
             state.block_outer().is_some(),
@@ -27,7 +29,12 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
     }
 }
 
-type PaintSnapshot = Vec<(usize, Option<Sides<ComputedBorder>>, bool)>;
+type PaintSnapshot = Vec<(
+    usize,
+    Option<Sides<ComputedBorder>>,
+    Option<crate::paint_rules::CollapsedCorners>,
+    bool,
+)>;
 
 fn save_paint(tree: &LayoutSession<'_>, state: &BorderState) -> PaintSnapshot {
     state
@@ -43,6 +50,9 @@ fn save_paint(tree: &LayoutSession<'_>, state: &BorderState) -> PaintSnapshot {
                     .collapsed_border,
                 tree.ifc_layout_node(idx)
                     .expect("paint target is live")
+                    .collapsed_corners,
+                tree.ifc_layout_node(idx)
+                    .expect("paint target is live")
                     .centered_collapsed_block_borders(),
             )
         })
@@ -50,8 +60,9 @@ fn save_paint(tree: &LayoutSession<'_>, state: &BorderState) -> PaintSnapshot {
 }
 
 fn restore_paint(tree: &mut LayoutSession<'_>, saved: PaintSnapshot) {
-    for (idx, paint, centered) in saved.into_iter().rev() {
+    for (idx, paint, corners, centered) in saved.into_iter().rev() {
         tree.table_layout_node_mut(idx).collapsed_border = paint;
+        tree.table_layout_node_mut(idx).collapsed_corners = corners;
         tree.table_layout_node_mut(idx)
             .flags
             .set(NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS, centered);

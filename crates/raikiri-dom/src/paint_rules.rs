@@ -17,6 +17,51 @@ use std::collections::{BinaryHeap, HashSet};
 mod negative_levels;
 pub use negative_levels::NegativeLevels;
 
+/// The side of a collapsed-border table cell that paints one corner of its
+/// border box. Where border lines meet, the strongest of them takes the whole
+/// junction (CSS 2.1 §17.6.2.1; Chromium gives the square to the widest line,
+/// then the one with the stronger style, then the one from the more specific
+/// kind of box, then the one that comes first in the table), so a corner is
+/// not split along its diagonal.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum CornerOwner {
+    /// The top or bottom side runs over the corner.
+    #[default]
+    Horizontal,
+    /// The left or right side runs over the corner.
+    Vertical,
+    /// Neither side does: the line of a neighbouring cell with this border
+    /// takes the junction. A cell painted later over that line still paints
+    /// the corner square in its color.
+    Neither(raikiri_style::resolve::ComputedBorder),
+}
+
+/// Which side of a collapsed-border table cell paints each of its corners.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CollapsedCorners {
+    /// The top-left corner.
+    pub top_left: CornerOwner,
+    /// The top-right corner.
+    pub top_right: CornerOwner,
+    /// The bottom-right corner.
+    pub bottom_right: CornerOwner,
+    /// The bottom-left corner.
+    pub bottom_left: CornerOwner,
+}
+
+impl CollapsedCorners {
+    /// The same corners seen in a mirror, left and right swapped.
+    #[must_use]
+    pub fn mirrored(self) -> Self {
+        Self {
+            top_left: self.top_right,
+            top_right: self.top_left,
+            bottom_right: self.bottom_left,
+            bottom_left: self.bottom_right,
+        }
+    }
+}
+
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
 ///
 /// `None` skips the check. An inline `<canvas>` and floated boxes stay on

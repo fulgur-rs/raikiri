@@ -300,6 +300,7 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;
+        doc.nodes[idx].collapsed_corners = None;
         doc.nodes[idx]
             .flags
             .remove(NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS);

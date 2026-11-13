@@ -28,6 +28,9 @@ pub(super) struct ElementBorder<'a> {
     paint_top: bool,
     /// Which corners are cut along their diagonal.
     miters: Miters,
+    /// For a cell of a table with collapsed borders, which side paints each
+    /// corner whole: such corners are never cut.
+    corners: Option<raikiri_dom::paint_rules::CollapsedCorners>,
 }
 
 /// The corners of a box that are cut along their diagonal between the strips of
@@ -75,7 +78,19 @@ impl<'a> ElementBorder<'a> {
             widths,
             paint_top,
             miters: corner_miters(border, current_color, paint_top),
+            corners: None,
         })
+    }
+
+    /// The same border, with each corner painted whole by the side `corners`
+    /// names, as a cell of a table with collapsed borders paints it.
+    pub(super) fn with_corners(
+        mut self,
+        corners: raikiri_dom::paint_rules::CollapsedCorners,
+    ) -> Self {
+        self.miters = Miters::default();
+        self.corners = Some(corners);
+        self
     }
 
     /// Paints the strips of the sides: top, bottom, left and right. A side that
@@ -189,6 +204,35 @@ impl<'a> ElementBorder<'a> {
         let top_right_cut = cut(top_right, (box_x1, box_y0), (-wr, wt));
         let bottom_right_cut = cut(bottom_right, (box_x1, box_y1), (-wr, -wb));
         let bottom_left_cut = cut(bottom_left, (box_x0, box_y1), (wl, -wb));
+        // Which side runs over each corner of a collapsed-border cell. A
+        // corner the horizontal side does not own keeps the horizontal strip
+        // out of the corner square of the box; one the vertical side owns
+        // runs the vertical strip over it.
+        use raikiri_dom::paint_rules::CornerOwner;
+        let owner = |pick: fn(&raikiri_dom::paint_rules::CollapsedCorners) -> CornerOwner| {
+            self.corners.as_ref().map_or(CornerOwner::Horizontal, pick)
+        };
+        let (owner_tl, owner_tr, owner_br, owner_bl) = (
+            owner(|c| c.top_left),
+            owner(|c| c.top_right),
+            owner(|c| c.bottom_right),
+            owner(|c| c.bottom_left),
+        );
+        // Where a horizontal strip stops short of a corner it does not own.
+        let start = |owner: CornerOwner, corner: f64| {
+            if matches!(owner, CornerOwner::Horizontal) {
+                f64::NEG_INFINITY
+            } else {
+                corner
+            }
+        };
+        let end = |owner: CornerOwner, corner: f64| {
+            if matches!(owner, CornerOwner::Horizontal) {
+                f64::INFINITY
+            } else {
+                corner
+            }
+        };
         if self.paint_top && bt > 0.0 {
             let strip = Strip::horizontal(
                 Rect::new(
@@ -199,7 +243,8 @@ impl<'a> ElementBorder<'a> {
                 ),
                 top_left_cut,
                 top_right_cut,
-            );
+            )
+            .within(start(owner_tl, box_x0 + wl), end(owner_tr, box_x1 - wr));
             self.paint_side(scene, &self.border.top, strip, ring, true);
         }
         if bb > 0.0 {
@@ -212,7 +257,8 @@ impl<'a> ElementBorder<'a> {
                 ),
                 bottom_left_cut,
                 bottom_right_cut,
-            );
+            )
+            .within(start(owner_bl, box_x0 + wl), end(owner_br, box_x1 - wr));
             self.paint_side(scene, &self.border.bottom, strip, ring, false);
         }
         // The left and right strips only need a vertical span. When the
@@ -221,8 +267,20 @@ impl<'a> ElementBorder<'a> {
         // files), the full inner box is empty but both side strips still
         // cover their rects.
         let left_span = (
-            if top_left { box_y0 } else { inner_y0 },
-            if bottom_left { box_y1 } else { inner_y1 },
+            if top_left {
+                box_y0
+            } else if matches!(owner_tl, CornerOwner::Vertical) {
+                y0
+            } else {
+                inner_y0
+            },
+            if bottom_left {
+                box_y1
+            } else if matches!(owner_bl, CornerOwner::Vertical) {
+                y1
+            } else {
+                inner_y1
+            },
         );
         if bl > 0.0 && left_span.1 > left_span.0 {
             let strip = Strip::vertical(
@@ -234,8 +292,20 @@ impl<'a> ElementBorder<'a> {
             self.paint_side(scene, &self.border.left, strip, ring, true);
         }
         let right_span = (
-            if top_right { box_y0 } else { inner_y0 },
-            if bottom_right { box_y1 } else { inner_y1 },
+            if top_right {
+                box_y0
+            } else if matches!(owner_tr, CornerOwner::Vertical) {
+                y0
+            } else {
+                inner_y0
+            },
+            if bottom_right {
+                box_y1
+            } else if matches!(owner_br, CornerOwner::Vertical) {
+                y1
+            } else {
+                inner_y1
+            },
         );
         if br > 0.0 && right_span.1 > right_span.0 {
             let strip = Strip::vertical(
@@ -245,6 +315,38 @@ impl<'a> ElementBorder<'a> {
                 bottom_right_cut,
             );
             self.paint_side(scene, &self.border.right, strip, ring, false);
+        }
+        // A solid line of a neighbouring cell that takes a corner square is
+        // painted there again, so that a cell painted after that neighbour,
+        // as a positioned one is, does not cover the junction with its
+        // background.
+        let squares = [
+            (
+                owner_tl,
+                Rect::new(box_x0, box_y0, box_x0 + wl, box_y0 + wt),
+            ),
+            (
+                owner_tr,
+                Rect::new(box_x1 - wr, box_y0, box_x1, box_y0 + wt),
+            ),
+            (
+                owner_br,
+                Rect::new(box_x1 - wr, box_y1 - wb, box_x1, box_y1),
+            ),
+            (
+                owner_bl,
+                Rect::new(box_x0, box_y1 - wb, box_x0 + wl, box_y1),
+            ),
+        ];
+        for (owner, square) in squares {
+            if let CornerOwner::Neither(line) = owner
+                && ring == 0
+                && line.style() == BorderStyle::Solid
+                && square.area() > 0.0
+                && let Some(color) = self.color(&line, 0, true)
+            {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &square);
+            }
         }
     }
 
@@ -478,6 +580,15 @@ impl Strip {
             start,
             end,
         }
+    }
+
+    /// The same horizontal strip painted only between `from` and `to`, with
+    /// its dashes or dots still laid out over the whole side, as where a
+    /// vertical side paints the corner square.
+    fn within(mut self, from: f64, to: f64) -> Self {
+        self.rect.x0 = self.rect.x0.max(from);
+        self.rect.x1 = self.rect.x1.min(to);
+        self
     }
 
     /// A left or right strip of a side that is `line` long, between the top and
