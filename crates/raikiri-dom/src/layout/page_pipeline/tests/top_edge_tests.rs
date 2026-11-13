@@ -462,11 +462,13 @@ fn a_flex_line_moves_whole_while_one_item_has_its_first_line_on_the_page() {
 }
 
 #[test]
-fn a_container_stays_when_the_next_page_cannot_hold_the_first_piece() {
-    // An item that avoids breaks inside it and is taller than a page would
-    // cross a page edge wherever it went.
+fn a_container_moves_even_when_the_next_page_cannot_hold_the_first_piece() {
+    // An item that avoids breaks inside it and is taller than a page crosses
+    // a page edge wherever it goes, but the page still breaks before the
+    // container rather than between its padding and the item, as Chromium
+    // prints it.
     let (container, _, _) = container_after(94, FLEX, &["break-inside:avoid;height:120px"], 1);
-    assert_eq!(container, 94.0);
+    assert_eq!(container, 100.0);
 }
 
 #[test]

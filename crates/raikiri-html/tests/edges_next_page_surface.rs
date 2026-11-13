@@ -89,15 +89,15 @@ fn a_box_with_edges_above_nothing_and_no_height_moves_whole() {
     check(ROWS_EMPTY_BOXES, "10px/10px", 8.0);
 }
 
-/// Not Chromium's output: Chromium keeps an inline-block whole, but a tall
-/// inline-block with room for content fragments across the pages, which the
-/// css/printing fragmented-inline-block-002-print pair requires, so its
-/// border-top does not take it to the next page.
+/// An inline-block taller than a page that does not start its page moves
+/// to the next page whole, as its line does, and goes on below the page end
+/// from there. One that starts the page stays and runs over the pages, as
+/// the css/printing fragmented-inline-block print tests ask.
 #[test]
-fn an_inline_block_with_room_for_content_keeps_fragmenting() {
+fn a_tall_inline_block_below_content_starts_the_next_page() {
     let rows: &[Row] = &[(
         r#"<div style="height:80px">S</div><div style="display:inline-block;width:20px;height:150px;border-top:5px solid"></div><div style="height:10px">Z</div>"#,
-        &[(0, 0), (2, 37)],
+        &[(0, 0), (2, 57)],
     )];
     check(rows, "10px/10px", 8.0);
 }
