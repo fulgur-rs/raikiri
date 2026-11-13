@@ -22,8 +22,7 @@ use crate::layout::protocol::{
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{MaybeMath, Size};
 use raikiri_layout_style::values::{
-    AlignContentKeyword, AlignItemsKeyword, Display, ExpandedDimension, MaybeResolve, Position,
-    ResolveOrZero,
+    AlignItemsKeyword, Display, ExpandedDimension, MaybeResolve, Position, ResolveOrZero,
 };
 
 use super::block_flow::{self, Metrics, context::BlockContext};
@@ -206,44 +205,39 @@ fn contribution(
         .width;
     tree.context.grid_ratio_content.pop();
     let style = block_flow::style_input::physical(tree, idx);
-    // A row of a definite size gives the height the ratio carries over, as
-    // it would to an item stretched to it, though the content may still
-    // raise the height the item is laid out at: Chromium makes
-    // `aspect-ratio: 1` in a 50px row 50px wide around a 200px tall child,
-    // and 50x200 in all. An `auto` row that a grid of a stated height
-    // stretches gives its height as well, but there the height of the
-    // content gives the width where it is taller. A row that grows with its
-    // content is sized from the width settled here, so its height is no size
-    // to carry back over to that width.
-    let rows = tree.taffy_parent_of(idx).map(|container| {
-        let container = tree.physical_style(container);
-        // The `auto` rows of a grid of a stated height, or minimum height,
-        // stretch to fill it unless `align-content` packs them.
-        let stretched = matches!(
-            container.align_content().keyword,
-            AlignContentKeyword::Normal | AlignContentKeyword::Stretch
-        ) && (!container.size().height.is_auto()
-            || !container.min_size().height.is_auto());
-        (
-            crate::layout::taffy_adapter::rows_size_to_content(&container),
-            stretched,
-        )
-    });
-    let area_height = inputs.parent_size.height.map(|height| {
-        let margin = style.margin.resolve_or_zero(inputs.parent_size.width);
-        (height - margin.top - margin.bottom).max(0.0)
-    });
-    let content_height = |tree: &mut LayoutSession<'_>| {
+    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
+    // The border-box width the ratio gives for a border-box `height`, held
+    // to the bounds of the box.
+    let across = |height: f32| {
+        let sized = Metrics::resolve(
+            &style,
+            false,
+            content_box_ratio,
+            LayoutInput {
+                known_dimensions: Size {
+                    width: None,
+                    height: Some(height),
+                },
+                ..inputs
+            },
+        );
+        sized
+            .preferred
+            .width
+            .map(|width| width.maybe_clamp(sized.min.width, sized.max.width))
+    };
+    // The height the box takes laid out at `width`.
+    let height_at = |tree: &mut LayoutSession<'_>, width: f32| {
         tree.compute_child_layout_with_block_ctx_inner(
             node_id,
             LayoutInput {
                 axis: RequestedAxis::Vertical,
                 known_dimensions: Size {
-                    width: Some(content_width),
+                    width: Some(width),
                     height: None,
                 },
                 available_space: Size {
-                    width: AvailableSpace::Definite(content_width),
+                    width: AvailableSpace::Definite(width),
                     ..inputs.available_space
                 },
                 ..probe
@@ -253,28 +247,35 @@ fn contribution(
         .size
         .height
     };
-    let height = match (rows, area_height) {
-        (Some((false, _)), Some(area)) => area,
-        (Some((true, true)), Some(area)) => area.max(content_height(tree)),
-        _ => content_height(tree),
+    let area_height = inputs.parent_size.height.map(|height| {
+        let margin = style.margin.resolve_or_zero(inputs.parent_size.width);
+        (height - margin.top - margin.bottom).max(0.0)
+    });
+    let rows_size_to_content = tree.taffy_parent_of(idx).is_none_or(|container| {
+        crate::layout::taffy_adapter::rows_size_to_content(&tree.physical_style(container))
+    });
+    // The area the item sits in gives the height the ratio carries over once
+    // its row is sized, as it would to an item stretched to it, though the
+    // content may still raise the height the item is laid out at: Chromium
+    // makes `aspect-ratio: 1` in a 50px row 50px wide around a 200px tall
+    // child, and 50x200 in all, and 300px wide beside a 300px tall item in
+    // the same `auto` row. A row that only this item sizes grows with the
+    // width settled here, so its height is no size to carry back over to
+    // that width: there the height of the content gives it.
+    let height = match area_height {
+        Some(area) if !rows_size_to_content => area,
+        Some(area) => {
+            let content = height_at(tree, content_width);
+            let width = across(content).map_or(content_width, |width| width.max(content_width));
+            if area > height_at(tree, width) + 0.5 {
+                area
+            } else {
+                content
+            }
+        }
+        None => height_at(tree, content_width),
     };
-    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let sized = Metrics::resolve(
-        &style,
-        false,
-        content_box_ratio,
-        LayoutInput {
-            known_dimensions: Size {
-                width: None,
-                height: Some(height),
-            },
-            ..inputs
-        },
-    );
-    let across = sized
-        .preferred
-        .width
-        .map(|width| width.maybe_clamp(sized.min.width, sized.max.width));
+    let across = across(height);
     match across {
         Some(width) if width > content_width => (width, true),
         _ => (content_width, false),

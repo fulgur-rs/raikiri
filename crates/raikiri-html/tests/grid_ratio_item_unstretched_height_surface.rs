@@ -258,3 +258,27 @@ fn the_rows_a_grid_stretches_give_the_width_of_a_ratio_grid_item() {
         ),
     ]);
 }
+
+#[test]
+fn a_row_another_item_makes_taller_gives_the_width_of_a_ratio_grid_item() {
+    // A 300px tall item beside the ratio item sizes their `auto` row, with
+    // and without a fixed row above it.
+    assert_rows(&[
+        (
+            "<div style='display:grid;width:300px;grid-template-columns:max-content 100px;grid-template-rows:auto auto;align-content:start'><div style='height:50px'></div><div></div><div id=c style='aspect-ratio:1;justify-self:start'><div style='height:50px'></div></div><div style='height:300px'></div></div>",
+            &[("c", [0, 50, 300, 300])],
+        ),
+        (
+            "<div style='display:grid;width:300px;grid-template-columns:max-content 100px;grid-template-rows:50px auto;align-content:start'><div style='height:50px'></div><div></div><div id=c style='aspect-ratio:1;justify-self:start'><div style='height:50px'></div></div><div style='height:300px'></div></div>",
+            &[("c", [0, 50, 300, 300])],
+        ),
+        (
+            "<div style='display:grid;width:300px;grid-template-columns:max-content 100px'><div id=c style='aspect-ratio:1'><div style='height:50px'></div></div><div style='height:300px'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='display:grid;width:300px;grid-template-columns:max-content 100px;grid-template-rows:300px'><div id=c style='aspect-ratio:1'><div style='height:50px'></div></div><div style='height:300px'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+    ]);
+}
