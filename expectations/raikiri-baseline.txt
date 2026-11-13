@@ -637,6 +637,7 @@ css/css-tables/parsing/border-collapse-valid.html
 css/css-tables/parsing/border-spacing-valid.html
 css/css-tables/parsing/table-layout-valid.html
 css/css-tables/rowspan-cell-border-after-color.html
+css/css-tables/rules-groups.html
 css/css-tables/table-cell-child-overflow-measure.html
 css/css-tables/table-cell-inline-size-box-sizing-quirks.html
 css/css-tables/table-cell-overflow-auto.html
@@ -1053,7 +1054,6 @@ css/css-tables/parsing/caption-side-valid.html
 css/css-tables/parsing/empty-cells-valid.html
 # --- css-tables reftest pin 2026-09-15 (tables-sweep: rowspan=0 section-end + first-thead/first-tfoot order + css/reference unlock, EXACT 800x600) ---
 css/css-tables/zero-rowspan-001.html
-css/css-tables/row-group-order.html
 css/css-tables/percent-height-replaced-in-percent-cell.tentative.html
 css/css-tables/table-cell-baseline-static-position.html
 # --- css-tables reftest pin 2026-09-15 (tables-sweep: tr-height row floor, CSS 2.1 §17.5.3) ---

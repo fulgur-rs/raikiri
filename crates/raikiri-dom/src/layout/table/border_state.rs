@@ -65,7 +65,9 @@ impl BorderState {
             .map(|(slot, cell)| (cell.node_id, slot))
             .collect();
         // Anonymous rows alias their first cell; that cell owns its paint.
-        let rows: Vec<_> = grid
+        // The row groups around the rows follow them: their borders, too,
+        // resolve into the cells and are not painted by the group.
+        let mut rows: Vec<_> = grid
             .rows
             .iter()
             .copied()
@@ -75,6 +77,11 @@ impl BorderState {
             })
             .map(|row| (row, None))
             .collect();
+        for group in grid.rows.iter().filter_map(|&row| row_group_of(doc, row)) {
+            if !rows.iter().any(|&(node, _)| node == group) {
+                rows.push((group, None));
+            }
+        }
         let row_slots = rows
             .iter()
             .enumerate()
@@ -315,8 +322,13 @@ impl BorderState {
                 }
             }
         }
-        for row in &grid.rows {
-            if let Some(&slot) = self.row_slots.get(row) {
+        for row in grid
+            .rows
+            .iter()
+            .flat_map(|&row| [Some(row), row_group_of(doc, row)])
+            .flatten()
+        {
+            if let Some(&slot) = self.row_slots.get(&row) {
                 self.rows[slot].1 = None;
             }
         }
