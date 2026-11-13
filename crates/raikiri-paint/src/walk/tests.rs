@@ -8700,6 +8700,25 @@ fn a_row_moved_to_the_next_page_takes_its_half_of_the_collapsed_line() {
 }
 
 #[test]
+fn a_row_span_stops_at_its_row_group_when_the_collapsed_line_splits() {
+    // The blue cells span more rows than their row group holds: they end
+    // with the group, so the line below them splits where the next group
+    // moves to the next page, as it does for a cell spanning one row.
+    for rowspan in ["2", "0"] {
+        let markup = format!(
+            "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tbody style='border:10px solid lime'><tr><td style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid blue'><tr><td rowspan='{rowspan}' style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid yellow'><tr><td style='padding:0;width:40px;height:30px'></td></tr></tbody></table></body></html>"
+        );
+        let first = paint_ahem_page(&markup, square_page(100.0), 0);
+        let pixel = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..3].to_vec();
+        assert_eq!(pixel(&first, 20, 82), [0, 0, 255], "rowspan={rowspan}");
+        assert_eq!(pixel(&first, 20, 87), [255, 255, 255], "rowspan={rowspan}");
+        let second = paint_ahem_page(&markup, square_page(100.0), 1);
+        assert_eq!(pixel(&second, 20, 2), [0, 0, 255], "rowspan={rowspan}");
+        assert_eq!(pixel(&second, 20, 7), [255, 255, 255], "rowspan={rowspan}");
+    }
+}
+
+#[test]
 fn an_empty_row_on_one_page_leaves_the_collapsed_lines_around_it_whole() {
     // The empty row has a height but no cells: no break separates the rows
     // around it, so both lines keep their full 10px.

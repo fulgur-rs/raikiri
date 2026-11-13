@@ -138,6 +138,21 @@ fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
         .unwrap_or(table)
 }
 
+/// For each of the `rows` (row markers in grid order) of `table`, the index
+/// just past the last row of its row group: a row span stops there.
+pub(super) fn group_ends(doc: &Document, table: usize, rows: &[usize]) -> Vec<usize> {
+    let groups: Vec<_> = rows.iter().map(|&row| row_group(doc, table, row)).collect();
+    let mut group_ends = vec![rows.len(); rows.len()];
+    let mut end = rows.len();
+    for row in (0..rows.len()).rev() {
+        if row + 1 < rows.len() && groups[row] != groups[row + 1] {
+            end = row + 1;
+        }
+        group_ends[row] = end;
+    }
+    group_ends
+}
+
 pub(super) fn reserve_columns(
     doc: &Document,
     table: usize,
@@ -161,15 +176,7 @@ fn reserve_columns_counted<const COUNT: bool>(
     if COUNT {
         crate::table_reservation_diagnostics::record(|work| work.passes += 1);
     }
-    let groups: Vec<_> = rows.iter().map(|&row| row_group(doc, table, row)).collect();
-    let mut group_ends = vec![rows.len(); rows.len()];
-    let mut end = rows.len();
-    for row in (0..rows.len()).rev() {
-        if row + 1 < rows.len() && groups[row] != groups[row + 1] {
-            end = row + 1;
-        }
-        group_ends[row] = end;
-    }
+    let group_ends = group_ends(doc, table, rows);
 
     let mut reservations = ColumnReservations::default();
     let mut current_row = None;

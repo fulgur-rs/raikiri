@@ -46,19 +46,24 @@ pub(crate) fn mark_split_lines(document: &mut Document, moved_rows: &HashMap<usi
         })
         .collect();
     let mut split_lines = std::mem::take(&mut document.table_objects.split_lines);
-    for rows in tables
+    for (table, rows) in tables
         .iter()
-        .filter_map(|table| document.table_objects.rows.get(table))
+        .filter_map(|&table| Some((table, document.table_objects.rows.get(&table)?)))
     {
-        // The cells whose rows end at each row.
+        // The cells whose rows end at each row. A cell spans no further than
+        // the end of its row group, as in layout, and `rowspan="0"` reaches
+        // that end.
+        let markers: Vec<usize> = rows.iter().map(|row| row.marker).collect();
+        let group_ends = super::rowspan::group_ends(document, table, &markers);
         let mut ending: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
         for (index, row) in rows.iter().enumerate() {
             for &cell in &row.cells {
                 let span = usize::from(super::get_rowspan(document, cell));
                 let end = span
                     .checked_sub(1)
-                    .map_or(rows.len() - 1, |more| index + more);
-                ending[end.min(rows.len() - 1)].push(cell);
+                    .map_or(usize::MAX, |more| index + more)
+                    .min(group_ends[index] - 1);
+                ending[end].push(cell);
             }
         }
         let delta = |index: usize| moved_rows.get(&rows[index].marker).copied().unwrap_or(0.0);
