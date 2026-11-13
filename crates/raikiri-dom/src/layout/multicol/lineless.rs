@@ -2162,16 +2162,14 @@ pub(super) fn layout(
     let mut overflows = Vec::with_capacity(children.len());
     for &child in children {
         tree.nodes[child].cache.clear();
-        let output = tree.compute_child_layout(
-            NodeId::from(child),
-            super::column_child_layout_input(
-                tree,
-                child,
-                context.column_width,
-                definite_height,
-                AvailableSpace::MaxContent,
-            ),
+        let input = super::column_child_layout_input(
+            tree,
+            child,
+            context.column_width,
+            definite_height,
+            AvailableSpace::MaxContent,
         );
+        let output = tree.compute_child_layout(NodeId::from(child), input);
         sizes.push(output.size);
         overflows.push(output.scrollable_overflow_rect);
     }

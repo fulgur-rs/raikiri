@@ -1634,6 +1634,8 @@ impl LayoutSession<'_> {
 }
 
 #[cfg(test)]
+mod block_justify_tests;
+#[cfg(test)]
 mod float_container_tests;
 #[cfg(test)]
 mod grid_baseline_tests;

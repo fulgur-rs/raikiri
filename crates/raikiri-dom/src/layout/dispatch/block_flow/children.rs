@@ -13,8 +13,8 @@ use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContent, AlignContentKeyword, AlignmentSafety, BoxGenerationMode, Clear, Direction,
-    ExpandedDimension, Float, MaybeResolve, Overflow, Position,
+    AlignContent, AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, BoxGenerationMode,
+    Clear, Direction, ExpandedDimension, Float, MaybeResolve, Overflow, Position,
 };
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 
@@ -74,6 +74,79 @@ fn measure_in_flow_child(
     }
 }
 
+/// Where a block-level box is placed along the inline axis of its block
+/// container by `justify-self` (CSS Box Alignment 3 §6.1): `None` for
+/// `normal` and `stretch`, which leave it to its margins, else the start, the
+/// center or the end of the container, and whether an overflowing box falls
+/// back to the start (`safe`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum InlinePosition {
+    Start,
+    Center,
+    End,
+}
+
+/// The position `justify-self` gives the in-flow child `style` in the block
+/// container `container`, with `auto` taking the container's
+/// `justify-items`. Baseline alignment has no shared baseline in a block
+/// container, so it falls back to the start, as `self-start` and `self-end`
+/// do to the start or the end of the child's own direction.
+// spec: https://www.w3.org/TR/css-align-3/#justify-block
+pub(super) fn justify_position(style: &Style, container: &Style) -> Option<(InlinePosition, bool)> {
+    let alignment = style
+        .justify_self
+        .unwrap_or(container.justify_items)
+        .resolve_self_relative(style.direction, container.direction, true);
+    let position = match alignment.keyword {
+        AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch => return None,
+        AlignItemsKeyword::Center => InlinePosition::Center,
+        AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => InlinePosition::End,
+        _ => InlinePosition::Start,
+    };
+    Some((position, alignment.safety == AlignmentSafety::Safe))
+}
+
+/// Where `justify-self` puts the in-flow block `child` of the block container
+/// `parent` in a room `free` wider than its margin box, as an offset from the
+/// left of that room; `None` when its alignment leaves it to its margins,
+/// as `normal`, `stretch` and an auto margin do.
+pub(crate) fn justified_offset(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    parent: usize,
+    rtl: bool,
+    free: f32,
+) -> Option<f32> {
+    let style = super::style_input::child(tree, child);
+    if style.margin.left.is_auto() || style.margin.right.is_auto() {
+        return None;
+    }
+    let (position, safe) = justify_position(&style, &super::style_input::container(tree, parent))?;
+    let position = if safe && free < 0.0 {
+        InlinePosition::Start
+    } else {
+        position
+    };
+    Some(match position {
+        InlinePosition::Center => free / 2.0,
+        InlinePosition::Start if rtl => free,
+        InlinePosition::End if !rtl => free,
+        _ => 0.0,
+    })
+}
+
+/// Whether `justify-self` (or the container's `justify-items` for `auto`)
+/// asks the in-flow child `style` to stretch explicitly, which fills the room
+/// for a replaced box that `normal` leaves at its natural width.
+fn justify_stretches(style: &Style, container: &Style) -> bool {
+    style
+        .justify_self
+        .unwrap_or(container.justify_items)
+        .keyword
+        == AlignItemsKeyword::Stretch
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn place_inline_axis(
     style: &Style,
     direction: Direction,
@@ -81,6 +154,7 @@ pub(super) fn place_inline_axis(
     insets: [f32; 2],
     (area_start, area_width): (f32, f32),
     used_width: f32,
+    justify: Option<(InlinePosition, bool)>,
     margin: &mut Edges<f32>,
 ) -> f32 {
     let free = area_width - used_width;
@@ -91,10 +165,24 @@ pub(super) fn place_inline_axis(
         (false, true) => (0.0, free.max(0.0)),
         _ => (0.0, 0.0),
     };
-    let offset = if direction == Direction::Rtl && (free < 0.0 || !left_auto && !right_auto) {
-        free
-    } else {
-        auto_left
+    let rtl = direction == Direction::Rtl;
+    let offset = match justify {
+        // Auto margins take the free space before alignment does.
+        Some((position, safe)) if !left_auto && !right_auto => {
+            let position = if safe && free < 0.0 {
+                InlinePosition::Start
+            } else {
+                position
+            };
+            match position {
+                InlinePosition::Center => free / 2.0,
+                InlinePosition::Start if rtl => free,
+                InlinePosition::End if !rtl => free,
+                _ => 0.0,
+            }
+        }
+        _ if rtl && (free < 0.0 || !left_auto && !right_auto) => free,
+        _ => auto_left,
     };
     if left_auto {
         margin.left = auto_left + (area_start - insets[0]).max(0.0);
@@ -618,7 +706,11 @@ pub(super) fn layout(
         // An `auto` width fills the room, but a table, a compressible
         // replaced box and a button take their own size then; `stretch` fills
         // it for them too (CSS Sizing 4 §5.1).
-        let stretches = match style.size.width.expand() {
+        // A box that `justify-self` places at a position takes its
+        // fit-content width for `auto` instead (CSS Box Alignment 3 §6.1).
+        // An explicit `stretch` fills the room for a replaced box too.
+        let justify = justify_position(&style, container);
+        let auto_stretches = match style.size.width.expand() {
             ExpandedDimension::Stretch => true,
             ExpandedDimension::Auto => {
                 !style.item_is_table
@@ -627,6 +719,14 @@ pub(super) fn layout(
             }
             _ => false,
         };
+        let fit_content = auto_stretches
+            && justify.is_some()
+            && style.size.width.expand() == ExpandedDimension::Auto;
+        let stretches = (auto_stretches && !fit_content)
+            || (style.item_is_replaced
+                && !style.item_is_table
+                && style.size.width.expand() == ExpandedDimension::Auto
+                && justify_stretches(&style, container));
         let natural_stretch = content_width - margin.horizontal_axis_sum();
         // A `min-width` or `max-width` of `stretch` fills the room the child
         // finds, which beside a float is the room the float leaves.
@@ -671,6 +771,23 @@ pub(super) fn layout(
                     }
                     if !style.item_is_table && stretches && !child_metrics.ratio_width {
                         break 'width child_metrics.clamp_width(stretch.max(0.0));
+                    }
+                    if fit_content {
+                        // The fit-content width: the max-content width, but
+                        // no wider than the room and no narrower than the
+                        // min-content width (CSS Sizing 3 §5.2).
+                        let mut probe = |space| {
+                            let mut measure = child_input;
+                            measure.run_mode = RunMode::ComputeSize;
+                            measure.available_space.width = space;
+                            tree.compute_child_layout_with_block_ctx(child, measure, None)
+                                .size
+                                .width
+                        };
+                        let max_content = probe(AvailableSpace::MaxContent);
+                        let min_content = probe(AvailableSpace::MinContent);
+                        break 'width child_metrics
+                            .clamp_width(max_content.min(stretch.max(0.0)).max(min_content));
                     }
                     let mut measure = child_input;
                     measure.run_mode = RunMode::ComputeSize;
@@ -773,6 +890,7 @@ pub(super) fn layout(
             [metrics.inset.left, metrics.inset.right],
             (area_start, area_width),
             child_width,
+            justify,
             &mut margin,
         );
         let assigned_width = laid_out_width(child_width, area_width);
@@ -934,6 +1052,7 @@ pub(super) fn layout(
             [metrics.inset.left, metrics.inset.right],
             (area_start, area_width),
             output.size.width,
+            justify,
             &mut margin,
         );
         let offset = relative(&style, parent, container.direction);

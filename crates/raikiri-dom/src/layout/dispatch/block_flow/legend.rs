@@ -138,6 +138,7 @@ pub(super) fn place(
         [metrics.inset.left, metrics.inset.right],
         (metrics.inset.left + margin.left, room),
         output.size.width,
+        None,
         &mut margin,
     );
     let border = metrics.border.top;

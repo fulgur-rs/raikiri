@@ -714,9 +714,11 @@ fn column_horizontal_margins(
 
 /// The input that lays `child` out in a column of `column_width`: at the
 /// width the column imposes on it, if any, and for a float or a button with an
-/// auto width within the room its margins leave.
+/// auto width within the room its margins leave. A block that `justify-self`
+/// places at a position takes its fit-content width in that room instead
+/// (CSS Box Alignment 3 §6.1).
 fn column_child_layout_input(
-    tree: &LayoutSession<'_>,
+    tree: &mut LayoutSession<'_>,
     child: usize,
     column_width: f32,
     parent_height: Option<f32>,
@@ -730,20 +732,68 @@ fn column_child_layout_input(
             available_height,
         );
     }
-    let style = style_of(tree, child);
-    let floated = style.float().is_floated();
-    let room = || column_room(&style, column_width);
     // An authored width resolves against the column width instead, and a
     // float or a button with an auto width shrinks to fit its content within
     // the column (HTML Standard 15.5.3 for the button).
-    let shrinks = floated || layout_node(tree, child).is_html_button();
-    let imposed_width = (style.size().width == Dimension::auto() && !shrinks).then(room);
+    let (room, shrinks, auto_width) = {
+        let style = style_of(tree, child);
+        (
+            column_room(&style, column_width),
+            style.float().is_floated() || layout_node(tree, child).is_html_button(),
+            style.size().width == Dimension::auto(),
+        )
+    };
+    let imposed_width = (auto_width && !shrinks).then(|| {
+        if justify_positions_in_column(tree, child, room) {
+            column_fit_content_width(tree, child, column_width, parent_height, room)
+        } else {
+            room
+        }
+    });
     let mut input =
         column_child_input(imposed_width, column_width, parent_height, available_height);
     if input.known_dimensions.width.is_none() && shrinks {
-        input.available_space.width = AvailableSpace::Definite(room());
+        input.available_space.width = AvailableSpace::Definite(room);
     }
     input
+}
+
+/// Whether `justify-self` places the in-flow block `child` of a column at a
+/// position in the `room` its margins leave, rather than stretching it.
+fn justify_positions_in_column(tree: &LayoutSession<'_>, child: usize, room: f32) -> bool {
+    tree.taffy_parent_of(child).is_some_and(|parent| {
+        crate::layout::dispatch::block_flow::justified_offset(tree, child, parent, false, room)
+            .is_some()
+    })
+}
+
+/// The fit-content width of `child` in the `room` of a column of
+/// `column_width`: its max-content width, but no wider than the room unless
+/// its min-content width is.
+fn column_fit_content_width(
+    tree: &mut LayoutSession<'_>,
+    child: usize,
+    column_width: f32,
+    parent_height: Option<f32>,
+    room: f32,
+) -> f32 {
+    let mut measure = |space| {
+        let mut input = column_child_input(
+            None,
+            column_width,
+            parent_height,
+            AvailableSpace::MaxContent,
+        );
+        input.run_mode = RunMode::ComputeSize;
+        input.known_dimensions_are_definite.width = false;
+        input.available_space.width = space;
+        tree.compute_child_layout(NodeId::from(child), input)
+            .size
+            .width
+    };
+    let max_content = measure(AvailableSpace::MaxContent);
+    let min_content = measure(AvailableSpace::MinContent);
+    max_content.min(room).max(min_content)
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -2797,8 +2847,35 @@ fn layout_column_group(
                 Float::Right => true,
                 Float::None => context.rtl,
             };
+            // `justify-self` places a block in the room of the column the
+            // floats leave it.
+            let justified = (!float.is_floated() && slot_x.is_none())
+                .then(|| {
+                    let free = context.column_width
+                        - spot.left
+                        - spot.right
+                        - margin_left
+                        - margin_right
+                        - child_output.size.width;
+                    tree.taffy_parent_of(child).and_then(|parent| {
+                        crate::layout::dispatch::block_flow::justified_offset(
+                            tree,
+                            child,
+                            parent,
+                            context.rtl,
+                            free,
+                        )
+                    })
+                })
+                .flatten();
             let x = if let Some(slot_x) = slot_x {
                 content_origin.x + context.column_offset_x(column) + slot_x
+            } else if let Some(offset) = justified {
+                content_origin.x
+                    + context.column_offset_x(column)
+                    + spot.left
+                    + margin_left
+                    + offset
             } else if flush_right {
                 content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
                     - margin_right
@@ -5238,6 +5315,8 @@ impl AncestorFacts {
             || self.out_of_flow_ancestor[id]
             || self.non_block_flow_ancestor[id]
             || AuthoredBox::new(doc, cascade, id).is_replaced()
+            // A box that `justify-self` places at a position fits its content.
+            || justify_self_positions(doc, cascade, id)
         {
             return false;
         }
@@ -5357,6 +5436,24 @@ pub(crate) fn group_column_fragments(
         })
         .collect();
     (fragments, height)
+}
+
+/// Whether the `justify-self` of block `id`, or the `justify-items` of its
+/// parent for `auto`, places it at a position rather than stretching it: such
+/// a block takes its fit-content width (CSS Box Alignment 3 §6.1).
+fn justify_self_positions(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    use raikiri_style::property::{AlignSelfValue, SelfAlignmentValue};
+    let alignment = match cascade.computed[id].justify_self {
+        AlignSelfValue::Value(value) => value,
+        _ => match doc.parent_of(id) {
+            Some(parent) => cascade.computed[parent].justify_items,
+            None => SelfAlignmentValue::Normal,
+        },
+    };
+    !matches!(
+        alignment,
+        SelfAlignmentValue::Normal | SelfAlignmentValue::Stretch
+    )
 }
 
 /// Give `auto`-width blocks outside any multicol container the width of their
