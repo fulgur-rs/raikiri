@@ -4277,6 +4277,7 @@ pub(crate) fn flex_layout(
     // horizontal axes.
     let inputs = if block_right_to_left(tree, usize::from(node_id)).is_some() {
         let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
+        let inputs = with_vertical_keyword_height(tree, node_id, inputs);
         with_orthogonal_fit_content_height(tree, node_id, inputs)
     } else {
         inputs
@@ -5604,6 +5605,50 @@ fn with_orthogonal_fit_content_height(
         } else {
             max_content.min(measure(AvailableSpace::MinContent).max(room))
         }
+    };
+    inputs.known_dimensions.height = Some(orthogonal_flow::clamp_to_height_limits(
+        tree,
+        idx,
+        inputs.parent_size,
+        height,
+    ));
+    inputs.known_dimensions_are_definite.height = true;
+    inputs
+}
+
+/// Give a flex container that runs on the axes of a vertical writing mode, and
+/// whose `height` is a `min-content` or `max-content` keyword, the height the
+/// keyword stands for: its min-content or max-content inline size, within its
+/// `min-height` and `max-height` (CSS Sizing 3 section 3.1.1).
+///
+/// The bridge hands Taffy such a height as `auto` and the box keeps the keyword
+/// (see [`LayoutSession::retained_height_keyword`]), so the container would
+/// otherwise size its inline axis as an `auto` one: to fit the room it is
+/// offered, or stretched to it.
+fn with_vertical_keyword_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.height.is_some() || inputs.sizing_mode != SizingMode::InherentSize {
+        return inputs;
+    }
+    let request = match tree.retained_height_keyword(idx) {
+        Some(raikiri_style::ContentSizeKeyword::MinContent) => AvailableSpace::MinContent,
+        Some(raikiri_style::ContentSizeKeyword::MaxContent) => AvailableSpace::MaxContent,
+        _ => return inputs,
+    };
+    let mut probe = inputs;
+    probe.run_mode = RunMode::ComputeSize;
+    probe.axis = RequestedAxis::Vertical;
+    probe.available_space.height = request;
+    let measure =
+        |tree: &mut LayoutSession<'_>| flex_layout_sized(tree, node_id, probe).size.height;
+    let height = if wraps_along(tree, idx, true) {
+        without_main_max(tree, idx, true, measure)
+    } else {
+        measure(tree)
     };
     inputs.known_dimensions.height = Some(orthogonal_flow::clamp_to_height_limits(
         tree,
