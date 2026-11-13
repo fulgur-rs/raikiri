@@ -190,3 +190,36 @@ fn percentage_widths_of_orthogonal_children_refer_to_the_page_area() {
         &[[0., 0., 100., 10.], [50., 0., 50., 10.]],
     );
 }
+
+#[test]
+fn percentage_offsets_of_relative_children_follow_the_same_bases() {
+    let sibling = "<div id=m style=\"width:40px\">x</div>";
+    let inline_block = "display:inline-block;writing-mode:vertical-rl";
+    // A horizontal offset refers to the block size, `auto` while the content
+    // decides it.
+    for offset in ["left:50%", "right:50%"] {
+        assert_boxes(
+            &container(
+                inline_block,
+                &format!("{sibling}<div id=i style=\"position:relative;{offset}\">x</div>"),
+            ),
+            &[[0., 0., 50., 10.], [10., 0., 40., 10.], [0., 0., 10., 10.]],
+        );
+    }
+    assert_boxes(
+        &container(
+            "display:block;width:100px;writing-mode:vertical-rl",
+            "<div id=i style=\"position:relative;left:10%\">x</div>",
+        ),
+        &[[0., 0., 100., 10.], [100., 0., 10., 10.]],
+    );
+    // A vertical offset refers to the inline size, which the lines settle.
+    assert_boxes(
+        &container(
+            inline_block,
+            "<div id=m style=\"width:40px\">xxxx</div>\
+             <div id=i style=\"position:relative;top:50%\">x</div>",
+        ),
+        &[[0., 0., 50., 40.], [10., 0., 40., 40.], [0., 20., 10., 40.]],
+    );
+}
