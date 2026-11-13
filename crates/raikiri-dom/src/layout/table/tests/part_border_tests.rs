@@ -1,7 +1,7 @@
 //! Collapsed borders of row groups, columns and column groups (CSS 2.1
-//! §17.6.2.1). Each case was checked against Chromium's rendering of the
-//! same markup: the cell sides take the winning border, and the parts paint
-//! nothing of their own.
+//! §17.6.2.1). The cases follow Chromium's rendering of the same markup,
+//! except where a test says otherwise: the cell sides take the winning
+//! border, and the parts paint nothing of their own.
 
 use super::*;
 
@@ -67,6 +67,46 @@ fn layout(
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     Fixture { doc, cells, parts }
 }
+
+/// Lay out `html` as the children of a collapsed table, with 20px cells, and
+/// return the document and the cells in tree order.
+fn layout_markup(
+    table_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Some(&format!(
+            "display:table;border-collapse:collapse;{table_css}"
+        )),
+    );
+    build(&mut doc, table);
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    let cells = (0..doc.nodes.len())
+        .filter(|&idx| doc.nodes[idx].display() == DisplayValue::TableCell)
+        .collect();
+    (doc, cells)
+}
+
+const CELL: &str = "display:table-cell;width:20px;height:20px";
+const GREEN: BorderColor = BorderColor::Resolved(CssColor {
+    r: 0,
+    g: 128,
+    b: 0,
+    a: 255,
+});
+const RED: BorderColor = BorderColor::Resolved(CssColor {
+    r: 255,
+    g: 0,
+    b: 0,
+    a: 255,
+});
 
 /// The painted widths of a cell, as `[top, right, bottom, left]`.
 fn widths(doc: &Document, cell: usize) -> [f32; 4] {
@@ -182,4 +222,82 @@ fn separated_row_groups_leave_their_cells_alone() {
     );
     let cell = f.cells[0][0];
     assert!(f.doc.nodes[cell].collapsed_border.is_none());
+}
+
+#[test]
+fn a_cell_border_wins_a_tie_with_the_group_across_the_line() {
+    // The upper group's bottom and the lower cell's top are the same border
+    // but for colour; the cell's wins, on both cells of the line.
+    let (doc, cells) = layout_markup("", |doc, table| {
+        let upper = doc.append_element(
+            Some(table),
+            "tbody",
+            Some("display:table-row-group;border-bottom:4px solid rgb(0, 128, 0)"),
+        );
+        let row = doc.append_element(Some(upper), "tr", Some("display:table-row"));
+        doc.append_element(Some(row), "td", Some(CELL));
+        let lower = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+        let row = doc.append_element(Some(lower), "tr", Some("display:table-row"));
+        doc.append_element(
+            Some(row),
+            "td",
+            Some(&format!("{CELL};border-top:4px solid rgb(255, 0, 0)")),
+        );
+    });
+    let upper = doc.nodes[cells[0]].collapsed_border.unwrap();
+    let lower = doc.nodes[cells[1]].collapsed_border.unwrap();
+    assert_eq!(upper.bottom.color, RED);
+    assert_eq!(lower.top.color, RED);
+    assert_eq!(lower.top.width().px(), 4.0);
+}
+
+#[test]
+fn a_collapsed_column_takes_its_part_out_of_the_lines() {
+    // The first column collapses; the bordered second column is then the
+    // first one shown, and its border goes to the cells in it.
+    let (doc, cells) = layout_markup("", |doc, table| {
+        doc.append_element(
+            Some(table),
+            "col",
+            Some("display:table-column;visibility:collapse"),
+        );
+        doc.append_element(
+            Some(table),
+            "col",
+            Some("display:table-column;border:4px solid rgb(0, 128, 0)"),
+        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        for _ in 0..3 {
+            doc.append_element(Some(row), "td", Some(CELL));
+        }
+    });
+    assert_eq!(widths(&doc, cells[1]), [4.0, 4.0, 4.0, 4.0]);
+    assert_eq!(widths(&doc, cells[2]), [0.0, 0.0, 0.0, 4.0]);
+    assert_eq!(
+        doc.nodes[cells[1]].collapsed_border.unwrap().top.color,
+        GREEN
+    );
+}
+
+#[test]
+fn a_spanning_cell_takes_the_top_of_every_column_it_spans() {
+    // Chromium draws the column's top over that column only. A cell paints
+    // one border per side, so the spanning cell takes the strongest of the
+    // columns' tops rather than none of them.
+    let (doc, cells) = layout_markup("", |doc, table| {
+        doc.append_element(Some(table), "col", Some("display:table-column"));
+        doc.append_element(
+            Some(table),
+            "col",
+            Some("display:table-column;border-top:6px solid"),
+        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "td", Some(CELL));
+        doc.set_element_attribute(cell, "colspan", "2".to_string())
+            .unwrap();
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        doc.append_element(Some(row), "td", Some(CELL));
+        doc.append_element(Some(row), "td", Some(CELL));
+    });
+    assert_eq!(widths(&doc, cells[0])[0], 6.0);
 }

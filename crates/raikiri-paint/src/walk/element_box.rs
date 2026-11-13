@@ -192,7 +192,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // conflict resolution with its rows, neighbours and table. In the
         // separated borders model rows and row groups have no borders
         // (CSS 2.1 §17.6.1).
-        let painted_border = if separated_table_part(cv) {
+        let painted_border = if separated_table_part(self.document, self.cascade, node_id, cv) {
             Sides {
                 top: cv.border.top.without_line(),
                 right: cv.border.right.without_line(),
@@ -984,15 +984,31 @@ fn in_flow_child_end(
         })
 }
 
-/// Whether `cv` is a row or row group of a table in the separated borders
-/// model, which ignores the borders of those boxes (CSS 2.1 §17.6.1).
-fn separated_table_part(cv: &ComputedValues) -> bool {
-    matches!(cv.border_collapse, BorderCollapseValue::Separate)
-        && matches!(
-            cv.display,
-            DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableRow
+/// Whether `node_id`, with values `cv`, is a row or row group of a table in
+/// the separated borders model, which ignores the borders of those boxes
+/// (CSS 2.1 §17.6.1). The model is the table's, as layout reads it, not the
+/// part's own `border-collapse`.
+fn separated_table_part(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    if !matches!(
+        cv.display,
+        DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+    ) {
+        return false;
+    }
+    let table = document.ancestors(node_id).find(|&id| {
+        matches!(
+            cascade.computed[id].display,
+            DisplayValue::Table | DisplayValue::InlineTable
         )
+    });
+    let values = table.map_or(cv, |id| &cascade.computed[id]);
+    matches!(values.border_collapse, BorderCollapseValue::Separate)
 }

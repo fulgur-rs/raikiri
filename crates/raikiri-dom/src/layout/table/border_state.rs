@@ -77,8 +77,9 @@ impl BorderState {
             })
             .map(|row| (row, None))
             .collect();
+        let mut groups = std::collections::HashSet::new();
         for group in grid.rows.iter().filter_map(|&row| row_group_of(doc, row)) {
-            if !rows.iter().any(|&(node, _)| node == group) {
+            if groups.insert(group) {
                 rows.push((group, None));
             }
         }

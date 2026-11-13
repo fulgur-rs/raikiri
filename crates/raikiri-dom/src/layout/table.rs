@@ -7131,39 +7131,42 @@ fn resolve_collapsed_row_borders(
 }
 
 /// The row group box around a grid row, looking through `display: contents`
-/// wrappers. An anonymous row is recorded by its first cell, whose parent is
-/// then the group.
+/// wrappers as `row_groups` does. An anonymous row is recorded by its first
+/// cell, whose parent is then the group.
 fn row_group_of(doc: &Document, row: usize) -> Option<usize> {
-    let mut parent = doc.nodes[row].parent?;
-    while doc.nodes[parent].display() == DisplayValue::Contents {
-        parent = doc.nodes[parent].parent?;
-    }
-    matches!(
-        doc.nodes[parent].display(),
-        DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-    )
-    .then_some(parent)
+    doc.ancestors(row)
+        .find(|&id| doc.nodes[id].display() != DisplayValue::Contents)
+        .filter(|&id| {
+            matches!(
+                doc.nodes[id].display(),
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            )
+        })
 }
 
-/// The `<col>` and `<colgroup>` boxes over each column, in grid order, as far
-/// as the table has columns of either. A `<colgroup>` without `<col>` children
-/// is only a group.
-fn column_parts(doc: &Document, table_idx: usize) -> Vec<(Option<usize>, Option<usize>)> {
+/// The `<col>` and `<colgroup>` boxes over each column of `grid`, in grid
+/// order, as far as the table has columns of either. A `<colgroup>` without
+/// `<col>` children is only a group. With `columns_removed`, `grid` is the
+/// one without its collapsed columns, and so are the parts.
+fn column_parts(
+    doc: &Document,
+    table_idx: usize,
+    columns_removed: bool,
+) -> Vec<(Option<usize>, Option<usize>)> {
     let mut out = Vec::new();
-    each_column_run(doc, table_idx, |node, _, span| {
+    each_column_run(doc, table_idx, |node, collapsed, span| {
+        if collapsed && columns_removed {
+            return;
+        }
         let part = if doc.nodes[node].display() == DisplayValue::TableColumnGroup {
             (None, Some(node))
         } else {
-            let mut parent = doc.nodes[node].parent;
-            while let Some(id) =
-                parent.filter(|&id| doc.nodes[id].display() == DisplayValue::Contents)
-            {
-                parent = doc.nodes[id].parent;
-            }
-            let group =
-                parent.filter(|&id| doc.nodes[id].display() == DisplayValue::TableColumnGroup);
+            let group = doc
+                .ancestors(node)
+                .find(|&id| doc.nodes[id].display() != DisplayValue::Contents)
+                .filter(|&id| doc.nodes[id].display() == DisplayValue::TableColumnGroup);
             (Some(node), group)
         };
         out.extend(std::iter::repeat_n(part, span));
@@ -7173,13 +7176,15 @@ fn column_parts(doc: &Document, table_idx: usize) -> Vec<(Option<usize>, Option<
 
 /// Resolve the sides of each cell that lie on the edges of its row group,
 /// column and column group against the borders of those boxes (CSS 2.1
-/// §17.6.2.1). They take part in the conflict below the cell and the row: a
-/// tie keeps the cell's side, and of the boxes a row group wins over a column
-/// and a column over a column group. The row groups then paint nothing of
-/// their own, as rows do not.
+/// §17.6.2.1). This runs after the cells have resolved against each other, so
+/// each side already holds the winner among the cells and rows on its line,
+/// which wins a tie with any of these boxes; of the boxes, a row group wins
+/// over a column and a column over a column group. The row groups then paint
+/// nothing of their own, as rows do not.
 ///
-/// The columns are left out when `columns` has more of them than `grid`, as
-/// when collapsed columns have been taken out of it.
+/// The parts reach only the cells along their edges: where a slot on a group's
+/// outer edge holds no cell, that part of the group's border is not drawn.
+/// The columns are left out when `columns` has more of them than `grid`.
 fn resolve_collapsed_part_borders(
     doc: &LayoutSession<'_>,
     state: &mut BorderState,
@@ -7198,31 +7203,38 @@ fn resolve_collapsed_part_borders(
     let group = |row: usize| groups.get(row).copied().flatten();
     let column = |col: usize| columns.get(col).and_then(|part| part.0);
     let column_group = |col: usize| columns.get(col).and_then(|part| part.1);
-    // The border on the line before track `index` (or, with `end`, after
-    // it), where two boxes of `parts` meet or one ends: the box before the
-    // line wins a tie, as the upper or left of two boxes of a kind does.
-    // `sides` names the far side of the box before the line and the near
-    // side of the box after it.
-    let line = |parts: &dyn Fn(usize) -> Option<usize>,
-                index: usize,
-                end: bool,
-                (before_side, after_side): (CellBorderSide, CellBorderSide)| {
-        let (before, after) = if end {
-            (parts(index), parts(index + 1))
-        } else {
-            (index.checked_sub(1).and_then(parts), parts(index))
-        };
+    let candidate =
+        |part: Option<usize>, side| part.and_then(|part| state.candidate(doc, part, side));
+    // The border on the line before track `index`, where two boxes of
+    // `parts` meet or one ends: the box before the line wins a tie, as the
+    // upper or left of two boxes of a kind does. `far` and `near` are the
+    // sides of the boxes before and after the line that lie on it.
+    let line = |parts: &dyn Fn(usize) -> Option<usize>, index: usize, (far, near)| {
+        let before = index.checked_sub(1).and_then(parts);
+        let after = parts(index);
         if before == after {
             return None;
         }
-        let side =
-            |part: Option<usize>, side| part.and_then(|part| state.candidate(doc, part, side));
-        side(before, before_side)
+        candidate(before, far)
             .into_iter()
-            .chain(side(after, after_side))
+            .chain(candidate(after, near))
             .reduce(collapsed_border_winner)
     };
-    let mut resolved = Vec::new();
+    // The `side` borders of the boxes of `parts` over `tracks`, when the cell
+    // lies on that edge of the table: a cell spanning several columns takes
+    // the strongest of their borders.
+    let edge = |parts: &dyn Fn(usize) -> Option<usize>,
+                tracks: std::ops::RangeInclusive<usize>,
+                side,
+                on_edge: bool| {
+        if !on_edge {
+            return None;
+        }
+        tracks
+            .filter_map(|track| candidate(parts(track), side))
+            .reduce(collapsed_border_winner)
+    };
+    let mut resolved = Vec::with_capacity(grid.cells.len());
     for cell in &grid.cells {
         let first_row = usize::from(cell.row);
         let last_row = (first_row + usize::from(cell.row_span))
@@ -7232,25 +7244,31 @@ fn resolve_collapsed_part_borders(
         let last_col = (first_col + usize::from(cell.col_span))
             .min(cols)
             .saturating_sub(1);
-        let edge = |part: Option<usize>, side, on_edge: bool| {
-            part.filter(|_| on_edge)
-                .and_then(|part| state.candidate(doc, part, side))
-        };
+        // A row spans no row group boundary, so the cell's first row names
+        // its group.
+        let left_right = first_row..=first_row;
+        let span = first_col..=last_col;
         // In the order the boxes take part: row group, column, column group.
-        let mut sides = vec![
-            (Top, line(&group, first_row, false, (Bottom, Top))),
-            (Bottom, line(&group, last_row, true, (Bottom, Top))),
-            (Left, edge(group(first_row), Left, first_col == 0)),
-            (Right, edge(group(first_row), Right, last_col + 1 == cols)),
+        let sides = [
+            (Top, line(&group, first_row, (Bottom, Top))),
+            (Bottom, line(&group, last_row + 1, (Bottom, Top))),
+            (Left, edge(&group, left_right.clone(), Left, first_col == 0)),
+            (Right, edge(&group, left_right, Right, last_col + 1 == cols)),
+            (Left, line(&column, first_col, (Right, Left))),
+            (Right, line(&column, last_col + 1, (Right, Left))),
+            (Top, edge(&column, span.clone(), Top, first_row == 0)),
+            (
+                Bottom,
+                edge(&column, span.clone(), Bottom, last_row + 1 == rows),
+            ),
+            (Left, line(&column_group, first_col, (Right, Left))),
+            (Right, line(&column_group, last_col + 1, (Right, Left))),
+            (Top, edge(&column_group, span.clone(), Top, first_row == 0)),
+            (
+                Bottom,
+                edge(&column_group, span, Bottom, last_row + 1 == rows),
+            ),
         ];
-        for parts in [&column as &dyn Fn(usize) -> Option<usize>, &column_group] {
-            sides.extend([
-                (Left, line(parts, first_col, false, (Right, Left))),
-                (Right, line(parts, last_col, true, (Right, Left))),
-                (Top, edge(parts(first_col), Top, first_row == 0)),
-                (Bottom, edge(parts(first_col), Bottom, last_row + 1 == rows)),
-            ]);
-        }
         resolved.push((cell.node_id, sides));
     }
     for (node_id, sides) in resolved {
@@ -7321,19 +7339,23 @@ fn resolve_collapsed_table_edges(
 }
 
 /// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
-/// cells, adjoining cells against each other, and edge cells against the table.
+/// cells, adjoining cells against each other, the cells against their row
+/// groups, columns and column groups, and edge cells against the table. With
+/// `columns_removed`, `grid` is the table's grid without its collapsed
+/// columns.
 fn resolve_collapsed_borders(
     doc: &LayoutSession<'_>,
     state: &mut BorderState,
     grid: &TableGrid,
     index: &CellIndex,
-    table_idx: usize,
+    (table_idx, columns_removed): (usize, bool),
 ) {
     #[cfg(test)]
     BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
     resolve_collapsed_row_borders(doc, state, grid);
-    resolve_collapsed_part_borders(doc, state, grid, &column_parts(doc, table_idx));
     resolve_collapsed_cell_borders(doc, state, grid, index);
+    let columns = column_parts(doc, table_idx, columns_removed);
+    resolve_collapsed_part_borders(doc, state, grid, &columns);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
 }
 
@@ -7348,8 +7370,8 @@ fn resolve_centered_block_borders(
     #[cfg(test)]
     BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
     resolve_collapsed_row_borders(doc, state, grid);
-    resolve_collapsed_part_borders(doc, state, grid, &column_parts(doc, table_idx));
     resolve_collapsed_cell_borders(doc, state, grid, index);
+    resolve_collapsed_part_borders(doc, state, grid, &column_parts(doc, table_idx, false));
     let metrics = state.block_metrics_before_table_edges(doc, grid, table_idx, basis);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
     state.install_block_metrics(metrics);
@@ -7524,7 +7546,7 @@ fn border_width_with_columns_in_place(
     }
     let index = CellIndex::new(&rows_shown);
     state.reset_authored(doc, grid);
-    resolve_collapsed_borders(doc, state, &rows_shown, &index, table_idx);
+    resolve_collapsed_borders(doc, state, &rows_shown, &index, (table_idx, false));
     let lines = compute_collapsed_lines(doc, state, &rows_shown, &index, table_border, basis);
     let in_place = state.clone();
     state.reset_authored(doc, shown);

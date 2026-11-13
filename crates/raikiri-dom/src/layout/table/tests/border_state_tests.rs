@@ -25,7 +25,13 @@ fn border_state_resolves_without_document_publication() {
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut state = BorderState::authored(&tree, &grid, false);
     let before_paint = tree.nodes[right].collapsed_border;
-    super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
+    super::super::resolve_collapsed_borders(
+        &tree,
+        &mut state,
+        &grid,
+        &CellIndex::new(&grid),
+        (0, false),
+    );
     assert_eq!(
         state.cell(right).unwrap().widths.left,
         LengthPercentage::length(9.0)
@@ -168,11 +174,23 @@ fn border_state_remaining_keeps_excluded_cells() {
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut state = BorderState::authored(&tree, &grid, false);
-    super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
+    super::super::resolve_collapsed_borders(
+        &tree,
+        &mut state,
+        &grid,
+        &CellIndex::new(&grid),
+        (0, false),
+    );
     let excluded = state.cell(left).unwrap().clone();
     assert_eq!(excluded.widths.right, LengthPercentage::length(9.0));
     state.reset_authored(&tree, &shown);
-    super::super::resolve_collapsed_borders(&tree, &mut state, &shown, &CellIndex::new(&shown), 0);
+    super::super::resolve_collapsed_borders(
+        &tree,
+        &mut state,
+        &shown,
+        &CellIndex::new(&shown),
+        (0, false),
+    );
     assert_eq!(state.cell(left).unwrap(), &excluded);
     assert_eq!(state.entries(&tree).len(), 8);
     assert_eq!(
@@ -250,7 +268,13 @@ fn border_state_missing_computed_border_keeps_retained_width() {
     // The cell has a width but no computed border to contribute as a candidate.
     tree.nodes[cell].computed_border = None;
     let mut state = BorderState::authored(&tree, &grid, false);
-    super::super::resolve_collapsed_borders(&tree, &mut state, &grid, &CellIndex::new(&grid), 0);
+    super::super::resolve_collapsed_borders(
+        &tree,
+        &mut state,
+        &grid,
+        &CellIndex::new(&grid),
+        (0, false),
+    );
     assert_eq!(
         state.cell(cell).unwrap().widths.left,
         LengthPercentage::length(7.0)

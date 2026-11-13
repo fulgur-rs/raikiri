@@ -89,3 +89,17 @@ fn a_separated_row_group_paints_no_border() {
         assert_eq!(column(&pixels, x, 0, 30), ".".repeat(30), "column {x}");
     }
 }
+
+#[test]
+fn a_row_group_follows_the_border_model_of_its_table() {
+    // The group's own `border-collapse` does not matter: the table separates
+    // its borders, so the group's border is ignored.
+    let pixels = raster(
+        "<table style='border-collapse:separate;border-spacing:0'>\
+         <tbody style='border-collapse:collapse;border:4px solid green'>\
+         <tr><td></td></tr></tbody></table>",
+    );
+    for x in 0..30 {
+        assert_eq!(column(&pixels, x, 0, 30), ".".repeat(30), "column {x}");
+    }
+}
