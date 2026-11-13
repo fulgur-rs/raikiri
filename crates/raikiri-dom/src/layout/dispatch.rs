@@ -3255,13 +3255,16 @@ pub(crate) fn contained_row_item_follows_width(tree: &LayoutSession<'_>, idx: us
     if tree.nodes[idx].layout_position() == Position::Absolute || !contained_ratio_item(tree, idx) {
         return false;
     }
-    let Some(container) = tree.taffy_parent_of(idx) else {
-        return true;
-    };
-    let container_style = tree.physical_style(container);
-    let stretched = !container_style.flex_wraps()
-        && content_limits::alignment_stretches(&container_style, &tree.physical_style(idx), true)
-        && flex_item_percent_basis(tree, idx).is_some_and(|basis| basis.height.is_some());
+    let stretched = tree.taffy_parent_of(idx).is_some_and(|container| {
+        let container_style = tree.physical_style(container);
+        !container_style.flex_wraps()
+            && content_limits::alignment_stretches(
+                &container_style,
+                &tree.physical_style(idx),
+                true,
+            )
+            && flex_item_percent_basis(tree, idx).is_some_and(|basis| basis.height.is_some())
+    });
     !stretched
 }
 
