@@ -633,6 +633,41 @@ tr, td, th { vertical-align: inherit; }
  * table would otherwise inherit `collapse` and lose the spacing. The block's
  * `box-sizing` and `text-indent` are not taken here. */
 table { border-spacing: 2px; border-collapse: separate; }
+/* HTML LS §15.3.8 maps the `rules` attribute of a table to collapsed
+ * borders. A table with `rules` hides its own border, and `rules=groups`
+ * puts a 1px solid border on both block-axis edges of each row group and
+ * both inline-axis edges of each column group:
+ *
+ *   table[rules=none i], table[rules=groups i], table[rules=rows i],
+ *   table[rules=cols i], table[rules=all i] {
+ *     border-style: hidden;
+ *     border-collapse: collapse;
+ *   }
+ *   table[rules=groups i] > :is(thead, tbody, tfoot) {
+ *     border-block-width: 1px; border-block-style: solid;
+ *   }
+ *   table[rules=groups i] > colgroup {
+ *     border-inline-width: 1px; border-inline-style: solid;
+ *   }
+ *
+ * The hidden table border wins the collapsed-border conflict at the table's
+ * outer edges, so only the borders between groups show. The `rows`, `cols`
+ * and `all` cell borders and the `frame` and `border` attributes are not
+ * mapped here. */
+table[rules=none i], table[rules=groups i], table[rules=rows i],
+table[rules=cols i], table[rules=all i] {
+  border-style: hidden;
+  border-collapse: collapse;
+}
+table[rules=groups i] > thead, table[rules=groups i] > tbody,
+table[rules=groups i] > tfoot {
+  border-block-width: 1px;
+  border-block-style: solid;
+}
+table[rules=groups i] > colgroup {
+  border-inline-width: 1px;
+  border-inline-style: solid;
+}
 /* HTML UA behavior: the internal center value centers a header only when
  * its inherited table alignment is the initial `start` value; otherwise it
  * follows the inherited alignment. */
