@@ -229,8 +229,12 @@ fn an_out_of_flow_box_caps_the_minimum_its_ratio_carries_at_its_own_maximum() {
             &[("c", [0, 0, 100, 50])],
         ),
         (
-            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:100px;aspect-ratio:2'></div></div>",
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1/2;position:absolute;max-width:80px;min-height:100px'></div></div>",
             &[("c", [0, 0, 50, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:2;position:absolute;max-width:150px;min-height:100px'></div></div>",
+            &[("c", [0, 0, 150, 100])],
         ),
         (
             "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;max-width:50px;min-height:100px;display:flex'></div></div>",

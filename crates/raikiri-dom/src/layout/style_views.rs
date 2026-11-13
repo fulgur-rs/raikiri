@@ -552,8 +552,8 @@ impl LayoutSession<'_> {
             context.grid_item_ratio = self.grid_item_ratio(idx);
             context.carried_min_width = self.grid_item_carried_min_width(idx);
         }
-        if matches!(role, ReadRole::Oof) && view.with_context(context).aspect_ratio().is_some() {
-            let carried = self.oof_capped_carried_minimum(idx);
+        if matches!(role, ReadRole::Oof) {
+            let carried = oof_capped_carried_minimum(view.with_context(context));
             context.carried_min_width = carried.width;
             context.carried_min_height = carried.height;
         }
@@ -779,46 +779,6 @@ impl LayoutSession<'_> {
         GridItemRatio::MeasuredByItem {
             align_self: alignment,
             justify_self: justify,
-        }
-    }
-
-    /// The minimum of each axis of the out-of-flow box `idx` that its ratio
-    /// carries over from the minimum of the other axis, where the maximum the
-    /// box states in that axis caps it. Taffy's out-of-flow algorithm lets a
-    /// carried minimum win over that maximum; Chromium caps it there (CSS
-    /// Sizing 4 §5.2: the transferred minimum is limited by the maximum), and
-    /// sizes `aspect-ratio: 1; max-width: 50px; min-height: 100px` at 50px by
-    /// 100px. The cap is reported as the minimum, in the box `box-sizing`
-    /// names, where Taffy carries the bound: only between lengths, as a
-    /// percentage leaves the bound to the library.
-    fn oof_capped_carried_minimum(&self, idx: usize) -> raikiri_layout_geometry::Size<Option<f32>> {
-        use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
-        let style = self.physical_style(idx);
-        let none = raikiri_layout_geometry::Size {
-            width: None,
-            height: None,
-        };
-        let Some(ratio) = style.stated_aspect_ratio() else {
-            return none;
-        };
-        let (min, max) = (style.min_size(), style.max_size());
-        let capped = |own_min: raikiri_layout_style::values::LengthPercentageAuto,
-                      other_min: raikiri_layout_style::values::LengthPercentageAuto,
-                      own_max: raikiri_layout_style::values::LengthPercentageAuto,
-                      carry: &dyn Fn(f32) -> f32| {
-            let (
-                true,
-                ExpandedLengthPercentageAuto::Length(other),
-                ExpandedLengthPercentageAuto::Length(cap),
-            ) = (own_min.is_auto(), other_min.expand(), own_max.expand())
-            else {
-                return None;
-            };
-            (carry(other) > cap).then_some(cap)
-        };
-        raikiri_layout_geometry::Size {
-            width: capped(min.width, min.height, max.width, &|height| height * ratio),
-            height: capped(min.height, min.width, max.height, &|width| width / ratio),
         }
     }
 
@@ -1351,5 +1311,54 @@ fn states_a_fixed_size(size: raikiri_layout_style::values::Dimension) -> bool {
         ExpandedDimension::Length(_) => true,
         ExpandedDimension::Calc(calc) => !calc.has_percentage(),
         _ => false,
+    }
+}
+
+/// The minimum of each axis of an out-of-flow box that its ratio carries over
+/// from the minimum of the other axis, where the maximum the box states in
+/// that axis caps it, as `view`, the box's out-of-flow view, reads them.
+/// Taffy's out-of-flow algorithm lets a carried minimum win over that maximum;
+/// Chromium caps it there (CSS Sizing 4 §5.2: the transferred minimum is
+/// limited by the maximum), and sizes `aspect-ratio: 1; max-width: 50px;
+/// min-height: 100px` at 50px by 100px. The cap is reported as the minimum, in
+/// the box `box-sizing` names, in which Taffy carries the bound too. Only
+/// lengths are compared: a percentage, which only the containing block
+/// resolves, leaves the bound to the library.
+fn oof_capped_carried_minimum(
+    view: raikiri_layout_style::LayoutStyleView<'_>,
+) -> raikiri_layout_geometry::Size<Option<f32>> {
+    use raikiri_layout_style::values::{ExpandedLengthPercentageAuto, LengthPercentageAuto};
+    let (min, max) = (view.min_size(), view.max_size());
+    // The minimum `own_min` stands for, carried from `other_min`, when it is
+    // `auto` and both `other_min` and the cap `own_max` are lengths.
+    let bounds = |own_min: LengthPercentageAuto,
+                  other_min: LengthPercentageAuto,
+                  own_max: LengthPercentageAuto| {
+        match (own_min.is_auto(), other_min.expand(), own_max.expand()) {
+            (
+                true,
+                ExpandedLengthPercentageAuto::Length(other),
+                ExpandedLengthPercentageAuto::Length(cap),
+            ) => Some((other, cap)),
+            _ => None,
+        }
+    };
+    let width = bounds(min.width, min.height, max.width);
+    let height = bounds(min.height, min.width, max.height);
+    if width.is_none() && height.is_none() {
+        return raikiri_layout_geometry::Size {
+            width: None,
+            height: None,
+        };
+    }
+    // The ratio Taffy carries the bounds across, if the view reports one.
+    let ratio = view.aspect_ratio();
+    let capped = |bounds: Option<(f32, f32)>, carry: &dyn Fn(f32, f32) -> f32| {
+        let ((other, cap), ratio) = (bounds?, ratio?);
+        (carry(other, ratio) > cap).then_some(cap)
+    };
+    raikiri_layout_geometry::Size {
+        width: capped(width, &|height, ratio| height * ratio),
+        height: capped(height, &|width, ratio| width / ratio),
     }
 }
