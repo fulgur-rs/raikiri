@@ -356,3 +356,15 @@ fn an_auto_margin_along_a_vertical_inline_axis_takes_the_room_first() {
         assert_eq!(top, y, "{margin}");
     }
 }
+
+#[test]
+fn left_and_right_inside_an_inline_follow_the_block_container() {
+    for (item, x) in [("justify-self:right", 180.0), ("justify-self:left", 0.0)] {
+        let (left, _, width, _) = block_rect(LTR, &format!("display:block;{item}"), |doc, root| {
+            let span = doc.append_element(Some(root), "span", Some("display:inline;direction:rtl"));
+            doc.append_text(span, "a");
+            span
+        });
+        assert_eq!((left, width), (x, 20.0), "{item}");
+    }
+}
