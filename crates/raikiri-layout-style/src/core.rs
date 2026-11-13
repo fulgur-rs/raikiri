@@ -40,18 +40,13 @@ impl LayoutStyleView<'_> {
     pub fn avoids_floats(&self) -> bool {
         self.flags().contains(StyleFlags::AVOIDS_FLOATS)
     }
-    /// The used box-sizing, including the border-box exception for side borders.
+    /// The used box-sizing, including the border-box exception for side
+    /// borders that [`sized_as_border_box`] describes.
     #[inline]
     pub fn box_sizing(&self) -> values::BoxSizing {
         let c = &*self.prepared.values;
-        let side_borders = c.border.left.width().px() > 0.0 || c.border.right.width().px() > 0.0;
-        let vertical_clean = c.border.top.width().px() == 0.0
-            && c.border.bottom.width().px() == 0.0
-            && matches!(c.padding.top, P::Px(0.0) | P::Percent(0.0))
-            && matches!(c.padding.bottom, P::Px(0.0) | P::Percent(0.0));
         if matches!(c.box_sizing, BoxSizing::BorderBox)
-            || (side_borders
-                && vertical_clean
+            || (sized_as_border_box(c, self.is_replaced())
                 && matches!(
                     self.base_length(LengthProperty::Width).value.as_ref(),
                     L::Auto
@@ -457,6 +452,35 @@ pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> values::Clear
         C::Both => values::Clear::Both,
         _ => values::Clear::None,
     }
+}
+
+/// Whether a content box with an `auto` width is sized as a border box: one
+/// with side borders, but no padding or border on the vertical axis. With no
+/// width and no vertical edges to measure, the two boxes size it the same.
+/// They do not where a `min-width`, a `max-width` or a length `flex-basis`,
+/// which `box-sizing` applies to, or an aspect ratio, which relates the
+/// content box, or the natural size of a replaced element takes part, so
+/// those keep `content-box`. The `auto` width is the caller's to check.
+#[doc(hidden)]
+pub fn sized_as_border_box(c: &raikiri_style::ComputedValues, replaced: bool) -> bool {
+    let side_borders = c.border.left.width().px() > 0.0 || c.border.right.width().px() > 0.0;
+    let vertical_clean = c.border.top.width().px() == 0.0
+        && c.border.bottom.width().px() == 0.0
+        && matches!(c.padding.top, P::Px(0.0) | P::Percent(0.0))
+        && matches!(c.padding.bottom, P::Px(0.0) | P::Percent(0.0));
+    let width_bounds_neutral = matches!(c.min_width, L::Auto | L::Px(0.0) | L::Percent(0.0))
+        && matches!(c.max_width, L::Auto)
+        && !matches!(
+            c.flex_basis,
+            raikiri_style::ComputedFlexBasis::Px(_)
+                | raikiri_style::ComputedFlexBasis::Percent(_)
+                | raikiri_style::ComputedFlexBasis::Calc(_)
+        );
+    side_borders
+        && vertical_clean
+        && width_bounds_neutral
+        && c.aspect_ratio.preferred(None).is_none()
+        && !replaced
 }
 
 /// Preferred ratio after automatic-size and containment policy, before axis projection.

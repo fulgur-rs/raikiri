@@ -1263,8 +1263,7 @@ impl LayoutSession<'_> {
                         &mut leaf_style,
                         &[OwnedPropertyOverride::aspect_ratio(None)],
                     );
-                    let inputs =
-                        ContainedRatioFloor::oof_width_from_insets(floor, tree, idx, inputs);
+                    let inputs = RatioFloor::oof_width_from_insets(floor, tree, idx, inputs);
                     // Given its width, the box takes the height the ratio
                     // relates to it within its bounds, also while a parent
                     // measures it for its content: the leaf algorithm would
@@ -3384,23 +3383,25 @@ pub(crate) fn contained_oof(tree: &LayoutSession<'_>, idx: usize) -> Option<Cont
     .then_some(ContainedOof::WidthFromInsets)
 }
 
-/// The height a size-contained box takes from its preferred aspect ratio once
-/// its width is known, in the box the ratio relates: Taffy's leaf algorithm
+/// The height a leaf takes from its preferred aspect ratio once its width is
+/// known, in the box the ratio relates, for a size-contained box or a
+/// content-box leaf whose height the ratio gives: Taffy's leaf algorithm
 /// divides the border-box width by the ratio whatever box `box-sizing` names,
 /// so the ratio is taken out of the style the leaf is laid out with and its
 /// height floor is put back here. Chromium sizes `contain: size;
 /// contain-intrinsic-size: 200px 400px; aspect-ratio: 1 / 2; padding: 10px`
 /// at 220px by 420px.
 #[derive(Clone, Copy)]
-struct ContainedRatioFloor {
+struct RatioFloor {
     ratio: f32,
     inset: Size<f32>,
-    /// The bounds of the border-box width, the minimum winning.
+    /// The bounds of the border-box width, the minimum winning. Only the
+    /// width a size-contained box takes from its height reads them.
     min_width: f32,
     max_width: Option<f32>,
 }
 
-impl ContainedRatioFloor {
+impl RatioFloor {
     /// The border-box width the ratio relates to the border-box `height`,
     /// within the bounds of the width.
     fn width_from_height(self, height: f32) -> f32 {
@@ -3463,7 +3464,7 @@ fn carry_contained_ratio_bounds(
     natural: Size<f32>,
     content_box_ratio: bool,
     inputs: LayoutInput,
-) -> Option<ContainedRatioFloor> {
+) -> Option<RatioFloor> {
     let ratio = style.aspect_ratio?;
     let metrics = block_flow::Metrics::resolve(style, false, content_box_ratio, inputs);
     let edges = (metrics.padding + metrics.border).sum_axes();
@@ -3513,7 +3514,7 @@ fn carry_contained_ratio_bounds(
     })
     .collect();
     apply_local_sizing(style, &overrides);
-    Some(ContainedRatioFloor {
+    Some(RatioFloor {
         ratio,
         inset: if content_box_ratio || style.box_sizing == BoxSizing::ContentBox {
             edges
@@ -3937,11 +3938,9 @@ fn compute_inline_block_shrink_wrap(
     // fixes the width.
     // The aspect ratio takes the width of a box from its definite height, and a
     // width so fixed is a basis.
-    let width_from_ratio = leaf_style.aspect_ratio.is_some()
-        && (known_height.is_some()
-            || MaybeResolve::maybe_resolve(leaf_style.size, inputs.parent_size)
-                .height
-                .is_some());
+    let height_fixed = known_height.is_some()
+        || MaybeResolve::maybe_resolve(leaf_style.size.height, inputs.parent_size.height).is_some();
+    let width_from_ratio = leaf_style.aspect_ratio.is_some() && height_fixed;
     let content_decided_width = inputs.known_dimensions.width.is_none()
         && tree.has_vertical_writing_mode(idx)
         && !width_from_ratio;
@@ -3976,7 +3975,37 @@ fn compute_inline_block_shrink_wrap(
         // and whose width it gave, and Taffy's ratio floor would raise that
         // height again to the border-box width divided by the ratio. A
         // contained box raises its height by its own floor instead.
-        if fixed_width.is_some() || stretched_by_parent.is_some() || contained_floor.is_some() {
+        //
+        // Taffy's floor also raises a height the box states, or one the
+        // parent fixed, to the width divided by the ratio, where the width
+        // that `min-width` raises leaves that height alone: `aspect-ratio: 1;
+        // height: 100px; min-width: 300px` is 300px by 100px. And it divides
+        // the border-box width, where a ratio that relates the content box
+        // gives the height of the content-box width: `aspect-ratio: 1;
+        // border-left: 20px solid` with a 100px content height is 120px by
+        // 100px. Such a box raises an `auto` height by a floor of its own.
+        let plain_ratio = leaf_style.aspect_ratio.filter(|_| {
+            // A leaf with natural dimensions or a size-contained one is
+            // sized from them above.
+            leaf_intrinsic.is_none() && final_inputs.sizing_mode == SizingMode::InherentSize
+        });
+        let content_box_floor = plain_ratio
+            .filter(|_| {
+                !height_fixed
+                    && (leaf_style.box_sizing == BoxSizing::ContentBox || content_box_ratio)
+            })
+            .map(|ratio| RatioFloor {
+                ratio,
+                inset: replaced_size::padding_and_border(&leaf_style, inputs.parent_size.width),
+                min_width: 0.0,
+                max_width: None,
+            });
+        if fixed_width.is_some()
+            || stretched_by_parent.is_some()
+            || contained_floor.is_some()
+            || content_box_floor.is_some()
+            || (plain_ratio.is_some() && height_fixed)
+        {
             apply_local_sizing(
                 &mut leaf_style,
                 &[OwnedPropertyOverride::aspect_ratio(None)],
@@ -3994,6 +4023,22 @@ fn compute_inline_block_shrink_wrap(
         );
         if let Some(floor) = contained_floor.filter(|_| stretched_by_parent.is_none()) {
             floor.raise(&mut output);
+        } else if let Some(floor) = content_box_floor {
+            // The height the ratio gives is held to the `max-height` the box
+            // states, as the ratio's own height would be: `aspect-ratio: 1;
+            // min-width: 300px; max-height: 100px` is 300px by 100px. The
+            // height the leaf took already keeps its bounds.
+            let laid_out = output.size.height;
+            floor.raise(&mut output);
+            if let Some(max) =
+                MaybeResolve::maybe_resolve(leaf_style.max_size.height, inputs.parent_size.height)
+            {
+                let max = match leaf_style.box_sizing {
+                    BoxSizing::ContentBox => max + floor.inset.height,
+                    BoxSizing::BorderBox => max,
+                };
+                output.size.height = output.size.height.min(max).max(laid_out);
+            }
         }
         output
     } else {

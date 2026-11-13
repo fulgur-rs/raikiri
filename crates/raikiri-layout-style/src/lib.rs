@@ -6,7 +6,7 @@ mod calc;
 mod calc_slab;
 mod context;
 mod core;
-pub use core::preferred_aspect_ratio;
+pub use core::{preferred_aspect_ratio, sized_as_border_box};
 mod flex;
 pub use flex::items as align_items_of;
 pub use flex::line_relative as line_relative_alignment;
