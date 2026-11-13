@@ -1059,6 +1059,11 @@ impl LayoutSession<'_> {
         {
             return output;
         }
+        if let Some(output) =
+            grid_ratio_content::layout(self, node_id, inputs, block_ctx.as_deref_mut())
+        {
+            return output;
+        }
         if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
@@ -1663,6 +1668,7 @@ pub(crate) mod content_limits;
 pub(super) mod flex_cross_margins;
 pub(crate) mod grid_baseline;
 mod grid_oof;
+mod grid_ratio_content;
 mod inline_baseline;
 mod intrinsic_scopes;
 pub(super) mod table_items;

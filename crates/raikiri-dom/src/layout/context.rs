@@ -71,6 +71,10 @@ pub(crate) struct LayoutContext {
     /// so the flexed main size of an item whose flex basis is not definite is
     /// not definite for the item's children either.
     pub(crate) content_sized_flex_mains: Vec<usize>,
+    /// The grid items with a preferred aspect ratio whose content is being
+    /// measured before the ratio carries its height over to their width (see
+    /// `grid_ratio_content` in [`crate::layout::dispatch`]).
+    pub(crate) grid_ratio_content: Vec<usize>,
     /// Original column contribution constraints and their isolated cache domains.
     pub(crate) column_cross_constraints:
         Vec<crate::layout::dispatch::column_cross_measure::Constraints>,
