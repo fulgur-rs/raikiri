@@ -554,3 +554,120 @@ fn layout_precedence_takes_top_in_every_writing_mode() {
         Some(7.0)
     );
 }
+
+/// The painted offset of a relative float of style `child` placed after a
+/// 40px-square block in a container of style `container`.
+fn float_offset_after_block(container: &str, child: &str) -> (f32, f32) {
+    let mut document = Document::new();
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let container = document.append_element(Some(body), "div", Some(container));
+    document.append_element(
+        Some(container),
+        "div",
+        Some("display:block;width:40px;height:40px"),
+    );
+    let child = document.append_element(
+        Some(container),
+        "div",
+        Some(&format!(
+            "display:block;float:left;position:relative;width:10px;height:10px;{child}"
+        )),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut document),
+        &cascade,
+        raikiri_traits::PageBox::A4,
+    )
+    .unwrap();
+    used_relative_offset(&document, &cascade, &cascade.computed[child], child)
+}
+
+#[test]
+fn a_vertical_containing_block_resolves_top_and_bottom_against_its_inline_size() {
+    // A vertical box has its inline size, its height, before its content is
+    // laid out, so a percentage of it resolves even when `height` is `auto`.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let container = format!("display:inline-block;writing-mode:{mode}");
+        assert_eq!(
+            float_offset_after_block(&container, "top:50%"),
+            (0.0, 20.0),
+            "{mode}"
+        );
+        assert_eq!(
+            float_offset_after_block(&container, "bottom:50%"),
+            (0.0, -20.0),
+            "{mode}"
+        );
+    }
+    assert_eq!(
+        float_offset_after_block(
+            "display:inline-block;writing-mode:vertical-rl;height:80px;padding:5px",
+            "top:50%"
+        ),
+        (0.0, 40.0)
+    );
+}
+
+#[test]
+fn a_vertical_containing_block_without_a_width_has_no_block_size_percentage_basis() {
+    // Its width is its block size, which an `auto` width leaves indefinite,
+    // so a percentage of it counts as `auto`.
+    let container = "display:inline-block;writing-mode:vertical-rl";
+    assert_eq!(float_offset_after_block(container, "left:50%"), (0.0, 0.0));
+    assert_eq!(float_offset_after_block(container, "right:10%"), (0.0, 0.0));
+    let container = "display:inline-block;writing-mode:vertical-rl;width:100px";
+    assert_eq!(float_offset_after_block(container, "left:50%"), (50.0, 0.0));
+    assert_eq!(
+        float_offset_after_block(container, "right:10%"),
+        (-10.0, 0.0)
+    );
+}
+
+#[test]
+fn a_vertical_containing_block_takes_a_block_size_that_layout_makes_definite() {
+    // A logical `block-size` and the width a column flex container
+    // stretches a paragraph to are definite block sizes too.
+    assert_eq!(
+        float_offset_after_block(
+            "display:inline-block;writing-mode:vertical-rl;block-size:100px",
+            "left:50%"
+        ),
+        (50.0, 0.0)
+    );
+    let mut document = Document::new();
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let flex = document.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;flex-direction:column;width:100px"),
+    );
+    let item = document.append_element(Some(flex), "div", Some("writing-mode:vertical-rl"));
+    // Text makes the item a paragraph, whose width layout settles.
+    document.append_text(item, "x");
+    document.append_element(
+        Some(item),
+        "div",
+        Some("display:block;width:40px;height:40px"),
+    );
+    let child = document.append_element(
+        Some(item),
+        "div",
+        Some("display:block;float:left;position:relative;width:10px;height:10px;left:50%"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut document),
+        &cascade,
+        raikiri_traits::PageBox::A4,
+    )
+    .unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
+        (50.0, 0.0)
+    );
+}
