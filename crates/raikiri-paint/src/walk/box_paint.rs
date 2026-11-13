@@ -7,10 +7,10 @@ use super::paint_walk::PaintWalk;
 use super::{
     BackgroundEnv, InlineSvg, background_padding_for_paint, border_hides_background_edge,
     color_only_background_layer, fixed_background_viewport, img_src_url, infer_url_color,
-    paint_canvas, paint_element_background, paint_element_border_image,
-    paint_element_border_rounded, paint_element_border_with_top, paint_element_box_shadows,
-    paint_element_outline, paint_generated_pseudo, paint_image, paint_list_marker_with_snapshots,
-    paint_outline_break_bars, push_overflow_clip, solid_outline,
+    paint_canvas, paint_collapsed_cell_border, paint_element_background,
+    paint_element_border_image, paint_element_border_rounded, paint_element_border_with_top,
+    paint_element_box_shadows, paint_element_outline, paint_generated_pseudo, paint_image,
+    paint_list_marker_with_snapshots, paint_outline_break_bars, push_overflow_clip, solid_outline,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Rect};
@@ -732,6 +732,20 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                 cv.color,
                 false,
+            );
+        } else if paints_own_box
+            && !border_covered_by_background
+            && let Some(corners) = element.node.collapsed_corners()
+        {
+            paint_collapsed_cell_border(
+                scene,
+                own_paint_width,
+                own_paint_height,
+                own_paint_x,
+                own_paint_y,
+                painted_border,
+                cv.color,
+                corners,
             );
         } else if paints_own_box && !border_covered_by_background {
             paint_element_border_rounded(
