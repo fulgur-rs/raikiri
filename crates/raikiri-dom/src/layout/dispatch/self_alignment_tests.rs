@@ -459,3 +459,163 @@ fn an_overflowing_flex_item_keeps_its_cross_size() {
         }
     }
 }
+
+/// The border box of the box styled by `item_css` inside a wrapper styled by
+/// `wrapper_css` inside a container styled by `container_css`, relative to the
+/// container.
+fn wrapped_item_rect(
+    container_css: &str,
+    wrapper_css: &str,
+    item_css: &str,
+) -> (f32, f32, f32, f32) {
+    let mut item = 0;
+    let fixture = block_fixture(container_css, |doc, root| {
+        let wrapper = doc.append_element(Some(root), "div", Some(wrapper_css));
+        item = doc.append_element(
+            Some(wrapper),
+            "div",
+            Some(&format!("display:block;{item_css}")),
+        );
+    });
+    let root = fixture.root;
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let (container_x, container_y, _, _) = absolute_rect(&doc, root);
+    let (x, y, width, height) = absolute_rect(&doc, item);
+    (x - container_x, y - container_y, width, height)
+}
+
+const SQUARE_GRID: &str = "display:grid;width:200px;height:200px;grid-template:200px / 200px";
+const SMALL: &str = "width:50px;height:20px";
+
+#[test]
+fn left_and_right_are_physical_edges_of_a_grid_area() {
+    for direction in ["ltr", "rtl"] {
+        for item_direction in ["", "direction:ltr;", "direction:rtl;"] {
+            for (alignment, x) in [
+                ("left", 0.0),
+                ("safe left", 0.0),
+                ("unsafe left", 0.0),
+                ("right", 150.0),
+                ("safe right", 150.0),
+                ("unsafe right", 150.0),
+            ] {
+                let container = format!("{SQUARE_GRID};direction:{direction}");
+                let (left, ..) = item_rect(
+                    &container,
+                    &format!("{SMALL};{item_direction}justify-self:{alignment}"),
+                );
+                assert_eq!(left, x, "{direction} | {item_direction}{alignment}");
+                let (left, ..) =
+                    item_rect(&format!("{container};justify-items:{alignment}"), SMALL);
+                assert_eq!(left, x, "{direction} | justify-items:{alignment}");
+            }
+        }
+    }
+}
+
+#[test]
+fn left_is_the_line_left_edge_of_a_vertical_grid_area() {
+    // Line-left is the top in both vertical-rl and vertical-lr, and the bottom
+    // in sideways-lr; a right-to-left grid starts its lines at the other end.
+    for (mode, direction, left_y, right_y) in [
+        ("vertical-rl", "ltr", 0.0, 180.0),
+        ("vertical-rl", "rtl", 0.0, 180.0),
+        ("vertical-lr", "rtl", 0.0, 180.0),
+        ("sideways-lr", "ltr", 180.0, 0.0),
+        ("sideways-lr", "rtl", 180.0, 0.0),
+    ] {
+        for (property, container_extra) in [("justify-self", false), ("justify-items", true)] {
+            let container = format!("{SQUARE_GRID};writing-mode:{mode};direction:{direction}");
+            for (alignment, y) in [("left", left_y), ("right", right_y)] {
+                let (_, top, _, _) = if container_extra {
+                    item_rect(&format!("{container};{property}:{alignment}"), SMALL)
+                } else {
+                    item_rect(&container, &format!("{SMALL};{property}:{alignment}"))
+                };
+                assert_eq!(top, y, "{mode} {direction} | {property}:{alignment}");
+            }
+        }
+    }
+}
+
+#[test]
+fn left_follows_the_direction_of_the_alignment_container() {
+    // A `display: contents` wrapper makes no box: the grid is the container.
+    for direction in ["ltr", "rtl"] {
+        let other = if direction == "rtl" { "ltr" } else { "rtl" };
+        for (alignment, x) in [("left", 0.0), ("right", 150.0)] {
+            let (left, ..) = wrapped_item_rect(
+                &format!("{SQUARE_GRID};direction:{direction}"),
+                &format!("display:contents;direction:{other}"),
+                &format!("{SMALL};justify-self:{alignment}"),
+            );
+            assert_eq!(left, x, "contents {direction} | {alignment}");
+            // The containing block of an absolutely positioned box is its
+            // alignment container, not the parent between them.
+            for container in [
+                "position:relative;width:200px;height:200px",
+                "display:grid;position:relative;width:200px;height:200px",
+            ] {
+                let (left, ..) = wrapped_item_rect(
+                    &format!("{container};direction:{direction}"),
+                    &format!("direction:{other}"),
+                    &format!("position:absolute;inset:0;{SMALL};justify-self:{alignment}"),
+                );
+                assert_eq!(left, x, "{container} {direction} | abspos {alignment}");
+            }
+        }
+    }
+}
+
+#[test]
+fn left_in_a_static_position_follows_the_box_that_holds_it() {
+    for (direction, other) in [("ltr", "rtl"), ("rtl", "ltr")] {
+        // A grid aligns its static-position area with its own direction.
+        for (alignment, x) in [("left", 0.0), ("right", 150.0)] {
+            let (left, ..) = wrapped_item_rect(
+                &format!(
+                    "position:relative;display:grid;width:200px;height:200px;direction:{direction}"
+                ),
+                &format!("display:grid;width:200px;direction:{other}"),
+                &format!("position:absolute;{SMALL};justify-self:{alignment}"),
+            );
+            assert_eq!(left, x, "grid {direction} | {alignment}");
+        }
+        // A block container reads them as its start and end.
+        let (start_x, end_x) = if other == "rtl" {
+            (150.0, 0.0)
+        } else {
+            (0.0, 150.0)
+        };
+        for (alignment, x) in [("left", start_x), ("right", end_x)] {
+            let (left, ..) = wrapped_item_rect(
+                &format!("position:relative;width:200px;height:200px;direction:{direction}"),
+                &format!("width:200px;direction:{other}"),
+                &format!("position:absolute;{SMALL};justify-self:{alignment}"),
+            );
+            assert_eq!(left, x, "block {direction} | {alignment}");
+        }
+    }
+}
+
+#[test]
+fn right_keeps_both_insets_of_a_vertical_keyword_height_box() {
+    // In a vertical containing block, `justify-self` aligns along the height:
+    // `right` (line-right, the bottom) keeps both insets and ends at the
+    // bottom, `left` drops the bottom one.
+    for direction in ["ltr", "rtl"] {
+        for (alignment, bottom_aligned) in [("left", false), ("right", true)] {
+            let (_, top, _, height) = item_rect(
+                &format!(
+                    "position:relative;width:200px;height:200px;writing-mode:vertical-rl;direction:{direction}"
+                ),
+                &format!(
+                    "position:absolute;top:0;bottom:0;width:50px;height:max-content;justify-self:{alignment}"
+                ),
+            );
+            let y = if bottom_aligned { 200.0 - height } else { 0.0 };
+            assert_eq!(top, y, "{direction} | {alignment}");
+        }
+    }
+}

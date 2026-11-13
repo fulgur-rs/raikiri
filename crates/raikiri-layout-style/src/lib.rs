@@ -9,6 +9,7 @@ mod core;
 pub use core::preferred_aspect_ratio;
 mod flex;
 pub use flex::items as align_items_of;
+pub use flex::line_relative as line_relative_alignment;
 mod length;
 mod overrides;
 mod physical_sizing;

@@ -4099,6 +4099,14 @@ pub enum SelfPosition {
     FlexStart,
     /// `flex-end`.
     FlexEnd,
+    /// `left`, which only the inline (justify) axis takes: the line-left edge
+    /// of the alignment container, whatever its direction (CSS Box Alignment 3
+    /// §6.1). Layout resolves it to `start` or `end` against the direction of
+    /// the alignment container.
+    Left,
+    /// `right`: the line-right edge of the alignment container (see
+    /// [`Self::Left`]).
+    Right,
 }
 
 impl SelfPosition {
@@ -4114,6 +4122,8 @@ impl SelfPosition {
             Self::SelfEnd => SelfAlignmentValue::SelfEnd,
             Self::FlexStart => SelfAlignmentValue::FlexStart,
             Self::FlexEnd => SelfAlignmentValue::FlexEnd,
+            Self::Left => SelfAlignmentValue::Left,
+            Self::Right => SelfAlignmentValue::Right,
         }
     }
 }
@@ -4146,8 +4156,6 @@ impl SelfPosition {
 ///   for its fallback alignment (spec §9 "Fallback Alignment"); taffy aligns
 ///   both to the first baseline. `first baseline` is the same value as
 ///   `baseline`.
-/// - **(b) unsupported**: `left` and `right` of `justify-items` and
-///   `justify-self` are read as `start` and `end`, whatever the direction.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelfAlignmentValue {
@@ -4171,6 +4179,11 @@ pub enum SelfAlignmentValue {
     SelfStart,
     /// `self-end` — `<self-position>`; see [`Self::SelfStart`].
     SelfEnd,
+    /// `left`, which only `justify-items` and `justify-self` take; see
+    /// [`SelfPosition::Left`].
+    Left,
+    /// `right`; see [`SelfPosition::Right`].
+    Right,
     /// `anchor-center`, the value that CSS Anchor Positioning 1 adds to
     /// `align-self` and `justify-self`: an absolutely positioned box aligns to
     /// the center of its default anchor box. Without a default anchor box, and
@@ -4211,6 +4224,8 @@ impl SelfAlignmentValue {
             Self::FlexEnd => Some(SelfPosition::FlexEnd),
             Self::SelfStart => Some(SelfPosition::SelfStart),
             Self::SelfEnd => Some(SelfPosition::SelfEnd),
+            Self::Left => Some(SelfPosition::Left),
+            Self::Right => Some(SelfPosition::Right),
             Self::Safe(position) | Self::Unsafe(position) => Some(position),
             _ => None,
         }
