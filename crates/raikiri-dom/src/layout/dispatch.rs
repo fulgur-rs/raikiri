@@ -3092,22 +3092,58 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         {
             stack.push((
                 child,
-                doc.nodes[child].layout.location.y,
+                normal_flow_top(doc, child),
                 (f32::NEG_INFINITY, f32::INFINITY),
             ));
         }
     }
+    // Block flow, as opposed to a flex or grid container, whose items align
+    // by their own baselines.
+    let block_flow = |idx: usize| {
+        matches!(
+            doc.nodes[idx].formatting_context,
+            FormattingContext::Block | FormattingContext::Inline | FormattingContext::Multicol
+        )
+    };
     let mut last_baseline = None;
     while let Some((idx, offset_y, outer_clip)) = stack.pop() {
         let node = &doc.nodes[idx];
-        // Clamping a value to this box and then to the boxes around it is
-        // clamping it to this box's edges, each clamped to the outer range.
         let is_text = node.kind() == raikiri_traits::NodeKind::Text;
         let style = (!is_text).then(|| doc.physical_style(idx));
-        let clip = if style
+        // A float is out of flow: neither it nor its lines give the baseline.
+        // A flex or grid item does not float, whatever it declares.
+        if style
             .as_ref()
-            .is_some_and(|style| is_scroll_container(style.overflow()))
+            .is_some_and(|style| style.float() != Float::None)
+            && doc.taffy_parent_of(idx).is_none_or(block_flow)
         {
+            continue;
+        }
+        // A box whose lines run across those of the inline-block has none it
+        // could sit on, and neither does anything inside it. An element that
+        // generates no box hands its children on whatever its writing mode.
+        if !is_text
+            && node.used_writing_mode.is_vertical()
+            && node.display() != DisplayValue::Contents
+        {
+            continue;
+        }
+        let scrolls = style
+            .as_ref()
+            .is_some_and(|style| is_scroll_container(style.overflow()));
+        // A block container that is a scroll container in block flow has,
+        // for the last baseline an inline-block sits on, its block-end margin
+        // edge, whatever lines it holds and whatever containment applies to
+        // it (CSS Box Alignment 3 §9.1).
+        // spec: https://www.w3.org/TR/css-align-3/#baseline-export
+        if scrolls && block_flow(idx) && doc.taffy_parent_of(idx).is_none_or(block_flow) {
+            let edge = offset_y + node.layout.size.height + node.layout.margin.bottom;
+            last_baseline = Some(edge.max(outer_clip.0).min(outer_clip.1));
+            continue;
+        }
+        // Clamping a value to this box and then to the boxes around it is
+        // clamping it to this box's edges, each clamped to the outer range.
+        let clip = if scrolls {
             let bottom = offset_y + node.layout.size.height;
             (
                 offset_y.max(outer_clip.0).min(outer_clip.1),
@@ -3152,11 +3188,48 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
                 && !doc.nodes[child].is_display_none()
                 && doc.nodes[child].layout_position() != Position::Absolute
             {
-                stack.push((child, offset_y + doc.nodes[child].layout.location.y, clip));
+                stack.push((child, offset_y + normal_flow_top(doc, child), clip));
             }
         }
     }
     last_baseline
+}
+
+/// The top of the box `idx` in normal flow, from the top of its parent's
+/// border box: where layout placed it, less the offset its relative
+/// positioning moved it by. A baseline is found where the box would be,
+/// as a relative offset moves the box without moving the boxes it is
+/// aligned with (CSS 2.1 §9.4.3).
+fn normal_flow_top(doc: &LayoutSession<'_>, idx: usize) -> f32 {
+    let node = &doc.nodes[idx];
+    let top = node.layout.location.y;
+    // Character data is never positioned, and a relative offset that layout
+    // leaves to the painter is not in the location.
+    if node.kind() == raikiri_traits::NodeKind::Text || node.needs_relative_block_paint_offset {
+        return top;
+    }
+    let style = doc.physical_style(idx);
+    if style.position() != Position::Relative {
+        return top;
+    }
+    // A percentage refers to the height a grid item's area gives it, or to
+    // the height its parent resolved percentages against.
+    let basis = doc.taffy_parent_of(idx).and_then(|parent| {
+        let parent = &doc.nodes[parent];
+        if parent.formatting_context == FormattingContext::Grid {
+            parent
+                .grid_item_areas
+                .iter()
+                .find(|&&(item, _)| item == idx)
+                .map(|&(_, area)| area.height)
+        } else {
+            parent.percent_basis_height
+        }
+    });
+    let inset = style.inset();
+    let start = inset.top.maybe_resolve(basis);
+    let end = inset.bottom.maybe_resolve(basis).map(|end| -end);
+    top - start.or(end).unwrap_or(0.0)
 }
 
 /// Whether `idx` is a block-level `<button>` that is a direct child of a
