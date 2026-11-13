@@ -233,7 +233,15 @@ impl<'a> ElementBorder<'a> {
         let heights = self
             .corners
             .map_or([0.0; 4], |corners| corners.junction_heights);
-        let reach = |corner: usize, own: f64| ((f64::from(heights[corner]) - own) / 2.0).max(0.0);
+        // A cell without a line of its own there has no line center to
+        // reach from, and leaves the square to its neighbours.
+        let reach = |corner: usize, own: f64| {
+            if own > 0.0 {
+                ((f64::from(heights[corner]) - own) / 2.0).max(0.0)
+            } else {
+                0.0
+            }
+        };
         let (reach_tl, reach_tr, reach_br, reach_bl) =
             (reach(0, wt), reach(1, wt), reach(2, wb), reach(3, wb));
         if self.paint_top && bt > 0.0 {

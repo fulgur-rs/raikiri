@@ -243,3 +243,18 @@ fn a_collapsed_column_keeps_the_table_order_of_the_cells() {
     );
     assert_eq!(junctions(&pixels, 3, 3), ["RRG", "RRG", "BBY"]);
 }
+
+#[test]
+fn a_cell_without_its_own_line_leaves_the_junction_alone() {
+    // The last cell draws no border of its own; the 1px lines of the cell
+    // beside it end at the bottom of the table, with nothing below.
+    let pixels = raster(
+        "<tr><td style='border:1px solid red'></td><td style='border:1px solid red'></td></tr>\
+         <tr><td style='border:1px solid red'></td><td style='border-style:none'></td></tr>",
+    );
+    let bottom = (0..SIZE)
+        .rev()
+        .find(|&y| area(&pixels, (0, y), (1, y + 1)) == 'R')
+        .expect("the table has a left edge");
+    assert_eq!(area(&pixels, (0, bottom + 1), (SIZE, bottom + 2)), '.');
+}
