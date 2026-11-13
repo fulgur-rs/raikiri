@@ -258,3 +258,15 @@ fn a_cell_without_its_own_line_leaves_the_junction_alone() {
         .expect("the table has a left edge");
     assert_eq!(area(&pixels, (0, bottom + 1), (SIZE, bottom + 2)), '.');
 }
+
+#[test]
+fn a_junction_keeps_the_current_color_of_the_cell_that_paints_it() {
+    // The first cell's border is its red text color. The positioned cells
+    // paint after it, in blue text, and still leave the junction red.
+    let pixels = raster(
+        "<tr><td style='color:red;border:4px solid'></td><td style='border:4px solid green'></td></tr>\
+         <tr><td style='position:relative;background:white;color:blue;border:4px solid blue'></td>\
+         <td style='position:relative;background:white;color:blue;border:4px solid yellow'></td></tr>",
+    );
+    assert_eq!(junctions(&pixels, 3, 3), ["RRG", "RRG", "BBY"]);
+}
