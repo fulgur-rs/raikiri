@@ -749,3 +749,46 @@ fn the_content_of_an_item_outweighs_the_minimum_its_ratio_carries() {
         ),
     ]);
 }
+
+#[test]
+fn flex_and_grid_items_measure_their_content_but_scrollers_and_contained_boxes_do_not() {
+    // Flex and grid containers as items weigh their content as a block does.
+    // A scroll container, a box with inline-size containment, and a box whose
+    // only child is absolutely positioned keep the carried 100px; a
+    // `max-height` caps the content height, and a scroll container with a
+    // `max-width` takes the height the ratio gives.
+    assert_rows(&[
+        (
+            "<div style='display:grid;width:50px;grid-template-columns:auto'><div id=c style='aspect-ratio:1;min-height:100px;overflow:hidden'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 100, 100])],
+        ),
+        (
+            "<div style='display:grid;width:50px;grid-template-columns:auto'><div id=c style='aspect-ratio:1;min-height:100px'><div style='width:150px;height:10px;position:absolute'></div></div></div>",
+            &[("c", [0, 0, 100, 100])],
+        ),
+        (
+            "<div style='display:grid;width:300px'><div id=c style='aspect-ratio:1;max-width:50px;max-height:30px'><div style='height:200px'></div></div></div>",
+            &[("c", [0, 0, 30, 30])],
+        ),
+        (
+            "<div style='display:grid;width:50px;grid-template-columns:auto'><div id=c style='display:flex;aspect-ratio:1;min-height:100px'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 150])],
+        ),
+        (
+            "<div style='display:grid;width:50px;grid-template-columns:auto'><div id=c style='display:grid;aspect-ratio:1;min-height:100px'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 150])],
+        ),
+        (
+            "<div style='display:grid;width:300px'><div id=c style='display:flex;aspect-ratio:1;max-width:50px'><div style='height:200px'></div></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:50px;grid-template-columns:auto'><div id=c style='aspect-ratio:1;min-height:100px;contain:inline-size'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 100, 100])],
+        ),
+        (
+            "<div style='display:grid;width:300px'><div id=c style='aspect-ratio:1;max-width:50px;overflow:hidden'><div style='height:200px'></div></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+    ]);
+}

@@ -597,8 +597,9 @@ impl LayoutSession<'_> {
             })
     }
 
-    /// Whether the grid item `idx`, a block container with content and an
-    /// aspect ratio that states no size and no `min-width`, measures itself
+    /// Whether the grid item `idx`, a block, flex or grid container with
+    /// in-flow content, no size containment and an aspect ratio, that is no
+    /// scroll container and states no size and no `min-width`, measures itself
     /// because the library would let a minimum or maximum its ratio carries
     /// over undercut its content (CSS Grid 1 §6.6):
     ///
@@ -623,19 +624,29 @@ impl LayoutSession<'_> {
         item: &LayoutStyleView<'_>,
     ) -> bool {
         use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
+        let node = &self.nodes[idx];
+        let overflow = item.overflow();
         matches!(
-            self.nodes[idx].formatting_context,
-            FormattingContext::Block | FormattingContext::Inline
-        ) && !self.nodes[idx].children.is_empty()
+            node.formatting_context,
+            FormattingContext::Block
+                | FormattingContext::Inline
+                | FormattingContext::Flex
+                | FormattingContext::Grid
+        ) && !node.size_containment.width
+            && !node.size_containment.height
+            && node
+                .children
+                .iter()
+                .any(|&child| self.nodes[child].layout_position() != Position::Absolute)
+            && !overflow.x.is_scroll_container()
+            && !overflow.y.is_scroll_container()
             && item.stated_aspect_ratio().is_some()
             && item.size().width.is_auto()
             && item.size().height.is_auto()
             && item.min_size().width.is_auto()
             && match item.min_size().height.expand() {
                 ExpandedLengthPercentageAuto::Length(_) => true,
-                ExpandedLengthPercentageAuto::Auto => {
-                    !item.max_size().width.is_auto() && !item.overflow().y.is_scroll_container()
-                }
+                ExpandedLengthPercentageAuto::Auto => !item.max_size().width.is_auto(),
                 _ => false,
             }
             && self.taffy_parent_of(idx).is_some_and(|container| {
@@ -776,9 +787,6 @@ impl LayoutSession<'_> {
         };
         let item = self.physical_style(idx);
         let ratio = item.stated_aspect_ratio()?;
-        if self.grid_item_content_outweighs_carried_minimum(idx, &item) {
-            return None;
-        }
         if self.container_is_vertical(idx)
             || self.nodes[idx].used_writing_mode.is_vertical()
             || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
@@ -793,6 +801,9 @@ impl LayoutSession<'_> {
         else {
             return None;
         };
+        if self.grid_item_content_outweighs_carried_minimum(idx, &item) {
+            return None;
+        }
         let justify = self.grid_item_justify_self(idx);
         if justify.keyword == AlignItemsKeyword::Stretch {
             return None;
