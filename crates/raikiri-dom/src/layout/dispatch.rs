@@ -1249,11 +1249,15 @@ impl LayoutSession<'_> {
                     contain_natural.filter(|_| keeps_contained_ratio(tree, idx))
                 {
                     let mut leaf_style = block_flow::style_input::physical(tree, idx);
-                    carry_contained_ratio_bounds(
+                    let floor = carry_contained_ratio_bounds(
                         &mut leaf_style,
                         natural,
                         tree.nodes[idx].ratio_in_content_box,
                         inputs,
+                    );
+                    apply_local_sizing(
+                        &mut leaf_style,
+                        &[OwnedPropertyOverride::aspect_ratio(None)],
                     );
                     // Given its width, the box takes the height the ratio
                     // relates to it within its bounds, also while a parent
@@ -1269,7 +1273,16 @@ impl LayoutSession<'_> {
                     } else {
                         inputs
                     };
-                    compute_leaf_layout(inputs, &LeafStyle::new(&leaf_style), resolve_calc, measure)
+                    let mut output = compute_leaf_layout(
+                        inputs,
+                        &LeafStyle::new(&leaf_style),
+                        resolve_calc,
+                        measure,
+                    );
+                    if let Some(floor) = floor {
+                        floor.raise(&mut output);
+                    }
+                    output
                 } else {
                     compute_leaf_layout(inputs, &TaffyStyle::new(style), resolve_calc, measure)
                 };
@@ -3199,6 +3212,27 @@ fn keeps_contained_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && !tree.has_vertical_writing_mode(idx)
 }
 
+/// The height a size-contained box takes from its preferred aspect ratio once
+/// its width is known, in the box the ratio relates: Taffy's leaf algorithm
+/// divides the border-box width by the ratio whatever box `box-sizing` names,
+/// so the ratio is taken out of the style the leaf is laid out with and its
+/// height floor is put back here. Chromium sizes `contain: size;
+/// contain-intrinsic-size: 200px 400px; aspect-ratio: 1 / 2; padding: 10px`
+/// at 220px by 420px.
+#[derive(Clone, Copy)]
+struct ContainedRatioFloor {
+    ratio: f32,
+    inset: Size<f32>,
+}
+
+impl ContainedRatioFloor {
+    fn raise(self, output: &mut LayoutOutput) {
+        let height =
+            (output.size.width - self.inset.width).max(0.0) / self.ratio + self.inset.height;
+        output.size.height = output.size.height.max(height);
+    }
+}
+
 /// Put in `style` the bounds of a size-contained box that keeps its preferred
 /// aspect ratio, whose content `natural` stands for: the bounds block flow
 /// resolves, with those the ratio carries over from one axis to the other,
@@ -3207,13 +3241,16 @@ fn keeps_contained_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// maximum height the box states. The minimum width is never `auto`, so the leaf algorithm
 /// carries no minimum of its own across the ratio past a maximum width.
 /// Chromium sizes `contain: size; contain-intrinsic-size: 200px 200px;
-/// aspect-ratio: 1; max-height: 50px` at 50px by 50px.
+/// aspect-ratio: 1; max-height: 50px` at 50px by 50px. The ratio stays in
+/// `style`; the floor returned stands in for it once the leaf is laid out
+/// without it.
 fn carry_contained_ratio_bounds(
     style: &mut Style,
     natural: Size<f32>,
     content_box_ratio: bool,
     inputs: LayoutInput,
-) {
+) -> Option<ContainedRatioFloor> {
+    let ratio = style.aspect_ratio?;
     let metrics = block_flow::Metrics::resolve(style, false, content_box_ratio, inputs);
     let edges = (metrics.padding + metrics.border).sum_axes();
     // The bounds hold the border box; the style states them in the box
@@ -3261,6 +3298,14 @@ fn carry_contained_ratio_bounds(
     })
     .collect();
     apply_local_sizing(style, &overrides);
+    Some(ContainedRatioFloor {
+        ratio,
+        inset: if content_box_ratio || style.box_sizing == BoxSizing::ContentBox {
+            edges
+        } else {
+            Size::ZERO
+        },
+    })
 }
 
 /// Put in `style` the minimum and maximum sizes of an empty, non-replaced box
@@ -3382,8 +3427,9 @@ fn compute_inline_block_shrink_wrap(
     // content, and the ratio and the bounds it carries size the box around
     // that content as they would without containment.
     let contained_ratio = contain_natural.filter(|_| keeps_contained_ratio(tree, idx));
+    let mut contained_floor = None;
     if let Some(natural) = contained_ratio {
-        carry_contained_ratio_bounds(
+        contained_floor = carry_contained_ratio_bounds(
             &mut leaf_style,
             natural,
             tree.nodes[idx].ratio_in_content_box,
@@ -3711,15 +3757,16 @@ fn compute_inline_block_shrink_wrap(
         });
         // The ratio has done its work for a box whose height the parent fixed
         // and whose width it gave, and Taffy's ratio floor would raise that
-        // height again to the border-box width divided by the ratio.
-        if fixed_width.is_some() || stretched_by_parent.is_some() {
+        // height again to the border-box width divided by the ratio. A
+        // contained box raises its height by its own floor instead.
+        if fixed_width.is_some() || stretched_by_parent.is_some() || contained_floor.is_some() {
             apply_local_sizing(
                 &mut leaf_style,
                 &[OwnedPropertyOverride::aspect_ratio(None)],
             );
         }
         let natural = fixed_width.or(leaf_intrinsic);
-        compute_leaf_layout(
+        let mut output = compute_leaf_layout(
             final_inputs,
             &LeafStyle::new(&leaf_style),
             resolve_calc,
@@ -3727,7 +3774,11 @@ fn compute_inline_block_shrink_wrap(
                 width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
                 height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
             },
-        )
+        );
+        if let Some(floor) = contained_floor.filter(|_| stretched_by_parent.is_none()) {
+            floor.raise(&mut output);
+        }
+        output
     } else {
         match display {
             DisplayValue::Flex | DisplayValue::InlineFlex => {

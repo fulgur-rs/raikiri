@@ -227,3 +227,45 @@ fn contained_ratio_boxes_with_a_stated_width_or_a_wrapper() {
         ),
     ]);
 }
+
+#[test]
+fn a_contained_ratio_box_with_padding_relates_the_box_box_sizing_names() {
+    // A ratio of 1 / 2 with 10px of padding relates the content box of a
+    // `content-box` box and the border box of a `border-box` one, in inline
+    // blocks, floats and flex items, under a `max-height` or `max-width`, and
+    // with content shorter than the ratio gives.
+    assert_rows(&[
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 420])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='float:left;contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 420])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;box-sizing:border-box;contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 440])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;max-height:100px;contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 70, 120])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;max-width:50px;contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 70, 420])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;contain:size;contain-intrinsic-size:200px 100px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 420])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;'><div id=c style='display:inline-block;contain:size;contain-intrinsic-size:200px 100px;aspect-ratio:2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 120])],
+        ),
+        (
+            "<div style='margin-top:300px;width:500px;display:flex'><div id=c style='contain:size;contain-intrinsic-size:200px 400px;aspect-ratio:1/2;padding:10px'></div></div>",
+            &[("c", [0, 300, 220, 420])],
+        ),
+    ]);
+}
