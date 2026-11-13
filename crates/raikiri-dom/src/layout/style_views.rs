@@ -526,17 +526,18 @@ impl LayoutSession<'_> {
                 .zero_min_main_axis(idx)
                 .filter(|_| !self.container_is_vertical(idx));
         }
-        // A size-contained out-of-flow box whose insets leave its height open
-        // derives it from its width itself, as a row flex item does.
-        if matches!(role, ReadRole::Oof)
-            && crate::layout::dispatch::contained_oof_follows_width(self, idx)
-        {
-            context.flex_item_ratio = raikiri_layout_style::FlexItemRatio::CrossFollowsMain;
-        }
-        if matches!(role, ReadRole::Oof)
-            && crate::layout::dispatch::contained_oof_height_follows_width(self, idx)
-        {
-            context.oof_height_follows_width = true;
+        // A size-contained out-of-flow box takes one of its sizes from the
+        // other through its ratio itself.
+        if matches!(role, ReadRole::Oof) {
+            match crate::layout::dispatch::contained_oof(self, idx) {
+                Some(crate::layout::dispatch::ContainedOof::HeightFromWidth) => {
+                    context.flex_item_ratio = raikiri_layout_style::FlexItemRatio::CrossFollowsMain;
+                }
+                Some(crate::layout::dispatch::ContainedOof::WidthFromInsets) => {
+                    context.oof_height_follows_width = true;
+                }
+                None => {}
+            }
         }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);

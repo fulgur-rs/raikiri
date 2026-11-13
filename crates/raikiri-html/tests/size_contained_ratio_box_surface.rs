@@ -525,8 +525,10 @@ fn a_contained_out_of_flow_box_with_top_and_bottom_takes_its_height_from_its_wid
     // takes its width from the height they leave it, through the ratio and
     // within its width bounds, then its height from that width, no lower
     // than `contain-intrinsic-size` says, and above the insets if that says
-    // more. Its alignment places it between the insets, and only `stretch`
-    // stretches its height to them.
+    // more, also when its width is a content keyword. Its alignment places
+    // it between the insets, and only `stretch` stretches its height to
+    // them; its width then follows that height unless `justify-self:
+    // stretch` stretches it to `left` and `right`.
     assert_rows(&[
         (
             "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;max-width:50px'></div></div>",
@@ -595,6 +597,26 @@ fn a_contained_out_of_flow_box_with_top_and_bottom_takes_its_height_from_its_wid
         (
             "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;max-width:50px;overflow:hidden'></div></div>",
             &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:min-content'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:min-content;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;top:50px;bottom:50px'></div></div>",
+            &[("c", [0, 50, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;left:0;right:0;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;left:0;right:0;justify-self:stretch;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 500, 300])],
         ),
     ]);
 }

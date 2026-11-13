@@ -101,7 +101,19 @@ impl LayoutStyleView<'_> {
     /// (see [`Self::with_swapped_oof_alignment`]).
     #[inline]
     pub(crate) fn oof_justify_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment(!self.swapped_oof_alignment)
+        let alignment = self.self_alignment(!self.swapped_oof_alignment);
+        // A box whose height follows its width and is stretched to its insets
+        // all the same takes its width from that height, so an `auto` or
+        // `normal` alignment does not stretch the width to its insets either.
+        if self.context.oof_height_follows_width
+            && matches!(alignment, None | Some(values::AlignSelf::NORMAL))
+            && self
+                .self_alignment(self.swapped_oof_alignment)
+                .is_some_and(|block| block.keyword == values::AlignItemsKeyword::Stretch)
+        {
+            return Some(values::AlignSelf::START);
+        }
+        alignment
     }
     /// Content alignment read by project block primitives.
     #[inline]
