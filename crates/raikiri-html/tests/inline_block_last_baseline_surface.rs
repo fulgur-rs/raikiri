@@ -69,7 +69,8 @@ fn a_scroll_container_in_an_inline_block_gives_its_bottom_margin_edge() {
     // by a float, puts the baseline at its bottom margin edge, so the line
     // grows to hold the inline-block above the strut's descent. `overflow:
     // clip`, a flex scroll container and a scroll container that is a flex
-    // item keep the baseline of the line inside.
+    // item keep the baseline of the line inside. Layout containment does not
+    // take the edge away from a scroll container.
     assert_rows(&[
         (
             "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div id=i style='overflow:hidden;height:30px'>X</div></div>B</div>",
@@ -197,6 +198,15 @@ fn a_scroll_container_in_an_inline_block_gives_its_bottom_margin_edge() {
                 ("i", [10, 300, 40, 30]),
             ],
         ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div>X</div><div id=i style='overflow:hidden;contain:layout;height:30px'></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 42]),
+                ("a", [0, 332, 10, 10]),
+                ("f", [10, 300, 40, 40]),
+                ("i", [10, 310, 40, 30]),
+            ],
+        ),
     ]);
 }
 
@@ -238,9 +248,10 @@ fn a_box_in_another_writing_mode_gives_an_inline_block_no_baseline() {
 
 #[test]
 fn a_relative_offset_does_not_move_the_baseline_of_an_inline_block() {
-    // Boxes moved by `top`, `bottom`, a percentage of a definite height, or
-    // a relative offset of their parent too, give the baseline of where they
-    // would be.
+    // Boxes moved by `top`, `bottom`, a percentage of a definite height (a
+    // height that is itself a percentage, a grid area, a flex container or a
+    // scroll container), or a relative offset of their parent too, give the
+    // baseline of where they would be.
     assert_rows(&[
         (
             "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div id=i style='height:30px;position:relative;top:9px'>X</div></div>B</div>",
@@ -285,6 +296,42 @@ fn a_relative_offset_does_not_move_the_baseline_of_an_inline_block() {
                 ("a", [0, 300, 10, 10]),
                 ("f", [10, 300, 40, 20]),
                 ("i", [10, 307, 40, 20]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div style='height:100px'><div style='height:50%'><div id=i style='position:relative;top:10%'>X</div></div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 100]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 100]),
+                ("i", [10, 305, 40, 10]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div style='display:grid;height:100px;grid-template-rows:50px 50px'><div id=i style='position:relative;top:10%'>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 100]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 100]),
+                ("i", [10, 305, 40, 50]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div style='display:flex;height:100px'><div id=i style='position:relative;top:10%'>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 100]),
+                ("a", [0, 300, 10, 10]),
+                ("f", [10, 300, 40, 100]),
+                ("i", [10, 310, 10, 100]),
+            ],
+        ),
+        (
+            "<div id=w style='margin-top:300px;width:600px'><span id=a>A</span><div id=f style='display:inline-block;width:40px'><div style='overflow:hidden;height:100px'><div id=i style='position:relative;top:10%'>X</div></div></div>B</div>",
+            &[
+                ("w", [0, 300, 600, 102]),
+                ("a", [0, 392, 10, 10]),
+                ("f", [10, 300, 40, 100]),
+                ("i", [10, 310, 40, 10]),
             ],
         ),
     ]);
