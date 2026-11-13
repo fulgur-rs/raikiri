@@ -522,9 +522,13 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
             context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            context.zero_min_main_axis = self
+                .zero_min_main_axis(idx)
+                .filter(|_| !self.container_is_vertical(idx));
         }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);
+            context.carried_min_width = self.grid_item_carried_min_width(idx);
         }
         if matches!(role, ReadRole::BlockItem) {
             context.block_item_basis = self
@@ -538,6 +542,66 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         view.with_context(context)
+    }
+
+    /// Whether the minimum height that the aspect ratio of the grid item
+    /// `idx` carries over to its width needs the grid area to resolve: the
+    /// item states no size and no `min-width`, a `min-height`, and a
+    /// percentage in that `min-height`, in its padding or in its
+    /// `max-width`, and its inline alignment is `normal`. A column whose
+    /// minimum is `min-content` or `max-content` takes the content
+    /// contribution of the item instead, so a grid with such a column leaves
+    /// the item to the library.
+    fn grid_item_percent_carry(&self, idx: usize, item: &LayoutStyleView<'_>) -> bool {
+        use raikiri_layout_style::values::{
+            AlignItemsKeyword, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+        };
+        if !item.size().width.is_auto()
+            || !item.size().height.is_auto()
+            || !item.min_size().width.is_auto()
+            || item.min_size().height.is_auto()
+        {
+            return false;
+        }
+        let auto_percent = |value: raikiri_layout_style::values::LengthPercentageAuto| match value
+            .expand()
+        {
+            ExpandedLengthPercentageAuto::Auto | ExpandedLengthPercentageAuto::Length(_) => false,
+            ExpandedLengthPercentageAuto::Calc(value) => value.has_percentage(),
+            _ => true,
+        };
+        let percent = |edge: raikiri_layout_style::values::LengthPercentage| match edge.expand() {
+            ExpandedLengthPercentage::Length(_) => false,
+            ExpandedLengthPercentage::Calc(value) => value.has_percentage(),
+            _ => true,
+        };
+        let padding = item.padding();
+        let needs_area = auto_percent(item.min_size().height)
+            || auto_percent(item.max_size().width)
+            || [padding.left, padding.right, padding.top, padding.bottom]
+                .into_iter()
+                .any(percent);
+        needs_area
+            && self.grid_item_justify_self(idx).keyword == AlignItemsKeyword::Normal
+            && self.taffy_parent_of(idx).is_some_and(|container| {
+                crate::layout::taffy_adapter::columns_have_no_content_minimum(
+                    &self.physical_style(container),
+                )
+            })
+    }
+
+    /// The inline alignment of the grid item `idx`: its own `justify-self`,
+    /// or the `justify-items` of its container for `auto`.
+    fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
+        use raikiri_layout_style::values::AlignSelf;
+        self.physical_style(idx)
+            .bridge_justify_self()
+            .unwrap_or_else(|| {
+                self.taffy_parent_of(idx)
+                    .map_or(AlignSelf::NORMAL, |parent| {
+                        self.physical_style(parent).justify_items()
+                    })
+            })
     }
 
     /// Preserve replaced sizes and defer content-based automatic ratio sizes
@@ -596,12 +660,12 @@ impl LayoutSession<'_> {
                     | ExpandedLengthPercentageAuto::Percent(_)
                     | ExpandedLengthPercentageAuto::Calc(_)
             );
-        if !vertical_container
-            && (!matches!(
-                self.nodes[idx].formatting_context,
-                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
-            ) || !(percentage_sized || auto_with_minimum))
-        {
+        let measured = matches!(
+            self.nodes[idx].formatting_context,
+            FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+        ) && (percentage_sized || auto_with_minimum);
+        // Any box measures itself for a minimum that the area resolves.
+        if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
         }
         let alignment = item.bridge_align_self().unwrap_or_else(|| {
@@ -615,12 +679,7 @@ impl LayoutSession<'_> {
         } else {
             alignment
         };
-        let justify = item.bridge_justify_self().unwrap_or_else(|| {
-            self.taffy_parent_of(idx)
-                .map_or(AlignSelf::NORMAL, |parent| {
-                    self.physical_style(parent).justify_items()
-                })
-        });
+        let justify = self.grid_item_justify_self(idx);
         let justify = if justify.keyword == AlignItemsKeyword::Normal {
             AlignSelf::START
         } else {
@@ -630,6 +689,124 @@ impl LayoutSession<'_> {
             align_self: alignment,
             justify_self: justify,
         }
+    }
+
+    /// The minimum width, in the box `box-sizing` names, that the aspect ratio
+    /// of the grid item `idx` carries over from the length its `min-height`
+    /// states, when the item states no size and no `min-width` and its inline
+    /// alignment is `normal`.
+    ///
+    /// The library fills an `auto` minimum with the padding and border before
+    /// it carries minimums across the ratio, so a `min-height` never becomes a
+    /// minimum width, and it stretches a `normal` item to the width of its
+    /// area. Chromium takes the width the ratio relates to the `min-height`
+    /// past a narrower area: `aspect-ratio: 1; min-height: 100px` in a 50px
+    /// column is 100px wide. An item that asks for `stretch` keeps the width
+    /// of its area, and a `max-width` the item states caps the carried width.
+    /// Percentages that only the grid area resolves are left to the item,
+    /// which measures itself once the area is known (`grid_item_percent_carry`).
+    fn grid_item_carried_min_width(&self, idx: usize) -> Option<f32> {
+        use raikiri_layout_style::values::{
+            AlignItemsKeyword, BoxSizing, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+        };
+        let item = self.physical_style(idx);
+        let ratio = item.stated_aspect_ratio()?;
+        if self.container_is_vertical(idx)
+            || self.nodes[idx].used_writing_mode.is_vertical()
+            || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
+            || crate::paint_rules::is_replaced_element(self.document, idx)
+            || !item.size().width.is_auto()
+            || !item.size().height.is_auto()
+            || !item.min_size().width.is_auto()
+        {
+            return None;
+        }
+        let ExpandedLengthPercentageAuto::Length(min_height) = item.min_size().height.expand()
+        else {
+            return None;
+        };
+        let justify = self.grid_item_justify_self(idx);
+        if justify.keyword != AlignItemsKeyword::Normal {
+            return None;
+        }
+        // The padding and border, which only lengths give before the width of
+        // the grid area is known: percentages leave the item to the library.
+        let length = |edge: raikiri_layout_style::values::LengthPercentage| match edge.expand() {
+            ExpandedLengthPercentage::Length(length) => Some(length),
+            _ => None,
+        };
+        let (padding, border) = (item.padding(), item.border());
+        let edges = |a, b, c, d| Some(length(a)? + length(b)? + length(c)? + length(d)?);
+        let edges_x = edges(padding.left, padding.right, border.left, border.right)?;
+        let edges_y = edges(padding.top, padding.bottom, border.top, border.bottom)?;
+        let content_box = item.box_sizing() == BoxSizing::ContentBox;
+        // The ratio relates the content box of a box sized by its content box
+        // and of an `auto <ratio>`, else the border box.
+        let width = if content_box || self.nodes[idx].ratio_in_content_box {
+            let content_height = if content_box {
+                min_height
+            } else {
+                (min_height - edges_y).max(0.0)
+            };
+            let content_width = content_height * ratio;
+            if content_box {
+                content_width
+            } else {
+                content_width + edges_x
+            }
+        } else {
+            min_height.max(edges_y) * ratio
+        };
+        // A `max-width` caps the carried width, and one that only the width
+        // of the grid area resolves leaves the item to the library.
+        let width = match item.max_size().width.expand() {
+            ExpandedLengthPercentageAuto::Length(max) => width.min(max),
+            ExpandedLengthPercentageAuto::Auto => width,
+            _ => return None,
+        };
+        Some(width.max(0.0))
+    }
+
+    /// The main axis of the flex item `idx` when its automatic minimum size
+    /// is zero along it and the view reports an `auto` minimum there as zero,
+    /// in the axes of the container: the width for a row, the height for a
+    /// column, whichever physical axis the container's writing mode turns them
+    /// into.
+    ///
+    /// The content size suggestion of an item with size containment along the
+    /// main axis is not its contained size: Chromium shrinks it below
+    /// `contain-intrinsic-size` like an item without content, down to its
+    /// padding and border.
+    ///
+    /// A scroll container with an aspect ratio has no automatic minimum
+    /// either. The library would carry the minimum of the
+    /// other axis across the ratio onto its `auto` one and keep the item from
+    /// shrinking below that, which Chromium does not.
+    pub(crate) fn zero_min_main_axis(&self, idx: usize) -> Option<raikiri_layout_style::Axis> {
+        use raikiri_layout_style::Axis;
+        let contained = self.nodes[idx].size_containment;
+        let item = self.physical_style(idx);
+        let overflow = item.overflow();
+        let scrolling_ratio = item.stated_aspect_ratio().is_some()
+            && (overflow.x.is_scroll_container() || overflow.y.is_scroll_container());
+        if (!contained.width && !contained.height && !scrolling_ratio)
+            || self.nodes[idx].layout_position() == Position::Absolute
+        {
+            return None;
+        }
+        let container = self.taffy_parent_of(idx)?;
+        if self.nodes[container].formatting_context != FormattingContext::Flex {
+            return None;
+        }
+        let row = self.physical_style(container).flex_direction_is_row();
+        let main_is_width = row != self.container_is_vertical(idx);
+        let (contained, scrolls) = if main_is_width {
+            (contained.width, overflow.x.is_scroll_container())
+        } else {
+            (contained.height, overflow.y.is_scroll_container())
+        };
+        let zero = contained || (scrolling_ratio && scrolls);
+        zero.then_some(if row { Axis::X } else { Axis::Y })
     }
 
     /// The limits on the cross size of the flex item `idx` that its stated cross

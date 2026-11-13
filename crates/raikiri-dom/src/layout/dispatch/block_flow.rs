@@ -405,14 +405,20 @@ fn item_metrics(
     inputs: LayoutInput,
 ) -> Metrics {
     let main_is_width = tree.flex_main_axis_is_width(usize::from(node));
+    // The flex algorithm settles the main size of an item and the cross size
+    // it lays the item out at, except a cross size that only hints at the
+    // stretch of a wrapping line, which the item measures past.
+    let hint = main_is_width.is_some()
+        && tree.is_wrapping_stretch_hint(usize::from(node), style, inputs.known_dimensions);
+    let settled = |main: bool| main_is_width.is_some() && (main || !hint);
     let mut metrics = Metrics::resolve_flexed(
         style,
         width_stands_in,
         content_box_ratio,
         inputs,
         Size {
-            width: main_is_width == Some(true),
-            height: main_is_width == Some(false),
+            width: settled(main_is_width == Some(true)),
+            height: settled(main_is_width == Some(false)),
         },
     );
     // A cyclic percentage width is auto for this grid contribution, so its

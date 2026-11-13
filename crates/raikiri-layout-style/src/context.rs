@@ -377,6 +377,14 @@ pub struct ViewContext {
     pub held_cross_size: Option<HeldCrossSize>,
     /// Whether a grid item's ratio-dependent sizes are measured by the item itself.
     pub grid_item_ratio: GridItemRatio,
+    /// The main axis of a flex item whose automatic minimum size is zero along
+    /// it, from size containment along it or as a scroll container: an `auto`
+    /// minimum is reported as zero there, as Chromium resolves it.
+    pub zero_min_main_axis: Option<Axis>,
+    /// The minimum width, in the box `box-sizing` names, that the aspect
+    /// ratio of a grid item carries over from its `min-height`, reported in
+    /// place of an `auto` minimum width.
+    pub carried_min_width: Option<f32>,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -391,6 +399,8 @@ impl Default for ViewContext {
             flex_item_ratio: FlexItemRatio::Declared,
             held_cross_size: None,
             grid_item_ratio: GridItemRatio::Declared,
+            zero_min_main_axis: None,
+            carried_min_width: None,
         }
     }
 }

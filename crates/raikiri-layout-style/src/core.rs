@@ -159,6 +159,20 @@ impl LayoutStyleView<'_> {
             height,
         );
         let mut min = self.with_held_cross_size(min, |held| held.min);
+        if let Some(width) = self.context.carried_min_width
+            && min.width.is_auto()
+        {
+            min.width = LengthPercentageAuto::length(width);
+        }
+        if let Some(axis) = self.context.zero_min_main_axis {
+            let main = match axis {
+                Axis::X => &mut min.width,
+                Axis::Y => &mut min.height,
+            };
+            if main.is_auto() {
+                *main = LengthPercentageAuto::length(0.0);
+            }
+        }
         if let Some(held) = self.context.held_cross_size
             && let Some(floor) = held.main_min
         {

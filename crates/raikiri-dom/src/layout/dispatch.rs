@@ -1112,11 +1112,20 @@ impl LayoutSession<'_> {
             // Size containment may give the box a width the request did not
             // have; whether the request stretched it is read before that.
             let stretched_width = inputs.known_dimensions.width.is_some();
+            let open_height = inputs.known_dimensions.height.is_none();
             let inputs = if empty {
                 inputs
             } else {
                 size_contained_inputs(tree, node_id, inputs)
             };
+            // A height its parent measured it at and passes down as not
+            // definite is the one containment gave it as well, except the
+            // main size a flex container flexed its item to.
+            let contained_height = !empty
+                && tree.nodes[idx].size_containment.height
+                && (open_height
+                    || (!inputs.known_dimensions_are_definite.height
+                        && !is_flexed_along_height(tree, idx)));
             let formatting_context = tree.nodes[idx].formatting_context;
             match formatting_context {
                 FormattingContext::None => return LayoutOutput::HIDDEN,
@@ -1233,15 +1242,51 @@ impl LayoutSession<'_> {
                     width: 0.0,
                     height: 0.0,
                 });
-                let mut output = compute_leaf_layout(
-                    inputs,
-                    &TaffyStyle::new(style),
-                    resolve_calc,
-                    |known, _| Size {
-                        width: known.width.unwrap_or(natural.width),
-                        height: known.height.unwrap_or(natural.height),
-                    },
-                );
+                let measure = |known: Size<Option<f32>>, _| Size {
+                    width: known.width.unwrap_or(natural.width),
+                    height: known.height.unwrap_or(natural.height),
+                };
+                let mut output = if let Some(natural) =
+                    contain_natural.filter(|_| keeps_contained_ratio(tree, idx))
+                {
+                    let mut leaf_style = block_flow::style_input::physical(tree, idx);
+                    let floor = carry_contained_ratio_bounds(
+                        &mut leaf_style,
+                        natural,
+                        tree.nodes[idx].ratio_in_content_box,
+                        inputs,
+                    );
+                    apply_local_sizing(
+                        &mut leaf_style,
+                        &[OwnedPropertyOverride::aspect_ratio(None)],
+                    );
+                    // Given its width, the box takes the height the ratio
+                    // relates to it within its bounds, also while a parent
+                    // measures it for its content: the leaf algorithm would
+                    // take the height of the content there.
+                    let inputs = if inputs.known_dimensions.width.is_some()
+                        && inputs.known_dimensions.height.is_none()
+                    {
+                        LayoutInput {
+                            sizing_mode: SizingMode::InherentSize,
+                            ..inputs
+                        }
+                    } else {
+                        inputs
+                    };
+                    let mut output = compute_leaf_layout(
+                        inputs,
+                        &LeafStyle::new(&leaf_style),
+                        resolve_calc,
+                        measure,
+                    );
+                    if let Some(floor) = floor {
+                        floor.raise(&mut output);
+                    }
+                    output
+                } else {
+                    compute_leaf_layout(inputs, &TaffyStyle::new(style), resolve_calc, measure)
+                };
                 let style = block_flow::style_input::physical(tree, idx);
                 correct_empty_vertical_leaf_collapse(
                     tree,
@@ -1449,6 +1494,9 @@ impl LayoutSession<'_> {
                 output
             } else {
                 match formatting_context {
+                    FormattingContext::Flex if contained_height => {
+                        contained_height_flex_layout(tree, node_id, inputs)
+                    }
                     FormattingContext::Flex => flex_layout(tree, node_id, inputs),
                     FormattingContext::Grid => grid_layout(tree, node_id, inputs),
                     // A block container, including a paragraph or multicol
@@ -3154,6 +3202,157 @@ fn border_box_width_bounds(
     (min, max.max(min))
 }
 
+/// Whether the size-contained box `idx` keeps its preferred aspect ratio while
+/// it is measured as if it had no content: a box that is not replaced, states
+/// a ratio and an `auto` height, and lays out in a horizontal writing mode.
+fn keeps_contained_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    style.stated_aspect_ratio().is_some()
+        && style.size().height.is_auto()
+        && !style.is_replaced()
+        && !tree.has_vertical_writing_mode(idx)
+}
+
+/// The height a size-contained box takes from its preferred aspect ratio once
+/// its width is known, in the box the ratio relates: Taffy's leaf algorithm
+/// divides the border-box width by the ratio whatever box `box-sizing` names,
+/// so the ratio is taken out of the style the leaf is laid out with and its
+/// height floor is put back here. Chromium sizes `contain: size;
+/// contain-intrinsic-size: 200px 400px; aspect-ratio: 1 / 2; padding: 10px`
+/// at 220px by 420px.
+#[derive(Clone, Copy)]
+struct ContainedRatioFloor {
+    ratio: f32,
+    inset: Size<f32>,
+}
+
+impl ContainedRatioFloor {
+    fn raise(self, output: &mut LayoutOutput) {
+        let height =
+            (output.size.width - self.inset.width).max(0.0) / self.ratio + self.inset.height;
+        output.size.height = output.size.height.max(height);
+    }
+}
+
+/// Put in `style` the bounds of a size-contained box that keeps its preferred
+/// aspect ratio, whose content `natural` stands for: the bounds block flow
+/// resolves, with those the ratio carries over from one axis to the other,
+/// and an automatic minimum height that is the height of that content, as it
+/// is for a box whose height the ratio gives (CSS Sizing 4 §5.2), held to the
+/// maximum height the box states. The minimum width is never `auto`, so the leaf algorithm
+/// carries no minimum of its own across the ratio past a maximum width.
+/// Chromium sizes `contain: size; contain-intrinsic-size: 200px 200px;
+/// aspect-ratio: 1; max-height: 50px` at 50px by 50px. The ratio stays in
+/// `style`; the floor returned stands in for it once the leaf is laid out
+/// without it.
+fn carry_contained_ratio_bounds(
+    style: &mut Style,
+    natural: Size<f32>,
+    content_box_ratio: bool,
+    inputs: LayoutInput,
+) -> Option<ContainedRatioFloor> {
+    let ratio = style.aspect_ratio?;
+    let metrics = block_flow::Metrics::resolve(style, false, content_box_ratio, inputs);
+    let edges = (metrics.padding + metrics.border).sum_axes();
+    // The bounds hold the border box; the style states them in the box
+    // `box-sizing` names.
+    let adjustment = if style.box_sizing == BoxSizing::ContentBox {
+        edges
+    } else {
+        Size::ZERO
+    };
+    // The content floor yields to a maximum height the box states, but not to
+    // one the ratio carries over from a maximum width: that one yields to it.
+    let content_floor = (style.min_size.height.is_auto()
+        && !style.overflow.y.is_scroll_container())
+    .then(|| (natural.height + edges.height).maybe_min(metrics.own_max.height));
+    let min = Size {
+        width: Some(metrics.min.width.unwrap_or(edges.width)),
+        height: metrics
+            .min
+            .height
+            .maybe_max(content_floor)
+            .or(content_floor),
+    };
+    let max = Size {
+        width: metrics.max.width,
+        height: metrics.max.height.maybe_max(min.height),
+    };
+    let (min, max) = (min.maybe_sub(adjustment), max.maybe_sub(adjustment));
+    let overrides: Vec<_> = [
+        (min.width, LengthProperty::MinWidth),
+        (min.height, LengthProperty::MinHeight),
+        (max.width, LengthProperty::MaxWidth),
+        (max.height, LengthProperty::MaxHeight),
+    ]
+    .into_iter()
+    .filter_map(|(size, property)| {
+        let size = size?;
+        Some(
+            OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(size.max(0.0)),
+                true,
+            )
+            .expect("resolved pixel bound"),
+        )
+    })
+    .collect();
+    apply_local_sizing(style, &overrides);
+    Some(ContainedRatioFloor {
+        ratio,
+        inset: if content_box_ratio || style.box_sizing == BoxSizing::ContentBox {
+            edges
+        } else {
+            Size::ZERO
+        },
+    })
+}
+
+/// Put in `style` the minimum and maximum sizes of an empty, non-replaced box
+/// with a preferred aspect ratio as block flow resolves them, with the bounds
+/// that the ratio carries over from one axis to the other. Taffy's leaf
+/// algorithm carries a minimum only into an axis whose own minimum is `auto`,
+/// past any maximum the axis states, and in the border box whatever box the
+/// ratio relates. Chromium binds each axis by the tighter of its own bounds
+/// and the carried ones: `aspect-ratio: 1; min-height: 100px; min-width: 0`
+/// is 100px wide, and with `max-width: 60px` it is 60px wide.
+fn carry_ratio_bounds(style: &mut Style, content_box_ratio: bool, inputs: LayoutInput) {
+    if style.aspect_ratio.is_none() {
+        return;
+    }
+    let metrics = block_flow::Metrics::resolve(style, false, content_box_ratio, inputs);
+    // The bounds hold the border box; the style states them in the box
+    // `box-sizing` names.
+    let adjustment = if style.box_sizing == BoxSizing::ContentBox {
+        (metrics.padding + metrics.border).sum_axes()
+    } else {
+        Size::ZERO
+    };
+    let min = metrics.min.maybe_sub(adjustment);
+    let max = metrics.max.maybe_sub(adjustment);
+    let overrides: Vec<_> = [
+        (min.width, LengthProperty::MinWidth),
+        (min.height, LengthProperty::MinHeight),
+        (max.width, LengthProperty::MaxWidth),
+        (max.height, LengthProperty::MaxHeight),
+    ]
+    .into_iter()
+    .filter_map(|(size, property)| {
+        let size = size?;
+        Some(
+            OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(size.max(0.0)),
+                true,
+            )
+            .expect("resolved pixel bound"),
+        )
+    })
+    .collect();
+    apply_local_sizing(style, &overrides);
+}
+
 /// Shrink-to-fit layout for a width:auto inline-block.
 ///
 /// A width:auto inline-block sizes to its fit-content size: the preferred
@@ -3224,7 +3423,20 @@ fn compute_inline_block_shrink_wrap(
             )],
         );
     }
-    if empty {
+    // A box that is not replaced keeps the ratio it states when its size is
+    // contained: the size `contain-intrinsic-size` names stands for its
+    // content, and the ratio and the bounds it carries size the box around
+    // that content as they would without containment.
+    let contained_ratio = contain_natural.filter(|_| keeps_contained_ratio(tree, idx));
+    let mut contained_floor = None;
+    if let Some(natural) = contained_ratio {
+        contained_floor = carry_contained_ratio_bounds(
+            &mut leaf_style,
+            natural,
+            tree.nodes[idx].ratio_in_content_box,
+            inputs,
+        );
+    } else if empty {
         apply_local_sizing(
             &mut leaf_style,
             &[OwnedPropertyOverride::aspect_ratio(None)],
@@ -3233,6 +3445,13 @@ fn compute_inline_block_shrink_wrap(
     let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx])
         .filter(|_| !empty)
         .or(contain_natural);
+    if is_leaf && leaf_intrinsic.is_none() && !tree.physical_style(idx).is_replaced() {
+        carry_ratio_bounds(
+            &mut leaf_style,
+            tree.nodes[idx].ratio_in_content_box,
+            inputs,
+        );
+    }
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
@@ -3339,7 +3558,10 @@ fn compute_inline_block_shrink_wrap(
         && inputs.sizing_mode == SizingMode::ContentSize
         && leaf_style.size.width.is_auto()
         && leaf_style.size.height.is_auto();
-    let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
+    // A contained box that keeps its ratio is sized as a box with content,
+    // not by the natural sizes of replaced content.
+    let replaced_natural = leaf_intrinsic.filter(|_| contained_ratio.is_none());
+    let leaf_auto_sides = replaced_natural.and_then(|natural| {
         replaced_size::auto_sides_size(
             sides_style.as_ref().unwrap_or(&leaf_style),
             &LayoutInput {
@@ -3525,7 +3747,7 @@ fn compute_inline_block_shrink_wrap(
     };
     if is_leaf {
         // The width is fixed now; the height follows it through the ratio.
-        let fixed_width = leaf_intrinsic.and_then(|natural| {
+        let fixed_width = replaced_natural.and_then(|natural| {
             replaced_size::auto_sides_size(
                 &leaf_style,
                 &final_inputs,
@@ -3536,15 +3758,16 @@ fn compute_inline_block_shrink_wrap(
         });
         // The ratio has done its work for a box whose height the parent fixed
         // and whose width it gave, and Taffy's ratio floor would raise that
-        // height again to the border-box width divided by the ratio.
-        if fixed_width.is_some() || stretched_by_parent.is_some() {
+        // height again to the border-box width divided by the ratio. A
+        // contained box raises its height by its own floor instead.
+        if fixed_width.is_some() || stretched_by_parent.is_some() || contained_floor.is_some() {
             apply_local_sizing(
                 &mut leaf_style,
                 &[OwnedPropertyOverride::aspect_ratio(None)],
             );
         }
         let natural = fixed_width.or(leaf_intrinsic);
-        compute_leaf_layout(
+        let mut output = compute_leaf_layout(
             final_inputs,
             &LeafStyle::new(&leaf_style),
             resolve_calc,
@@ -3552,7 +3775,11 @@ fn compute_inline_block_shrink_wrap(
                 width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
                 height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
             },
-        )
+        );
+        if let Some(floor) = contained_floor.filter(|_| stretched_by_parent.is_none()) {
+            floor.raise(&mut output);
+        }
+        output
     } else {
         match display {
             DisplayValue::Flex | DisplayValue::InlineFlex => {
@@ -3743,6 +3970,55 @@ fn size_contained_inputs(
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
+}
+
+/// Whether the flex container `idx` runs its main axis along its height: a
+/// row in a vertical writing mode or a column in a horizontal one.
+fn flex_main_is_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx)
+}
+
+/// Whether the box `idx` is an in-flow item of a flex container whose main
+/// axis runs along its height, which flexes the item's height.
+fn is_flexed_along_height(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].layout_position() != Position::Absolute
+        && tree
+            .taffy_parent_of(idx)
+            .filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex)
+            .is_some_and(|parent| flex_main_is_height(tree, parent))
+}
+
+/// Lay out a flex container whose height size containment settled, at the
+/// height `inputs` carry for it.
+///
+/// Where that height is the main size of the container, its items flex within
+/// the main size their content gives it, within its `min-height` and
+/// `max-height`, as if it had no containment, and overflow the height it
+/// takes (Chromium: items 60px and 30px tall keep their heights in a column
+/// container 50px tall by containment). Taffy would flex them into the
+/// contained height instead. The box itself, and the boxes it is the
+/// containing block of, take the contained height. A container whose height
+/// is its cross size lays its lines out in that height as it is.
+fn contained_height_flex_layout(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let Some(height) = inputs
+        .known_dimensions
+        .height
+        .filter(|_| flex_main_is_height(tree, idx))
+    else {
+        return flex_layout(tree, node_id, inputs);
+    };
+    let mut open = inputs;
+    open.known_dimensions.height = None;
+    tree.context.contained_flex_heights.push((idx, height));
+    let mut output = flex_layout(tree, node_id, open);
+    tree.context.contained_flex_heights.pop();
+    output.size.height = height;
+    output
 }
 
 /// The absolutely positioned boxes that `idx` is the containing block of and
@@ -4213,9 +4489,7 @@ fn flexed_wrapping_main_size(
     mut inputs: LayoutInput,
 ) -> Option<(LayoutInput, Vec<(usize, OwnedPropertyOverride)>)> {
     let idx = usize::from(node_id);
-    let main_is_height = |idx: usize| {
-        tree.physical_style(idx).flex_direction_is_row() == tree.has_vertical_writing_mode(idx)
-    };
+    let main_is_height = |idx: usize| flex_main_is_height(tree, idx);
     let style = tree.physical_style(idx);
     let container = tree
         .taffy_parent_of(idx)
@@ -4479,6 +4753,35 @@ fn flex_layout_items(
     }
     if let Some(width) = max_content_floor {
         output.size.width = output.size.width.max(width);
+    }
+    if let Some(&(_, height)) = tree
+        .context
+        .contained_flex_heights
+        .last()
+        .filter(|(contained, _)| *contained == idx)
+    {
+        // The boxes it is the containing block of are placed in its padding
+        // box at that height, and those it lays out itself are aligned in its
+        // content box at that height where their insets are `auto`.
+        let grown = height - output.size.height;
+        if let Some(area) = output.oof_positioning_area.as_mut() {
+            area.size.height = (area.size.height + grown).max(0.0);
+        }
+        let style = tree.physical_style(idx);
+        let basis = inputs.parent_size.width;
+        let content_end = output.size.height
+            - style.padding().resolve_or_zero(basis).bottom
+            - style.border().resolve_or_zero(basis).bottom;
+        output.oof_candidates.for_each_mut(|candidate| {
+            let area = &mut candidate.static_position.y.area;
+            let own = tree.taffy_parent_of(usize::from(candidate.node)) == Some(idx);
+            area.end += if own && (area.end - content_end).abs() < 0.01 {
+                grown
+            } else {
+                0.0
+            };
+        });
+        output.size.height = height;
     }
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
