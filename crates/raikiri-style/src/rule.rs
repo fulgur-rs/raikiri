@@ -310,7 +310,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
             BorderLeftColor,
         ],
         // The flow-relative axis shorthands list the start edge's longhands
-        // first, then the end edge's ([`border_axis_longhand_side`]).
+        // first, then the end edge's (`border_axis_longhand_side`).
         BorderBlock => &[
             BorderTopWidth,
             BorderTopStyle,
