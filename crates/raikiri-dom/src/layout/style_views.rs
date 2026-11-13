@@ -526,6 +526,13 @@ impl LayoutSession<'_> {
                 .zero_min_main_axis(idx)
                 .filter(|_| !self.container_is_vertical(idx));
         }
+        // A size-contained out-of-flow box whose insets leave its height open
+        // derives it from its width itself, as a row flex item does.
+        if matches!(role, ReadRole::Oof)
+            && crate::layout::dispatch::contained_oof_follows_width(self, idx)
+        {
+            context.flex_item_ratio = raikiri_layout_style::FlexItemRatio::CrossFollowsMain;
+        }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);
             context.carried_min_width = self.grid_item_carried_min_width(idx);
@@ -664,6 +671,9 @@ impl LayoutSession<'_> {
             self.nodes[idx].formatting_context,
             FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
         ) && (percentage_sized || auto_with_minimum);
+        // A size-contained box measures itself for the height that
+        // `contain-intrinsic-size` holds it to past a carried maximum.
+        let measured = measured || crate::layout::dispatch::contained_ratio_item(self, idx);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
@@ -970,9 +980,15 @@ impl LayoutSession<'_> {
             }
             _ => false,
         };
+        // A size-contained item of a row derives its height from the width
+        // it flexes to as well, held to the height `contain-intrinsic-size`
+        // names, which a maximum the library carries across the ratio from
+        // the width would undercut. An item the container stretches to a
+        // definite height takes that height instead, and its width from it.
         if item.aspect_ratio().is_some()
             && cross.is_auto()
-            && main_is_stated
+            && (main_is_stated
+                || (is_row && crate::layout::dispatch::contained_row_item_follows_width(self, idx)))
             && derives_cross_from_ratio
         {
             FlexItemRatio::CrossFollowsMain

@@ -269,3 +269,333 @@ fn a_contained_ratio_box_with_padding_relates_the_box_box_sizing_names() {
         ),
     ]);
 }
+
+#[test]
+fn a_contained_flex_item_keeps_the_height_its_contained_size_names() {
+    // A row flex item with a ratio of 1 and a `max-width` stays as high as
+    // `contain-intrinsic-size` says, whatever the alignment, in a container
+    // that wraps or shrinks to fit, with padding in either box; a `max-height`,
+    // a `min-height` of zero or a scroll container lets the ratio give the
+    // height, and a `max-height` carries a maximum width.
+    assert_rows(&[
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;width:500px;align-items:start'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;min-width:0;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div><div id=d style='width:10px;height:10px'></div></div>",
+            &[("c", [0, 0, 50, 200]), ("d", [50, 0, 10, 10])],
+        ),
+        (
+            "<div style='display:inline-flex'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;padding:5px;box-sizing:border-box'></div></div>",
+            &[("c", [0, 0, 50, 210])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;padding:5px'></div></div>",
+            &[("c", [0, 0, 60, 210])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;max-height:100px'></div></div>",
+            &[("c", [0, 0, 50, 100])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-height:50px'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;min-height:0;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;overflow:hidden'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_grid_item_keeps_the_height_its_contained_size_names() {
+    // A grid item with a ratio of 1 and a `max-width`, stretched or aligned to
+    // the start, stays as high as `contain-intrinsic-size` says, within a
+    // `max-height` it states.
+    assert_rows(&[
+        (
+            "<div style='display:grid;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;justify-items:start;align-items:start'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;align-items:start'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;max-height:100px'></div></div>",
+            &[("c", [0, 0, 50, 100])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_vertical_box_takes_its_width_from_its_ratio() {
+    // A box in a vertical writing mode that shrinks to fit, an inline block,
+    // a float, an absolutely positioned box or an inline flex container, takes
+    // its width from its height through the ratio, and a `max-width` carries a
+    // maximum height. The width `contain-intrinsic-size` names is its floor,
+    // past a stated or carried height, unless a `max-width` caps it.
+    assert_rows(&[
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block;writing-mode:vertical-lr'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;float:left;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px;position:relative;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;writing-mode:vertical-rl;position:absolute'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;min-width:0;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block;writing-mode:vertical-rl;padding:5px;box-sizing:border-box'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block;writing-mode:vertical-rl;padding:5px'></div></div>",
+            &[("c", [0, 0, 60, 60])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-height:50px;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 200, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;height:100px;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 200, 100])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;height:100px;max-width:50px;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 50, 100])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-height:50px;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 200, 50])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;writing-mode:vertical-rl;display:inline-flex'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_flex_item_stretched_to_a_definite_height_takes_it() {
+    // A row container stretches its contained item to its definite height
+    // or `min-height`, to the one line it wraps its items onto, or to a line
+    // that a taller sibling makes, and the ratio gives the width from that
+    // height within a `max-width`. An item aligned to the center keeps the
+    // height `contain-intrinsic-size` names.
+    assert_rows(&[
+        (
+            "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:400px'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 100px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:100px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:400px'></div></div>",
+            &[("c", [0, 0, 100, 100])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:100px;align-items:start'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:100px'></div></div>",
+            &[("c", [0, 0, 100, 200])],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 300])],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 100px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 200, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:300px;align-items:center'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 50, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:300px;align-items:start'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 50, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px;min-height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 300])],
+        ),
+        (
+            "<div style='display:flex;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;margin:10px'></div><div id=d style='height:300px;width:10px'></div></div>",
+            &[("c", [10, 10, 50, 280]), ("d", [70, 0, 10, 300])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_out_of_flow_box_keeps_the_height_its_contained_size_names() {
+    // An absolutely positioned or fixed box with a ratio of 1 and a
+    // `max-width` stays as high as `contain-intrinsic-size` says, as a child
+    // of a block or a grid container, with insets, padding, or a `max-height`
+    // that carries a maximum width; a `min-height` of zero lets the ratio give
+    // the height, and `top` and `bottom` give the height the width follows.
+    assert_rows(&[
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;max-height:50px'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;left:0;right:0'></div></div>",
+            &[("c", [0, 0, 500, 500])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;left:0;right:0;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:fixed;max-width:50px'></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:20px;left:30px;max-width:50px;padding:5px'></div></div>",
+            &[("c", [30, 20, 60, 210])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;max-width:50px;min-height:0'></div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 100px;aspect-ratio:1;position:absolute;left:0;right:100px'></div></div>",
+            &[("c", [0, 0, 400, 400])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_item_with_an_auto_cross_margin_or_in_a_grid_keeps_its_contained_height() {
+    // A row flex item with an `auto` margin across the line is not stretched,
+    // so it keeps the height `contain-intrinsic-size` names; so does a grid
+    // item in a definite row, as a flex container, or in a narrow column, while
+    // an item that a row stretches without a `max-width` takes the width of the
+    // row through the ratio.
+    assert_rows(&[
+        (
+            "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;margin:auto'></div></div>",
+            &[("c", [225, 50, 50, 200])],
+        ),
+        (
+            "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;margin-top:auto'></div></div>",
+            &[("c", [0, 100, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;grid-template-rows:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;grid-template-rows:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 500, 500])],
+        ),
+        (
+            "<div style='display:grid;width:500px;grid-template-rows:100px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:400px'></div></div>",
+            &[("c", [0, 0, 400, 400])],
+        ),
+        (
+            "<div style='display:grid;width:500px;grid-template-rows:100px;grid-template-columns:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 300, 300])],
+        ),
+        (
+            "<div style='display:grid;width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:flex'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='display:grid;width:500px;grid-template-columns:100px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1'></div></div>",
+            &[("c", [0, 0, 100, 200])],
+        ),
+    ]);
+}
+
+#[test]
+fn a_contained_vertical_box_in_other_contexts_takes_its_width_from_its_ratio() {
+    // A vertical box with only inline-size containment, or no
+    // `contain-intrinsic-size`, takes its width from the height it states; a
+    // vertical box in a vertical parent stretches or shrinks as it does
+    // without containment; content inside a contained box does not count.
+    assert_rows(&[
+        (
+            "<div style='width:500px'><div id=c style='contain:inline-size;contain-intrinsic-size:200px 200px;aspect-ratio:1;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;aspect-ratio:1;height:40px;display:inline-block;writing-mode:vertical-rl'></div></div>",
+            &[("c", [0, 0, 40, 40])],
+        ),
+        (
+            "<div style='width:500px;writing-mode:vertical-rl;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-height:50px'></div></div>",
+            &[("c", [300, 0, 200, 50])],
+        ),
+        (
+            "<div style='width:500px;writing-mode:vertical-rl;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1'></div></div>",
+            &[("c", [200, 0, 300, 300])],
+        ),
+        (
+            "<div style='width:500px;writing-mode:vertical-rl;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block'></div></div>",
+            &[("c", [450, 0, 50, 50])],
+        ),
+        (
+            "<div style='width:500px;writing-mode:vertical-rl;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;display:inline-block'></div></div>",
+            &[("c", [300, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:50px;display:inline-block;writing-mode:vertical-rl'>XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</div></div>",
+            &[("c", [0, 0, 50, 50])],
+        ),
+    ]);
+}

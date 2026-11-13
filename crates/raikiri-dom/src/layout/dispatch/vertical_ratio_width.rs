@@ -33,8 +33,6 @@ fn takes_width_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutI
     if inputs.known_dimensions.width.is_some()
         || !node.used_writing_mode.is_vertical()
         || node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
-        || node.size_containment.width
-        || node.size_containment.height
         || super::leaf_intrinsic_size(node).is_some()
         || matches!(
             node.formatting_context,
@@ -217,6 +215,14 @@ fn ratio_size(
     }
     let floor = match content {
         Some(content) => content.width,
+        // A size-contained box lays out no content to reach past the width:
+        // the block size `contain-intrinsic-size` names stands for it, which
+        // the box measured without its ratio takes. Chromium sizes
+        // `contain: size; contain-intrinsic-size: 200px 200px; aspect-ratio:
+        // 1; height: 100px` at 200px by 100px.
+        None if tree.nodes[idx].size_containment.width => {
+            content_size(tree, node_id, inputs, true).width
+        }
         // With a stated height the width of the box is definite, so its
         // content is measured at that width for the percentages inside it.
         // What reaches past it there may be out-of-flow or relatively
