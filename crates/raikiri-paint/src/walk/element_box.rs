@@ -14,7 +14,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use raikiri_dom::{Document, Node};
 use raikiri_layout_geometry::{BoxLayout, Edges};
-use raikiri_style::property::{BorderStyle, PositionValue};
+use raikiri_style::property::{BorderCollapseValue, BorderStyle, DisplayValue, PositionValue};
 use raikiri_style::{
     CascadeResult, ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto,
     ComputedValues, Sides,
@@ -91,7 +91,7 @@ pub(super) struct ElementBox<'w> {
     pub(super) paint_background_height: f32,
     pub(super) multicol_clip_pushed: bool,
     pub(super) fragmentainer_clip_pushed: bool,
-    pub(super) painted_border: &'w Sides<ComputedBorder>,
+    pub(super) painted_border: Sides<ComputedBorder>,
     pub(super) paints_on_page: bool,
     pub(super) paints_as_absolute_continuation: bool,
     pub(super) unfragmented_top: f32,
@@ -189,12 +189,23 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         }
         let cut = self.cut_by_fragmentainers(&inputs, node, layout, paint_x, paint_y);
         // A collapsed-border table cell paints the borders that won
-        // conflict resolution with its rows, neighbours and table.
-        let painted_border = self
-            .document
-            .get_node(node_id)
-            .and_then(|node| node.collapsed_border())
-            .unwrap_or(&cv.border);
+        // conflict resolution with its rows, neighbours and table. In the
+        // separated borders model rows and row groups have no borders
+        // (CSS 2.1 §17.6.1).
+        let painted_border = if separated_table_part(self.document, self.cascade, node_id, cv) {
+            Sides {
+                top: cv.border.top.without_line(),
+                right: cv.border.right.without_line(),
+                bottom: cv.border.bottom.without_line(),
+                left: cv.border.left.without_line(),
+            }
+        } else {
+            *self
+                .document
+                .get_node(node_id)
+                .and_then(|node| node.collapsed_border())
+                .unwrap_or(&cv.border)
+        };
         let mut extent = self.page_extent(&inputs, node, layout, &placement, &cut);
         self.grow_for_generated_flow(node_id, layout, &placement, &mut extent);
         let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
@@ -971,4 +982,33 @@ fn in_flow_child_end(
         .fold(None, |maximum, value| {
             Some(maximum.map_or(value, |current: f32| current.max(value)))
         })
+}
+
+/// Whether `node_id`, with values `cv`, is a row or row group of a table in
+/// the separated borders model, which ignores the borders of those boxes
+/// (CSS 2.1 §17.6.1). The model is the table's, as layout reads it, not the
+/// part's own `border-collapse`.
+fn separated_table_part(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    if !matches!(
+        cv.display,
+        DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+    ) {
+        return false;
+    }
+    let table = document.ancestors(node_id).find(|&id| {
+        matches!(
+            cascade.computed[id].display,
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+    });
+    let values = table.map_or(cv, |id| &cascade.computed[id]);
+    matches!(values.border_collapse, BorderCollapseValue::Separate)
 }

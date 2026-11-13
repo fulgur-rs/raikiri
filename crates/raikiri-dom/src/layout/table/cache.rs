@@ -195,7 +195,7 @@ pub(super) fn prepared_borders(
                 borders.as_mut().expect("collapsed border state"),
                 resolved,
                 index,
-                table_idx,
+                (table_idx, shown.is_some() && columns_collapse),
             );
         }
     }

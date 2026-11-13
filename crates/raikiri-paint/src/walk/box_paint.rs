@@ -613,7 +613,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             layout,
             paint_padding,
             paint_border_radius,
-            painted_border,
+            ref painted_border,
             ..
         } = *element;
         let OwnBox {
@@ -651,7 +651,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             cv,
             inside_fixed_containing_block,
             establishes_fixed_containing_block,
-            painted_border,
+            ref painted_border,
             ..
         } = *element;
         BackgroundEnv {
@@ -682,7 +682,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let ElementBox {
             cv,
             paint_border_radius,
-            painted_border,
+            ref painted_border,
             paints_as_absolute_continuation,
             ..
         } = *element;
@@ -782,7 +782,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn paint_border_image(&mut self, element: &ElementBox<'w>, own: &OwnBox) -> bool {
         let ElementBox {
             cv,
-            painted_border,
+            ref painted_border,
             paints_as_absolute_continuation,
             unfragmented_top,
             ..

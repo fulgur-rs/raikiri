@@ -65,7 +65,9 @@ impl BorderState {
             .map(|(slot, cell)| (cell.node_id, slot))
             .collect();
         // Anonymous rows alias their first cell; that cell owns its paint.
-        let rows: Vec<_> = grid
+        // The row groups around the rows follow them: their borders, too,
+        // resolve into the cells and are not painted by the group.
+        let mut rows: Vec<_> = grid
             .rows
             .iter()
             .copied()
@@ -75,6 +77,12 @@ impl BorderState {
             })
             .map(|row| (row, None))
             .collect();
+        let mut groups = std::collections::HashSet::new();
+        for group in grid.rows.iter().filter_map(|&row| row_group_of(doc, row)) {
+            if groups.insert(group) {
+                rows.push((group, None));
+            }
+        }
         let row_slots = rows
             .iter()
             .enumerate()
@@ -245,11 +253,34 @@ impl BorderState {
         node: usize,
         side: CellBorderSide,
     ) -> Option<CollapsedBorderCandidate> {
+        self.candidate_of(doc, node, side, true)
+    }
+
+    /// The authored border of a row, row group or other table part, even
+    /// once its paint has been suppressed: a later resolution of the grid
+    /// without its collapsed rows needs it again for the cells that then lie
+    /// on the part's edge.
+    pub(super) fn part_candidate(
+        &self,
+        doc: &LayoutSession<'_>,
+        node: usize,
+        side: CellBorderSide,
+    ) -> Option<CollapsedBorderCandidate> {
+        self.candidate_of(doc, node, side, false)
+    }
+
+    fn candidate_of(
+        &self,
+        doc: &LayoutSession<'_>,
+        node: usize,
+        side: CellBorderSide,
+        with_paint: bool,
+    ) -> Option<CollapsedBorderCandidate> {
         let (mut paint, widths) = if let Some(cell) = self.cell(node) {
             (cell.paint.or(cell.authored)?, cell.widths)
         } else if let Some(&slot) = self.row_slots.get(&node) {
             (
-                self.rows[slot].1.or_else(|| {
+                self.rows[slot].1.filter(|_| with_paint).or_else(|| {
                     let authored = doc.ifc_layout_node(node)?.computed_border;
                     if self.flipped {
                         authored.map(mirrored_sides)
@@ -315,8 +346,13 @@ impl BorderState {
                 }
             }
         }
-        for row in &grid.rows {
-            if let Some(&slot) = self.row_slots.get(row) {
+        for row in grid
+            .rows
+            .iter()
+            .flat_map(|&row| [Some(row), row_group_of(doc, row)])
+            .flatten()
+        {
+            if let Some(&slot) = self.row_slots.get(&row) {
                 self.rows[slot].1 = None;
             }
         }
