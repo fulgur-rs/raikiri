@@ -744,7 +744,7 @@ fn column_child_layout_input(
         )
     };
     let imposed_width = (auto_width && !shrinks).then(|| {
-        if justify_positions_in_column(tree, child) {
+        if crate::layout::dispatch::block_flow::justify_fits_content(tree, child) {
             column_fit_content_width(tree, child, column_width, parent_height, room)
         } else {
             room
@@ -758,18 +758,10 @@ fn column_child_layout_input(
     input
 }
 
-/// Whether `justify-self` places the in-flow block `child` of a column at a
-/// position, rather than stretching it.
-fn justify_positions_in_column(tree: &LayoutSession<'_>, child: usize) -> bool {
-    tree.taffy_parent_of(child).is_some_and(|parent| {
-        crate::layout::dispatch::block_flow::justify_fits_content(tree, child, parent)
-    })
-}
-
 /// The fit-content width of `child` in the `room` of a column of
 /// `column_width`: its max-content width, but no wider than the room unless
 /// its min-content width is.
-fn column_fit_content_width(
+pub(super) fn column_fit_content_width(
     tree: &mut LayoutSession<'_>,
     child: usize,
     column_width: f32,
@@ -2856,15 +2848,12 @@ fn layout_column_group(
                         - margin_left
                         - margin_right
                         - child_output.size.width;
-                    tree.taffy_parent_of(child).and_then(|parent| {
-                        crate::layout::dispatch::block_flow::justified_offset(
-                            tree,
-                            child,
-                            parent,
-                            context.rtl,
-                            free,
-                        )
-                    })
+                    crate::layout::dispatch::block_flow::justified_offset(
+                        tree,
+                        child,
+                        context.rtl,
+                        free,
+                    )
                 })
                 .flatten();
             let x = if let Some(slot_x) = slot_x {

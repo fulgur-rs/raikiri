@@ -10,6 +10,7 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::dispatch::block_flow;
 use crate::layout::dispatch::block_flow::context::{
     BlockContext, BlockFormattingContext, BoxProbe,
 };
@@ -2792,7 +2793,7 @@ fn layout_block_child(
     let room = geometry.width - width - margin.left - margin.right;
     let free = room.max(0.0);
     let (left_auto, right_auto) = (style_margin.left.is_auto(), style_margin.right.is_auto());
-    if let Some(offset) = justified_offset(
+    if let Some(offset) = block_flow::justified_offset(
         tree,
         node,
         geometry.axes.direction() == Direction::Rtl,
@@ -3305,7 +3306,7 @@ fn layout_vertical_block_child_with_edges(
     let inline_insets = geometry.inline_axis_insets();
     // `justify-self` places a child whose margins are not auto along the
     // inline axis, measured here from its start.
-    let justified = justified_offset(tree, node, false, inline_free)
+    let justified = block_flow::justified_offset(tree, node, false, inline_free)
         .filter(|_| slot.is_none())
         .unwrap_or(0.0);
     let inline_start = slot.map_or_else(
@@ -3743,14 +3744,17 @@ fn layout_formatting_context_child(
         0.0
     };
     let rtl = geometry.axes.direction() == Direction::Rtl;
-    let justified = (!beside_floats)
-        .then(|| justified_offset(tree, node, rtl, stretch - output.size.width))
-        .flatten();
-    let extra_left = if beside_floats {
+    let justified = block_flow::justified_offset(tree, node, rtl, stretch - output.size.width);
+    let extra_left = if let Some(offset) = justified {
+        // `justify-self` places a box whose margins are not auto, in the
+        // room the floats leave it, where the slot already holds the margins.
+        if beside_floats {
+            offset
+        } else {
+            margin.left + offset
+        }
+    } else if beside_floats {
         auto_left
-    } else if let Some(offset) = justified {
-        // `justify-self` places a box whose margins are not auto.
-        margin.left + offset
     } else if (autos == 0 || output.size.width > stretch)
         && geometry.axes.direction() == Direction::Rtl
     {
@@ -4032,7 +4036,8 @@ fn content_keyword_width(
     // block-level too, as is the `auto` inline size of a block that
     // `justify-self` places at a position (CSS Box Alignment 3 §6.1).
     let fits_auto = keyword.expand() == ExpandedDimension::Auto
-        && (horizontal && tree.nodes[node].is_html_button() || justify_positions(tree, node));
+        && (horizontal && tree.nodes[node].is_html_button()
+            || block_flow::justify_fits_content(tree, node));
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -4084,22 +4089,6 @@ fn content_keyword_width(
         }),
         _ => None,
     }
-}
-
-/// Whether `justify-self` places the block child `node` at a position along
-/// the inline axis rather than leaving it to stretch.
-fn justify_positions(tree: &LayoutSession<'_>, node: usize) -> bool {
-    tree.taffy_parent_of(node).is_some_and(|parent| {
-        crate::layout::dispatch::block_flow::justify_fits_content(tree, node, parent)
-    })
-}
-
-/// Where `justify-self` puts the block child `node` in a room `free` wider
-/// than its margin box, measured from the left (`rtl` false) or the right of
-/// the room; `None` when its alignment leaves it to its margins.
-fn justified_offset(tree: &LayoutSession<'_>, node: usize, rtl: bool, free: f32) -> Option<f32> {
-    let parent = tree.taffy_parent_of(node)?;
-    crate::layout::dispatch::block_flow::justified_offset(tree, node, parent, rtl, free)
 }
 
 /// The border-box width a block child's own `width` gives, resolved against

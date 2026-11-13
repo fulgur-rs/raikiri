@@ -93,10 +93,21 @@ pub(super) enum InlinePosition {
 /// do to the start or the end of the child's own direction.
 // spec: https://www.w3.org/TR/css-align-3/#justify-block
 pub(super) fn justify_position(style: &Style, container: &Style) -> Option<(InlinePosition, bool)> {
-    let alignment = style
-        .justify_self
-        .unwrap_or(container.justify_items)
-        .resolve_self_relative(style.direction, container.direction, true);
+    position_of(
+        style.justify_self.unwrap_or(container.justify_items),
+        style.direction,
+        container.direction,
+    )
+}
+
+/// The position `alignment` gives a box of `direction` in a block container
+/// of `container_direction` (see [`justify_position`]).
+fn position_of(
+    alignment: raikiri_layout_style::values::AlignItems,
+    direction: Direction,
+    container_direction: Direction,
+) -> Option<(InlinePosition, bool)> {
+    let alignment = alignment.resolve_self_relative(direction, container_direction, true);
     let position = match alignment.keyword {
         AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch => return None,
         AlignItemsKeyword::Center => InlinePosition::Center,
@@ -125,34 +136,49 @@ impl InlinePosition {
     }
 }
 
-/// Whether `justify-self` places the in-flow block `child` of the block
-/// container `parent` at a position, which gives an `auto` width the
-/// fit-content width, even where an auto margin then places the box.
-pub(crate) fn justify_fits_content(tree: &LayoutSession<'_>, child: usize, parent: usize) -> bool {
-    justify_position(
-        &super::style_input::child(tree, child),
-        &super::style_input::container(tree, parent),
-    )
-    .is_some()
+/// The position `justify-self` gives the in-flow block `child` in the block
+/// container that lays it out, read from the style views, and whether its
+/// margins are auto (see [`justify_position`]).
+fn justify_position_of(
+    tree: &LayoutSession<'_>,
+    child: usize,
+) -> Option<((InlinePosition, bool), bool)> {
+    use crate::layout::style_views::ReadRole;
+    let parent = tree.taffy_parent_of(child)?;
+    let style = tree.query_style(child, ReadRole::BlockItem);
+    let container = tree.query_style(parent, ReadRole::BlockContainer);
+    let position = position_of(
+        style
+            .bridge_justify_self()
+            .unwrap_or_else(|| container.justify_items()),
+        style.direction(),
+        container.direction(),
+    )?;
+    let margin = style.margin();
+    Some((position, margin.left.is_auto() || margin.right.is_auto()))
 }
 
-/// Where `justify-self` puts the in-flow block `child` of the block container
-/// `parent` in a room `free` wider than its margin box, as an offset from the
-/// left of that room; `None` when its alignment leaves it to its margins,
-/// as `normal`, `stretch` and an auto margin do.
+/// Whether `justify-self` places the in-flow block `child` at a position,
+/// which gives an `auto` width the fit-content width, even where an auto
+/// margin then places the box.
+pub(crate) fn justify_fits_content(tree: &LayoutSession<'_>, child: usize) -> bool {
+    justify_position_of(tree, child).is_some()
+}
+
+/// Where `justify-self` puts the in-flow block `child` in a room `free` wider
+/// than its margin box, as an offset from the left of that room; `None` when
+/// its alignment leaves it to its margins, as `normal`, `stretch` and an
+/// auto margin do.
 pub(crate) fn justified_offset(
     tree: &LayoutSession<'_>,
     child: usize,
-    parent: usize,
     rtl: bool,
     free: f32,
 ) -> Option<f32> {
-    let style = super::style_input::child(tree, child);
-    if style.margin.left.is_auto() || style.margin.right.is_auto() {
-        return None;
+    match justify_position_of(tree, child)? {
+        (_, true) => None,
+        ((position, safe), false) => Some(position.offset(safe, free, rtl)),
     }
-    let (position, safe) = justify_position(&style, &super::style_input::container(tree, parent))?;
-    Some(position.offset(safe, free, rtl))
 }
 
 /// Whether `justify-self` (or the container's `justify-items` for `auto`)

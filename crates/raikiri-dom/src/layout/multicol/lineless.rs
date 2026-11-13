@@ -2417,18 +2417,13 @@ pub(super) fn layout(
         }
         previous_column = pieces.last()?.column;
         // `justify-self` places a box in its column.
-        let justified = tree
-            .taffy_parent_of(child)
-            .and_then(|parent| {
-                crate::layout::dispatch::block_flow::justified_offset(
-                    tree,
-                    child,
-                    parent,
-                    context.rtl,
-                    context.column_width - size.width,
-                )
-            })
-            .unwrap_or(0.0);
+        let justified = crate::layout::dispatch::block_flow::justified_offset(
+            tree,
+            child,
+            context.rtl,
+            context.column_width - size.width,
+        )
+        .unwrap_or(0.0);
         let mut layout = tree.nodes[child].layout;
         layout.order = order as u32;
         layout.size = size;
@@ -2465,7 +2460,12 @@ pub(super) fn layout(
         };
         // A box that stays in one column is not cut, so has no clip.
         let clip_extents = if pieces.len() > 1 {
-            let wide = size.width.max(context.column_width).max(held_right);
+            // The clip ends where the column does, which a box `justify-self`
+            // moves along leaves nearer to it.
+            let wide = size
+                .width
+                .max(context.column_width - justified)
+                .max(held_right);
             piece_clip_extents(pieces.len(), (held_left, wide), absolute)
         } else {
             Vec::new()

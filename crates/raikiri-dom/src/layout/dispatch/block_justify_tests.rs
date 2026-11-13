@@ -14,13 +14,23 @@ fn block_rect(
     item_css: &str,
     before: impl FnOnce(&mut crate::Document, usize) -> usize,
 ) -> (f32, f32, f32, f32) {
+    text_block_rect(container_css, item_css, "xx", before)
+}
+
+/// [`block_rect`] for a block holding `text`.
+fn text_block_rect(
+    container_css: &str,
+    item_css: &str,
+    text: &str,
+    before: impl FnOnce(&mut crate::Document, usize) -> usize,
+) -> (f32, f32, f32, f32) {
     let mut item = 0;
     let fixture = block_fixture(
         &format!("font:10px/10px Ahem;{container_css}"),
         |doc, root| {
             let parent = before(doc, root);
             item = doc.append_element(Some(parent), "div", Some(item_css));
-            doc.append_text(item, "xx");
+            doc.append_text(item, text);
         },
     );
     let root = fixture.root;
@@ -208,4 +218,75 @@ fn justify_items_reaches_past_a_contents_parent() {
         |doc, root| doc.append_element(Some(root), "div", Some("display:contents")),
     );
     assert_eq!((left, width), (90.0, 20.0));
+}
+
+/// The rect of a justified block holding two lines, which does not fit
+/// below a 20px block in a filled column and moves to the next one.
+fn moved_block_rect(container_css: &str, item_css: &str) -> (f32, f32, f32, f32) {
+    text_block_rect(
+        &format!(
+            "display:block;width:200px;columns:2;column-gap:0;height:30px;column-fill:auto;\
+             {container_css}"
+        ),
+        &format!("white-space:pre-line;{item_css}"),
+        "xx\nxx",
+        |doc, root| {
+            doc.append_element(Some(root), "div", Some("display:block;height:20px"));
+            root
+        },
+    )
+}
+
+#[test]
+fn a_block_moved_to_the_next_column_is_placed_in_that_column() {
+    for (container, item, x) in [
+        ("", "display:block;justify-self:end", 180.0),
+        ("", "display:block;justify-self:center", 140.0),
+        ("", "display:block;justify-self:end;padding:0 2px", 176.0),
+        ("", "display:flow-root;justify-self:end", 180.0),
+        ("direction:rtl", "display:block;justify-self:start", 80.0),
+        ("direction:rtl", "display:block;justify-self:end", 0.0),
+    ] {
+        let (left, _, _, _) = moved_block_rect(container, item);
+        assert_eq!(left, x, "{container} | {item}");
+    }
+}
+
+#[test]
+fn a_sized_block_in_a_column_is_placed_in_the_column() {
+    for (container, item, x) in [
+        ("", "justify-self:end", 70.0),
+        ("", "justify-self:center", 35.0),
+        ("direction:rtl", "justify-self:end", 100.0),
+    ] {
+        let (left, _, _, _) = block_rect(
+            &format!("display:block;width:200px;columns:2;column-gap:0;{container}"),
+            &format!("display:block;width:30px;height:40px;{item}"),
+            |_, root| root,
+        );
+        assert_eq!(left, x, "{container} | {item}");
+    }
+}
+
+#[test]
+fn a_block_beside_a_float_is_placed_in_the_room_the_float_leaves() {
+    for (container, side, x) in [(LTR, "left", 180.0), (RTL, "right", 0.0)] {
+        let (left, _, width, _) = block_rect(
+            container,
+            "display:flow-root;justify-self:end",
+            |doc, root| {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    Some(&format!(
+                        "display:block;float:{side};width:50px;height:50px"
+                    )),
+                );
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
+                doc.append_text(span, "a");
+                span
+            },
+        );
+        assert_eq!((left, width), (x, 20.0), "{container}");
+    }
 }
