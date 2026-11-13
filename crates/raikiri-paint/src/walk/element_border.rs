@@ -218,21 +218,24 @@ impl<'a> ElementBorder<'a> {
             owner(|c| c.bottom_right),
             owner(|c| c.bottom_left),
         );
-        // Where a horizontal strip stops short of a corner it does not own.
-        let start = |owner: CornerOwner, corner: f64| {
+        // Where a horizontal strip stops short of a corner it does not own:
+        // at `corner`, or nowhere (`unbounded`) when it owns it.
+        let stop = |owner: CornerOwner, corner: f64, unbounded: f64| {
             if matches!(owner, CornerOwner::Horizontal) {
-                f64::NEG_INFINITY
+                unbounded
             } else {
                 corner
             }
         };
-        let end = |owner: CornerOwner, corner: f64| {
-            if matches!(owner, CornerOwner::Horizontal) {
-                f64::INFINITY
-            } else {
-                corner
-            }
-        };
+        // How far the junction square of each corner reaches past the
+        // cell's own top or bottom line: half of what the widest horizontal
+        // line there is wider.
+        let heights = self
+            .corners
+            .map_or([0.0; 4], |corners| corners.junction_heights);
+        let reach = |corner: usize, own: f64| ((f64::from(heights[corner]) - own) / 2.0).max(0.0);
+        let (reach_tl, reach_tr, reach_br, reach_bl) =
+            (reach(0, wt), reach(1, wt), reach(2, wb), reach(3, wb));
         if self.paint_top && bt > 0.0 {
             let strip = Strip::horizontal(
                 Rect::new(
@@ -244,7 +247,10 @@ impl<'a> ElementBorder<'a> {
                 top_left_cut,
                 top_right_cut,
             )
-            .within(start(owner_tl, box_x0 + wl), end(owner_tr, box_x1 - wr));
+            .within(
+                stop(owner_tl, box_x0 + wl, f64::NEG_INFINITY),
+                stop(owner_tr, box_x1 - wr, f64::INFINITY),
+            );
             self.paint_side(scene, &self.border.top, strip, ring, true);
         }
         if bb > 0.0 {
@@ -258,7 +264,10 @@ impl<'a> ElementBorder<'a> {
                 bottom_left_cut,
                 bottom_right_cut,
             )
-            .within(start(owner_bl, box_x0 + wl), end(owner_br, box_x1 - wr));
+            .within(
+                stop(owner_bl, box_x0 + wl, f64::NEG_INFINITY),
+                stop(owner_br, box_x1 - wr, f64::INFINITY),
+            );
             self.paint_side(scene, &self.border.bottom, strip, ring, false);
         }
         // The left and right strips only need a vertical span. When the
@@ -266,21 +275,22 @@ impl<'a> ElementBorder<'a> {
         // plus right exactly fill the border box, as in the conic reference
         // files), the full inner box is empty but both side strips still
         // cover their rects.
+        // A vertical strip runs to the box edge over a cut corner, to the
+        // ring's edge over a corner it owns, and otherwise stops at the inner
+        // edge of the horizontal side, or past the junction square.
+        let span = |cut: bool, owner: CornerOwner, edge: (f64, f64, f64)| {
+            let (box_edge, ring_edge, inner) = edge;
+            if cut {
+                box_edge
+            } else if matches!(owner, CornerOwner::Vertical) {
+                ring_edge
+            } else {
+                inner
+            }
+        };
         let left_span = (
-            if top_left {
-                box_y0
-            } else if matches!(owner_tl, CornerOwner::Vertical) {
-                y0
-            } else {
-                inner_y0
-            },
-            if bottom_left {
-                box_y1
-            } else if matches!(owner_bl, CornerOwner::Vertical) {
-                y1
-            } else {
-                inner_y1
-            },
+            span(top_left, owner_tl, (box_y0, y0, inner_y0 + reach_tl)),
+            span(bottom_left, owner_bl, (box_y1, y1, inner_y1 - reach_bl)),
         );
         if bl > 0.0 && left_span.1 > left_span.0 {
             let strip = Strip::vertical(
@@ -292,20 +302,8 @@ impl<'a> ElementBorder<'a> {
             self.paint_side(scene, &self.border.left, strip, ring, true);
         }
         let right_span = (
-            if top_right {
-                box_y0
-            } else if matches!(owner_tr, CornerOwner::Vertical) {
-                y0
-            } else {
-                inner_y0
-            },
-            if bottom_right {
-                box_y1
-            } else if matches!(owner_br, CornerOwner::Vertical) {
-                y1
-            } else {
-                inner_y1
-            },
+            span(top_right, owner_tr, (box_y0, y0, inner_y0 + reach_tr)),
+            span(bottom_right, owner_br, (box_y1, y1, inner_y1 - reach_br)),
         );
         if br > 0.0 && right_span.1 > right_span.0 {
             let strip = Strip::vertical(
@@ -323,19 +321,39 @@ impl<'a> ElementBorder<'a> {
         let squares = [
             (
                 owner_tl,
-                Rect::new(box_x0, box_y0, box_x0 + wl, box_y0 + wt),
+                Rect::new(
+                    box_x0,
+                    box_y0 - reach_tl,
+                    box_x0 + wl,
+                    box_y0 + wt + reach_tl,
+                ),
             ),
             (
                 owner_tr,
-                Rect::new(box_x1 - wr, box_y0, box_x1, box_y0 + wt),
+                Rect::new(
+                    box_x1 - wr,
+                    box_y0 - reach_tr,
+                    box_x1,
+                    box_y0 + wt + reach_tr,
+                ),
             ),
             (
                 owner_br,
-                Rect::new(box_x1 - wr, box_y1 - wb, box_x1, box_y1),
+                Rect::new(
+                    box_x1 - wr,
+                    box_y1 - wb - reach_br,
+                    box_x1,
+                    box_y1 + reach_br,
+                ),
             ),
             (
                 owner_bl,
-                Rect::new(box_x0, box_y1 - wb, box_x0 + wl, box_y1),
+                Rect::new(
+                    box_x0,
+                    box_y1 - wb - reach_bl,
+                    box_x0 + wl,
+                    box_y1 + reach_bl,
+                ),
             ),
         ];
         for (owner, square) in squares {

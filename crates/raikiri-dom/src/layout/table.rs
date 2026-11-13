@@ -6859,9 +6859,13 @@ fn border_candidate(
         CellBorderSide::Bottom => (borders.bottom, widths.bottom),
         CellBorderSide::Left => (borders.left, widths.left),
     };
+    // Columns and column groups come in document order.
+    let order = u32::try_from(node_id)
+        .unwrap_or(u32::MAX)
+        .min(border_state::ORIGIN_ORDER_MASK);
     let origin = match node.display() {
-        DisplayValue::TableColumn => border_state::COLUMN_ORIGIN,
-        DisplayValue::TableColumnGroup => border_state::COLUMN_GROUP_ORIGIN,
+        DisplayValue::TableColumn => border_state::COLUMN_ORIGIN | order,
+        DisplayValue::TableColumnGroup => border_state::COLUMN_GROUP_ORIGIN | order,
         _ => border_state::TABLE_ORIGIN,
     };
     Some(CollapsedBorderCandidate {
@@ -7361,59 +7365,43 @@ fn resolve_collapsed_table_edges(
 /// of box, and then from the box earlier in the table, as Chromium paints
 /// it. Between lines of the same box, the line after the junction comes
 /// before the one before it, and a horizontal line before a vertical one.
-fn resolve_collapsed_corners(
-    state: &mut BorderState,
-    grid: &TableGrid,
-    index: &CellIndex,
-) -> Option<()> {
+fn resolve_collapsed_corners(state: &mut BorderState, grid: &TableGrid) {
     use crate::paint_rules::{CollapsedCorners, CornerOwner};
     use CellBorderSide::{Bottom, Left, Right, Top};
-    // The lines are found among the boundary segments, so the work follows
-    // the number of cells rather than the area of the grid. A table too large
-    // for them keeps the default corners.
-    let segments = index.boundary_segments(grid)?;
     let (n_rows, n_cols) = (grid.rows.len(), usize::from(grid.n_cols));
-    // The cells along the top and bottom edges of the grid, as column ranges
-    // in column order.
-    let edge = |on_edge: &dyn Fn(&CellPlacement) -> bool| {
-        let mut cells: Vec<(usize, usize, usize)> = grid
-            .cells
-            .iter()
-            .enumerate()
-            .filter(|(_, cell)| on_edge(cell))
-            .map(|(slot, cell)| {
-                let start = usize::from(cell.col_start);
-                (start, start + usize::from(cell.col_span), slot)
-            })
-            .collect();
-        cells.sort_unstable_by_key(|&(start, _, slot)| (start, slot));
-        cells
-    };
-    let top_edge = edge(&|cell| cell.row == 0);
-    let bottom_edge = edge(&|cell| usize::from(cell.row) + usize::from(cell.row_span) >= n_rows);
-    let edge_cell = |cells: &[(usize, usize, usize)], col: usize| {
-        let after = cells.partition_point(|&(start, _, _)| start <= col);
-        after
-            .checked_sub(1)
-            .map(|found| cells[found])
-            .filter(|&(_, end, _)| col < end)
-            .map(|(_, _, slot)| slot)
-    };
-    // The segment of `list` on `boundary` that covers track `track`.
-    let segment = |list: &[boundaries::Segment], boundary: usize, track: usize| {
-        let after =
-            list.partition_point(|segment| (segment.boundary, segment.start) <= (boundary, track));
+    // The edges of the cells, each as (grid line, first track, end track,
+    // cell slot), in grid line order: the work follows the number of cells
+    // rather than the area of the grid, and a side that faces an empty slot
+    // of the grid still meets its junctions.
+    let mut edges: [Vec<(usize, usize, usize, usize)>; 4] = Default::default();
+    for (slot, cell) in grid.cells.iter().enumerate() {
+        let (row, col) = (usize::from(cell.row), usize::from(cell.col_start));
+        let row_end = (row + usize::from(cell.row_span)).min(n_rows);
+        let col_end = (col + usize::from(cell.col_span)).min(n_cols);
+        // An empty range covers no track, so it never meets a junction.
+        let [tops, bottoms, lefts, rights] = &mut edges;
+        tops.push((row, col, col_end, slot));
+        bottoms.push((row_end, col, col_end, slot));
+        lefts.push((col, row, row_end, slot));
+        rights.push((col_end, row, row_end, slot));
+    }
+    for list in &mut edges {
+        list.sort_unstable();
+    }
+    let [tops, bottoms, lefts, rights] = &edges;
+    // The cell in `list` whose edge on grid line `line` covers track
+    // `track`.
+    let edge_at = |list: &[(usize, usize, usize, usize)], line: usize, track: usize| {
+        let after = list.partition_point(|&(at, start, _, _)| (at, start) <= (line, track));
         after
             .checked_sub(1)
             .map(|found| list[found])
-            .filter(|segment| segment.boundary == boundary && track < segment.end)
+            .filter(|&(at, _, end, _)| at == line && track < end)
+            .map(|(_, _, _, slot)| slot)
     };
     // The line painted on `first`'s `first_side` or else on `second`'s
-    // `second_side`; none where it would run inside a spanning cell.
+    // `second_side`.
     let line = |(first, second): (Option<usize>, Option<usize>), first_side, second_side| {
-        if first.is_some() && first == second {
-            return None;
-        }
         first
             .and_then(|cell| state.painted_side(grid.cells[cell].node_id, first_side))
             .or_else(|| {
@@ -7425,27 +7413,13 @@ fn resolve_collapsed_corners(
     // over column `col`.
     let across = |row: usize, col: Option<usize>| {
         let col = col.filter(|&col| col < n_cols)?;
-        Some(if row == 0 {
-            (None, edge_cell(&top_edge, col))
-        } else if row == n_rows {
-            (edge_cell(&bottom_edge, col), None)
-        } else {
-            let found = segment(&segments.horizontal, row, col)?;
-            (Some(found.leading), Some(found.trailing))
-        })
+        Some((edge_at(bottoms, row, col), edge_at(tops, row, col)))
     };
     // The cells left and right of the vertical line on grid column line
     // `col` beside row `row`.
     let beside = |col: usize, row: Option<usize>| {
         let row = row.filter(|&row| row < n_rows)?;
-        let found = segment(&segments.vertical, col, row)?;
-        Some(if col == 0 {
-            (None, Some(found.trailing))
-        } else if col == n_cols {
-            (Some(found.leading), None)
-        } else {
-            (Some(found.leading), Some(found.trailing))
-        })
+        Some((edge_at(rights, col, row), edge_at(lefts, col, row)))
     };
     // The lines that meet at grid point (`row`, `col`), in tie order:
     // horizontal after, vertical after, horizontal before, vertical before.
@@ -7474,15 +7448,30 @@ fn resolve_collapsed_corners(
             })
             .map(|(rank, (border, _))| (rank, border))
     };
+    // Each junction is resolved once for the up to four cells that meet
+    // there: its winning line
+    let mut winners = std::collections::HashMap::new();
     // The owner of a corner whose horizontal side is line `horizontal` and
     // vertical side line `vertical` of its junction.
-    let owner =
-        |row: u16, col: u16, horizontal: usize, vertical: usize| match winner(junction(row, col)) {
+    // and the width of its widest horizontal line.
+    let mut owner = |row: u16, col: u16, horizontal: usize, vertical: usize| {
+        let (won, height) = *winners.entry((row, col)).or_insert_with(|| {
+            let lines = junction(row, col);
+            let height = [lines[0], lines[2]]
+                .iter()
+                .flatten()
+                .map(|(border, _)| border.width().px())
+                .fold(0.0_f32, f32::max);
+            (winner(lines), height)
+        });
+        let owner = match won {
             Some((rank, _)) if rank == horizontal => CornerOwner::Horizontal,
             Some((rank, _)) if rank == vertical => CornerOwner::Vertical,
             Some((_, border)) => CornerOwner::Neither(border),
             None => CornerOwner::Horizontal,
         };
+        (owner, height)
+    };
     let last_row = u16::try_from(grid.rows.len()).unwrap_or(u16::MAX);
     let mut corners = Vec::with_capacity(grid.cells.len());
     for cell in &grid.cells {
@@ -7493,20 +7482,29 @@ fn resolve_collapsed_corners(
             .col_start
             .saturating_add(cell.col_span)
             .min(grid.n_cols);
+        let (top_left, top_left_height) = owner(top, left, 0, 1);
+        let (top_right, top_right_height) = owner(top, right, 2, 1);
+        let (bottom_right, bottom_right_height) = owner(bottom, right, 2, 3);
+        let (bottom_left, bottom_left_height) = owner(bottom, left, 0, 3);
         corners.push((
             cell.node_id,
             CollapsedCorners {
-                top_left: owner(top, left, 0, 1),
-                top_right: owner(top, right, 2, 1),
-                bottom_right: owner(bottom, right, 2, 3),
-                bottom_left: owner(bottom, left, 0, 3),
+                top_left,
+                top_right,
+                bottom_right,
+                bottom_left,
+                junction_heights: [
+                    top_left_height,
+                    top_right_height,
+                    bottom_right_height,
+                    bottom_left_height,
+                ],
             },
         ));
     }
     for (node_id, corners) in corners {
         state.set_corners(node_id, corners);
     }
-    Some(())
 }
 
 /// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
@@ -7529,7 +7527,7 @@ fn resolve_collapsed_borders(
     resolve_collapsed_part_borders(doc, state, grid, &columns);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
     if !table_writing_mode(doc, table_idx).is_vertical() {
-        let _ = resolve_collapsed_corners(state, grid, index);
+        resolve_collapsed_corners(state, grid);
     }
 }
 
@@ -7548,7 +7546,7 @@ fn resolve_centered_block_borders(
     resolve_collapsed_part_borders(doc, state, grid, &column_parts(doc, table_idx, false));
     let metrics = state.block_metrics_before_table_edges(doc, grid, table_idx, basis);
     resolve_collapsed_table_edges(doc, state, grid, table_idx);
-    let _ = resolve_collapsed_corners(state, grid, index);
+    resolve_collapsed_corners(state, grid);
     state.install_block_metrics(metrics);
 }
 

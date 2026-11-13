@@ -184,3 +184,62 @@ fn a_cell_painted_later_keeps_the_junction_it_does_not_own() {
     );
     assert_eq!(junctions(&pixels, 3, 3), ["RRG", "RRG", "BBY"]);
 }
+
+/// The color of the pixels from (`x0`, `y0`) to (`x1`, `y1`), as
+/// [`junction`] gives it for a junction square.
+fn area(pixels: &[u8], (x0, y0): (usize, usize), (x1, y1): (usize, usize)) -> char {
+    let colors: std::collections::BTreeSet<char> = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let index = (y * SIZE + x) * 4;
+            match [pixels[index], pixels[index + 1], pixels[index + 2]] {
+                [255, 0, 0] => 'R',
+                [0, 128, 0] => 'G',
+                [0, 0, 255] => 'B',
+                [255, 255, 0] => 'Y',
+                [255, 255, 255] => '.',
+                _ => 'o',
+            }
+        })
+        .collect();
+    match colors.into_iter().collect::<Vec<_>>()[..] {
+        [color] => color,
+        _ => 'o',
+    }
+}
+
+#[test]
+fn a_side_facing_an_empty_slot_still_meets_its_junction() {
+    // The second row has one cell: the wide bottom line of the second cell
+    // above the empty slot takes its corner over the thin right line.
+    let pixels = raster(
+        "<tr><td></td><td style='border-bottom:10px solid red;border-right:2px solid blue'></td></tr>\
+         <tr><td></td></tr>",
+    );
+    assert_eq!(area(&pixels, (20, 20), (42, 30)), 'R');
+    assert_eq!(area(&pixels, (40, 0), (42, 20)), 'B');
+}
+
+#[test]
+fn the_junction_square_is_as_tall_as_the_widest_line() {
+    // The 10px top line of the first cell takes the junction from the 2px
+    // top line of the second, so the second cell's left line starts below
+    // it.
+    let pixels = raster(
+        "<tr><td style='border-top:10px solid red'></td>\
+         <td style='border-top:2px solid blue;border-left:4px solid green'></td></tr>",
+    );
+    assert_eq!(area(&pixels, (0, 0), (24, 10)), 'R');
+    assert_eq!(area(&pixels, (24, 4), (44, 6)), 'B');
+    assert_eq!(area(&pixels, (20, 10), (24, 16)), 'G');
+}
+
+#[test]
+fn a_collapsed_column_keeps_the_table_order_of_the_cells() {
+    let pixels = raster(
+        "<col><col><col style='visibility:collapse'>\
+         <tr><td style='border:4px solid red'></td><td style='border:4px solid green'></td><td></td></tr>\
+         <tr><td style='border:4px solid blue'></td><td style='border:4px solid yellow'></td><td></td></tr>",
+    );
+    assert_eq!(junctions(&pixels, 3, 3), ["RRG", "RRG", "BBY"]);
+}

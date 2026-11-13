@@ -427,6 +427,8 @@ impl BorderState {
                 .get(&cell.node_id)
                 .expect("reset cell belongs to border state");
             self.cells[slot] = Self::authored_cell(doc, cell.node_id, self.flipped);
+            self.cells[slot].origins =
+                Sides::all(Self::origin_of(grid, cell.row, Some(cell.col_start)));
             if let Some(metrics) = &self.block_metrics {
                 let (widths, paint) = metrics.seeds[slot];
                 self.cells[slot].widths.top = widths.start;

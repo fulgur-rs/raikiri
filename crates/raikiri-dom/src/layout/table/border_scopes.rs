@@ -1,5 +1,6 @@
 use super::*;
 use crate::node::NodeFlags;
+use crate::paint_rules::CollapsedCorners;
 
 fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
     #[cfg(test)]
@@ -7,8 +8,17 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
     for cell in &state.cells {
         tree.table_layout_node_mut(cell.node_id).collapsed_border =
             state.physical_paint(cell.paint);
-        tree.table_layout_node_mut(cell.node_id).collapsed_corners =
-            state.physical_corners(cell.corners);
+        // The junction heights only hold where the cell's top and bottom
+        // borders are centered on their grid lines.
+        let centered = state.block_outer().is_some();
+        tree.table_layout_node_mut(cell.node_id).collapsed_corners = state
+            .physical_corners(cell.corners)
+            .map(|corners| CollapsedCorners {
+                junction_heights: Some(corners.junction_heights)
+                    .filter(|_| centered)
+                    .unwrap_or_default(),
+                ..corners
+            });
         tree.table_layout_node_mut(cell.node_id).flags.set(
             NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS,
             state.block_outer().is_some(),
@@ -32,7 +42,7 @@ fn publish_paint(tree: &mut LayoutSession<'_>, state: &BorderState) {
 type PaintSnapshot = Vec<(
     usize,
     Option<Sides<ComputedBorder>>,
-    Option<crate::paint_rules::CollapsedCorners>,
+    Option<CollapsedCorners>,
     bool,
 )>;
 
@@ -43,17 +53,12 @@ fn save_paint(tree: &LayoutSession<'_>, state: &BorderState) -> PaintSnapshot {
         .map(|cell| cell.node_id)
         .chain(state.rows.iter().map(|&(row, _)| row))
         .map(|idx| {
+            let node = tree.ifc_layout_node(idx).expect("paint target is live");
             (
                 idx,
-                tree.ifc_layout_node(idx)
-                    .expect("paint target is live")
-                    .collapsed_border,
-                tree.ifc_layout_node(idx)
-                    .expect("paint target is live")
-                    .collapsed_corners,
-                tree.ifc_layout_node(idx)
-                    .expect("paint target is live")
-                    .centered_collapsed_block_borders(),
+                node.collapsed_border,
+                node.collapsed_corners,
+                node.centered_collapsed_block_borders(),
             )
         })
         .collect()

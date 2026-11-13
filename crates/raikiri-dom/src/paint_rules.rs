@@ -47,6 +47,13 @@ pub struct CollapsedCorners {
     pub bottom_right: CornerOwner,
     /// The bottom-left corner.
     pub bottom_left: CornerOwner,
+    /// The width of the widest horizontal line at the junction of each
+    /// corner, top left, top right, bottom right and bottom left, when the
+    /// cell's top and bottom borders are centered on their grid lines: the
+    /// junction square is that tall, centered on the cell's own line, and a
+    /// vertical side that does not own the corner stays out of it. Zero
+    /// otherwise.
+    pub junction_heights: [f32; 4],
 }
 
 impl CollapsedCorners {
@@ -58,6 +65,12 @@ impl CollapsedCorners {
             top_right: self.top_left,
             bottom_right: self.bottom_left,
             bottom_left: self.bottom_right,
+            junction_heights: [
+                self.junction_heights[1],
+                self.junction_heights[0],
+                self.junction_heights[3],
+                self.junction_heights[2],
+            ],
         }
     }
 }
