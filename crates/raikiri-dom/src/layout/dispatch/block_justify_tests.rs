@@ -306,3 +306,32 @@ fn justify_items_does_not_reach_a_block_inside_an_inline() {
     );
     assert_eq!((left, width), (0.0, 200.0));
 }
+
+#[test]
+fn self_start_inside_an_inline_follows_the_block_container() {
+    for (item, x) in [
+        ("justify-self:self-start", 180.0),
+        ("justify-self:start", 0.0),
+    ] {
+        let (left, _, width, _) = block_rect(LTR, &format!("display:block;{item}"), |doc, root| {
+            let span = doc.append_element(Some(root), "span", Some("display:inline;direction:rtl"));
+            doc.append_text(span, "a");
+            span
+        });
+        assert_eq!((left, width), (x, 20.0), "{item}");
+    }
+}
+
+#[test]
+fn start_inside_an_inline_of_another_direction_is_the_containers_start() {
+    for (item, x) in [
+        ("justify-self:start", 0.0),
+        ("justify-self:end", 180.0),
+        ("justify-self:self-start", 180.0),
+    ] {
+        let (left, _, width, _) = block_rect(LTR, &format!("display:block;{item}"), |doc, root| {
+            doc.append_element(Some(root), "span", Some("display:inline;direction:rtl"))
+        });
+        assert_eq!((left, width), (x, 20.0), "{item}");
+    }
+}

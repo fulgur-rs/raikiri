@@ -86,22 +86,12 @@ pub(super) enum InlinePosition {
     End,
 }
 
-/// The position `justify-self` gives the in-flow child `style` in the block
-/// container `container`, with `auto` taking the container's
-/// `justify-items`. Baseline alignment has no shared baseline in a block
-/// container, so it falls back to the start, as `self-start` and `self-end`
-/// do to the start or the end of the child's own direction.
+/// The position `alignment`, a `justify-self` or the container's
+/// `justify-items` for `auto`, gives a box of `direction` in a block container
+/// of `container_direction`. Baseline alignment has no shared baseline in a
+/// block container, so it falls back to the start, as `self-start` and
+/// `self-end` do to the start or the end of the box's own direction.
 // spec: https://www.w3.org/TR/css-align-3/#justify-block
-pub(super) fn justify_position(style: &Style, container: &Style) -> Option<(InlinePosition, bool)> {
-    position_of(
-        style.justify_self.unwrap_or(container.justify_items),
-        style.direction,
-        container.direction,
-    )
-}
-
-/// The position `alignment` gives a box of `direction` in a block container
-/// of `container_direction` (see [`justify_position`]).
 fn position_of(
     alignment: raikiri_layout_style::values::AlignItems,
     direction: Direction,
@@ -138,33 +128,40 @@ impl InlinePosition {
 
 /// The position `justify-self` gives the in-flow block `child` in the block
 /// container that lays it out, read from the style views, and whether its
-/// margins are auto (see [`justify_position`]).
+/// margins are auto (see [`position_of`]), with the direction of that
+/// container.
 fn justify_position_of(
     tree: &LayoutSession<'_>,
     child: usize,
-) -> Option<((InlinePosition, bool), bool)> {
+) -> Option<((InlinePosition, bool), bool, Direction)> {
     use crate::layout::style_views::ReadRole;
-    let parent = tree.taffy_parent_of(child)?;
+    // The parent box, past `display: contents`, and the block container that
+    // holds the box, past inline boxes too: its direction lays out the room.
+    let mut boxes = std::iter::successors(tree.parent_of(child), |&parent| tree.parent_of(parent))
+        .filter(|&parent| tree.nodes[parent].display() != DisplayValue::Contents);
+    let parent = boxes.next()?;
+    let inline_parent = tree.nodes[parent].display() == DisplayValue::Inline;
+    let container = if inline_parent {
+        boxes.find(|&ancestor| tree.nodes[ancestor].display() != DisplayValue::Inline)?
+    } else {
+        parent
+    };
     let style = tree.query_style(child, ReadRole::BlockItem);
-    let container = tree.query_style(parent, ReadRole::BlockContainer);
+    let container = tree.query_style(container, ReadRole::BlockContainer);
     // `justify-items` does not apply to an inline box, so `auto` is `normal`
     // for a block inside one, whatever its containing block says.
     let alignment = match style.bridge_justify_self() {
         Some(alignment) => alignment,
-        None if inline_parent(tree, child) => return None,
+        None if inline_parent => return None,
         None => container.justify_items(),
     };
     let position = position_of(alignment, style.direction(), container.direction())?;
     let margin = style.margin();
-    Some((position, margin.left.is_auto() || margin.right.is_auto()))
-}
-
-/// Whether the parent box of `child`, past `display: contents`, is an inline
-/// box.
-fn inline_parent(tree: &LayoutSession<'_>, child: usize) -> bool {
-    std::iter::successors(tree.parent_of(child), |&parent| tree.parent_of(parent))
-        .find(|&parent| tree.nodes[parent].display() != DisplayValue::Contents)
-        .is_some_and(|parent| tree.nodes[parent].display() == DisplayValue::Inline)
+    Some((
+        position,
+        margin.left.is_auto() || margin.right.is_auto(),
+        container.direction(),
+    ))
 }
 
 /// Whether `justify-self` places the in-flow block `child` at a position,
@@ -185,8 +182,8 @@ pub(crate) fn justified_offset(
     free: f32,
 ) -> Option<f32> {
     match justify_position_of(tree, child)? {
-        (_, true) => None,
-        ((position, safe), false) => Some(position.offset(safe, free, rtl)),
+        (_, true, _) => None,
+        ((position, safe), false, _) => Some(position.offset(safe, free, rtl)),
     }
 }
 
@@ -752,7 +749,23 @@ pub(super) fn layout(
         // A box that `justify-self` places at a position takes its
         // fit-content width for `auto` instead (CSS Box Alignment 3 §6.1).
         // An explicit `stretch` fills the room for a replaced box too.
-        let justify = justify_position(&style, container);
+        // The position comes from the block container that holds the child,
+        // which an inline box between them does not change; it is turned
+        // into one along the direction this container lays the child out in.
+        let justify = justify_position_of(tree, usize::from(child)).map(
+            |((position, safe), _, direction)| {
+                let position = match position {
+                    InlinePosition::Start if direction != container.direction => {
+                        InlinePosition::End
+                    }
+                    InlinePosition::End if direction != container.direction => {
+                        InlinePosition::Start
+                    }
+                    position => position,
+                };
+                (position, safe)
+            },
+        );
         let auto_stretches = match style.size.width.expand() {
             ExpandedDimension::Stretch => true,
             ExpandedDimension::Auto => {
