@@ -1263,6 +1263,8 @@ impl LayoutSession<'_> {
                         &mut leaf_style,
                         &[OwnedPropertyOverride::aspect_ratio(None)],
                     );
+                    let inputs =
+                        ContainedRatioFloor::oof_width_from_insets(floor, tree, idx, inputs);
                     // Given its width, the box takes the height the ratio
                     // relates to it within its bounds, also while a parent
                     // measures it for its content: the leaf algorithm would
@@ -3354,6 +3356,26 @@ pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) 
     }
 }
 
+/// Whether the size-contained out-of-flow box `idx` (see
+/// [`contained_ratio_item`]) has both its top and bottom insets set. Its
+/// height is then the axis the ratio depends on: the box takes its width from
+/// the height the insets leave it, through its ratio and within its own width
+/// bounds, and unless it aligns to `stretch`, its height from that width, with
+/// the contained height as its floor. Chromium sizes `contain: size;
+/// contain-intrinsic-size: 200px 200px; aspect-ratio: 1; top: 0; bottom: 0;
+/// max-width: 50px` in a 300px high containing block at 50px by 200px, at
+/// 300px by 300px without the `max-width`, and at 50px by 300px with
+/// `align-self: stretch`.
+pub(crate) fn contained_oof_height_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].layout_position() == Position::Absolute
+        && !tree.oof_alignment_swapped(idx)
+        && contained_ratio_item(tree, idx)
+        && {
+            let inset = tree.physical_style(idx).inset();
+            !inset.top.is_auto() && !inset.bottom.is_auto()
+        }
+}
+
 /// The height a size-contained box takes from its preferred aspect ratio once
 /// its width is known, in the box the ratio relates: Taffy's leaf algorithm
 /// divides the border-box width by the ratio whatever box `box-sizing` names,
@@ -3365,9 +3387,49 @@ pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) 
 struct ContainedRatioFloor {
     ratio: f32,
     inset: Size<f32>,
+    /// The bounds of the border-box width, the minimum winning.
+    min_width: f32,
+    max_width: Option<f32>,
 }
 
 impl ContainedRatioFloor {
+    /// The border-box width the ratio relates to the border-box `height`,
+    /// within the bounds of the width.
+    fn width_from_height(self, height: f32) -> f32 {
+        ((height - self.inset.height).max(0.0) * self.ratio + self.inset.width)
+            .maybe_min(self.max_width)
+            .max(self.min_width)
+    }
+
+    /// `inputs` with the width a size-contained out-of-flow box takes from
+    /// the height its insets leave it, when they ask for its size without its
+    /// width (see [`contained_oof_height_follows_width`]). That height is the
+    /// one they stretch the box to, or else the space the out-of-flow
+    /// algorithm offers it, which is that height too.
+    fn oof_width_from_insets(
+        floor: Option<Self>,
+        tree: &LayoutSession<'_>,
+        idx: usize,
+        inputs: LayoutInput,
+    ) -> LayoutInput {
+        let height = inputs
+            .known_dimensions
+            .height
+            .or(inputs.available_space.height.into_option());
+        match (floor, inputs.known_dimensions.width, height) {
+            (Some(floor), None, Some(height)) if contained_oof_height_follows_width(tree, idx) => {
+                LayoutInput {
+                    known_dimensions: Size {
+                        width: Some(floor.width_from_height(height)),
+                        ..inputs.known_dimensions
+                    },
+                    ..inputs
+                }
+            }
+            _ => inputs,
+        }
+    }
+
     fn raise(self, output: &mut LayoutOutput) {
         let height =
             (output.size.width - self.inset.width).max(0.0) / self.ratio + self.inset.height;
@@ -3447,6 +3509,8 @@ fn carry_contained_ratio_bounds(
         } else {
             Size::ZERO
         },
+        min_width: metrics.min.width.unwrap_or(edges.width),
+        max_width: metrics.max.width,
     })
 }
 

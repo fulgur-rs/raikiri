@@ -256,6 +256,9 @@ impl LayoutStyleView<'_> {
         ) {
             return None;
         }
+        if self.context.oof_height_follows_width {
+            return None;
+        }
         match self.context.flex_item_ratio {
             FlexItemRatio::CrossFollowsMain => return None,
             FlexItemRatio::BasisFromCross => return self.stated_aspect_ratio(),

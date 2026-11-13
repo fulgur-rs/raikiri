@@ -533,6 +533,11 @@ impl LayoutSession<'_> {
         {
             context.flex_item_ratio = raikiri_layout_style::FlexItemRatio::CrossFollowsMain;
         }
+        if matches!(role, ReadRole::Oof)
+            && crate::layout::dispatch::contained_oof_height_follows_width(self, idx)
+        {
+            context.oof_height_follows_width = true;
+        }
         if matches!(role, ReadRole::GridItem) {
             context.grid_item_ratio = self.grid_item_ratio(idx);
             context.carried_min_width = self.grid_item_carried_min_width(idx);

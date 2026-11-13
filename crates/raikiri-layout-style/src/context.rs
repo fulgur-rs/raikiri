@@ -385,6 +385,13 @@ pub struct ViewContext {
     /// ratio of a grid item carries over from its `min-height`, reported in
     /// place of an `auto` minimum width.
     pub carried_min_width: Option<f32>,
+    /// Whether an out-of-flow box whose top and bottom insets are both set
+    /// takes its width from the height they leave it, through its ratio, and
+    /// its height from the width it ends up with, rather than keeping the
+    /// height the insets give it: the view then reports no ratio, and reports
+    /// an `auto` or `normal` block alignment as `start`, which does not
+    /// stretch the box. An explicit `stretch` still stretches its height.
+    pub oof_height_follows_width: bool,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -401,6 +408,7 @@ impl Default for ViewContext {
             grid_item_ratio: GridItemRatio::Declared,
             zero_min_main_axis: None,
             carried_min_width: None,
+            oof_height_follows_width: false,
         }
     }
 }
