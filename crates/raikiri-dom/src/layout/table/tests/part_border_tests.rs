@@ -301,3 +301,23 @@ fn a_spanning_cell_takes_the_top_of_every_column_it_spans() {
     });
     assert_eq!(widths(&doc, cells[0])[0], 6.0);
 }
+
+#[test]
+fn a_spanning_col_makes_a_line_between_its_columns() {
+    // `<col span=2>` stands for two columns, each with the border, as
+    // Chromium draws it; a column group has no line inside it.
+    let (doc, cells) = layout_markup("", |doc, table| {
+        let col = doc.append_element(
+            Some(table),
+            "col",
+            Some("display:table-column;border:4px solid"),
+        );
+        doc.set_element_attribute(col, "span", "2".to_string())
+            .unwrap();
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        doc.append_element(Some(row), "td", Some(CELL));
+        doc.append_element(Some(row), "td", Some(CELL));
+    });
+    assert_eq!(widths(&doc, cells[0]), [4.0, 4.0, 4.0, 4.0]);
+    assert_eq!(widths(&doc, cells[1]), [4.0, 4.0, 4.0, 4.0]);
+}

@@ -7208,18 +7208,21 @@ fn resolve_collapsed_part_borders(
     // The border on the line before track `index`, where two boxes of
     // `parts` meet or one ends: the box before the line wins a tie, as the
     // upper or left of two boxes of a kind does. `far` and `near` are the
-    // sides of the boxes before and after the line that lie on it.
-    let line = |parts: &dyn Fn(usize) -> Option<usize>, index: usize, (far, near)| {
-        let before = index.checked_sub(1).and_then(parts);
-        let after = parts(index);
-        if before == after {
-            return None;
-        }
-        candidate(before, far)
-            .into_iter()
-            .chain(candidate(after, near))
-            .reduce(collapsed_border_winner)
-    };
+    // sides of the boxes before and after the line that lie on it. A group
+    // has no line inside it, but a `<col>` spanning several columns makes a
+    // box for each of them, so with `per_track` every line counts.
+    let line =
+        |parts: &dyn Fn(usize) -> Option<usize>, index: usize, (far, near), per_track: bool| {
+            let before = index.checked_sub(1).and_then(parts);
+            let after = parts(index);
+            if before == after && !per_track {
+                return None;
+            }
+            candidate(before, far)
+                .into_iter()
+                .chain(candidate(after, near))
+                .reduce(collapsed_border_winner)
+        };
     // The `side` borders of the boxes of `parts` over `tracks`, when the cell
     // lies on that edge of the table: a cell spanning several columns takes
     // the strongest of their borders.
@@ -7250,19 +7253,22 @@ fn resolve_collapsed_part_borders(
         let span = first_col..=last_col;
         // In the order the boxes take part: row group, column, column group.
         let sides = [
-            (Top, line(&group, first_row, (Bottom, Top))),
-            (Bottom, line(&group, last_row + 1, (Bottom, Top))),
+            (Top, line(&group, first_row, (Bottom, Top), false)),
+            (Bottom, line(&group, last_row + 1, (Bottom, Top), false)),
             (Left, edge(&group, left_right.clone(), Left, first_col == 0)),
             (Right, edge(&group, left_right, Right, last_col + 1 == cols)),
-            (Left, line(&column, first_col, (Right, Left))),
-            (Right, line(&column, last_col + 1, (Right, Left))),
+            (Left, line(&column, first_col, (Right, Left), true)),
+            (Right, line(&column, last_col + 1, (Right, Left), true)),
             (Top, edge(&column, span.clone(), Top, first_row == 0)),
             (
                 Bottom,
                 edge(&column, span.clone(), Bottom, last_row + 1 == rows),
             ),
-            (Left, line(&column_group, first_col, (Right, Left))),
-            (Right, line(&column_group, last_col + 1, (Right, Left))),
+            (Left, line(&column_group, first_col, (Right, Left), false)),
+            (
+                Right,
+                line(&column_group, last_col + 1, (Right, Left), false),
+            ),
             (Top, edge(&column_group, span.clone(), Top, first_row == 0)),
             (
                 Bottom,
