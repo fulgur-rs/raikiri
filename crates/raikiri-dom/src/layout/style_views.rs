@@ -597,6 +597,54 @@ impl LayoutSession<'_> {
             })
     }
 
+    /// Whether the grid item `idx`, a block container with content and an
+    /// aspect ratio that states no size and no `min-width`, measures itself
+    /// because the library would let a minimum or maximum its ratio carries
+    /// over undercut its content (CSS Grid 1 §6.6):
+    ///
+    /// - With a length `min-height`, its minimum width is the larger of the
+    ///   min-content width of its content and the width the ratio carries
+    ///   over. The library takes the carried width as the minimum
+    ///   contribution and never asks for the content: Chromium sizes
+    ///   `aspect-ratio: 1; min-height: 100px` around a 150px wide child at
+    ///   150px by 150px in an `auto` column of a 50px grid.
+    /// - With an `auto` `min-height` and a `max-width`, its height is at
+    ///   least that of its content. The library holds it to the maximum
+    ///   height the ratio carries over from the `max-width`: Chromium sizes
+    ///   `aspect-ratio: 1; max-width: 50px` around a 200px high child at
+    ///   50px by 200px.
+    ///
+    /// A grid whose columns have a `min-content` or `max-content` minimum
+    /// takes the contribution of the item instead, so it leaves the item to
+    /// the library.
+    fn grid_item_content_outweighs_carried_minimum(
+        &self,
+        idx: usize,
+        item: &LayoutStyleView<'_>,
+    ) -> bool {
+        use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
+        matches!(
+            self.nodes[idx].formatting_context,
+            FormattingContext::Block | FormattingContext::Inline
+        ) && !self.nodes[idx].children.is_empty()
+            && item.stated_aspect_ratio().is_some()
+            && item.size().width.is_auto()
+            && item.size().height.is_auto()
+            && item.min_size().width.is_auto()
+            && match item.min_size().height.expand() {
+                ExpandedLengthPercentageAuto::Length(_) => true,
+                ExpandedLengthPercentageAuto::Auto => {
+                    !item.max_size().width.is_auto() && !item.overflow().y.is_scroll_container()
+                }
+                _ => false,
+            }
+            && self.taffy_parent_of(idx).is_some_and(|container| {
+                crate::layout::taffy_adapter::columns_have_no_content_minimum(
+                    &self.physical_style(container),
+                )
+            })
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -673,7 +721,9 @@ impl LayoutSession<'_> {
         ) && (percentage_sized || auto_with_minimum);
         // A size-contained box measures itself for the height that
         // `contain-intrinsic-size` holds it to past a carried maximum.
-        let measured = measured || crate::layout::dispatch::contained_ratio_item(self, idx);
+        let measured = measured
+            || crate::layout::dispatch::contained_ratio_item(self, idx)
+            || self.grid_item_content_outweighs_carried_minimum(idx, &item);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
@@ -726,6 +776,9 @@ impl LayoutSession<'_> {
         };
         let item = self.physical_style(idx);
         let ratio = item.stated_aspect_ratio()?;
+        if self.grid_item_content_outweighs_carried_minimum(idx, &item) {
+            return None;
+        }
         if self.container_is_vertical(idx)
             || self.nodes[idx].used_writing_mode.is_vertical()
             || self.nodes[idx].layout_position() == raikiri_layout_style::values::Position::Absolute
