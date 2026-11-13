@@ -817,6 +817,37 @@ pub(crate) fn parse_property_grammar(
                 parse_border_left_shorthand(input).map(PropertyValue::BorderLeft)
             }
         }
+        // CSS Logical Properties and Values 1 §4.5 flow-relative border
+        // longhands and single-edge shorthands: parsed with the grammar of the
+        // physical property they map to in `horizontal-tb` with `direction:
+        // ltr`; the cascade moves them by the element's writing mode
+        // (`crate::logical`).
+        "border-block-start" => parse_property_grammar("border-top", input),
+        "border-block-end" => parse_property_grammar("border-bottom", input),
+        "border-inline-start" => parse_property_grammar("border-left", input),
+        "border-inline-end" => parse_property_grammar("border-right", input),
+        "border-block-start-width" => parse_property_grammar("border-top-width", input),
+        "border-block-end-width" => parse_property_grammar("border-bottom-width", input),
+        "border-inline-start-width" => parse_property_grammar("border-left-width", input),
+        "border-inline-end-width" => parse_property_grammar("border-right-width", input),
+        "border-block-start-style" => parse_property_grammar("border-top-style", input),
+        "border-block-end-style" => parse_property_grammar("border-bottom-style", input),
+        "border-inline-start-style" => parse_property_grammar("border-left-style", input),
+        "border-inline-end-style" => parse_property_grammar("border-right-style", input),
+        "border-block-start-color" => parse_property_grammar("border-top-color", input),
+        "border-block-end-color" => parse_property_grammar("border-bottom-color", input),
+        "border-inline-start-color" => parse_property_grammar("border-left-color", input),
+        "border-inline-end-color" => parse_property_grammar("border-right-color", input),
+        // CSS Logical Properties and Values 1 §4.5 flow-relative border
+        // shorthands of one axis.
+        "border-block" => parse_border_axis_value(input, PropertyKey::BorderBlock),
+        "border-inline" => parse_border_axis_value(input, PropertyKey::BorderInline),
+        "border-block-width" => parse_border_axis_value(input, PropertyKey::BorderBlockWidth),
+        "border-block-style" => parse_border_axis_value(input, PropertyKey::BorderBlockStyle),
+        "border-block-color" => parse_border_axis_value(input, PropertyKey::BorderBlockColor),
+        "border-inline-width" => parse_border_axis_value(input, PropertyKey::BorderInlineWidth),
+        "border-inline-style" => parse_border_axis_value(input, PropertyKey::BorderInlineStyle),
+        "border-inline-color" => parse_border_axis_value(input, PropertyKey::BorderInlineColor),
         "border-style" => parse_border_style_shorthand(input).map(PropertyValue::BorderStyle),
         "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
         "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),

@@ -4864,6 +4864,14 @@ property_key_samples! {
     BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
     BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
     BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
+    BorderBlock => border_axis_sample(PropertyKey::BorderBlock),
+    BorderInline => border_axis_sample(PropertyKey::BorderInline),
+    BorderBlockWidth => border_axis_sample(PropertyKey::BorderBlockWidth),
+    BorderBlockStyle => border_axis_sample(PropertyKey::BorderBlockStyle),
+    BorderBlockColor => border_axis_sample(PropertyKey::BorderBlockColor),
+    BorderInlineWidth => border_axis_sample(PropertyKey::BorderInlineWidth),
+    BorderInlineStyle => border_axis_sample(PropertyKey::BorderInlineStyle),
+    BorderInlineColor => border_axis_sample(PropertyKey::BorderInlineColor),
     Width => PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
     Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
     MaxWidth => PropertyValue::MaxWidth(LengthOrAuto::Length(Length::Em(5.0))),
@@ -5808,6 +5816,14 @@ property_value_variant_registry! {
     BorderStyle,
     BorderWidth,
     BorderColor,
+    BorderBlock,
+    BorderInline,
+    BorderBlockWidth,
+    BorderBlockStyle,
+    BorderBlockColor,
+    BorderInlineWidth,
+    BorderInlineStyle,
+    BorderInlineColor,
     Width,
     Height,
     MaxWidth,
@@ -6554,6 +6570,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::Inset(s) => sides((**s).clone(), length_or_auto),
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
             PropertyValue::BorderTop(b) => length(b.width),
+            PropertyValue::BorderBlock(a)
+            | PropertyValue::BorderInline(a)
+            | PropertyValue::BorderBlockWidth(a)
+            | PropertyValue::BorderBlockStyle(a)
+            | PropertyValue::BorderBlockColor(a)
+            | PropertyValue::BorderInlineWidth(a)
+            | PropertyValue::BorderInlineStyle(a)
+            | PropertyValue::BorderInlineColor(a) => {
+                start_end(**a, |b: Border| length(b.width))
+            }
             PropertyValue::BorderRight(b) => length(b.width),
             PropertyValue::BorderBottom(b) => length(b.width),
             PropertyValue::BorderLeft(b) => length(b.width),
@@ -10819,4 +10845,15 @@ fn white_space_var_fallbacks_and_invalid_halves_in_page_and_margin() {
             );
         }
     }
+}
+
+/// A worst-case flow-relative border axis shorthand sample for `key`: an
+/// `em` width on both edges.
+fn border_axis_sample(key: PropertyKey) -> PropertyValue {
+    let border = Border {
+        width: Length::Em(1.0),
+        style: BorderStyle::Solid,
+        color: BorderColor::CurrentColor,
+    };
+    PropertyValue::border_axis(key, StartEnd::both(border)).expect("a border axis key")
 }

@@ -397,3 +397,197 @@ fn deferred_inset_values_move_to_every_side() {
         );
     }
 }
+
+#[test]
+fn border_values_markers_and_deferred_values_move_to_every_side() {
+    use crate::property::{
+        BorderColor, BorderStyle, ContextualColor, CssWideKeyword, DeferredValue, Length,
+    };
+    let flow = FlowMapping::new(WritingMode::VerticalRl, Direction::Ltr);
+    // vertical-rl ltr: inline-start top, block-start right, inline-end
+    // bottom, block-end left.
+    let sides = [
+        LogicalSide::InlineStart,
+        LogicalSide::BlockStart,
+        LogicalSide::InlineEnd,
+        LogicalSide::BlockEnd,
+    ];
+    let width = Length::Px(3.0);
+    let keyword = CssWideKeyword::Inherit;
+    let families: [(PropertyValue, [PropertyValue; 4]); 6] = [
+        (
+            PropertyValue::BorderLeftWidth(width),
+            [
+                PropertyValue::BorderTopWidth(width),
+                PropertyValue::BorderRightWidth(width),
+                PropertyValue::BorderBottomWidth(width),
+                PropertyValue::BorderLeftWidth(width),
+            ],
+        ),
+        (
+            PropertyValue::BorderLeftStyle(BorderStyle::Dashed),
+            [
+                PropertyValue::BorderTopStyle(BorderStyle::Dashed),
+                PropertyValue::BorderRightStyle(BorderStyle::Dashed),
+                PropertyValue::BorderBottomStyle(BorderStyle::Dashed),
+                PropertyValue::BorderLeftStyle(BorderStyle::Dashed),
+            ],
+        ),
+        (
+            PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+            [
+                PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+                PropertyValue::BorderRightColor(BorderColor::CurrentColor),
+                PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+                PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+            ],
+        ),
+        (
+            PropertyValue::BorderLeftWidthCssWide(keyword),
+            [
+                PropertyValue::BorderTopWidthCssWide(keyword),
+                PropertyValue::BorderRightWidthCssWide(keyword),
+                PropertyValue::BorderBottomWidthCssWide(keyword),
+                PropertyValue::BorderLeftWidthCssWide(keyword),
+            ],
+        ),
+        (
+            PropertyValue::BorderLeftStyleCssWide(keyword),
+            [
+                PropertyValue::BorderTopStyleCssWide(keyword),
+                PropertyValue::BorderRightStyleCssWide(keyword),
+                PropertyValue::BorderBottomStyleCssWide(keyword),
+                PropertyValue::BorderLeftStyleCssWide(keyword),
+            ],
+        ),
+        (
+            PropertyValue::BorderLeftColorCssWide(keyword),
+            [
+                PropertyValue::BorderTopColorCssWide(keyword),
+                PropertyValue::BorderRightColorCssWide(keyword),
+                PropertyValue::BorderBottomColorCssWide(keyword),
+                PropertyValue::BorderLeftColorCssWide(keyword),
+            ],
+        ),
+    ];
+    for (from, expected) in families {
+        for (side, expected) in sides.iter().zip(expected) {
+            assert_eq!(flow.value(from.clone(), *side), expected, "{side:?}");
+        }
+    }
+    // A keyword declared on any physical side moves the same way.
+    for from in [
+        PropertyValue::BorderTopWidthCssWide(keyword),
+        PropertyValue::BorderRightWidthCssWide(keyword),
+        PropertyValue::BorderBottomWidthCssWide(keyword),
+    ] {
+        assert_eq!(
+            flow.value(from, LogicalSide::BlockStart),
+            PropertyValue::BorderRightWidthCssWide(keyword)
+        );
+    }
+    for from in [
+        PropertyValue::BorderTopStyleCssWide(keyword),
+        PropertyValue::BorderRightStyleCssWide(keyword),
+        PropertyValue::BorderBottomStyleCssWide(keyword),
+    ] {
+        assert_eq!(
+            flow.value(from, LogicalSide::BlockStart),
+            PropertyValue::BorderRightStyleCssWide(keyword)
+        );
+    }
+    for from in [
+        PropertyValue::BorderTopColorCssWide(keyword),
+        PropertyValue::BorderRightColorCssWide(keyword),
+        PropertyValue::BorderBottomColorCssWide(keyword),
+    ] {
+        assert_eq!(
+            flow.value(from, LogicalSide::BlockStart),
+            PropertyValue::BorderRightColorCssWide(keyword)
+        );
+    }
+
+    let deferred = |property: &'static str, key| {
+        PropertyValue::Deferred(DeferredValue {
+            context: crate::property::DeclarationContext::Css,
+            property: SmolStr::new_static(property),
+            value: "var(--b)".into(),
+            key,
+        })
+    };
+    for (from, names, keys) in [
+        (
+            deferred("border-inline-start-width", PropertyKey::BorderLeftWidth),
+            [
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ],
+            [
+                PropertyKey::BorderTopWidth,
+                PropertyKey::BorderRightWidth,
+                PropertyKey::BorderBottomWidth,
+                PropertyKey::BorderLeftWidth,
+            ],
+        ),
+        (
+            deferred("border-inline-start-style", PropertyKey::BorderLeftStyle),
+            [
+                "border-top-style",
+                "border-right-style",
+                "border-bottom-style",
+                "border-left-style",
+            ],
+            [
+                PropertyKey::BorderTopStyle,
+                PropertyKey::BorderRightStyle,
+                PropertyKey::BorderBottomStyle,
+                PropertyKey::BorderLeftStyle,
+            ],
+        ),
+        (
+            deferred("border-inline-start-color", PropertyKey::BorderLeftColor),
+            [
+                "border-top-color",
+                "border-right-color",
+                "border-bottom-color",
+                "border-left-color",
+            ],
+            [
+                PropertyKey::BorderTopColor,
+                PropertyKey::BorderRightColor,
+                PropertyKey::BorderBottomColor,
+                PropertyKey::BorderLeftColor,
+            ],
+        ),
+    ] {
+        for ((side, name), key) in sides.iter().zip(names).zip(keys) {
+            assert_eq!(
+                flow.value(from.clone(), *side),
+                deferred(name, key),
+                "{side:?}"
+            );
+        }
+    }
+
+    // A symbolic `currentcolor` keeps its side in its key; one for a
+    // property without sides stays as it is.
+    let contextual = |key| {
+        PropertyValue::ContextualColor(ContextualColor {
+            source: "color-mix(in srgb, currentcolor, red)".into(),
+            key,
+        })
+    };
+    assert_eq!(
+        flow.value(
+            contextual(PropertyKey::BorderLeftColor),
+            LogicalSide::BlockStart
+        ),
+        contextual(PropertyKey::BorderRightColor)
+    );
+    assert_eq!(
+        flow.value(contextual(PropertyKey::Color), LogicalSide::BlockStart),
+        contextual(PropertyKey::Color)
+    );
+}

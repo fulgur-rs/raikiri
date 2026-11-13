@@ -852,6 +852,24 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        // A flow-relative border shorthand of one axis projects onto the
+        // longhands its expansion pushes (the `horizontal-tb`, `ltr` edges).
+        value @ (PropertyValue::BorderBlock(_)
+        | PropertyValue::BorderInline(_)
+        | PropertyValue::BorderBlockWidth(_)
+        | PropertyValue::BorderBlockStyle(_)
+        | PropertyValue::BorderBlockColor(_)
+        | PropertyValue::BorderInlineWidth(_)
+        | PropertyValue::BorderInlineStyle(_)
+        | PropertyValue::BorderInlineColor(_)) => {
+            let mut projected = None;
+            crate::rule::expand_border_axis(&value, |value, _| {
+                if value.key() == key {
+                    projected = Some(value);
+                }
+            });
+            return projected;
+        }
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::BorderTop(border) => match key {
             crate::property::PropertyKey::BorderTopWidth => {

@@ -109,6 +109,14 @@ pub(crate) fn with_contextual_colors(value: PropertyValue, source: &str) -> Prop
         PropertyValue::BorderRight(_) => &[BorderRightColor],
         PropertyValue::BorderBottom(_) => &[BorderBottomColor],
         PropertyValue::BorderLeft(_) => &[BorderLeftColor],
+        // The flow-relative axis shorthands set the colors of the edges the
+        // axis has in `horizontal-tb` with `direction: ltr`, start first.
+        PropertyValue::BorderBlock(_) | PropertyValue::BorderBlockColor(_) => {
+            &[BorderTopColor, BorderBottomColor]
+        }
+        PropertyValue::BorderInline(_) | PropertyValue::BorderInlineColor(_) => {
+            &[BorderLeftColor, BorderRightColor]
+        }
         PropertyValue::Border(_) | PropertyValue::BorderColor(_) => &[
             BorderTopColor,
             BorderRightColor,
@@ -121,9 +129,16 @@ pub(crate) fn with_contextual_colors(value: PropertyValue, source: &str) -> Prop
         return value;
     }
     let components = contextual_color_components(source);
-    let colors: Box<[ContextualColor]> = if matches!(value, PropertyValue::BorderColor(_)) {
+    let colors: Box<[ContextualColor]> = if matches!(
+        value,
+        PropertyValue::BorderColor(_)
+            | PropertyValue::BorderBlockColor(_)
+            | PropertyValue::BorderInlineColor(_)
+    ) {
         // CSS Backgrounds 3 §3.1: one to four values set top, right, bottom
-        // and left, with a missing side copying its opposite side.
+        // and left, with a missing side copying its opposite side. A
+        // flow-relative axis has two edges, start and end, and one value
+        // sets both.
         let side = |index: usize| match (index, components.len()) {
             (1, 1) | (2, 1 | 2) | (3, 1) => 0,
             (3, 2 | 3) => 1,

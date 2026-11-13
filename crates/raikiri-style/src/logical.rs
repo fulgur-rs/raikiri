@@ -1,7 +1,7 @@
-//! Flow-relative margin, padding, inset and intrinsic size longhands.
+//! Flow-relative margin, padding, inset, border and intrinsic size longhands.
 //!
-//! The parser stores `margin-inline-start` and its siblings (the padding and
-//! inset ones too) under the physical longhand they map to in `horizontal-tb`
+//! The parser stores `margin-inline-start` and its siblings (the padding,
+//! inset and border ones too) under the physical longhand they map to in `horizontal-tb`
 //! with `direction: ltr`, and tags the declaration with the flow-relative side
 //! it was written for. `contain-intrinsic-inline-size` and
 //! `contain-intrinsic-block-size` are stored the same way, as
@@ -33,8 +33,8 @@ use smol_str::SmolStr;
 
 use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode};
 
-/// The flow-relative side a margin, padding, inset or intrinsic size declaration
-/// was written for.
+/// The flow-relative side a margin, padding, inset, border or intrinsic size
+/// declaration was written for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum LogicalSide {
     InlineStart,
@@ -184,6 +184,71 @@ impl FlowMapping {
                 PhysicalSide::Bottom => PropertyValue::Bottom(v),
                 PhysicalSide::Left => PropertyValue::Left(v),
             },
+            PropertyValue::BorderTopWidth(v)
+            | PropertyValue::BorderRightWidth(v)
+            | PropertyValue::BorderBottomWidth(v)
+            | PropertyValue::BorderLeftWidth(v) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopWidth(v),
+                PhysicalSide::Right => PropertyValue::BorderRightWidth(v),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomWidth(v),
+                PhysicalSide::Left => PropertyValue::BorderLeftWidth(v),
+            },
+            PropertyValue::BorderTopStyle(v)
+            | PropertyValue::BorderRightStyle(v)
+            | PropertyValue::BorderBottomStyle(v)
+            | PropertyValue::BorderLeftStyle(v) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopStyle(v),
+                PhysicalSide::Right => PropertyValue::BorderRightStyle(v),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomStyle(v),
+                PhysicalSide::Left => PropertyValue::BorderLeftStyle(v),
+            },
+            PropertyValue::BorderTopColor(v)
+            | PropertyValue::BorderRightColor(v)
+            | PropertyValue::BorderBottomColor(v)
+            | PropertyValue::BorderLeftColor(v) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopColor(v),
+                PhysicalSide::Right => PropertyValue::BorderRightColor(v),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomColor(v),
+                PhysicalSide::Left => PropertyValue::BorderLeftColor(v),
+            },
+            PropertyValue::BorderTopWidthCssWide(k)
+            | PropertyValue::BorderRightWidthCssWide(k)
+            | PropertyValue::BorderBottomWidthCssWide(k)
+            | PropertyValue::BorderLeftWidthCssWide(k) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopWidthCssWide(k),
+                PhysicalSide::Right => PropertyValue::BorderRightWidthCssWide(k),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomWidthCssWide(k),
+                PhysicalSide::Left => PropertyValue::BorderLeftWidthCssWide(k),
+            },
+            PropertyValue::BorderTopStyleCssWide(k)
+            | PropertyValue::BorderRightStyleCssWide(k)
+            | PropertyValue::BorderBottomStyleCssWide(k)
+            | PropertyValue::BorderLeftStyleCssWide(k) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopStyleCssWide(k),
+                PhysicalSide::Right => PropertyValue::BorderRightStyleCssWide(k),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomStyleCssWide(k),
+                PhysicalSide::Left => PropertyValue::BorderLeftStyleCssWide(k),
+            },
+            PropertyValue::BorderTopColorCssWide(k)
+            | PropertyValue::BorderRightColorCssWide(k)
+            | PropertyValue::BorderBottomColorCssWide(k)
+            | PropertyValue::BorderLeftColorCssWide(k) => match to {
+                PhysicalSide::Top => PropertyValue::BorderTopColorCssWide(k),
+                PhysicalSide::Right => PropertyValue::BorderRightColorCssWide(k),
+                PhysicalSide::Bottom => PropertyValue::BorderBottomColorCssWide(k),
+                PhysicalSide::Left => PropertyValue::BorderLeftColorCssWide(k),
+            },
+            // A border color that keeps `currentcolor` symbolic names its
+            // longhand in its key.
+            PropertyValue::ContextualColor(mut color)
+                if matches!(
+                    BoxProperty::of_key(color.key),
+                    Some(BoxProperty::BorderColor)
+                ) =>
+            {
+                color.key = BoxProperty::BorderColor.key(to);
+                PropertyValue::ContextualColor(color)
+            }
             PropertyValue::ContainIntrinsicWidth(v) | PropertyValue::ContainIntrinsicHeight(v) => {
                 match self.physical_of(BoxProperty::ContainIntrinsic, side) {
                     PhysicalSide::Left | PhysicalSide::Right => {
@@ -222,6 +287,9 @@ enum BoxProperty {
     Margin,
     Padding,
     Inset,
+    BorderWidth,
+    BorderStyle,
+    BorderColor,
     /// `contain-intrinsic-width` and `contain-intrinsic-height`: a side stands
     /// for its axis, the width for a left or right side and the height for a
     /// top or bottom one.
@@ -242,6 +310,18 @@ impl BoxProperty {
             PropertyKey::Top | PropertyKey::Right | PropertyKey::Bottom | PropertyKey::Left => {
                 Some(Self::Inset)
             }
+            PropertyKey::BorderTopWidth
+            | PropertyKey::BorderRightWidth
+            | PropertyKey::BorderBottomWidth
+            | PropertyKey::BorderLeftWidth => Some(Self::BorderWidth),
+            PropertyKey::BorderTopStyle
+            | PropertyKey::BorderRightStyle
+            | PropertyKey::BorderBottomStyle
+            | PropertyKey::BorderLeftStyle => Some(Self::BorderStyle),
+            PropertyKey::BorderTopColor
+            | PropertyKey::BorderRightColor
+            | PropertyKey::BorderBottomColor
+            | PropertyKey::BorderLeftColor => Some(Self::BorderColor),
             PropertyKey::ContainIntrinsicWidth | PropertyKey::ContainIntrinsicHeight => {
                 Some(Self::ContainIntrinsic)
             }
@@ -263,6 +343,18 @@ impl BoxProperty {
             (Self::Inset, PhysicalSide::Right) => PropertyKey::Right,
             (Self::Inset, PhysicalSide::Bottom) => PropertyKey::Bottom,
             (Self::Inset, PhysicalSide::Left) => PropertyKey::Left,
+            (Self::BorderWidth, PhysicalSide::Top) => PropertyKey::BorderTopWidth,
+            (Self::BorderWidth, PhysicalSide::Right) => PropertyKey::BorderRightWidth,
+            (Self::BorderWidth, PhysicalSide::Bottom) => PropertyKey::BorderBottomWidth,
+            (Self::BorderWidth, PhysicalSide::Left) => PropertyKey::BorderLeftWidth,
+            (Self::BorderStyle, PhysicalSide::Top) => PropertyKey::BorderTopStyle,
+            (Self::BorderStyle, PhysicalSide::Right) => PropertyKey::BorderRightStyle,
+            (Self::BorderStyle, PhysicalSide::Bottom) => PropertyKey::BorderBottomStyle,
+            (Self::BorderStyle, PhysicalSide::Left) => PropertyKey::BorderLeftStyle,
+            (Self::BorderColor, PhysicalSide::Top) => PropertyKey::BorderTopColor,
+            (Self::BorderColor, PhysicalSide::Right) => PropertyKey::BorderRightColor,
+            (Self::BorderColor, PhysicalSide::Bottom) => PropertyKey::BorderBottomColor,
+            (Self::BorderColor, PhysicalSide::Left) => PropertyKey::BorderLeftColor,
             (Self::ContainIntrinsic, PhysicalSide::Left | PhysicalSide::Right) => {
                 PropertyKey::ContainIntrinsicWidth
             }
@@ -286,6 +378,18 @@ impl BoxProperty {
             (Self::Inset, PhysicalSide::Right) => "right",
             (Self::Inset, PhysicalSide::Bottom) => "bottom",
             (Self::Inset, PhysicalSide::Left) => "left",
+            (Self::BorderWidth, PhysicalSide::Top) => "border-top-width",
+            (Self::BorderWidth, PhysicalSide::Right) => "border-right-width",
+            (Self::BorderWidth, PhysicalSide::Bottom) => "border-bottom-width",
+            (Self::BorderWidth, PhysicalSide::Left) => "border-left-width",
+            (Self::BorderStyle, PhysicalSide::Top) => "border-top-style",
+            (Self::BorderStyle, PhysicalSide::Right) => "border-right-style",
+            (Self::BorderStyle, PhysicalSide::Bottom) => "border-bottom-style",
+            (Self::BorderStyle, PhysicalSide::Left) => "border-left-style",
+            (Self::BorderColor, PhysicalSide::Top) => "border-top-color",
+            (Self::BorderColor, PhysicalSide::Right) => "border-right-color",
+            (Self::BorderColor, PhysicalSide::Bottom) => "border-bottom-color",
+            (Self::BorderColor, PhysicalSide::Left) => "border-left-color",
             (Self::ContainIntrinsic, PhysicalSide::Left | PhysicalSide::Right) => {
                 "contain-intrinsic-width"
             }
@@ -297,10 +401,12 @@ impl BoxProperty {
 }
 
 /// The flow-relative side the longhand `name` is written for, when `name`
-/// is one of the margin, padding, inset or intrinsic size flow-relative
-/// longhands.
+/// is one of the margin, padding, inset, border or intrinsic size
+/// flow-relative longhands, or one of the single-edge border shorthands
+/// (`border-block-start` and its siblings), whose longhands all share the
+/// side.
 pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
-    const LONGHANDS: [(&str, LogicalSide); 14] = [
+    const LONGHANDS: [(&str, LogicalSide); 30] = [
         ("margin-inline-start", LogicalSide::InlineStart),
         ("margin-inline-end", LogicalSide::InlineEnd),
         ("margin-block-start", LogicalSide::BlockStart),
@@ -315,10 +421,31 @@ pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
         ("inset-block-end", LogicalSide::BlockEnd),
         ("contain-intrinsic-inline-size", LogicalSide::InlineStart),
         ("contain-intrinsic-block-size", LogicalSide::BlockStart),
+        ("border-block-start", LogicalSide::BlockStart),
+        ("border-block-end", LogicalSide::BlockEnd),
+        ("border-inline-start", LogicalSide::InlineStart),
+        ("border-inline-end", LogicalSide::InlineEnd),
+        ("border-block-start-width", LogicalSide::BlockStart),
+        ("border-block-end-width", LogicalSide::BlockEnd),
+        ("border-inline-start-width", LogicalSide::InlineStart),
+        ("border-inline-end-width", LogicalSide::InlineEnd),
+        ("border-block-start-style", LogicalSide::BlockStart),
+        ("border-block-end-style", LogicalSide::BlockEnd),
+        ("border-inline-start-style", LogicalSide::InlineStart),
+        ("border-inline-end-style", LogicalSide::InlineEnd),
+        ("border-block-start-color", LogicalSide::BlockStart),
+        ("border-block-end-color", LogicalSide::BlockEnd),
+        ("border-inline-start-color", LogicalSide::InlineStart),
+        ("border-inline-end-color", LogicalSide::InlineEnd),
     ];
     // Every declaration passes through here; most names are shorter or
-    // longer than any of the fourteen, so their length rules them out first.
-    if !matches!(name.len(), 15..=20 | 28..=29) {
+    // longer than any of the thirty, so their length rules them out first.
+    // Only border names are 21 to 25 bytes long among them.
+    let border = || {
+        name.get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("border-"))
+    };
+    if !(matches!(name.len(), 15..=20 | 28..=29) || (matches!(name.len(), 21..=25) && border())) {
         return None;
     }
     LONGHANDS

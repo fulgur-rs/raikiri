@@ -8352,6 +8352,14 @@ impl PropertyKey {
                 | PropertyKey::BorderColor
                 | PropertyKey::BorderStyle
                 | PropertyKey::BorderWidth
+                | PropertyKey::BorderBlock
+                | PropertyKey::BorderInline
+                | PropertyKey::BorderBlockWidth
+                | PropertyKey::BorderBlockStyle
+                | PropertyKey::BorderBlockColor
+                | PropertyKey::BorderInlineWidth
+                | PropertyKey::BorderInlineStyle
+                | PropertyKey::BorderInlineColor
                 | PropertyKey::TextSpacing
                 | PropertyKey::Page
         )
@@ -11169,6 +11177,34 @@ pub enum PropertyValue {
     /// (`parse_border_color`: `currentcolor`, named, hash, or function).
     /// The 1–4-value expansion follows the margin precedent.
     BorderColor(Sides<BorderColor>),
+    /// `border-block: <line-width> || <line-style> || <color>` — the
+    /// flow-relative border shorthand of the block axis (CSS Logical
+    /// Properties and Values 1 §4.5
+    /// <https://www.w3.org/TR/css-logical-1/#border-shorthands>), holding the
+    /// start and end edges.
+    ///
+    /// It and the other flow-relative border shorthands of one axis below
+    /// expand into the longhands of the edges the axis has in `horizontal-tb`
+    /// with `direction: ltr` (top and bottom for the block axis, left and
+    /// right for the inline axis), tagged with their flow-relative sides, and
+    /// the cascade moves them by the element's writing mode like the other
+    /// flow-relative properties (see [`crate::rule::expand_border_axis`]).
+    BorderBlock(Box<StartEnd<Border>>),
+    /// `border-inline`: the inline-axis counterpart of [`Self::BorderBlock`].
+    BorderInline(Box<StartEnd<Border>>),
+    /// `border-block-width: <line-width>{1,2}`; only the widths of the edges
+    /// are used, the other parts keep their initial values.
+    BorderBlockWidth(Box<StartEnd<Border>>),
+    /// `border-block-style: <line-style>{1,2}`; only the styles are used.
+    BorderBlockStyle(Box<StartEnd<Border>>),
+    /// `border-block-color: <color>{1,2}`; only the colors are used.
+    BorderBlockColor(Box<StartEnd<Border>>),
+    /// `border-inline-width: <line-width>{1,2}`; only the widths are used.
+    BorderInlineWidth(Box<StartEnd<Border>>),
+    /// `border-inline-style: <line-style>{1,2}`; only the styles are used.
+    BorderInlineStyle(Box<StartEnd<Border>>),
+    /// `border-inline-color: <color>{1,2}`; only the colors are used.
+    BorderInlineColor(Box<StartEnd<Border>>),
     /// `border-top: <line-width> || <line-style> || <color>` — single-side shorthand
     /// for the three top-side longhands (CSS Backgrounds 3 §3.4
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>).
@@ -12553,6 +12589,16 @@ pub enum PropertyKey {
     BorderStyle,
     BorderWidth,
     BorderColor,
+    // Flow-relative border shorthands of one axis (CSS Logical Properties
+    // and Values 1 §4.5; semantics on PropertyValue::BorderBlock).
+    BorderBlock,
+    BorderInline,
+    BorderBlockWidth,
+    BorderBlockStyle,
+    BorderBlockColor,
+    BorderInlineWidth,
+    BorderInlineStyle,
+    BorderInlineColor,
     // width (CSS Sizing 3 §3.1.1).
     Width,
     // height (CSS Sizing 3 §3.1.1, semantics on the
@@ -13215,6 +13261,14 @@ impl PropertyValue {
             PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
             PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
             PropertyValue::BorderColor(_) => PropertyKey::BorderColor,
+            PropertyValue::BorderBlock(_) => PropertyKey::BorderBlock,
+            PropertyValue::BorderInline(_) => PropertyKey::BorderInline,
+            PropertyValue::BorderBlockWidth(_) => PropertyKey::BorderBlockWidth,
+            PropertyValue::BorderBlockStyle(_) => PropertyKey::BorderBlockStyle,
+            PropertyValue::BorderBlockColor(_) => PropertyKey::BorderBlockColor,
+            PropertyValue::BorderInlineWidth(_) => PropertyKey::BorderInlineWidth,
+            PropertyValue::BorderInlineStyle(_) => PropertyKey::BorderInlineStyle,
+            PropertyValue::BorderInlineColor(_) => PropertyKey::BorderInlineColor,
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
@@ -14358,6 +14412,34 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,
         "border-color" => PropertyKey::BorderColor,
+        // CSS Logical Properties and Values 1 §4.5 flow-relative border
+        // longhands and single-edge shorthands — keyed by the physical side
+        // they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode, like the margin and padding longhands.
+        "border-block-start" => PropertyKey::BorderTop,
+        "border-block-end" => PropertyKey::BorderBottom,
+        "border-inline-start" => PropertyKey::BorderLeft,
+        "border-inline-end" => PropertyKey::BorderRight,
+        "border-block-start-width" => PropertyKey::BorderTopWidth,
+        "border-block-end-width" => PropertyKey::BorderBottomWidth,
+        "border-inline-start-width" => PropertyKey::BorderLeftWidth,
+        "border-inline-end-width" => PropertyKey::BorderRightWidth,
+        "border-block-start-style" => PropertyKey::BorderTopStyle,
+        "border-block-end-style" => PropertyKey::BorderBottomStyle,
+        "border-inline-start-style" => PropertyKey::BorderLeftStyle,
+        "border-inline-end-style" => PropertyKey::BorderRightStyle,
+        "border-block-start-color" => PropertyKey::BorderTopColor,
+        "border-block-end-color" => PropertyKey::BorderBottomColor,
+        "border-inline-start-color" => PropertyKey::BorderLeftColor,
+        "border-inline-end-color" => PropertyKey::BorderRightColor,
+        "border-block" => PropertyKey::BorderBlock,
+        "border-inline" => PropertyKey::BorderInline,
+        "border-block-width" => PropertyKey::BorderBlockWidth,
+        "border-block-style" => PropertyKey::BorderBlockStyle,
+        "border-block-color" => PropertyKey::BorderBlockColor,
+        "border-inline-width" => PropertyKey::BorderInlineWidth,
+        "border-inline-style" => PropertyKey::BorderInlineStyle,
+        "border-inline-color" => PropertyKey::BorderInlineColor,
         "width" => PropertyKey::Width,
         "height" => PropertyKey::Height,
         "inline-size" => PropertyKey::InlineSize,
@@ -14560,4 +14642,24 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "aspect-ratio" => PropertyKey::AspectRatio,
         _ => return None,
     })
+}
+
+impl PropertyValue {
+    /// The value of the flow-relative border shorthand of one axis `key`
+    /// (`border-block`, `border-inline-width`, ...) with the edges `sides`;
+    /// `None` when `key` is not one of them.
+    pub(crate) fn border_axis(key: PropertyKey, sides: StartEnd<Border>) -> Option<Self> {
+        let sides = Box::new(sides);
+        Some(match key {
+            PropertyKey::BorderBlock => Self::BorderBlock(sides),
+            PropertyKey::BorderInline => Self::BorderInline(sides),
+            PropertyKey::BorderBlockWidth => Self::BorderBlockWidth(sides),
+            PropertyKey::BorderBlockStyle => Self::BorderBlockStyle(sides),
+            PropertyKey::BorderBlockColor => Self::BorderBlockColor(sides),
+            PropertyKey::BorderInlineWidth => Self::BorderInlineWidth(sides),
+            PropertyKey::BorderInlineStyle => Self::BorderInlineStyle(sides),
+            PropertyKey::BorderInlineColor => Self::BorderInlineColor(sides),
+            _ => return None,
+        })
+    }
 }

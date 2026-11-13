@@ -1399,6 +1399,7 @@ fn resolve_border_css_wide(
     candidates: ElementCandidates<'_>,
     winner: RankedDecl,
     deferred_resolver: &mut DeferredResolver<'_>,
+    flow: Option<FlowMapping>,
 ) -> Option<(PropertyValue, bool)> {
     let width_is_selected = matches!(
         key,
@@ -1485,12 +1486,24 @@ fn resolve_border_css_wide(
             Some(pick_keyword(keyword))
         }
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-            let rollback = find_rollback(candidates, key, winner.idx, keyword, deferred_resolver)?;
+            let index = rollback_index(
+                candidates,
+                key,
+                winner.idx,
+                keyword,
+                deferred_resolver,
+                flow,
+            )?;
+            // A flow-relative survivor moves to the physical side of `key`.
+            let to_slot = |value: PropertyValue| match (candidates.decls()[index].logical(), flow) {
+                (Some(side), Some(flow)) => flow.value(value, side),
+                _ => value,
+            };
             // Resolve one level: Deferred needs custom-property substitution;
             // a surviving Inherit/Initial/Unset marker resolves without further rollback.
-            match rollback {
+            match candidates.value(index).clone() {
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = deferred_resolver.resolve(&deferred)?;
+                    let resolved = to_slot(deferred_resolver.resolve(&deferred)?);
                     // A deferred var() may itself substitute to a CSS-wide keyword
                     // (e.g. `--x: inherit`). Resolve that single level directly
                     // against parent/initial to avoid rollback recursion.
@@ -1522,7 +1535,7 @@ fn resolve_border_css_wide(
                 | PropertyValue::BorderRightColorCssWide(kw)
                 | PropertyValue::BorderBottomColorCssWide(kw)
                 | PropertyValue::BorderLeftColorCssWide(kw) => Some(pick_keyword(kw)),
-                v => Some((v, false)),
+                v => Some((to_slot(v), false)),
             }
             .or(Some((pick_field(initial_border()), false)))
         }
@@ -1680,13 +1693,16 @@ pub(crate) fn apply_winners(
             };
             let mut resolve_border_wide =
                 |keyword, deferred_resolver: &mut DeferredResolver<'_>| {
+                    // The keyword resolves for the physical side the winner's
+                    // slot names, which a flow-relative declaration maps to.
                     let (value, width_is_computed) = resolve_border_css_wide(
                         keyword,
-                        winner_key,
+                        candidates.decls()[winner.idx].slot(flow),
                         inherited,
                         candidates,
                         winner,
                         deferred_resolver,
+                        flow,
                     )?;
                     inherited_border_width |= width_is_computed;
                     Some(value)
@@ -1885,7 +1901,9 @@ pub(crate) fn apply_winners(
                                 | crate::property::PropertyKey::ColumnRuleWidth
                         ))
                 {
-                    let index = match winner_key {
+                    // A flow-relative width was applied to the side its slot
+                    // names.
+                    let index = match candidates.decls()[winner.idx].slot(flow) {
                         crate::property::PropertyKey::BorderTopWidth => Some(0),
                         crate::property::PropertyKey::BorderRightWidth => Some(1),
                         crate::property::PropertyKey::BorderBottomWidth => Some(2),
@@ -3612,6 +3630,14 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderStyle(_)
         | PropertyValue::BorderWidth(_)
         | PropertyValue::BorderColor(_)
+        | PropertyValue::BorderBlock(_)
+        | PropertyValue::BorderInline(_)
+        | PropertyValue::BorderBlockWidth(_)
+        | PropertyValue::BorderBlockStyle(_)
+        | PropertyValue::BorderBlockColor(_)
+        | PropertyValue::BorderInlineWidth(_)
+        | PropertyValue::BorderInlineStyle(_)
+        | PropertyValue::BorderInlineColor(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
@@ -4586,6 +4612,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, |v| apply_value(v, target)),
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
+        value @ (PropertyValue::BorderBlock(_)
+        | PropertyValue::BorderInline(_)
+        | PropertyValue::BorderBlockWidth(_)
+        | PropertyValue::BorderBlockStyle(_)
+        | PropertyValue::BorderBlockColor(_)
+        | PropertyValue::BorderInlineWidth(_)
+        | PropertyValue::BorderInlineStyle(_)
+        | PropertyValue::BorderInlineColor(_)) => {
+            crate::rule::expand_border_axis(&value, |v, _| apply_value(v, target))
+        }
         PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
         PropertyValue::ObjectFit(v) => target.object_fit = v,
         PropertyValue::ObjectPosition(v) => target.object_position = v,

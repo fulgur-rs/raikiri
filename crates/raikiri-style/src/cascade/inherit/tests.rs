@@ -13957,3 +13957,206 @@ fn svg_shape_dimension_hints_are_limited_to_rectangles_and_images() {
     let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     assert_eq!(result.computed[node].width, Dimension::Auto);
 }
+
+/// The border widths of `values`, top, right, bottom and left.
+fn border_widths(values: &ComputedValues) -> [f32; 4] {
+    [
+        values.border.top.width().px(),
+        values.border.right.width().px(),
+        values.border.bottom.width().px(),
+        values.border.left.width().px(),
+    ]
+}
+
+#[test]
+fn flow_relative_border_colors_map_by_the_writing_mode() {
+    let red = BorderColor::Resolved(RED);
+    let blue = BorderColor::Resolved(BLUE);
+    let current = BorderColor::CurrentColor;
+    // `vertical-rl`: block-start is the right side, inline-start the top.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; border-block-color: red blue"),
+    );
+    let [top, right, bottom, left, ..] = line_colors(&values);
+    assert_eq!([top, right, bottom, left], [current, red, current, blue]);
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(
+            "writing-mode: vertical-rl; border-inline-start-color: red; border-inline-end: 1px solid blue",
+        ),
+    );
+    let [top, right, bottom, left, ..] = line_colors(&values);
+    assert_eq!([top, right, bottom, left], [red, current, blue, current]);
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("direction: rtl; border-inline-color: red; border-inline-start-color: blue"),
+    );
+    let [_, right, _, left, ..] = line_colors(&values);
+    assert_eq!([right, left], [blue, red]);
+    // A `var()` value projects onto each longhand of the shorthand.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("--c: blue red; writing-mode: vertical-lr; border-inline-color: var(--c)"),
+    );
+    let [top, _, bottom, _, ..] = line_colors(&values);
+    assert_eq!([top, bottom], [blue, red]);
+}
+
+#[test]
+fn flow_relative_border_shorthands_set_only_their_part() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("border: 2px solid red; border-block-style: dashed; border-inline-width: 5px 7px"),
+    );
+    assert_eq!(border_widths(&values), [2.0, 7.0, 2.0, 5.0]);
+    assert_eq!(
+        values.border.top.style(),
+        crate::property::BorderStyle::Dashed
+    );
+    assert_eq!(
+        values.border.left.style(),
+        crate::property::BorderStyle::Solid
+    );
+    assert_eq!(values.border.right.color, BorderColor::Resolved(RED));
+    // CSS-wide keywords on each axis shorthand reach only its own sides.
+    for (declaration, widths) in [
+        ("border-block-width: initial", [3.0, 2.0, 3.0, 2.0]),
+        ("border-inline-style: unset", [2.0, 0.0, 2.0, 0.0]),
+        ("border-block-color: inherit", [2.0, 2.0, 2.0, 2.0]),
+        ("border-inline: initial", [2.0, 0.0, 2.0, 0.0]),
+    ] {
+        let values = cascade_doc(
+            "",
+            "div",
+            Some(&format!("border: 2px solid; {declaration}")),
+        );
+        assert_eq!(border_widths(&values), widths, "{declaration}");
+    }
+}
+
+#[test]
+fn flow_relative_border_values_follow_their_grammar() {
+    let parse = |name: &str, source: &str| {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        crate::property::parse_value(name, &mut parser)
+            .filter(|_| parser.expect_exhausted().is_ok())
+    };
+    for (name, source) in [
+        ("border-block-width", "1px 2px"),
+        ("border-inline-style", "solid"),
+        ("border-block-color", "red currentcolor"),
+        ("border-inline", "thin dotted"),
+        ("border-block-start", "1px solid"),
+        ("border-inline-end-width", "thick"),
+        ("border-block-end-style", "double"),
+        ("border-inline-start-color", "currentcolor"),
+    ] {
+        assert!(parse(name, source).is_some(), "{name}: {source}");
+    }
+    for (name, source) in [
+        ("border-block-width", "1px 2px 3px"),
+        ("border-block-width", "10%"),
+        ("border-inline-style", "solid wavy"),
+        ("border-block", "1px 2px"),
+        ("border-inline-color", "1px"),
+        ("border-block-start-width", "-1px"),
+    ] {
+        assert!(parse(name, source).is_none(), "{name}: {source}");
+    }
+}
+
+#[test]
+fn applying_flow_relative_border_shorthands_directly_sets_their_longhands() {
+    let parse = |name: &str, source: &str| {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        crate::property::parse_value(name, &mut parser).expect("valid value")
+    };
+    let mut target = SpecifiedValues::initial();
+    apply_value(parse("border-block", "4px solid"), &mut target);
+    apply_value(parse("border-inline-style", "solid dashed"), &mut target);
+    apply_value(parse("border-inline-width", "1px 2px"), &mut target);
+    let values = target.finalize_as_root();
+    assert_eq!(border_widths(&values), [4.0, 2.0, 4.0, 1.0]);
+    assert_eq!(
+        values.border.right.style(),
+        crate::property::BorderStyle::Dashed
+    );
+}
+
+#[test]
+fn flow_relative_border_keeps_currentcolor_symbolic_on_its_mapped_side() {
+    let mix = BorderColor::Resolved(PINK);
+    let current = BorderColor::CurrentColor;
+    for declaration in [
+        format!("border-block-start-color: {MIX}"),
+        format!("border-block-start: 1px solid {MIX}"),
+        format!("border-block: 1px solid {MIX}; border-block-end-color: currentcolor"),
+        format!("border-block-color: {MIX} currentcolor"),
+    ] {
+        let values = cascade_doc(
+            "",
+            "div",
+            Some(&format!(
+                "color: red; writing-mode: vertical-rl; {declaration}"
+            )),
+        );
+        let [top, right, bottom, left, ..] = line_colors(&values);
+        assert_eq!(
+            [top, right, bottom, left],
+            [current, mix, current, current],
+            "{declaration}"
+        );
+    }
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(&format!(
+            "color: red; direction: rtl; border-inline-color: currentcolor {MIX}"
+        )),
+    );
+    let [_, right, _, left, ..] = line_colors(&values);
+    assert_eq!([right, left], [current, mix]);
+}
+
+#[test]
+fn inherited_flow_relative_border_width_marks_its_mapped_side() {
+    // At a device scale of 1.5, the parent's computed right width is
+    // 74 / 1.5px. The child inherits it on its right side (its
+    // block-start side in `vertical-rl`) without snapping it again, and its
+    // own top width is still snapped (49.75px is 74.625 device pixels).
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-right: 49.75px solid"));
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some(
+            "writing-mode: vertical-rl; border-top: 49.75px solid; \
+             border-block-start-width: inherit; border-block-start-style: solid",
+        ),
+    );
+    let tree = RuleTree::empty();
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+    let snapped = ComputedLength(74.0 / 1.5);
+    assert_eq!(result.computed[parent].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.top.width, snapped);
+}
