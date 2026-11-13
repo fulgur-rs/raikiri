@@ -57,21 +57,16 @@ impl<'a> AuthoredBox<'a> {
     }
 
     /// Whether the box is sized as `border-box`. A content-box with an `auto`
-    /// width and side borders but no block-axis padding or border is sized as
-    /// a border box too, as the bridge does.
+    /// width is sized as a border box too where the bridge sizes it so, as
+    /// `sized_as_border_box` describes.
     pub(super) fn is_border_box(&self) -> bool {
-        use ComputedLengthPercentageOrCalc as P;
         let cv = self.values();
         if cv.box_sizing == BoxSizing::BorderBox {
             return true;
         }
         let (width, _) = self.width_and_height();
-        let side_borders = cv.border.left.width().px() > 0.0 || cv.border.right.width().px() > 0.0;
-        let vertical_clean = cv.border.top.width().px() == 0.0
-            && cv.border.bottom.width().px() == 0.0
-            && matches!(cv.padding.top, P::Px(0.0) | P::Percent(0.0))
-            && matches!(cv.padding.bottom, P::Px(0.0) | P::Percent(0.0));
-        side_borders && vertical_clean && matches!(width, ComputedLengthPercentageOrAuto::Auto)
+        raikiri_layout_style::sized_as_border_box(cv, self.is_replaced())
+            && matches!(width, ComputedLengthPercentageOrAuto::Auto)
     }
 
     /// The left and right padding and border, resolved against `basis`.
