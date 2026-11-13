@@ -1119,6 +1119,31 @@ fn unresolved_item_percentages(
     idx: usize,
     vertical: bool,
 ) -> Vec<(usize, O)> {
+    item_percentages_left_unresolved(tree, idx, vertical, true)
+}
+
+/// Read every percentage height of the in-flow items of the row container
+/// `idx` whose writing mode is horizontal as their content height, and every percentage minimum and maximum
+/// height as `auto`: the cross size of the container they would refer to is
+/// not definite.
+pub(super) fn unresolved_item_cross_heights(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+) -> Vec<(usize, O)> {
+    item_percentages_left_unresolved(tree, idx, false, false)
+}
+
+/// The overrides that read the percentage sizes of the items of `idx` along
+/// the height, or the width where `vertical`, as unresolved: a minimum or a
+/// maximum as `auto`, and a size as `auto` along the main axis, where
+/// `with_basis` also reads a percentage flex basis as `content`, or as its
+/// content size along the cross axis.
+fn item_percentages_left_unresolved(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    vertical: bool,
+    with_basis: bool,
+) -> Vec<(usize, O)> {
     let properties = if vertical {
         [P::FlexBasis, P::Width, P::MinWidth, P::MaxWidth]
     } else {
@@ -1133,6 +1158,12 @@ fn unresolved_item_percentages(
         {
             continue;
         }
+        // The height of an orthogonal item is its inline size, and a
+        // percentage inline size resolves against the container even when
+        // the container's height is not definite.
+        if !with_basis && tree.has_vertical_writing_mode(child) {
+            continue;
+        }
         let basis = style.flex_basis();
         let (size, min, max) = (style.size(), style.min_size(), style.max_size());
         let (size, min, max) = if vertical {
@@ -1140,18 +1171,24 @@ fn unresolved_item_percentages(
         } else {
             (size.height, min.height, max.height)
         };
+        // Only a percentage refers to the container's size: a keyword such
+        // as `min-content` keeps its own meaning.
         let unresolved = [
-            !basis.is_auto() && basis.maybe_resolve(None::<f32>).is_none(),
-            !size.is_auto() && size.maybe_resolve(None::<f32>).is_none(),
-            !min.is_auto() && min.maybe_resolve(None::<f32>).is_none(),
-            !max.is_auto() && max.maybe_resolve(None::<f32>).is_none(),
+            with_basis && basis.uses_percentage(),
+            size.uses_percentage(),
+            min.uses_percentage(),
+            max.uses_percentage(),
         ];
         for (property, unresolved) in properties.into_iter().zip(unresolved) {
             if unresolved {
                 // An unresolved basis is `content`, which no override spells:
                 // the max-content block size is the content size of a column
                 // item.
-                let value = if property == P::FlexBasis {
+                // A cross size that does not resolve is still not `auto`,
+                // so the item is not stretched: it takes its content size.
+                let value = if property == P::FlexBasis
+                    || (!with_basis && matches!(property, P::Height | P::Width))
+                {
                     L::MaxContent
                 } else {
                     L::Auto

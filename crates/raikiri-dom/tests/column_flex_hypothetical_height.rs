@@ -2179,3 +2179,144 @@ fn a_bounded_wrapping_column_of_several_lines_leaves_item_percentages_of_childre
         ),
     ]);
 }
+
+#[test]
+fn a_height_that_a_minimum_and_a_smaller_maximum_decide_leaves_percentages_unresolved() {
+    // A `min-height` that the `max-height` does not exceed decides the height
+    // of the container, but its `height` is still `auto`: the percentage
+    // heights of the items, and of the children of items whose flex basis is
+    // their content, stay unresolved, and so does a percentage height in an
+    // absolutely positioned box sized the same way. An intrinsic keyword
+    // keeps its meaning, and the height of an orthogonal item is its inline
+    // size, which a percentage still resolves.
+    assert_cases(&[
+        (
+            "",
+            "display:inline-flex;flex-flow:column nowrap;box-sizing:content-box;min-height:80px;max-height:80px;padding:5px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 90.0]),
+                ("i0", [5.0, 5.0, 10.0, 60.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 65.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column nowrap;min-height:80px;max-height:80px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 80.0]),
+                ("i0", [0.0, 0.0, 10.0, 60.0]),
+                ("g", [0.0, 0.0, 10.0, 10.0]),
+                ("i1", [0.0, 60.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column nowrap;min-height:100px;max-height:80px;padding:5px;",
+            &[("height:50%", "x"), ("flex:0 0 20px", "x")],
+            &[
+                ("c", [0.0, 0.0, 20.0, 100.0]),
+                ("i0", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 15.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;min-height:80px;max-height:80px;",
+            &[
+                ("flex:0 0 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 40px", "x"),
+                ("flex:0 0 40px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 80.0]),
+                ("i0", [0.0, 0.0, 10.0, 10.0]),
+                ("g", [0.0, 0.0, 10.0, 10.0]),
+                ("i1", [0.0, 10.0, 10.0, 40.0]),
+                ("i2", [10.0, 0.0, 10.0, 40.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column wrap;min-height:100px;max-height:80px;padding:5px;",
+            &[
+                ("flex:1 1 auto", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 20.0, 100.0]),
+                ("i0", [5.0, 5.0, 10.0, 70.0]),
+                ("g", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [5.0, 75.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:column nowrap;min-height:80px;max-height:80px;",
+            &[
+                ("flex:1 0 30px", "<div id=g style=\"height:50%\">x</div>"),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 10.0, 80.0]),
+                ("i0", [0.0, 0.0, 10.0, 60.0]),
+                ("g", [0.0, 0.0, 10.0, 30.0]),
+                ("i1", [0.0, 60.0, 10.0, 20.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;flex-flow:row;min-height:80px;max-height:80px;padding:5px;",
+            &[("height:50%", "x"), ("flex:0 0 20px", "x")],
+            &[
+                ("c", [0.0, 0.0, 40.0, 80.0]),
+                ("i0", [5.0, 5.0, 10.0, 10.0]),
+                ("i1", [15.0, 5.0, 20.0, 70.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;min-height:80px;max-height:80px;",
+            &[("height:min-content", "xx xx xx"), ("flex:0 0 20px", "x")],
+            &[
+                ("c", [0.0, 0.0, 100.0, 80.0]),
+                ("i0", [0.0, 0.0, 80.0, 10.0]),
+                ("i1", [80.0, 0.0, 20.0, 80.0]),
+            ],
+        ),
+        (
+            "",
+            "display:inline-flex;min-height:80px;max-height:80px;",
+            &[
+                (
+                    "writing-mode:vertical-rl;height:calc(50% + 5px)",
+                    "xx xx xx",
+                ),
+                ("flex:0 0 20px", "x"),
+            ],
+            &[
+                ("c", [0.0, 0.0, 50.0, 80.0]),
+                ("i0", [0.0, 0.0, 30.0, 45.0]),
+                ("i1", [30.0, 0.0, 20.0, 80.0]),
+            ],
+        ),
+        (
+            "",
+            "position:absolute;min-height:100px;max-height:80px;",
+            &[("height:50%", "x"), ("flex:0 0 20px", "x")],
+            &[
+                ("c", [0.0, 0.0, 10.0, 100.0]),
+                ("i0", [0.0, 0.0, 10.0, 10.0]),
+                ("i1", [0.0, 10.0, 10.0, 10.0]),
+            ],
+        ),
+    ]);
+}
