@@ -28,6 +28,7 @@ use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustm
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
+use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::algorithms::baseline_lines::SAME_EDGE;
 use crate::layout::taffy_adapter::{LayoutCache, columns_have_no_content_minimum};
 use crate::node::FormattingContext;
@@ -1141,6 +1142,81 @@ fn ratio_max_size_overrides(
         },
     )
     .collect()
+}
+
+/// The minimum of each axis of the `candidates`, out-of-flow boxes with an
+/// aspect ratio in a containing block of `containing_size`, where the minimum
+/// the ratio carries over from the other axis exceeds the maximum the box
+/// states on that axis and either bound is a percentage or a `calc()`.
+///
+/// The out-of-flow view caps a carried minimum at the box's own maximum
+/// (CSS Sizing 4 §5.2), but it reads the style before the containing block is
+/// known, so it compares lengths only. The containing block of an out-of-flow
+/// box is definite, so both bounds resolve here to the pixels they come to in
+/// layout, and the cap goes in as the minimum of the axis, as the view reports
+/// it for lengths: `min-height: 50%` of a 300px containing block gives a
+/// square box with `max-width: 50px` a minimum width of 50px. A box that
+/// states either size is left alone, as is a table, whose sizes have their
+/// own overrides.
+pub(super) fn ratio_carried_minimum_caps(
+    tree: &LayoutSession<'_>,
+    candidates: &[NodeId],
+    containing_size: Size<f32>,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    let needs_containing_block = |value: LengthPercentageAuto| {
+        matches!(
+            value.expand(),
+            ExpandedLengthPercentageAuto::Percent(_) | ExpandedLengthPercentageAuto::Calc(_)
+        )
+    };
+    let mut entries = Vec::new();
+    for &candidate in candidates {
+        let idx = usize::from(candidate);
+        if is_table_content_limits(tree, idx) {
+            continue;
+        }
+        let style = tree.query_style(idx, ReadRole::Oof);
+        let (size, min, max) = (style.size(), style.min_size(), style.max_size());
+        let Some(ratio) = style.aspect_ratio() else {
+            continue;
+        };
+        if !size.width.is_auto() || !size.height.is_auto() {
+            continue;
+        }
+        let key = tree
+            .nodes
+            .box_key(idx)
+            .expect("an out-of-flow candidate has a box key");
+        // The width takes the minimum height times the ratio, and the height
+        // the minimum width over it.
+        let axes = [
+            (
+                LengthProperty::MinWidth,
+                min.width,
+                max.width.maybe_resolve(Some(containing_size.width)),
+                min.height.maybe_resolve(Some(containing_size.height)),
+                ratio,
+                needs_containing_block(max.width) || needs_containing_block(min.height),
+            ),
+            (
+                LengthProperty::MinHeight,
+                min.height,
+                max.height.maybe_resolve(Some(containing_size.height)),
+                min.width.maybe_resolve(Some(containing_size.width)),
+                ratio.recip(),
+                needs_containing_block(max.height) || needs_containing_block(min.width),
+            ),
+        ];
+        for (property, own_min, own_max, other_min, factor, resolves_here) in axes {
+            if let (true, true, Some(cap), Some(other)) =
+                (resolves_here, own_min.is_auto(), own_max, other_min)
+                && other * factor > cap
+            {
+                entries.push((key, px_length(property, cap)));
+            }
+        }
+    }
+    entries
 }
 
 /// The sizes of the `candidates`, out-of-flow boxes with an aspect ratio in a

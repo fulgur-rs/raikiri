@@ -1322,8 +1322,10 @@ fn states_a_fixed_size(size: raikiri_layout_style::values::Dimension) -> bool {
 /// limited by the maximum), and sizes `aspect-ratio: 1; max-width: 50px;
 /// min-height: 100px` at 50px by 100px. The cap is reported as the minimum, in
 /// the box `box-sizing` names, in which Taffy carries the bound too. Only
-/// lengths are compared: a percentage, which only the containing block
-/// resolves, leaves the bound to the library.
+/// lengths are compared here: where a bound is a percentage or `calc()` of the
+/// containing block, the out-of-flow layout states the capped minimum itself
+/// once it knows that block (`ratio_carried_minimum_caps` in the content
+/// limits).
 fn oof_capped_carried_minimum(
     view: raikiri_layout_style::LayoutStyleView<'_>,
 ) -> raikiri_layout_geometry::Size<Option<f32>> {
