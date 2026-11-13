@@ -3990,8 +3990,17 @@ fn content_keyword_width(
     parent_size: Size<Option<f32>>,
 ) -> Option<OwnWidth> {
     let size = tree.physical_style(node).size();
+    // A flex or grid container in a vertical writing mode keeps its height
+    // keyword apart from the horizontal layout fallback, as a vertical
+    // paragraph does.
     let keyword = if horizontal {
         size.width
+    } else if matches!(
+        tree.nodes[node].formatting_context,
+        crate::node::FormattingContext::Flex | crate::node::FormattingContext::Grid
+    ) && crate::layout::dispatch::used_writing_mode(tree, node).is_vertical()
+    {
+        tree.vertical_box_height(node)
     } else {
         tree.vertical_ifc_height(node)
     };

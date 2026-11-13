@@ -424,6 +424,15 @@ impl LayoutSession<'_> {
         {
             return height;
         }
+        self.vertical_box_height(idx)
+    }
+
+    /// The inline size of a box in a vertical writing mode: its physical
+    /// height, with a height keyword retained separately from the horizontal
+    /// layout fallback restored. A keyword is retained only for a height the
+    /// bridge hands Taffy as `auto`.
+    pub(crate) fn vertical_box_height(&self, idx: usize) -> Dimension {
+        let height = self.physical_style(idx).size().height;
         match self.retained_height_keyword(idx) {
             Some(raikiri_style::ContentSizeKeyword::MinContent) => Dimension::min_content(),
             Some(raikiri_style::ContentSizeKeyword::MaxContent) => Dimension::max_content(),

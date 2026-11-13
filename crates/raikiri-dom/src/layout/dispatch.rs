@@ -4345,6 +4345,7 @@ pub(crate) fn flex_layout(
     // horizontal axes.
     let inputs = if block_right_to_left(tree, usize::from(node_id)).is_some() {
         let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
+        let inputs = with_vertical_keyword_height(tree, node_id, inputs, flex_layout_sized);
         with_orthogonal_fit_content_height(tree, node_id, inputs)
     } else {
         inputs
@@ -5683,6 +5684,65 @@ fn with_orthogonal_fit_content_height(
     inputs
 }
 
+/// Give a flex or grid container that runs on the axes of a vertical writing
+/// mode, and whose `height` is a `min-content`, `max-content` or `fit-content` keyword,
+/// the height the keyword stands for: its min-content or max-content inline
+/// size, or the room it is offered within those, then within its `min-height`
+/// and `max-height` (CSS Sizing 3 section 3.1.1).
+///
+/// The bridge hands Taffy such a height as `auto` and the box keeps the keyword
+/// (see [`LayoutSession::retained_height_keyword`]), so the container would
+/// otherwise size its inline axis as an `auto` one: to fit the room it is
+/// offered, or stretched to it.
+fn with_vertical_keyword_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.height.is_some() || inputs.sizing_mode != SizingMode::InherentSize {
+        return inputs;
+    }
+    let Some(keyword) = tree.retained_height_keyword(idx) else {
+        return inputs;
+    };
+    let wraps = wraps_along(tree, idx, true);
+    let mut measure = |request: AvailableSpace| {
+        let mut probe = inputs;
+        probe.run_mode = RunMode::ComputeSize;
+        probe.axis = RequestedAxis::Vertical;
+        probe.available_space.height = request;
+        let measure = |tree: &mut LayoutSession<'_>| sized(tree, node_id, probe).size.height;
+        if wraps {
+            without_main_max(tree, idx, true, measure)
+        } else {
+            measure(tree)
+        }
+    };
+    let height = match keyword {
+        raikiri_style::ContentSizeKeyword::MinContent => measure(AvailableSpace::MinContent),
+        raikiri_style::ContentSizeKeyword::MaxContent => measure(AvailableSpace::MaxContent),
+        // `fit-content`, the remaining keyword, is the room offered, within
+        // the min-content and max-content sizes (CSS Sizing 3 section 3.1.1).
+        _ => match inputs.available_space.height {
+            AvailableSpace::Definite(room) => {
+                let max = measure(AvailableSpace::MaxContent);
+                room.min(max).max(measure(AvailableSpace::MinContent))
+            }
+            request => measure(request),
+        },
+    };
+    inputs.known_dimensions.height = Some(orthogonal_flow::clamp_to_height_limits(
+        tree,
+        idx,
+        inputs.parent_size,
+        height,
+    ));
+    inputs.known_dimensions_are_definite.height = true;
+    inputs
+}
+
 /// Whether the box `idx` is a flex container that wraps its items onto lines
 /// along its physical height (`along_height`) or width.
 fn wraps_along(tree: &LayoutSession<'_>, idx: usize, along_height: bool) -> bool {
@@ -5849,6 +5909,11 @@ fn with_clamped_keyword_width(
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
+    let inputs = if grid_oof::right_to_left(tree, usize::from(node_id)).is_some() {
+        with_vertical_keyword_height(tree, node_id, inputs, grid_layout_sized)
+    } else {
+        inputs
+    };
     content_limits::with_vertical_ratio_stated_size_clamp(
         tree,
         node_id,

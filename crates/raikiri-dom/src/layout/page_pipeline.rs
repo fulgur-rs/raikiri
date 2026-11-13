@@ -933,11 +933,14 @@ fn grows_with_paginated_content(
         && (block_axis.height().is_auto() || definite_content_height(document, node_id).is_none())
 }
 
-/// Whether `node_id` is a wrapping column flex container whose inline axis
-/// is the axis the pages of `root` break along: its height there is its
-/// inline size, which takes its items' intrinsic contributions rather than
-/// the lines they make, so an orthogonal item can be larger than its line
-/// and overflow it (CSS Flexbox 1 §9.9.2).
+/// Whether `node_id` is a row or wrapping column flex container whose inline
+/// axis is the axis the pages of `root` break along: its height there is its
+/// inline size. A wrapping column's inline size takes its items' intrinsic
+/// contributions rather than the lines they make, so an orthogonal item can be
+/// larger than its line and overflow it (CSS Flexbox 1 §9.9.2). A row's inline
+/// size is its main size, which items that cannot shrink below their flex base
+/// size overflow, and a wrapping row's `min-content` size is that of its
+/// largest item alone (CSS Flexbox 1 §9.9.1).
 fn orthogonal_flex_container(
     document: &super::context::LayoutSession<'_>,
     root: usize,
@@ -945,8 +948,7 @@ fn orthogonal_flex_container(
 ) -> bool {
     let style = document.pagination_style(node_id);
     document.nodes[node_id].formatting_context == FormattingContext::Flex
-        && !style.flex_direction_is_row()
-        && style.flex_wraps()
+        && (style.flex_direction_is_row() || style.flex_wraps())
         && document.nodes[node_id].used_writing_mode.is_vertical()
             != document.nodes[root].used_writing_mode.is_vertical()
 }
@@ -971,11 +973,10 @@ fn has_negative_item_margin(document: &super::context::LayoutSession<'_>, node_i
 /// or shrink it below its content; that content overflows the item rather
 /// than extending it. So does the content of a flex container in two cases.
 /// Its height comes from its items' outer sizes, so a negative margin can end
-/// it above the bottom of an item, which then overflows it. The
-/// height of a wrapping column whose inline axis runs along the pages is its
-/// inline size, which takes its items' intrinsic contributions rather than the
-/// lines they make, so an orthogonal item can overflow its line (CSS Flexbox 1
-/// §9.9.2). Only the growth pagination adds is enclosed. Other boxes are left
+/// it above the bottom of an item, which then overflows it. The height of a
+/// row or wrapping column whose inline axis runs along the pages is its inline
+/// size, which its items can overflow (see [`orthogonal_flex_container`]).
+/// Only the growth pagination adds is enclosed. Other boxes are left
 /// out: their auto height is the one the extension measures.
 fn unpaginated_content_overflow(
     document: &super::context::LayoutSession<'_>,
