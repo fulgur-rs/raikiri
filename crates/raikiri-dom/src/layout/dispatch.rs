@@ -3237,6 +3237,39 @@ pub(crate) fn contained_ratio_item(tree: &LayoutSession<'_>, idx: usize) -> bool
         && keeps_contained_ratio(tree, idx)
 }
 
+/// Whether the size-contained item `idx` of the row flex container being laid
+/// out derives its height from the width it flexes to (see
+/// [`contained_ratio_item`]): unless the container stretches it to a
+/// definite height, which it takes instead, and its width from it. A
+/// container stretches an item that aligns to `stretch` without an `auto`
+/// margin across the line, on a single line of a definite height; a
+/// container that wraps its items stretches them to their line, which their
+/// content makes.
+pub(crate) fn contained_row_item_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    if !contained_ratio_item(tree, idx) {
+        return false;
+    }
+    let Some(container) = tree.taffy_parent_of(idx) else {
+        return true;
+    };
+    let container_style = tree.physical_style(container);
+    let stretched = !container_style.flex_wraps()
+        && content_limits::alignment_stretches(&container_style, &tree.physical_style(idx), true)
+        && flex_item_percent_basis(tree, idx).is_some_and(|basis| basis.height.is_some());
+    !stretched
+}
+
+/// Whether the size-contained out-of-flow box `idx` derives its height from
+/// its width (see [`contained_ratio_item`]): unless its `top` and `bottom`
+/// insets give it a height, from which the ratio gives its width. Chromium
+/// sizes `position: absolute; contain: size; contain-intrinsic-size: 200px
+/// 200px; aspect-ratio: 1; max-width: 50px` at 50px by 200px, and with `top:
+/// 0; bottom: 0` and no `max-width` in a 300px high box at 300px by 300px.
+pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let inset = tree.physical_style(idx).inset();
+    contained_ratio_item(tree, idx) && (inset.top.is_auto() || inset.bottom.is_auto())
+}
+
 /// The height a size-contained box takes from its preferred aspect ratio once
 /// its width is known, in the box the ratio relates: Taffy's leaf algorithm
 /// divides the border-box width by the ratio whatever box `box-sizing` names,

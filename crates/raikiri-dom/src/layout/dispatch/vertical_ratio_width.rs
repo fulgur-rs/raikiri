@@ -221,7 +221,7 @@ fn ratio_size(
         // `contain: size; contain-intrinsic-size: 200px 200px; aspect-ratio:
         // 1; height: 100px` at 200px by 100px.
         None if tree.nodes[idx].size_containment.width => {
-            content_size(tree, node_id, inputs, true).width
+            content_size(tree, node_id, inputs, false).width
         }
         // With a stated height the width of the box is definite, so its
         // content is measured at that width for the percentages inside it.
