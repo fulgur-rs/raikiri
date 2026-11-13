@@ -756,7 +756,15 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
             ),
             (None, _) => (WritingMode::HorizontalTb, false),
         };
+        // A node without computed values of its own, such as text, is in the
+        // flow its parent is in.
+        let parent_multicol_flow = parent.is_some_and(|parent| doc.nodes[parent].multicol_flow);
+        let multicol_flow = match cascade.computed.get(id) {
+            Some(cv) if doc.nodes[id].kind() == NodeKind::Element => cv.multicol_flow,
+            _ => parent_multicol_flow,
+        };
         let node = &mut doc.nodes[id];
+        node.multicol_flow = multicol_flow;
         node.used_writing_mode = node.authored_writing_mode.unwrap_or(inherited);
         node.under_vertical_writing = under_vertical
             || node
