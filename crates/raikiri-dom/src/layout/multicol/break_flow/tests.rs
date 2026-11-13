@@ -1713,3 +1713,15 @@ fn percentage_margins_of_a_wrapper_resolve_against_the_column() {
     assert_eq!(placed(&doc, "wrapper"), vec![(0, 5.0, 0.0, 40.0, 40.0)]);
     assert_eq!(placed(&doc, "a"), vec![(0, 5.0, 0.0, 40.0, 20.0)]);
 }
+
+#[test]
+fn justify_self_places_wrappers_and_monolithic_boxes_in_their_column() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:160px">
+      <div id="wrapper" style="justify-self:end"><div style="width:20px;height:50px"></div><div style="width:20px;height:50px;break-before:avoid"></div><div style="width:20px;height:50px"></div></div>
+      <div id="atomic" style="display:flow-root;justify-self:center"><div style="width:20px;height:50px"></div></div>
+    </div>"#,
+    );
+    assert_eq!(boxes(&doc, "wrapper"), vec![(0, 30.0, 0.0, 20.0, 150.0)]);
+    assert_eq!(boxes(&doc, "atomic"), vec![(1, 65.0, 0.0, 20.0, 50.0)]);
+}
