@@ -199,9 +199,10 @@ fn nested_and_contained_blocks_keep_empty_and_nonempty_margin_rules() {
 }
 
 #[test]
-fn nonempty_cyclic_percentage_blocks_keep_their_existing_sizes() {
-    // Baseline 2b7016e8 and this change give 66.665px; Chromium gives 60px.
-    // Keep this separate from the browser-parity empty-block cases above.
+fn nonempty_cyclic_percentage_blocks_size_as_auto() {
+    // A percentage block size of a block whose container's block size the
+    // content decides behaves as `auto`, so it does not grow the container
+    // (CSS Sizing 3 §5.2.1), as in Chromium.
     for (mode, right_to_left) in [
         ("vertical-lr", false),
         ("vertical-rl", true),
@@ -218,10 +219,10 @@ fn nonempty_cyclic_percentage_blocks_keep_their_existing_sizes() {
             let body = format!(
                 "<div id=b style='writing-mode:{mode}'><div style='block-size:10px;margin-block-end:20px'></div><div style='inline-size:50px;block-size:10%;margin-block-start:30px;margin-block-end:5px{containment}'>{content}</div><div id=c style='block-size:10px;margin-block-start:10px'></div></div>"
             );
-            let x = if right_to_left { 8.0 } else { 64.665 };
+            let x = if right_to_left { 8.0 } else { 58.0 };
             check(
                 &body,
-                &[("b", (8.0, 8.0, 66.665, 50.0)), ("c", (x, 8.0, 10.0, 50.0))],
+                &[("b", (8.0, 8.0, 60.0, 50.0)), ("c", (x, 8.0, 10.0, 50.0))],
             );
         }
     }
