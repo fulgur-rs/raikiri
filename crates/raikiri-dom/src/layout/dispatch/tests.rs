@@ -68,8 +68,11 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
                 width: known_width,
                 height: None,
             },
+            // The reference fixes the width the probe returned the way a
+            // shrink-to-fit parent does: the width is known but not definite,
+            // so the percentage widths of the children stay `auto` in both.
             known_dimensions_are_definite: Size {
-                width: known_width.is_some(),
+                width: false,
                 height: false,
             },
             parent_size: Size {
@@ -100,7 +103,7 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
         input(None),
         Some(&mut context),
     );
-    assert_eq!(auto_output.size.width, 50.0);
+    assert_eq!(auto_output.size.width, 30.0);
     let auto_threshold = context.cleared_threshold(Clear::Both);
     assert!(
         auto_threshold.is_some(),

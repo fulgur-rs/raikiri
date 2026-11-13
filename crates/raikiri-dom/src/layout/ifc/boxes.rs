@@ -2552,7 +2552,7 @@ fn across_lines_of_child(
                     AcrossLines::Room(clamp_block_width_with_edge_basis(
                         tree,
                         node,
-                        width_basis,
+                        Some(width_basis),
                         inline_basis,
                         room,
                     ))
@@ -2591,8 +2591,8 @@ fn known_atomic_width(
     inline_basis: f32,
 ) -> Option<f32> {
     let narrowest = horizontal_padding_border(tree, node, inline_basis);
-    used_block_width_with_edge_basis(tree, node, physical_width, inline_basis).map(|width| {
-        clamp_block_width_with_edge_basis(tree, node, physical_width, inline_basis, width)
+    used_block_width_with_edge_basis(tree, node, Some(physical_width), inline_basis).map(|width| {
+        clamp_block_width_with_edge_basis(tree, node, Some(physical_width), inline_basis, width)
             .max(narrowest)
     })
 }
@@ -2951,7 +2951,7 @@ fn layout_block_child(
         let (dx, dy) = relative_inset(
             tree,
             node,
-            geometry.content_size.width,
+            relative_width(&geometry),
             relative_height(&geometry),
             geometry.axes,
         );
@@ -3078,8 +3078,16 @@ fn layout_vertical_block_child_with_edges(
     perform: bool,
     collapse_top: bool,
 ) -> BlockChild {
-    let basis = geometry.axes.block_extent(geometry.content_size);
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
+    // The width of a block child is its block size when it is vertical too, a
+    // percentage of the root's block size, which reads as `auto` while the
+    // root's content decides it (CSS Sizing 3 §5.2.1). A horizontal child is
+    // an orthogonal flow, whose percentage inline size refers to the initial
+    // containing block, the page area, then (CSS Writing Modes 4 §7.3).
+    let child_vertical = crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+    let basis = geometry
+        .vertical_width
+        .or_else(|| page_area_width(tree).filter(|_| !child_vertical));
     let mut margin = resolved_margins(tree, node, inline_basis);
     let style_margin = tree.physical_style(node).margin();
     let vertical_rl = matches!(
@@ -3094,17 +3102,10 @@ fn layout_vertical_block_child_with_edges(
     // A border box is never narrower than its padding and border, whatever
     // width it states: a flex container takes the width it is given as it is.
     let narrowest = horizontal_padding_border(tree, node, inline_basis);
-    // A `stretch` width fills the width of the root, the block extent, less the
-    // margins the root holds in (CSS Sizing 4 §5.1). While the content of the
-    // root decides that width, a vertical child acts as `auto` and a horizontal
-    // one, an orthogonal flow, fills the page area that stands in for the
-    // initial containing block (CSS Writing Modes 4 §7.3.1).
-    let stretched_width = geometry
-        .vertical_width
-        .or_else(|| {
-            page_area_width(tree)
-                .filter(|_| !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical())
-        })
+    // A `stretch` width fills the same `basis`, less the margins the root holds
+    // in (CSS Sizing 4 §5.1): a vertical child of a root whose content decides
+    // its width acts as `auto`, and a horizontal one fills the page area.
+    let stretched_width = basis
         .filter(|_| {
             matches!(
                 tree.physical_style(node).size().width.expand(),
@@ -3127,7 +3128,7 @@ fn layout_vertical_block_child_with_edges(
             clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width).max(narrowest)
         });
     let parent_size = Size {
-        width: Some(geometry.content_size.width),
+        width: basis,
         height: Some(inline_basis),
     };
     let shares_context = shares_vertical_root_context(tree, node, geometry.axes.writing_mode());
@@ -3150,7 +3151,7 @@ fn layout_vertical_block_child_with_edges(
             tree.nodes[node].display(),
             DisplayValue::Table | DisplayValue::InlineTable
         )
-        && !crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+        && !child_vertical;
     // A `stretch` height fills the inline extent of the root, less the margins,
     // when that is definite; a horizontal child would otherwise be as high as
     // its content.
@@ -3467,7 +3468,13 @@ fn layout_vertical_block_child_with_edges(
     );
     let mut child_candidates = OofCandidates::new();
     if perform {
-        let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            relative_width(&geometry),
+            relative_height(&geometry),
+            geometry.axes,
+        );
         let location = Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
@@ -3748,7 +3755,7 @@ fn layout_formatting_context_child(
         let (dx, dy) = relative_inset(
             tree,
             node,
-            geometry.content_size.width,
+            relative_width(&geometry),
             relative_height(&geometry),
             geometry.axes,
         );
@@ -4056,32 +4063,38 @@ fn content_keyword_width(
 /// the root's content width the way taffy's block algorithm resolves the size
 /// of an in-flow item; `None` for `auto`.
 fn used_block_width(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Option<f32> {
-    used_block_width_with_edge_basis(tree, node, basis, basis)
+    used_block_width_with_edge_basis(tree, node, Some(basis), basis)
 }
 
+/// As [`used_block_width`], with the percentage of the width resolved against
+/// `dimension_basis`, as `auto` when that is `None`, and the percentages of
+/// the padding and border against `edge_basis`.
 fn used_block_width_with_edge_basis(
     tree: &LayoutSession<'_>,
     node: usize,
-    dimension_basis: f32,
+    dimension_basis: Option<f32>,
     edge_basis: f32,
 ) -> Option<f32> {
     tree.physical_style(node)
         .size()
         .width
-        .maybe_resolve(Some(dimension_basis))
+        .maybe_resolve(dimension_basis)
         .map(|width| width + box_sizing_adjustment(tree, node, edge_basis))
 }
 
 /// `width` clamped by the block child's own `min-width` and `max-width`,
 /// resolved like [`used_block_width`].
 fn clamp_block_width(tree: &LayoutSession<'_>, node: usize, basis: f32, width: f32) -> f32 {
-    clamp_block_width_with_edge_basis(tree, node, basis, basis, width)
+    clamp_block_width_with_edge_basis(tree, node, Some(basis), basis, width)
 }
 
+/// As [`clamp_block_width`], with percentage limits of `dimension_basis`: a
+/// percentage `min-width` or `max-width` of an indefinite basis, `None`,
+/// limits nothing.
 fn clamp_block_width_with_edge_basis(
     tree: &LayoutSession<'_>,
     node: usize,
-    dimension_basis: f32,
+    dimension_basis: Option<f32>,
     edge_basis: f32,
     width: f32,
 ) -> f32 {
@@ -4090,12 +4103,12 @@ fn clamp_block_width_with_edge_basis(
     let min = style
         .min_size()
         .width
-        .maybe_resolve(Some(dimension_basis))
+        .maybe_resolve(dimension_basis)
         .map(|min| min + adjustment);
     let max = style
         .max_size()
         .width
-        .maybe_resolve(Some(dimension_basis))
+        .maybe_resolve(dimension_basis)
         .map(|max| max + adjustment);
     let width = max.map_or(width, |max| width.min(max));
     min.map_or(width, |min| width.max(min))
@@ -4243,7 +4256,7 @@ fn place_atomics(
             let (dx, dy) = relative_inset(
                 tree,
                 node,
-                geometry.content_size.width,
+                relative_width(&geometry),
                 relative_height(&geometry),
                 geometry.axes,
             );
@@ -4330,18 +4343,34 @@ pub(crate) fn atomic_fragments(
 /// The root's content height as the basis of a percentage `top` or
 /// `bottom`, when it is definite.
 fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
-    geometry.definite_height
+    if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+        geometry.definite_height
+    } else {
+        Some(geometry.content_size.height)
+    }
+}
+
+/// The width the horizontal percentage offsets of a relatively positioned box
+/// refer to: the content width of a horizontal root, and the block size of a
+/// vertical one when that is definite. While the content of a vertical root
+/// decides its width, a percentage offset computes to `auto`.
+fn relative_width(geometry: &FlowGeometry) -> Option<f32> {
+    if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+        Some(geometry.content_size.width)
+    } else {
+        geometry.vertical_width
+    }
 }
 
 /// The offset of a relatively positioned box (CSS 2.1 9.4.3): of opposing
 /// insets the one on the start side of the root's `axes` wins, percentages
-/// are of the root's content width and of its `height` when that is definite
-/// (otherwise a vertical percentage computes to `auto`). `(0, 0)` for a box
-/// in normal position.
+/// are of `basis`, the root's width when that is definite, and of its
+/// `height` when that is definite (otherwise a percentage computes to `auto`).
+/// `(0, 0)` for a box in normal position.
 fn relative_inset(
     tree: &LayoutSession<'_>,
     node: usize,
-    basis: f32,
+    basis: Option<f32>,
     height: Option<f32>,
     axes: IfcAxes,
 ) -> (f32, f32) {
@@ -4356,7 +4385,7 @@ fn relative_inset(
     {
         return (0.0, 0.0);
     }
-    let horizontal = |value: LengthPercentageAuto| value.maybe_resolve(Some(basis));
+    let horizontal = |value: LengthPercentageAuto| value.maybe_resolve(basis);
     let vertical = |value: LengthPercentageAuto| value.maybe_resolve(height);
     let (right_wins, bottom_wins) =
         super::style::inset_precedence(axes.writing_mode(), axes.direction() == Direction::Rtl);
