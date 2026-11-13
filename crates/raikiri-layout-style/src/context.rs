@@ -392,6 +392,10 @@ pub struct ViewContext {
     /// an `auto` or `normal` block alignment as `start`, which does not
     /// stretch the box. An explicit `stretch` still stretches its height.
     pub oof_height_follows_width: bool,
+    /// The minimum height, in the box `box-sizing` names, reported in place
+    /// of an `auto` minimum height, as [`Self::carried_min_width`] is for the
+    /// width.
+    pub carried_min_height: Option<f32>,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -409,6 +413,7 @@ impl Default for ViewContext {
             zero_min_main_axis: None,
             carried_min_width: None,
             oof_height_follows_width: false,
+            carried_min_height: None,
         }
     }
 }
