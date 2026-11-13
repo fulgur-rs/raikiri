@@ -1093,9 +1093,13 @@ pub(super) fn with_atomic_fit_content(
     algorithm: impl Fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutInput {
     let idx = usize::from(node_id);
+    // A `min-content`, `max-content` or `fit-content` height reaches Taffy as
+    // `auto`; the container measures the height its keyword stands for
+    // itself, and is measured here only under that intrinsic request.
     if inputs.known_dimensions.width.is_some()
         || !is_atomic_inline(tree, idx)
         || !shrinks_to_fit(tree, idx, &inputs)
+        || tree.retained_height_keyword(idx).is_some()
     {
         return inputs;
     }

@@ -1,6 +1,8 @@
-//! A flex container in a vertical writing mode has its inline size along its
-//! height. A `min-content`, `max-content` or `fit-content` height sizes it to
-//! that intrinsic size of its content (CSS Sizing 3 section 3.2), and the
+//! A flex or grid container in a vertical writing mode has its inline size
+//! along its height. A `min-content`, `max-content` or `fit-content` height
+//! sizes it to that intrinsic size of its content, or to the room it is
+//! offered within those (CSS Sizing 3 section 3.2), whether it is block-level,
+//! inline-level, floating, positioned, or a block in a vertical parent. The
 //! items it lays out keep overflowing it rather than growing it. The same
 //! holds for a row whose items cannot shrink to the room its parent gives it:
 //! the content that overflows the row's inline size does not grow the row
@@ -291,6 +293,252 @@ fn a_vertical_row_overflowing_its_parents_room_keeps_its_height() {
         (
             r#"<div style="height:50px"><div id=o style="writing-mode:vertical-rl"><div id=m style="height:70px">x</div></div></div>"#,
             &[("o", [0, 0, 10, 70]), ("m", [0, 0, 10, 70])],
+        ),
+    ]);
+}
+
+#[test]
+fn vertical_containers_take_their_keyword_heights_wherever_they_are_laid_out() {
+    assert_rows(&[
+        (
+            r#"<div id=o style="display:inline-block;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="float:left;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-block;writing-mode:vertical-rl;height:fit-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-flex;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 30]),
+                ("m", [0, 0, 20, 10]),
+                ("i", [0, 10, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-flex;flex-wrap:wrap;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 10]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-flex;flex-direction:column;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-grid;writing-mode:vertical-rl;height:fit-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-grid;writing-mode:vertical-rl;height:max-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:grid;writing-mode:vertical-rl;height:max-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:grid;writing-mode:vertical-lr;height:min-content;min-height:40px"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 40]),
+                ("m", [0, 0, 10, 40]),
+                ("i", [10, 0, 20, 40]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-grid;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="float:left;display:grid;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div style="position:relative"><div id=o style="position:absolute;display:grid;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:grid;grid-template-columns:auto auto;writing-mode:vertical-rl;height:min-content"><div id=m>xx xx</div><div id=i>xxx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [0, 0, 20, 20]),
+                ("i", [0, 20, 20, 30]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:grid;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:grid;height:max-content"><div id=m>x</div><div id=i>xx xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:grid;writing-mode:vertical-rl;height:min-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 30, 20]),
+                ("m", [20, 0, 10, 20]),
+                ("i", [0, 0, 20, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:grid;writing-mode:vertical-rl;height:fit-content"><div id=m>x</div><div id=i>xx xx</div></div>"#,
+            &[
+                ("o", [0, 0, 20, 50]),
+                ("m", [10, 0, 10, 50]),
+                ("i", [0, 0, 10, 50]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;flex-wrap:wrap;height:fit-content"><div id=m>xx</div><div id=i>xxx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 50]),
+                ("m", [0, 0, 10, 20]),
+                ("i", [0, 20, 10, 30]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;flex-wrap:wrap;height:min-content"><div id=m>xx</div><div id=i>xxx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 30]),
+                ("m", [10, 0, 10, 20]),
+                ("i", [0, 0, 10, 30]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;flex-direction:column;height:fit-content"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 20]),
+                ("m", [10, 0, 10, 20]),
+                ("i", [0, 0, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;height:fit-content"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 30]),
+                ("m", [0, 0, 10, 10]),
+                ("i", [0, 10, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:25px"><div id=o style="display:flex;flex-wrap:wrap;height:fit-content"><div id=m>xx</div><div id=i>xxx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 30]),
+                ("m", [10, 0, 10, 20]),
+                ("i", [0, 0, 10, 30]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;flex-wrap:wrap;height:fit-content"><div id=m style="flex:1 0 30px">x</div><div id=i style="flex:1 0 70px">x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 100]),
+                ("m", [0, 0, 10, 30]),
+                ("i", [0, 30, 10, 70]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:flex;writing-mode:vertical-rl;height:fit-content"><div id=m style="flex:1 0 30px">x</div><div id=i>xx</div></div>"#,
+            &[
+                ("o", [0, 0, 10, 50]),
+                ("m", [0, 0, 10, 30]),
+                ("i", [0, 30, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div id=o style="display:inline-flex;writing-mode:vertical-rl;height:fit-content"><div id=m style="flex:1 0 30px">x</div><div id=i>xx</div></div>"#,
+            &[
+                ("o", [0, 0, 10, 50]),
+                ("m", [0, 0, 10, 30]),
+                ("i", [0, 30, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="height:fit-content"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 20]),
+                ("m", [10, 0, 10, 20]),
+                ("i", [0, 0, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:grid;height:fit-content"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 20, 20]),
+                ("m", [10, 0, 10, 20]),
+                ("i", [0, 0, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;height:min-content"><div id=m>x</div><div id=i>xx</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 30]),
+                ("m", [0, 0, 10, 10]),
+                ("i", [0, 10, 10, 20]),
+            ],
+        ),
+        (
+            r#"<div style="writing-mode:vertical-rl;height:300px"><div id=o style="display:flex;flex-wrap:wrap;height:max-content"><div id=m style="flex:1 0 30px">x</div><div id=i style="flex:1 0 70px">x</div></div></div>"#,
+            &[
+                ("o", [0, 0, 10, 100]),
+                ("m", [0, 0, 10, 30]),
+                ("i", [0, 30, 10, 70]),
+            ],
         ),
     ]);
 }
