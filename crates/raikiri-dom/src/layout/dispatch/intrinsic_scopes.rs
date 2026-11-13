@@ -1224,18 +1224,146 @@ pub(super) fn with_ratio_height_probe<R>(
     }
 }
 
-/// What the automatic minimum size of a flex item with a horizontal main axis
-/// depends on.
+/// The physical axis that the main axis of a row flex container runs along:
+/// its width in a horizontal writing mode, its height in a vertical one. The
+/// cross axis is the other one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct RowAxis {
+    /// Whether the main axis runs along the physical height.
+    along_height: bool,
+    /// Whether the items are measured on the axes of the container, as they
+    /// are while it runs on the axes of its own vertical writing mode, where
+    /// the main axis is the width of the probes.
+    on_own_axes: bool,
+}
+
+impl RowAxis {
+    /// The main axis runs along the physical width.
+    pub(super) const WIDTH: Self = Self {
+        along_height: false,
+        on_own_axes: false,
+    };
+    /// The main axis runs along the physical height, and the items are measured
+    /// on their physical axes.
+    pub(super) const HEIGHT: Self = Self {
+        along_height: true,
+        on_own_axes: false,
+    };
+    /// The main axis runs along the physical height, and the items are measured
+    /// on the axes of the container, which runs on those of its vertical
+    /// writing mode.
+    pub(super) const HEIGHT_ON_OWN_AXES: Self = Self {
+        along_height: true,
+        on_own_axes: true,
+    };
+
+    /// The component of `size` along the main axis.
+    fn main<T>(self, size: Size<T>) -> T {
+        if self.along_height {
+            size.height
+        } else {
+            size.width
+        }
+    }
+
+    /// The component of `size` along the cross axis.
+    fn cross<T>(self, size: Size<T>) -> T {
+        if self.along_height {
+            size.width
+        } else {
+            size.height
+        }
+    }
+
+    /// The start and end components of `rect` along the main axis.
+    fn main_sides<T>(self, rect: Edges<T>) -> (T, T) {
+        if self.along_height {
+            (rect.top, rect.bottom)
+        } else {
+            (rect.left, rect.right)
+        }
+    }
+
+    /// The start and end components of `rect` along the cross axis.
+    fn cross_sides<T>(self, rect: Edges<T>) -> (T, T) {
+        if self.along_height {
+            (rect.left, rect.right)
+        } else {
+            (rect.top, rect.bottom)
+        }
+    }
+
+    /// The size, minimum and maximum properties along the main axis.
+    fn main_properties(self) -> [P; 3] {
+        if self.along_height {
+            [P::Height, P::MinHeight, P::MaxHeight]
+        } else {
+            [P::Width, P::MinWidth, P::MaxWidth]
+        }
+    }
+
+    /// Whether a probe of an item asks for its height: the main size of the
+    /// item where the items are measured on their physical axes. On the axes
+    /// of a vertical container the main size of a probe is its width.
+    fn probes_height(self) -> bool {
+        self.along_height && !self.on_own_axes
+    }
+
+    /// The main size of an item in the `size` a probe gave.
+    fn probed_main(self, size: Size<f32>) -> f32 {
+        if self.probes_height() {
+            size.height
+        } else {
+            size.width
+        }
+    }
+
+    /// The padding and border of the item `style` along this axis
+    /// (`along_main`) or across it, when its sizes are those of its content box,
+    /// and zero when they are those of its border box. A percentage padding is of
+    /// `basis`, the width of the containing block, and counts as zero where the
+    /// probe has not got one.
+    fn content_edges(
+        self,
+        style: &LayoutStyleView<'_>,
+        basis: Option<f32>,
+        along_main: bool,
+    ) -> f32 {
+        if style.box_sizing() != BoxSizing::ContentBox {
+            return 0.0;
+        }
+        self.edges(style, basis, along_main)
+    }
+
+    /// The padding and border of the item `style` along this axis
+    /// (`along_main`) or across it, whatever its `box-sizing`.
+    fn edges(self, style: &LayoutStyleView<'_>, basis: Option<f32>, along_main: bool) -> f32 {
+        let padding = style.padding().resolve_or_zero(basis);
+        let border = style.border().resolve_or_zero(basis);
+        let sides = |rect| {
+            let (start, end) = if along_main {
+                self.main_sides(rect)
+            } else {
+                self.cross_sides(rect)
+            };
+            start + end
+        };
+        sides(padding) + sides(border)
+    }
+}
+
+/// What the automatic minimum size of a flex item of a row container depends
+/// on.
 struct AutomaticMinimumInputs {
     /// Whether the item is a scroll container, which has no automatic minimum.
     scrolls: bool,
-    /// The `width` the item states, if it is a length.
+    /// The main size the item states, if it is a length.
     specified: Option<f32>,
-    /// The `max-width` of the item, if it is a length.
+    /// The maximum main size of the item, if it is a length.
     maximum: Option<f32>,
-    /// The border-box height the item has before its width is measured, if it
-    /// has one ([`height_before_width`]).
-    height: Option<f32>,
+    /// The border-box cross size the item has before its main size is
+    /// measured, if it has one ([`cross_before_main`]).
+    cross: Option<f32>,
     /// The padding and border of the item across its main axis, when its sizes
     /// are those of its content box, and zero when they are those of its border
     /// box.
@@ -1247,65 +1375,70 @@ struct AutomaticMinimumInputs {
 /// A percentage padding is of `basis`, the width of the containing block, and
 /// counts as zero where the probe has not got one.
 fn horizontal_content_edges(style: &LayoutStyleView<'_>, basis: Option<f32>) -> f32 {
-    if style.box_sizing() == BoxSizing::ContentBox {
-        let padding = style.padding().resolve_or_zero(basis);
-        let border = style.border().resolve_or_zero(basis);
-        padding.left + padding.right + border.left + border.right
-    } else {
-        0.0
-    }
+    RowAxis::WIDTH.content_edges(style, basis, true)
 }
 
-/// The border-box height the item `style` of a row flex container has before
-/// its width is measured, if it has one. That is the height it states, a
-/// percentage of the definite inner height `room` of the container, or the
-/// height the container gives it: `room` less the margins of the item, within
-/// its `min-height` and `max-height`. The container gives it to an item with
-/// `height: stretch` and to an item with an `auto` height that the container
-/// stretches, which a container of one line does to an item aligned to stretch
-/// that has no `auto` margin across (CSS Flexbox 1 section 9.4). The height is
-/// no less than the padding and border of the item.
-///
-/// spec: <https://www.w3.org/TR/css-flexbox-1/#definite-sizes>
+/// The border-box height the item `style` of a horizontal row flex container
+/// has before its width is measured ([`cross_before_main`]).
 fn height_before_width(
     style: &LayoutStyleView<'_>,
     room: Option<f32>,
     single_line: bool,
     container_align: AlignItems,
 ) -> Option<f32> {
-    let edges = {
-        let padding = style.padding().resolve_or_zero(None);
-        let border = style.border().resolve_or_zero(None);
-        padding.top + padding.bottom + border.top + border.bottom
-    };
+    cross_before_main(RowAxis::WIDTH, style, room, single_line, container_align)
+}
+
+/// The border-box cross size the item `style` of a row flex container whose
+/// main axis runs along `axis` has before its main size is measured, if it has
+/// one. That is the cross size it states, a percentage of the definite inner
+/// cross size `room` of the container, or the cross size the container gives
+/// it: `room` less the margins of the item, within its minimum and maximum cross
+/// size. The container gives it to an item whose cross size is `stretch` and to
+/// an item with an `auto` cross size that the container stretches, which a
+/// container of one line does to an item aligned to stretch that has no `auto`
+/// margin across (CSS Flexbox 1 section 9.4). The size is no less than the
+/// padding and border of the item.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#definite-sizes>
+fn cross_before_main(
+    axis: RowAxis,
+    style: &LayoutStyleView<'_>,
+    room: Option<f32>,
+    single_line: bool,
+    container_align: AlignItems,
+) -> Option<f32> {
+    let edges = axis.edges(style, None, false);
     let content_box = style.box_sizing() == BoxSizing::ContentBox;
     let outer = if content_box { edges } else { 0.0 };
-    let height = style.size().height;
-    if let Some(stated) = crate::layout::resolve_dimension(height, room) {
+    let size = axis.cross(style.size());
+    if let Some(stated) = crate::layout::resolve_dimension(size, room) {
         return Some((stated + outer).max(edges));
     }
     let room = room?;
-    let margin = style.margin();
-    // The self alignment of an item whose height is a content keyword is not
-    // `stretch`: the style reads the keyword as `auto` but does not stretch it.
-    let stretched = matches!(height.expand(), ExpandedDimension::Stretch)
-        || (height.is_auto()
+    let (start, end) = axis.cross_sides(style.margin());
+    // The self alignment of an item whose cross size is a content keyword is
+    // not `stretch`: the style reads the keyword as `auto` but does not stretch
+    // it.
+    let stretched = matches!(size.expand(), ExpandedDimension::Stretch)
+        || (size.is_auto()
             && single_line
-            && !margin.top.is_auto()
-            && !margin.bottom.is_auto()
+            && !start.is_auto()
+            && !end.is_auto()
             && matches!(
                 style.align_self().unwrap_or(container_align).keyword,
                 AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
             ));
     stretched.then(|| {
-        // A percentage margin counts as zero, as in the width of the container.
+        // A percentage margin counts as zero, as in the main size of the
+        // container.
         let bound = |length| {
             crate::layout::resolve_length_percentage_auto(length, Some(room))
                 .map(|bound| bound + outer)
         };
-        (room - margins_sum(margin.top, margin.bottom, None))
-            .min(bound(style.max_size().height).unwrap_or(f32::INFINITY))
-            .max(bound(style.min_size().height).unwrap_or(0.0))
+        (room - margins_sum(start, end, None))
+            .min(bound(axis.cross(style.max_size())).unwrap_or(f32::INFINITY))
+            .max(bound(axis.cross(style.min_size())).unwrap_or(0.0))
             .max(edges)
     })
 }
@@ -1325,52 +1458,76 @@ fn margins_sum(start: LengthPercentageAuto, end: LengthPercentageAuto, basis: Op
 /// it has one. A `sizing_mode` of `InherentSize` gives the item the width it
 /// states within its `min-width` and `max-width`.
 fn min_content_probe(sizing_mode: SizingMode, height: Option<f32>) -> LayoutInput {
+    main_probe(
+        RowAxis::WIDTH,
+        sizing_mode,
+        AvailableSpace::MinContent,
+        height,
+    )
+}
+
+/// The inputs that ask a flex item for its size along `axis` under `request`,
+/// measured with the border-box `cross` size it has before its main size is
+/// measured, if it has one. A `sizing_mode` of `InherentSize` gives the item the
+/// size it states within its limits; the size a `ContentSize` measure gives is
+/// the one Taffy takes as the contribution of the item.
+fn main_probe(
+    axis: RowAxis,
+    sizing_mode: SizingMode,
+    request: AvailableSpace,
+    cross: Option<f32>,
+) -> LayoutInput {
+    let (known_dimensions, available_space, requested) = if axis.probes_height() {
+        (
+            Size {
+                width: cross,
+                height: None,
+            },
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: request,
+            },
+            RequestedAxis::Vertical,
+        )
+    } else {
+        (
+            Size {
+                width: None,
+                height: cross,
+            },
+            Size {
+                width: request,
+                height: AvailableSpace::MaxContent,
+            },
+            RequestedAxis::Horizontal,
+        )
+    };
     LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode,
-        axis: RequestedAxis::Horizontal,
-        known_dimensions: Size {
-            width: None,
-            height,
-        },
+        axis: requested,
+        known_dimensions,
         known_dimensions_are_definite: Size {
-            width: false,
-            height: height.is_some(),
+            width: known_dimensions.width.is_some(),
+            height: known_dimensions.height.is_some(),
         },
         parent_size: Size::NONE,
-        available_space: Size {
-            width: AvailableSpace::MinContent,
-            height: AvailableSpace::MaxContent,
-        },
+        available_space,
         vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 
-/// The inputs that ask a flex item for its content width under `request`, the
-/// min-content or max-content width the container is asked for, measured with
-/// the border-box `height` it has before its width is measured, if it has one.
-/// The width a `ContentSize` measure gives is the one Taffy takes as the
-/// contribution of the item.
-fn content_probe(request: AvailableSpace, height: Option<f32>) -> LayoutInput {
-    LayoutInput {
-        available_space: Size {
-            width: request,
-            height: AvailableSpace::MaxContent,
-        },
-        ..min_content_probe(SizingMode::ContentSize, height)
-    }
-}
-
-/// The automatic minimum size of the item `child` of a row flex container, as
-/// the value of a `min-width` of the item's own: the smaller of its min-content
-/// size and the width it states, within its `max-width` (CSS Flexbox 1 section
-/// 4.5). The item is measured with the height it has before its width is
-/// measured, which gives a replaced item with an aspect ratio the width that
-/// follows from that height.
+/// The automatic minimum size of the item `child` of a row flex container along
+/// `axis`, as the value of a minimum of the item's own: the smaller of its
+/// min-content size and the size it states, within its maximum (CSS Flexbox 1
+/// section 4.5). The item is measured with the cross size it has before its main
+/// size is measured, which gives a replaced item with an aspect ratio the size
+/// that follows from that cross size.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#min-size-auto>
-fn automatic_minimum_width(
+fn automatic_minimum_size(
     tree: &mut LayoutSession<'_>,
+    axis: RowAxis,
     child: NodeId,
     inputs: AutomaticMinimumInputs,
 ) -> f32 {
@@ -1378,13 +1535,18 @@ fn automatic_minimum_width(
         return 0.0;
     }
     let across = inputs.across;
-    let measured = tree
-        .compute_child_layout(
+    let measured = axis.probed_main(
+        tree.compute_child_layout(
             child,
-            min_content_probe(SizingMode::ContentSize, inputs.height),
+            main_probe(
+                axis,
+                SizingMode::ContentSize,
+                AvailableSpace::MinContent,
+                inputs.cross,
+            ),
         )
-        .size
-        .width;
+        .size,
+    );
     let bounded = [inputs.specified, inputs.maximum]
         .into_iter()
         .flatten()
@@ -1393,9 +1555,12 @@ fn automatic_minimum_width(
 }
 
 /// Run `layout`, a layout of the row flex container `node_id`, with each item
-/// whose flex base size is a length bounded by it. `cross_room` is the definite
-/// inner height of the container, if it has one: the room that its items take
-/// their height from while they are measured for their minimum width.
+/// whose flex base size is a length bounded by it. `axis` is the physical axis
+/// its main axis runs along; the widths and heights below are its main and
+/// cross sizes in a vertical writing mode, where the bounds are installed as
+/// heights. `cross_room` is the definite inner cross size of the container, if
+/// it has one: the room that its items take their cross size from while they
+/// are measured for their minimum main size.
 ///
 /// An item contributes at least its flex base size to the intrinsic widths of
 /// the container when it cannot shrink and at most that size when it cannot
@@ -1427,6 +1592,7 @@ fn automatic_minimum_width(
 pub(super) fn with_flex_item_basis_bounds<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
+    axis: RowAxis,
     cross_room: Option<f32>,
     request: AvailableSpace,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
@@ -1452,9 +1618,9 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             {
                 continue;
             }
-            let height = height_before_width(&style, cross_room, single_line, container_align);
-            let edges = horizontal_content_edges(&style, None);
-            let stated = crate::layout::resolve_dimension(style.size().width, None);
+            let cross = cross_before_main(axis, &style, cross_room, single_line, container_align);
+            let edges = axis.content_edges(&style, None, true);
+            let stated = crate::layout::resolve_dimension(axis.main(style.size()), None);
             let finite_basis = crate::layout::resolve_dimension(style.flex_basis(), None)
                 .filter(|basis| basis.is_finite());
             // An item whose `width` is a `min-content` or `max-content` keyword
@@ -1466,7 +1632,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // so the keyword is replaced by the width it stands for, as a
             // length.
             let keyword = matches!(
-                style.size().width.expand(),
+                axis.main(style.size()).expand(),
                 ExpandedDimension::MinContent | ExpandedDimension::MaxContent
             );
             // Taffy gives a scroll container its flex base size as its
@@ -1477,30 +1643,38 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // instead, at the width of the container's request.
             let scrolls = finite_basis.is_some() && is_scroll_container(style.overflow());
             let keyword_width = keyword.then(|| {
-                let width = tree
-                    .compute_child_layout(
+                let size = axis.probed_main(
+                    tree.compute_child_layout(
                         child,
-                        min_content_probe(SizingMode::InherentSize, height),
+                        main_probe(
+                            axis,
+                            SizingMode::InherentSize,
+                            AvailableSpace::MinContent,
+                            cross,
+                        ),
                     )
-                    .size
-                    .width;
-                (width - edges).max(0.0)
+                    .size,
+                );
+                (size - edges).max(0.0)
             });
             let scroll_content =
                 (scrolls && stated.is_none() && keyword_width.is_none()).then(|| {
-                    let width = tree
-                        .compute_child_layout(child, content_probe(request, height))
-                        .size
-                        .width;
-                    (width - edges).max(0.0)
+                    let size = axis.probed_main(
+                        tree.compute_child_layout(
+                            child,
+                            main_probe(axis, SizingMode::ContentSize, request, cross),
+                        )
+                        .size,
+                    );
+                    (size - edges).max(0.0)
                 });
             let style = tree.physical_style(child_idx);
             let Some(basis) = finite_basis else {
                 if style.flex_basis().is_auto()
                     && let Some(width) = keyword_width
                 {
-                    let entry =
-                        O::length(P::Width, L::Px(width), true).expect("physical keyword width");
+                    let entry = O::length(axis.main_properties()[0], L::Px(width), true)
+                        .expect("physical keyword width");
                     let key = tree
                         .nodes
                         .box_key(child_idx)
@@ -1511,13 +1685,13 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 }
                 continue;
             };
-            let (min, max) = (style.min_size().width, style.max_size().width);
-            let margin = style.margin();
+            let (min, max) = (axis.main(style.min_size()), axis.main(style.max_size()));
+            let (margin_start, margin_end) = axis.main_sides(style.margin());
             // A percentage of the container's width, which the probe has not got,
             // bounds nothing, and is no margin either.
             let min_length = crate::layout::resolve_length_percentage_auto(min, None);
             let max_length = crate::layout::resolve_length_percentage_auto(max, None);
-            let margins = margins_sum(margin.left, margin.right, None);
+            let margins = margins_sum(margin_start, margin_end, None);
             let (cannot_shrink, cannot_grow) =
                 (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
             let preferred = stated.or(keyword_width);
@@ -1525,7 +1699,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 scrolls: is_scroll_container(style.overflow()),
                 specified: preferred,
                 maximum: max_length,
-                height,
+                cross,
                 across: edges,
             });
             if scrolls {
@@ -1556,7 +1730,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                 if cannot_shrink {
                     entries.push((key, O::flex_shrink(1.0)));
                 }
-                for property in [P::Width, P::MinWidth, P::MaxWidth] {
+                for property in axis.main_properties() {
                     entries.push((
                         key,
                         O::length(property, L::Px(width), true).expect("physical pinned width"),
@@ -1605,7 +1779,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // lowered, though no bound is installed for it otherwise.
             let automatic = automatic_minimum
                 .filter(|_| new_min.is_some() || new_max.is_some() || width_lowered)
-                .map(|inputs| automatic_minimum_width(tree, child, inputs));
+                .map(|inputs| automatic_minimum_size(tree, axis, child, inputs));
             let new_min = new_min
                 .map(|value| automatic.map_or(value, |minimum| value.max(minimum)))
                 .or(automatic.filter(|_| width_lowered));
@@ -1624,13 +1798,14 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             if cannot_shrink {
                 entries.push((key, O::flex_shrink(1.0)));
             }
+            let [size_property, min_property, max_property] = axis.main_properties();
             for (property, value) in [
                 (
-                    P::Width,
+                    size_property,
                     new_width.and_then(|value| crate::layout::resolve_dimension(value, None)),
                 ),
-                (P::MinWidth, new_min),
-                (P::MaxWidth, new_max),
+                (min_property, new_min),
+                (max_property, new_max),
             ] {
                 if let Some(value) = value {
                     entries.push((
@@ -1818,7 +1993,7 @@ fn content_height_probe(width: f32, inner_width: f32) -> LayoutInput {
 ///
 /// What an item contributes is its min-content size, or the width it states,
 /// within its `min-width` and `max-width`; the item is measured with the height
-/// it has before its width is measured, as [`automatic_minimum_width`] does.
+/// it has before its width is measured, as [`automatic_minimum_size`] does.
 /// `cross_room` is the definite inner height of the container, if it has one.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-sizes>

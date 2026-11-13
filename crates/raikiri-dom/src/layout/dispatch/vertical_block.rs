@@ -890,7 +890,7 @@ fn shrinks_to_fit(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
 
 /// Whether `idx` is an atomic inline, whose line offers it the room net of
 /// its margins. Inline tables size their columns instead.
-fn is_atomic_inline(tree: &LayoutSession<'_>, idx: usize) -> bool {
+pub(super) fn is_atomic_inline(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let display = tree.nodes[idx].display();
     display.is_atomic_inline_level() && display != DisplayValue::InlineTable
 }
@@ -1081,10 +1081,15 @@ pub(crate) fn with_orthogonal_fit_content(
 /// the fit-content inline size as the width when the container is an atomic
 /// inline whose inline size is `auto`. `algorithm` is the container's layout
 /// algorithm, which measures the sizes.
+///
+/// `flex_row` is given for a row flex container, whose main axis runs along
+/// its inline axis, measured on its physical axes before its frame was set up
+/// (see [`FlexRowFit`]).
 pub(super) fn with_atomic_fit_content(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
+    flex_row: Option<FlexRowFit>,
     algorithm: impl Fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutInput {
     let idx = usize::from(node_id);
@@ -1106,22 +1111,47 @@ pub(super) fn with_atomic_fit_content(
         inputs.available_space.width,
         margin,
         |tree, available| {
+            let floor = flex_row.and_then(|row| row.wrapping_floor);
+            if available == AvailableSpace::MinContent
+                && let Some(floor) = floor
+            {
+                return floor;
+            }
             let probe = |tree: &mut LayoutSession<'_>| {
                 algorithm(tree, node_id, probe_inputs(inputs, available))
                     .size
                     .width
+                    .max(floor.unwrap_or(0.0))
             };
-            if wrapping_row {
-                super::without_main_max(tree, idx, true, probe)
-            } else {
-                probe(tree)
+            let lifted = |tree: &mut LayoutSession<'_>| {
+                if wrapping_row {
+                    super::without_main_max(tree, idx, true, probe)
+                } else {
+                    probe(tree)
+                }
+            };
+            match flex_row {
+                Some(row) if row.bounds_items => super::with_flex_item_basis_bounds(
+                    tree,
+                    node_id,
+                    super::RowAxis::HEIGHT_ON_OWN_AXES,
+                    row.cross_room,
+                    available,
+                    lifted,
+                ),
+                _ => lifted(tree),
             }
         },
     );
     // The limits of the inline size are those of the physical height, whose
     // percentages refer to the height of the containing block.
+    // The limits leave the box no shorter than its own padding and border.
     let width = if wrapping_row {
+        let style = tree.physical_style(idx);
+        let padding = style.padding().resolve_or_zero(inputs.parent_size.height);
+        let border = style.border().resolve_or_zero(None);
         super::orthogonal_flow::clamp_to_height_limits(tree, idx, swap(inputs.parent_size), width)
+            .max(padding.top + padding.bottom + border.top + border.bottom)
     } else {
         width
     };
@@ -1140,6 +1170,27 @@ pub(super) fn with_atomic_fit_content(
         },
         ..inputs
     }
+}
+
+/// What the fit-content inline size of a row flex container that runs on the
+/// axes of its vertical writing mode takes from its items, measured on their
+/// physical axes before the container's frame is set up.
+#[derive(Clone, Copy)]
+pub(super) struct FlexRowFit {
+    /// Whether the flex base sizes of the items are to bound their
+    /// contributions to the inline sizes the fit-content size is measured from,
+    /// as they bound those to the widths of a horizontal row. A measure that is
+    /// itself one of the container's intrinsic heights has them bound already.
+    pub(super) bounds_items: bool,
+    /// The definite inner width of the container, its cross size, that its
+    /// items take their width from while they are measured, if it has one.
+    pub(super) cross_room: Option<f32>,
+    /// The border-box min-content inline size of a container that wraps its
+    /// items, that of its tallest item, as each item breaks onto a line of its
+    /// own (CSS Flexbox 1 section 9.9.1). It is the container's min-content
+    /// size and floors its max-content size, where Taffy sums the flex base
+    /// sizes of the items of a line for both.
+    pub(super) wrapping_floor: Option<f32>,
 }
 
 #[cfg(test)]

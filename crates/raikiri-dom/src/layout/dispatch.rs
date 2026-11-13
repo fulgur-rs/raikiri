@@ -1660,8 +1660,8 @@ mod inline_baseline;
 mod intrinsic_scopes;
 pub(super) mod table_items;
 use intrinsic_scopes::{
-    with_column_item_content_height, with_compressible_item_widths, with_flex_intrinsic_probe,
-    with_flex_item_basis_bounds, wrapping_min_content_width,
+    RowAxis, with_column_item_content_height, with_compressible_item_widths,
+    with_flex_intrinsic_probe, with_flex_item_basis_bounds, wrapping_min_content_width,
 };
 mod oof;
 mod orthogonal_flow;
@@ -4359,7 +4359,49 @@ fn with_wrapping_min_content_width(
         inputs.known_dimensions.width = Some(width);
         inputs.known_dimensions_are_definite.width = true;
     }
+    if inputs.available_space.height == AvailableSpace::MinContent
+        && let Some(height) = wrapping_row_min_content_height(tree, node_id, &inputs)
+    {
+        inputs.known_dimensions.height = Some(height);
+        inputs.known_dimensions_are_definite.height = true;
+    }
     inputs
+}
+
+/// [`wrapping_row_min_content_width`] for a row flex container that runs on the
+/// axes of a vertical writing mode, whose lines run along its height: the
+/// border-box height of its tallest item, as each item breaks onto a line of
+/// its own. Taffy sums the flex base sizes of the items of a line instead.
+/// `None` for any other container, and for one that states its height.
+fn wrapping_row_min_content_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.height.is_some()
+        || block_right_to_left(tree, idx).is_none()
+        || !{
+            let style = tree.physical_style(idx);
+            style.flex_direction_is_row() && style.flex_wraps()
+        }
+    {
+        return None;
+    }
+    let (size, inset, _) = tree.block_definite_size(idx, inputs);
+    if size.height.is_some() {
+        return None;
+    }
+    let room = item_cross_room_across(
+        size.width.map(|width| (width - inset.width).max(0.0)),
+        inputs,
+    );
+    let height = intrinsic_scopes::wrapping_min_content_height(tree, node_id, room) + inset.height;
+    // The limits leave the box no shorter than its own padding and border.
+    Some(
+        orthogonal_flow::clamp_to_height_limits(tree, idx, inputs.parent_size, height)
+            .max(inset.height),
+    )
 }
 
 /// The inner height of a flex container that its items take their height from
@@ -4370,6 +4412,27 @@ fn item_cross_room(inner_height: Option<f32>, inputs: &LayoutInput) -> Option<f3
     inner_height.filter(|_| {
         inputs.known_dimensions.height.is_none() || inputs.known_dimensions_are_definite.height
     })
+}
+
+/// The definite inner width of a vertical flex container, `inner_width`, if
+/// its items take their width from it while they are measured for their minimum
+/// height: the width the container is laid out at, where it is definite.
+fn item_cross_room_across(inner_width: Option<f32>, inputs: &LayoutInput) -> Option<f32> {
+    inner_width.filter(|_| {
+        inputs.known_dimensions.width.is_none() || inputs.known_dimensions_are_definite.width
+    })
+}
+
+/// Whether `inputs` ask for the size of a container at its min-content or
+/// max-content height, the intrinsic sizes along the main axis of a row in a
+/// vertical writing mode.
+fn measures_intrinsic_height(inputs: &LayoutInput) -> bool {
+    inputs.run_mode == RunMode::ComputeSize
+        && inputs.known_dimensions.height.is_none()
+        && matches!(
+            inputs.available_space.height,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
 }
 
 /// Whether `inputs` ask for the size of a container at its min-content or
@@ -4749,6 +4812,13 @@ fn flex_layout_items(
     } else {
         None
     };
+    let max_content_height_floor = if inputs.run_mode == RunMode::ComputeSize
+        && inputs.available_space.height == AvailableSpace::MaxContent
+    {
+        wrapping_row_min_content_height(tree, node_id, &inputs)
+    } else {
+        None
+    };
     let (size, inset, _) = tree.block_definite_size(idx, &inputs);
     let basis = Size {
         width: size.width.map(|width| (width - inset.width).max(0.0)),
@@ -4771,15 +4841,58 @@ fn flex_layout_items(
                         if block_right_to_left(tree, idx).is_some() {
                             // The container runs its algorithm on the axes of its own
                             // writing mode.
-                            tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
-                                let inputs = vertical_block::with_atomic_fit_content(
-                                    tree,
+                            // An atomic inline sizes its height to fit, from probes
+                            // on its own axes, whose items are bounded by their flex
+                            // base sizes and which the tallest item floors when it
+                            // wraps its items; those are measured on their physical
+                            // axes, before the container's frame is set up.
+                            let intrinsic_height = measures_intrinsic_height(&inputs);
+                            let cross_room = item_cross_room_across(basis.width, &inputs);
+                            let flex_row = (vertical_block::is_atomic_inline(tree, idx)
+                                && tree.physical_style(idx).flex_direction_is_row())
+                            .then(|| vertical_block::FlexRowFit {
+                                bounds_items: !intrinsic_height,
+                                cross_room,
+                                wrapping_floor: max_content_height_floor.or_else(|| {
+                                    wrapping_row_min_content_height(tree, node_id, &inputs)
+                                }),
+                            });
+                            let on_own_axes = |tree: &mut LayoutSession<'_>| {
+                                tree.compute_on_own_axes(
                                     node_id,
                                     inputs,
-                                    compute_flexbox_layout,
-                                );
-                                table_items::layout(tree, node_id, inputs, compute_flexbox_layout)
-                            })
+                                    |tree, node_id, inputs| {
+                                        let inputs = vertical_block::with_atomic_fit_content(
+                                            tree,
+                                            node_id,
+                                            inputs,
+                                            flex_row,
+                                            compute_flexbox_layout,
+                                        );
+                                        table_items::layout(
+                                            tree,
+                                            node_id,
+                                            inputs,
+                                            compute_flexbox_layout,
+                                        )
+                                    },
+                                )
+                            };
+                            // The main axis of a row runs along the height here, so
+                            // the flex base sizes of its items bound them while the
+                            // container is measured for its intrinsic heights.
+                            if intrinsic_height {
+                                with_flex_item_basis_bounds(
+                                    tree,
+                                    node_id,
+                                    RowAxis::HEIGHT,
+                                    cross_room,
+                                    inputs.available_space.height,
+                                    on_own_axes,
+                                )
+                            } else {
+                                on_own_axes(tree)
+                            }
                         } else if tree.context.flex_intrinsic_probe == Some(idx)
                             || measures_intrinsic_width(&inputs)
                         {
@@ -4790,6 +4903,7 @@ fn flex_layout_items(
                             with_flex_item_basis_bounds(
                                 tree,
                                 node_id,
+                                RowAxis::WIDTH,
                                 cross_room,
                                 inputs.available_space.width,
                                 |tree| {
@@ -4826,6 +4940,9 @@ fn flex_layout_items(
     }
     if let Some(width) = max_content_floor {
         output.size.width = output.size.width.max(width);
+    }
+    if let Some(height) = max_content_height_floor {
+        output.size.height = output.size.height.max(height);
     }
     if let Some(&(_, height)) = tree
         .context
@@ -6446,6 +6563,7 @@ fn grid_layout_sized(
                         tree,
                         node_id,
                         inputs,
+                        None,
                         compute_grid_layout,
                     );
                     algorithm(tree, node_id, inputs)
