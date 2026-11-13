@@ -1,4 +1,4 @@
-use super::super::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
+use super::super::{RowAxis, with_flex_intrinsic_probe, with_flex_item_basis_bounds};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
@@ -22,6 +22,7 @@ fn intrinsic_scope_preserves_unrelated_updates() {
         with_flex_item_basis_bounds(
             tree,
             NodeId::from(parent),
+            RowAxis::WIDTH,
             None,
             AvailableSpace::MaxContent,
             |tree| {
@@ -54,6 +55,7 @@ fn intrinsic_scope_measures_a_stretched_item_with_the_room_of_its_container() {
             with_flex_item_basis_bounds(
                 tree,
                 NodeId::from(parent),
+                RowAxis::WIDTH,
                 room,
                 AvailableSpace::MaxContent,
                 |tree| {
@@ -90,6 +92,7 @@ fn intrinsic_scope_restores_marker_and_original_panic() {
                     with_flex_item_basis_bounds(
                         tree,
                         NodeId::from(parent),
+                        RowAxis::WIDTH,
                         None,
                         AvailableSpace::MaxContent,
                         |_| panic!("intrinsic body failure"),
@@ -159,6 +162,7 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
     with_flex_item_basis_bounds(
         &mut tree,
         NodeId::from(parent),
+        RowAxis::WIDTH,
         None,
         AvailableSpace::MaxContent,
         |tree| {
@@ -218,6 +222,7 @@ fn intrinsic_scope_sets_the_bounded_item_cache_apart_and_keeps_the_generation() 
             with_flex_item_basis_bounds(
                 tree,
                 NodeId::from(parent),
+                RowAxis::WIDTH,
                 None,
                 AvailableSpace::MaxContent,
                 |tree| {
@@ -276,6 +281,7 @@ fn intrinsic_scope_discards_the_saved_item_cache_when_the_generation_moves() {
             with_flex_item_basis_bounds(
                 tree,
                 NodeId::from(parent),
+                RowAxis::WIDTH,
                 None,
                 AvailableSpace::MaxContent,
                 |tree| {
@@ -391,6 +397,7 @@ fn intrinsic_scope_dirty_descendant_preserves_original_panic() {
             with_flex_item_basis_bounds(
                 tree,
                 NodeId::from(parent),
+                RowAxis::WIDTH,
                 None,
                 AvailableSpace::MaxContent,
                 |tree| {
@@ -437,6 +444,7 @@ fn intrinsic_scope_later_child_setup_failure_restores_prefix() {
             with_flex_item_basis_bounds(
                 tree,
                 NodeId::from(parent),
+                RowAxis::WIDTH,
                 None,
                 AvailableSpace::MaxContent,
                 |_| panic!("unreachable body"),

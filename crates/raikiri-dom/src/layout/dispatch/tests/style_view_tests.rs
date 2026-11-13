@@ -71,6 +71,7 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
     let result: Result<(), ()> = super::super::with_flex_item_basis_bounds(
         &mut tree,
         NodeId::from(parent),
+        super::super::RowAxis::WIDTH,
         None,
         AvailableSpace::MaxContent,
         |tree| {
@@ -96,6 +97,7 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
         super::super::with_flex_item_basis_bounds(
             &mut tree,
             NodeId::from(parent),
+            super::super::RowAxis::WIDTH,
             None,
             AvailableSpace::MaxContent,
             |_| panic!("flex bound unwind"),
