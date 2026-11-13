@@ -3226,15 +3226,20 @@ fn keeps_contained_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// sizes `contain: size; contain-intrinsic-size: 200px 200px; aspect-ratio:
 /// 1; max-width: 50px` at 50px by 200px as a flex or grid item, as it does
 /// in block flow. Such an item is left to derive its height itself.
+/// A scroll container has no such floor.
 pub(crate) fn contained_ratio_item(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = &tree.nodes[idx];
+    if !node.size_containment.width
+        || !node.size_containment.height
+        || contain_intrinsic_natural(node).is_none()
+        || !keeps_contained_ratio(tree, idx)
+    {
+        return false;
+    }
     let style = tree.physical_style(idx);
-    node.size_containment.width
-        && node.size_containment.height
-        && contain_intrinsic_natural(node).is_some()
-        && style.min_size().height.is_auto()
+    style.min_size().height.is_auto()
         && style.max_size().height.is_auto()
-        && keeps_contained_ratio(tree, idx)
+        && !style.overflow().y.is_scroll_container()
 }
 
 /// Whether the size-contained item `idx` of the row flex container being laid
@@ -3242,11 +3247,12 @@ pub(crate) fn contained_ratio_item(tree: &LayoutSession<'_>, idx: usize) -> bool
 /// [`contained_ratio_item`]): unless the container stretches it to a
 /// definite height, which it takes instead, and its width from it. A
 /// container stretches an item that aligns to `stretch` without an `auto`
-/// margin across the line, on a single line of a definite height; a
-/// container that wraps its items stretches them to their line, which their
-/// content makes.
+/// margin across the line to its definite height when it lays its items out
+/// on a single line. A container that wraps its items settles the height of
+/// their lines after it measures them, so they are measured as derived from
+/// their width, and stretched to their line after that.
 pub(crate) fn contained_row_item_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    if !contained_ratio_item(tree, idx) {
+    if tree.nodes[idx].layout_position() == Position::Absolute || !contained_ratio_item(tree, idx) {
         return false;
     }
     let Some(container) = tree.taffy_parent_of(idx) else {
@@ -3266,8 +3272,10 @@ pub(crate) fn contained_row_item_follows_width(tree: &LayoutSession<'_>, idx: us
 /// 200px; aspect-ratio: 1; max-width: 50px` at 50px by 200px, and with `top:
 /// 0; bottom: 0` and no `max-width` in a 300px high box at 300px by 300px.
 pub(crate) fn contained_oof_follows_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    let inset = tree.physical_style(idx).inset();
-    contained_ratio_item(tree, idx) && (inset.top.is_auto() || inset.bottom.is_auto())
+    contained_ratio_item(tree, idx) && {
+        let inset = tree.physical_style(idx).inset();
+        inset.top.is_auto() || inset.bottom.is_auto()
+    }
 }
 
 /// The height a size-contained box takes from its preferred aspect ratio once

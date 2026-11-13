@@ -415,11 +415,11 @@ fn a_contained_vertical_box_takes_its_width_from_its_ratio() {
 
 #[test]
 fn a_contained_flex_item_stretched_to_a_definite_height_takes_it() {
-    // A row container with a definite height, or a `min-height`, stretches
-    // its contained item to it, and the ratio gives the width from that
-    // height within a `max-width`; one that wraps its items, or aligns the
-    // item to the center, leaves it the height `contain-intrinsic-size`
-    // names, as does a line that a taller sibling makes.
+    // A row container stretches its contained item to its definite height
+    // or `min-height`, to the one line it wraps its items onto, or to a line
+    // that a taller sibling makes, and the ratio gives the width from that
+    // height within a `max-width`. An item aligned to the center keeps the
+    // height `contain-intrinsic-size` names.
     assert_rows(&[
         (
             "<div style='display:flex;width:500px;height:300px'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;max-width:400px'></div></div>",
