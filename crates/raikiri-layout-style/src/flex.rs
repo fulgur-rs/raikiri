@@ -44,7 +44,7 @@ pub fn items(value: A) -> values::AlignItems {
         A::SelfStart => values::AlignItems::SELF_START,
         A::SelfEnd => values::AlignItems::SELF_END,
         // Only a caller that knows the alignment container can tell which
-        // inline edge is the line-left one (see [`line_relative`]); read
+        // inline edge is the line-left one (see `line_relative`); read
         // without it, `left` and `right` are the edges of a left-to-right
         // container.
         A::Left => values::AlignItems::START,
