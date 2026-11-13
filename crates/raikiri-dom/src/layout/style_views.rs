@@ -544,6 +544,52 @@ impl LayoutSession<'_> {
         view.with_context(context)
     }
 
+    /// Whether the minimum height that the aspect ratio of the grid item
+    /// `idx` carries over to its width needs the grid area to resolve: the
+    /// item states no size and no `min-width`, a `min-height`, and a
+    /// percentage in that `min-height`, in its padding or in its
+    /// `max-width`, and its inline alignment is `normal`. A column whose
+    /// minimum is `min-content` or `max-content` takes the content
+    /// contribution of the item instead, so a grid with such a column leaves
+    /// the item to the library.
+    fn grid_item_percent_carry(&self, idx: usize, item: &LayoutStyleView<'_>) -> bool {
+        use raikiri_layout_style::values::{
+            AlignItemsKeyword, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+        };
+        if !item.size().width.is_auto()
+            || !item.size().height.is_auto()
+            || !item.min_size().width.is_auto()
+            || item.min_size().height.is_auto()
+        {
+            return false;
+        }
+        let auto_percent = |value: raikiri_layout_style::values::LengthPercentageAuto| match value
+            .expand()
+        {
+            ExpandedLengthPercentageAuto::Auto | ExpandedLengthPercentageAuto::Length(_) => false,
+            ExpandedLengthPercentageAuto::Calc(value) => value.has_percentage(),
+            _ => true,
+        };
+        let percent = |edge: raikiri_layout_style::values::LengthPercentage| match edge.expand() {
+            ExpandedLengthPercentage::Length(_) => false,
+            ExpandedLengthPercentage::Calc(value) => value.has_percentage(),
+            _ => true,
+        };
+        let padding = item.padding();
+        let needs_area = auto_percent(item.min_size().height)
+            || auto_percent(item.max_size().width)
+            || [padding.left, padding.right, padding.top, padding.bottom]
+                .into_iter()
+                .any(percent);
+        needs_area
+            && self.grid_item_justify_self(idx).keyword == AlignItemsKeyword::Normal
+            && self.taffy_parent_of(idx).is_some_and(|container| {
+                crate::layout::taffy_adapter::columns_have_no_content_minimum(
+                    &self.physical_style(container),
+                )
+            })
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -614,12 +660,12 @@ impl LayoutSession<'_> {
                     | ExpandedLengthPercentageAuto::Percent(_)
                     | ExpandedLengthPercentageAuto::Calc(_)
             );
-        if !vertical_container
-            && (!matches!(
-                self.nodes[idx].formatting_context,
-                FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
-            ) || !(percentage_sized || auto_with_minimum))
-        {
+        let measured = matches!(
+            self.nodes[idx].formatting_context,
+            FormattingContext::Block | FormattingContext::Inline | FormattingContext::Grid
+        ) && (percentage_sized || auto_with_minimum);
+        // Any box measures itself for a minimum that the area resolves.
+        if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
         }
         let alignment = item.bridge_align_self().unwrap_or_else(|| {
@@ -657,7 +703,8 @@ impl LayoutSession<'_> {
     /// past a narrower area: `aspect-ratio: 1; min-height: 100px` in a 50px
     /// column is 100px wide. An item that asks for `stretch` keeps the width
     /// of its area, and a `max-width` the item states caps the carried width.
-    /// Percentages that only the grid area resolves leave the item as it was.
+    /// Percentages that only the grid area resolves are left to the item,
+    /// which measures itself once the area is known (`grid_item_percent_carry`).
     fn grid_item_carried_min_width(&self, idx: usize) -> Option<f32> {
         use raikiri_layout_style::values::{
             AlignItemsKeyword, BoxSizing, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,

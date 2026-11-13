@@ -245,3 +245,178 @@ fn grid_items_aligned_or_in_other_tracks_take_the_carried_width() {
         ),
     ]);
 }
+
+#[test]
+fn a_percentage_min_height_or_padding_carries_over_once_the_area_is_known() {
+    // A `min-height` in percent of the grid area's height, or in `calc()`
+    // with one, and padding in percent of its width, with ratios of 1 and 2,
+    // either `box-sizing`, an `auto 1` ratio, a `max-width` in length or
+    // percent, a fixed row, rows that the grid stretches and an `align-items`
+    // of `start`. An item that asks for `stretch` keeps the width of its
+    // area.
+    assert_rows(&[
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 105]), ("c", [0, 300, 105, 105])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:20%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 60, 60])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px;grid-template-rows:200px'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px;grid-template-rows:200px'><div id=c style='aspect-ratio:2;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 200, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%;box-sizing:border-box;padding:10px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%;padding:10px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 170, 170])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:calc(50% + 10px)'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 160, 160])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%;max-width:80px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 80, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%;justify-self:stretch'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 50, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px;align-items:start'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px;box-sizing:border-box'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;padding:20%;min-height:10px;box-sizing:border-box'></div></div></div>",
+            &[("g", [0, 300, 50, 50]), ("c", [0, 300, 50, 50])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:auto 1;padding:5%;min-height:100px;box-sizing:border-box'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px;max-width:90px'></div></div></div>",
+            &[("g", [0, 300, 50, 105]), ("c", [0, 300, 95, 105])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px;max-width:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 105]), ("c", [0, 300, 30, 105])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='aspect-ratio:1;min-height:50%;max-width:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 25, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;grid-template-rows:100px'><div id=c style='aspect-ratio:1;min-height:150%'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 150, 150])],
+        ),
+    ]);
+}
+
+#[test]
+fn columns_sized_by_content_or_with_a_fixed_maximum_keep_their_own_widths() {
+    // A `min-content` or `max-content` column takes the item's content
+    // contribution, and `minmax(0, 1fr)` and `minmax(auto, 50px)` columns are
+    // as wide as their maximum, past which the carried width reaches.
+    assert_rows(&[
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:max-content'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 300, 300])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:max-content'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 300, 300])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:min-content'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 300, 300])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:min-content'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 300, 300])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:minmax(0,1fr)'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:minmax(0,1fr)'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 105, 105])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:minmax(auto,50px)'><div id=c style='aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;height:300px;grid-template-columns:minmax(auto,50px)'><div id=c style='aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 105, 105])],
+        ),
+    ]);
+}
+
+#[test]
+fn any_item_box_carries_a_minimum_that_the_area_resolves() {
+    // Flex, grid, flow-root and table items with a `min-height` in percent
+    // or padding in percent or in `calc()` with one, and a length `min-height` under a `max-width`
+    // in percent or in `calc()` with one, which caps the carried width only
+    // where it is the narrower.
+    assert_rows(&[
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px'><div id=c style='aspect-ratio:1;padding:calc(5% + 1px);min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 107]), ("c", [0, 300, 107, 107])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px'><div id=c style='aspect-ratio:1;padding-left:calc(10% + 2px);min-height:100px;box-sizing:border-box'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='display:flex;aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='display:flex;aspect-ratio:1;padding:5%;min-height:100px'></div></div></div>",
+            &[("g", [0, 300, 50, 105]), ("c", [0, 300, 105, 105])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;min-height:100px;max-width:calc(50% + 100px)'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;min-height:100px;max-width:200%'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 100, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;'><div id=c style='aspect-ratio:1;min-height:100px;max-width:100%'></div></div></div>",
+            &[("g", [0, 300, 50, 100]), ("c", [0, 300, 50, 100])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='display:grid;aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='display:flow-root;aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+        (
+            "<div style='margin-top:300px'><div id=g style='display:grid;width:50px;grid-template-columns:50px;height:300px'><div id=c style='display:table;aspect-ratio:1;min-height:50%'></div></div></div>",
+            &[("g", [0, 300, 50, 300]), ("c", [0, 300, 150, 150])],
+        ),
+    ]);
+}
