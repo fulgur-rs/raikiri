@@ -324,6 +324,7 @@ fn non_initial_parent() -> ComputedValues {
         multicol_flow: true,
         height_keyword: Some(ContentSizeKeyword::FitContent),
         horizontal_children: true,
+        horizontal_block_children: false,
         ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
         // CSS Text 3 §8.1: differs from the initial `0`

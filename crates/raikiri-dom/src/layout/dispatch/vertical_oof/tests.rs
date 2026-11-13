@@ -229,6 +229,9 @@ fn inline_size_in(container_css: &str, height: AvailableSpace) -> Option<f32> {
     let cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     session.nodes[html].multicol = Some(two_columns());
+    // A vertical block in the flow of a multicol container runs on
+    // horizontal axes, as in a vertical multicol container.
+    session.nodes[container].multicol_flow = true;
     let inputs = LayoutInput {
         available_space: Size {
             width: AvailableSpace::Definite(300.0),
@@ -299,8 +302,10 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-    // Model the vertical block as a descendant of a multicol container.
+    // Model the vertical block as a box in the flow of a multicol container,
+    // which runs on horizontal axes, as in a vertical multicol container.
     session.nodes[html].multicol = Some(two_columns());
+    session.nodes[container].multicol_flow = true;
     assert_eq!(
         session.nodes[container].formatting_context,
         crate::node::FormattingContext::Block

@@ -780,9 +780,9 @@ pub struct SpecifiedValues {
     /// Whether an ancestor is a multicol container or inside one, copied from
     /// the parent's [`ComputedValues::multicol_flow`]. Not a CSS property.
     pub(crate) inside_multicol: bool,
-    /// Whether the parent's computed `writing-mode` is vertical. Not a CSS
+    /// The parent's [`ComputedValues::horizontal_block_children`]. Not a CSS
     /// property.
-    pub(crate) parent_vertical: bool,
+    pub(crate) parent_horizontal_block_children: bool,
     /// The parent's [`ComputedValues::horizontal_children`]. Not a CSS
     /// property.
     pub(crate) parent_horizontal_children: bool,
@@ -1247,7 +1247,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: false,
-            parent_vertical: false,
+            parent_horizontal_block_children: true,
             parent_horizontal_children: false,
             parent_ruby_writing_mode: WritingMode::HorizontalTb,
         }
@@ -1413,7 +1413,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: parent.multicol_flow,
-            parent_vertical: parent.cssom_writing_mode.is_vertical(),
+            parent_horizontal_block_children: parent.horizontal_block_children,
             parent_horizontal_children: parent.horizontal_children,
             parent_ruby_writing_mode: parent.ruby_writing_mode,
             // CSS Text 3 §5.3: hyphens is inherited.
@@ -2332,11 +2332,12 @@ impl SpecifiedValues {
         let display = resolve_display_for_float(self.display, self.float);
         // A `display: contents` element has no box to be a multicol container.
         let generates_box = !matches!(display, DisplayValue::Contents | DisplayValue::None);
-        // A vertical box in a horizontal flow is the root of an orthogonal
-        // flow, which a multicol container around it does not break into
-        // columns (CSS Writing Modes 4 section 7.3): it and its contents lay
-        // out on their own axes again.
-        let orthogonal_root = self.writing_mode.is_vertical() && !self.parent_vertical;
+        let orthogonal_root = orthogonal_multicol_root(
+            self.inside_multicol,
+            self.parent_horizontal_block_children,
+            self.writing_mode,
+            display,
+        );
         let multicol_flow = (self.inside_multicol && !orthogonal_root)
             || (generates_box
                 && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
@@ -2346,22 +2347,14 @@ impl SpecifiedValues {
         // writing mode. A boxless element's children are placed in its parent's
         // box instead.
         let horizontal_children = if generates_box {
-            multicol_flow
-                || matches!(
-                    display,
-                    DisplayValue::Table
-                        | DisplayValue::InlineTable
-                        | DisplayValue::TableRowGroup
-                        | DisplayValue::TableHeaderGroup
-                        | DisplayValue::TableFooterGroup
-                        | DisplayValue::TableRow
-                        | DisplayValue::TableColumnGroup
-                        | DisplayValue::TableColumn
-                        | DisplayValue::TableCell
-                        | DisplayValue::TableCaption
-                )
+            multicol_flow || is_table_box(display)
         } else {
             self.parent_horizontal_children
+        };
+        let horizontal_block_children = if generates_box {
+            !self.writing_mode.is_vertical() && !is_table_box(display)
+        } else {
+            self.parent_horizontal_block_children
         };
         // `writing-mode` does not apply to a ruby annotation container, so its
         // annotations follow the writing mode of the ruby around it.
@@ -2998,6 +2991,7 @@ impl SpecifiedValues {
             multicol_flow,
             height_keyword: self.height_keyword,
             horizontal_children,
+            horizontal_block_children,
             ruby_writing_mode,
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
@@ -3216,3 +3210,40 @@ pub(crate) fn computed_background_layers(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `display` makes a table box, which the table algorithm lays out
+/// with its children on horizontal axes in every writing mode.
+fn is_table_box(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::Table
+            | DisplayValue::InlineTable
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+            | DisplayValue::TableColumnGroup
+            | DisplayValue::TableColumn
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    )
+}
+
+/// Whether an element in a multicol flow (`inside_multicol`) is the root of
+/// an orthogonal flow: a vertical box, not a table box, whose box parent lays
+/// its children out in a horizontal block flow
+/// (`parent_horizontal_block_children`). The multicol container does not
+/// break such a box into columns (CSS Writing Modes 4 section 7.3), so it and
+/// its contents lay out on their own axes.
+pub(crate) fn orthogonal_multicol_root(
+    inside_multicol: bool,
+    parent_horizontal_block_children: bool,
+    writing_mode: WritingMode,
+    display: DisplayValue,
+) -> bool {
+    inside_multicol
+        && parent_horizontal_block_children
+        && writing_mode.is_vertical()
+        && !matches!(display, DisplayValue::Contents | DisplayValue::None)
+        && !is_table_box(display)
+}

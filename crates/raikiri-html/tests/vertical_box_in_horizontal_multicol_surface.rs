@@ -247,12 +247,20 @@ fn a_vertical_box_in_a_horizontal_multicol_maps_its_flow_relative_properties_on_
             ],
         ),
         (
-            r#"<div style="columns:2"><table><tr><td><div id=o style="writing-mode:vertical-rl;padding-block-start:5px"><div id=m>xx</div><div id=i>x</div></div></td></tr></table></div>"#,
-            &[
-                ("o", [3, 3, 25, 20]),
-                ("m", [13, 3, 10, 20]),
-                ("i", [3, 3, 10, 20]),
-            ],
+            r#"<div style="columns:2"><div style="display:contents;writing-mode:vertical-rl"><div id=o style="margin-block-start:10px">x</div></div></div>"#,
+            &[("o", [0, 0, 10, 10])],
+        ),
+        (
+            r#"<div style="columns:2"><span id=o style="display:inline-block;writing-mode:vertical-rl;padding-inline-start:4px">ab</span></div>"#,
+            &[("o", [0, 0, 10, 24])],
+        ),
+        (
+            r#"<div style="columns:2"><div id=o style="writing-mode:vertical-rl">abc<span id=m style="display:block">x</span>de</div></div>"#,
+            &[("o", [0, 0, 30, 30]), ("m", [10, 0, 10, 30])],
+        ),
+        (
+            r#"<div style="columns:2"><div style="display:contents;writing-mode:horizontal-tb"><div id=o style="writing-mode:vertical-rl;padding-block-start:6px"><div id=m>xx</div></div></div></div>"#,
+            &[("o", [0, 0, 16, 20]), ("m", [0, 0, 10, 20])],
         ),
     ]);
 }

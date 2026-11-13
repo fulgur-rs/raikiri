@@ -962,10 +962,10 @@ pub struct ComputedValues {
     /// Whether the element is a multicol container or inside one. Block
     /// layout runs such boxes on horizontal axes in every writing mode, so
     /// the flow-relative margins and padding of their children keep the
-    /// `horizontal-tb` mapping. A vertical box whose parent is horizontal is
-    /// the root of an orthogonal flow, which the multicol container does not
-    /// break into columns, so it and its contents are not in the flow. Not a
-    /// CSS property.
+    /// `horizontal-tb` mapping. The root of an orthogonal flow, a vertical
+    /// box whose box parent lays out a horizontal block flow
+    /// ([`Self::horizontal_block_children`]), is not broken into columns, so
+    /// it and its contents are not in the flow. Not a CSS property.
     pub multicol_flow: bool,
     /// The keyword that the `height` that wins, or the `block-size` that maps onto it, was
     /// declared with: `min-content`, `max-content` or `fit-content`. [`Self::height`] is
@@ -980,6 +980,13 @@ pub struct ComputedValues {
     /// flow. A `display: contents` or `display: none` element has no box,
     /// so it passes on its parent's value. Not a CSS property.
     pub horizontal_children: bool,
+    /// Whether the box this element's children are placed in lays them out
+    /// in a horizontal block flow: a box in a horizontal writing mode that is
+    /// not a table box. A vertical child of such a box in a multicol flow is
+    /// the root of an orthogonal flow. A `display: contents` or
+    /// `display: none` element has no box, so it passes on its parent's
+    /// value. Not a CSS property.
+    pub horizontal_block_children: bool,
     /// The writing mode of the ruby that this element's ruby annotations
     /// belong to: the parent's value for a ruby annotation container, which
     /// `writing-mode` does not apply to (CSS Writing Modes 4 §3.2), and the
@@ -2278,6 +2285,7 @@ impl ComputedValues {
             multicol_flow: false,
             height_keyword: None,
             horizontal_children: false,
+            horizontal_block_children: true,
             ruby_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: initial text-indent is `0`.

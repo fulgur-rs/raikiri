@@ -205,6 +205,7 @@ fn parent_fixture() -> ComputedValues {
         multicol_flow: true,
         height_keyword: Some(ContentSizeKeyword::FitContent),
         horizontal_children: true,
+        horizontal_block_children: false,
         ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
         text_indent: ComputedTextIndent::Px(9.0),

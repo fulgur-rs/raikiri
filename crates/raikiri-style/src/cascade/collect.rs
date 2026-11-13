@@ -1066,12 +1066,15 @@ pub(crate) fn flow_mapping(
     // below: unlike the sides, they do not depend on how block layout places the box (see
     // `FlowMapping::size_writing_mode`).
     let size_writing_mode = writing_mode;
-    // A vertical box in a horizontal multicol flow is the root of an
-    // orthogonal flow, which lays out on its own axes.
-    let orthogonal_multicol_root = inherited.multicol_flow
-        && writing_mode.is_vertical()
-        && !inherited.cssom_writing_mode.is_vertical();
-    let writing_mode = if inherited.horizontal_children && !orthogonal_multicol_root {
+    // The root of an orthogonal flow in a multicol flow lays out on its own
+    // axes.
+    let orthogonal_root = crate::specified::orthogonal_multicol_root(
+        inherited.multicol_flow,
+        inherited.horizontal_block_children,
+        writing_mode,
+        crate::property::resolve_display_for_float(display, float),
+    );
+    let writing_mode = if inherited.horizontal_children && !orthogonal_root {
         WritingMode::HorizontalTb
     } else {
         writing_mode

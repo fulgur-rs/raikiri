@@ -378,10 +378,9 @@ fn next_transposed_frame_id(tree: &mut LayoutSession<'_>) -> u64 {
 /// vertical axes: `Some(true)` for `vertical-rl` and `sideways-rl`,
 /// `Some(false)` for `vertical-lr` and `sideways-lr`.
 ///
-/// A vertical multicol container and the vertical boxes in it run vertical
-/// writing on horizontal axes, as their sizing properties do, and so do the
-/// boxes the table algorithm lays out; they are left to the horizontal block
-/// path.
+/// A multicol container and the boxes in its flow run vertical writing on
+/// horizontal axes, as their sizing properties do, and so do the boxes the
+/// table algorithm lays out; they are left to the horizontal block path.
 pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     let right_to_left = match used_writing_mode(tree, idx) {
         WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
@@ -395,14 +394,11 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     {
         return None;
     }
-    // A vertical box below a horizontal one is the root of an orthogonal
-    // flow, which a horizontal multicol container around it does not break
-    // into columns (CSS Writing Modes 4 section 7.3).
-    let in_vertical_multicol = tree
-        .inclusive_ancestors(idx)
-        .take_while(|&id| used_writing_mode(tree, id).is_vertical())
-        .any(|id| tree.nodes[id].multicol.is_some());
-    (!in_vertical_multicol).then_some(right_to_left)
+    // The style bridge records whether the box is in a multicol flow; the
+    // root of an orthogonal flow in a horizontal multicol, and its contents,
+    // are not (CSS Writing Modes 4 section 7.3).
+    let multicol_flow = tree.nodes[idx].multicol_flow;
+    (!multicol_flow).then_some(right_to_left)
 }
 
 /// Run the final physical layout of a vertical table cell on vertical axes.
