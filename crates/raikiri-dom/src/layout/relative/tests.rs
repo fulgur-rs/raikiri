@@ -671,3 +671,50 @@ fn a_vertical_containing_block_takes_a_block_size_that_layout_makes_definite() {
         (50.0, 0.0)
     );
 }
+
+#[test]
+fn a_percentage_width_of_a_definite_parent_is_a_definite_block_size() {
+    // A percentage width resolves against the parent's width, definite in a
+    // horizontal parent and in a vertical one whose own width is.
+    for (parent, dx) in [
+        ("display:block;width:200px", 50.0),
+        (
+            "display:block;writing-mode:vertical-rl;width:200px;height:300px",
+            50.0,
+        ),
+        ("display:block;writing-mode:vertical-rl;height:300px", 0.0),
+    ] {
+        let mut document = Document::new();
+        let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+        let parent = document.append_element(Some(body), "div", Some(parent));
+        let container = document.append_element(
+            Some(parent),
+            "div",
+            Some("display:block;writing-mode:vertical-rl;width:50%"),
+        );
+        document.append_element(
+            Some(container),
+            "div",
+            Some("display:block;width:40px;height:40px"),
+        );
+        let child = document.append_element(
+            Some(container),
+            "div",
+            Some("display:block;float:left;position:relative;width:10px;height:10px;left:50%"),
+        );
+        document.mark_in_document_flags();
+        let cascade =
+            raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+        crate::layout_single_page(
+            crate::layout::test_support::with_ahem(&mut document),
+            &cascade,
+            raikiri_traits::PageBox::A4,
+        )
+        .unwrap();
+        assert_eq!(
+            used_relative_offset(&document, &cascade, &cascade.computed[child], child),
+            (dx, 0.0),
+            "{parent}"
+        );
+    }
+}

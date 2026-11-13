@@ -144,9 +144,7 @@ fn relative_insets_with_box_tree(
             if let Some(root) = block.ifc.as_ref() {
                 return root.vertical_width;
             }
-            let width = crate::layout::bridge::vertical_logical_size(cascade, source)
-                .map_or(&cascade.computed[source].width, |size| &size.width);
-            return matches!(width, ComputedLengthPercentageOrAuto::Px(_))
+            return has_definite_vertical_width(cascade, boxes, source)
                 .then(|| block.layout.content_box_width());
         }
         Some(if is_spanner_in(document, cascade, node_id) {
@@ -271,6 +269,26 @@ pub(crate) enum Precedence {
 struct ContainingBlock {
     key: usize,
     source: usize,
+}
+
+/// Whether the vertical box `idx` has a definite width, its block size: a
+/// stated length, or a percentage of a parent whose width is definite, as
+/// the width of a horizontal box always is.
+fn has_definite_vertical_width(cascade: &CascadeResult, boxes: BoxTree<'_>, idx: usize) -> bool {
+    let width = crate::layout::bridge::vertical_logical_size(cascade, idx)
+        .map_or(&cascade.computed[idx].width, |size| &size.width);
+    match width {
+        ComputedLengthPercentageOrAuto::Px(_) => true,
+        ComputedLengthPercentageOrAuto::Percent(_)
+        | ComputedLengthPercentageOrAuto::Calc(_)
+        | ComputedLengthPercentageOrAuto::Math(_) => boxes
+            .parent(idx, BoxParentScope::Document)
+            .is_none_or(|parent| {
+                !crate::layout::bridge::uses_vertical_axes(cascade, parent)
+                    || has_definite_vertical_width(cascade, boxes, parent)
+            }),
+        _ => false,
+    }
 }
 
 /// The nearest ancestor of `node_id` that can be its containing block:
