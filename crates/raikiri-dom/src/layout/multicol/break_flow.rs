@@ -511,8 +511,20 @@ fn wrapper_boxes(
     let style = style_of(tree, id);
     let (margin_left, margin_right) =
         super::column_horizontal_margins(&style, content.width, width);
-    // A right-to-left parent aligns a narrower box to its right edge.
-    let offset = if parent_rtl {
+    let justified = tree.taffy_parent_of(id).and_then(|parent| {
+        crate::layout::dispatch::block_flow::justified_offset(
+            tree,
+            id,
+            parent,
+            parent_rtl,
+            content.width - margin_left - margin_right - width,
+        )
+    });
+    // `justify-self` places a box whose margins are not auto, and a
+    // right-to-left parent otherwise aligns a narrower box to its right edge.
+    let offset = if let Some(justified) = justified {
+        content.start + margin_left + justified
+    } else if parent_rtl {
         content.start + content.width - width - margin_right
     } else {
         content.start + margin_left

@@ -106,6 +106,36 @@ pub(super) fn justify_position(style: &Style, container: &Style) -> Option<(Inli
     Some((position, alignment.safety == AlignmentSafety::Safe))
 }
 
+impl InlinePosition {
+    /// The offset from the left of a room `free` wider than the box that
+    /// puts the box at this position, where a `safe` alignment that
+    /// overflows falls back to the start.
+    fn offset(self, safe: bool, free: f32, rtl: bool) -> f32 {
+        let position = if safe && free < 0.0 {
+            Self::Start
+        } else {
+            self
+        };
+        match position {
+            Self::Center => free / 2.0,
+            Self::Start if rtl => free,
+            Self::End if !rtl => free,
+            _ => 0.0,
+        }
+    }
+}
+
+/// Whether `justify-self` places the in-flow block `child` of the block
+/// container `parent` at a position, which gives an `auto` width the
+/// fit-content width, even where an auto margin then places the box.
+pub(crate) fn justify_fits_content(tree: &LayoutSession<'_>, child: usize, parent: usize) -> bool {
+    justify_position(
+        &super::style_input::child(tree, child),
+        &super::style_input::container(tree, parent),
+    )
+    .is_some()
+}
+
 /// Where `justify-self` puts the in-flow block `child` of the block container
 /// `parent` in a room `free` wider than its margin box, as an offset from the
 /// left of that room; `None` when its alignment leaves it to its margins,
@@ -122,17 +152,7 @@ pub(crate) fn justified_offset(
         return None;
     }
     let (position, safe) = justify_position(&style, &super::style_input::container(tree, parent))?;
-    let position = if safe && free < 0.0 {
-        InlinePosition::Start
-    } else {
-        position
-    };
-    Some(match position {
-        InlinePosition::Center => free / 2.0,
-        InlinePosition::Start if rtl => free,
-        InlinePosition::End if !rtl => free,
-        _ => 0.0,
-    })
+    Some(position.offset(safe, free, rtl))
 }
 
 /// Whether `justify-self` (or the container's `justify-items` for `auto`)
@@ -168,19 +188,7 @@ pub(super) fn place_inline_axis(
     let rtl = direction == Direction::Rtl;
     let offset = match justify {
         // Auto margins take the free space before alignment does.
-        Some((position, safe)) if !left_auto && !right_auto => {
-            let position = if safe && free < 0.0 {
-                InlinePosition::Start
-            } else {
-                position
-            };
-            match position {
-                InlinePosition::Center => free / 2.0,
-                InlinePosition::Start if rtl => free,
-                InlinePosition::End if !rtl => free,
-                _ => 0.0,
-            }
-        }
+        Some((position, safe)) if !left_auto && !right_auto => position.offset(safe, free, rtl),
         _ if rtl && (free < 0.0 || !left_auto && !right_auto) => free,
         _ => auto_left,
     };
@@ -752,6 +760,7 @@ pub(super) fn layout(
                 width
             }
         };
+        let mut content_widths = None;
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
                 // The table resolves its own width limits against its grid
@@ -775,17 +784,23 @@ pub(super) fn layout(
                     if fit_content {
                         // The fit-content width: the max-content width, but
                         // no wider than the room and no narrower than the
-                        // min-content width (CSS Sizing 3 §5.2).
-                        let mut probe = |space| {
-                            let mut measure = child_input;
-                            measure.run_mode = RunMode::ComputeSize;
-                            measure.available_space.width = space;
-                            tree.compute_child_layout_with_block_ctx(child, measure, None)
-                                .size
-                                .width
-                        };
-                        let max_content = probe(AvailableSpace::MaxContent);
-                        let min_content = probe(AvailableSpace::MinContent);
+                        // min-content width (CSS Sizing 3 §5.2). Neither
+                        // depends on the room, so each slot beside floats
+                        // reuses them.
+                        let (max_content, min_content) = *content_widths.get_or_insert_with(|| {
+                            let mut probe = |space| {
+                                let mut measure = child_input;
+                                measure.run_mode = RunMode::ComputeSize;
+                                measure.available_space.width = space;
+                                tree.compute_child_layout_with_block_ctx(child, measure, None)
+                                    .size
+                                    .width
+                            };
+                            (
+                                probe(AvailableSpace::MaxContent),
+                                probe(AvailableSpace::MinContent),
+                            )
+                        });
                         break 'width child_metrics
                             .clamp_width(max_content.min(stretch.max(0.0)).max(min_content));
                     }

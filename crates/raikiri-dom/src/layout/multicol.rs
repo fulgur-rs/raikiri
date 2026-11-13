@@ -744,7 +744,7 @@ fn column_child_layout_input(
         )
     };
     let imposed_width = (auto_width && !shrinks).then(|| {
-        if justify_positions_in_column(tree, child, room) {
+        if justify_positions_in_column(tree, child) {
             column_fit_content_width(tree, child, column_width, parent_height, room)
         } else {
             room
@@ -759,11 +759,10 @@ fn column_child_layout_input(
 }
 
 /// Whether `justify-self` places the in-flow block `child` of a column at a
-/// position in the `room` its margins leave, rather than stretching it.
-fn justify_positions_in_column(tree: &LayoutSession<'_>, child: usize, room: f32) -> bool {
+/// position, rather than stretching it.
+fn justify_positions_in_column(tree: &LayoutSession<'_>, child: usize) -> bool {
     tree.taffy_parent_of(child).is_some_and(|parent| {
-        crate::layout::dispatch::block_flow::justified_offset(tree, child, parent, false, room)
-            .is_some()
+        crate::layout::dispatch::block_flow::justify_fits_content(tree, child, parent)
     })
 }
 
@@ -5445,10 +5444,13 @@ fn justify_self_positions(doc: &Document, cascade: &CascadeResult, id: usize) ->
     use raikiri_style::property::{AlignSelfValue, SelfAlignmentValue};
     let alignment = match cascade.computed[id].justify_self {
         AlignSelfValue::Value(value) => value,
-        _ => match doc.parent_of(id) {
-            Some(parent) => cascade.computed[parent].justify_items,
-            None => SelfAlignmentValue::Normal,
-        },
+        // The box that lays this one out holds the `justify-items`, past
+        // any `display: contents` parent.
+        _ => std::iter::successors(doc.parent_of(id), |&parent| doc.parent_of(parent))
+            .find(|&parent| doc.nodes[parent].display() != DisplayValue::Contents)
+            .map_or(SelfAlignmentValue::Normal, |parent| {
+                cascade.computed[parent].justify_items
+            }),
     };
     !matches!(
         alignment,

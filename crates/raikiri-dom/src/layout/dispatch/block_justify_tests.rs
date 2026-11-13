@@ -166,3 +166,46 @@ fn a_vertical_block_is_placed_along_its_inline_axis() {
         assert_eq!((top, height), (y, 20.0), "{container} | {item}");
     }
 }
+
+#[test]
+fn an_auto_margin_places_a_block_that_fits_its_content() {
+    let in_flow = child_rect(LTR, "display:block;margin-left:auto;justify-self:center");
+    let in_inline = block_rect(
+        LTR,
+        "display:block;margin-left:auto;justify-self:center",
+        |doc, root| doc.append_element(Some(root), "span", Some("display:inline")),
+    );
+    let in_column = child_rect(
+        "display:block;width:200px;columns:2;column-gap:0",
+        "display:block;margin-left:auto;justify-self:center",
+    );
+    assert_eq!((in_flow.0, in_flow.2), (180.0, 20.0));
+    assert_eq!((in_inline.0, in_inline.2), (180.0, 20.0));
+    assert_eq!((in_column.0, in_column.2), (80.0, 20.0));
+}
+
+#[test]
+fn a_formatting_context_inside_an_inline_is_placed_in_the_container() {
+    for (container, x) in [(LTR, 180.0), (RTL, 0.0)] {
+        let (left, _, width, _) = block_rect(
+            container,
+            "display:flow-root;justify-self:end",
+            |doc, root| {
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
+                doc.append_text(span, "a");
+                span
+            },
+        );
+        assert_eq!((left, width), (x, 20.0), "{container}");
+    }
+}
+
+#[test]
+fn justify_items_reaches_past_a_contents_parent() {
+    let (left, _, width, _) = block_rect(
+        &format!("{LTR};justify-items:center"),
+        "display:block",
+        |doc, root| doc.append_element(Some(root), "div", Some("display:contents")),
+    );
+    assert_eq!((left, width), (90.0, 20.0));
+}

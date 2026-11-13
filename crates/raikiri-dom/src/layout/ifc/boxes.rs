@@ -3742,8 +3742,15 @@ fn layout_formatting_context_child(
     } else {
         0.0
     };
+    let rtl = geometry.axes.direction() == Direction::Rtl;
+    let justified = (!beside_floats)
+        .then(|| justified_offset(tree, node, rtl, stretch - output.size.width))
+        .flatten();
     let extra_left = if beside_floats {
         auto_left
+    } else if let Some(offset) = justified {
+        // `justify-self` places a box whose margins are not auto.
+        margin.left + offset
     } else if (autos == 0 || output.size.width > stretch)
         && geometry.axes.direction() == Direction::Rtl
     {
@@ -4024,7 +4031,8 @@ fn content_keyword_width(
     // The `auto` width of a button is its fit-content width, where it is
     // block-level too, as is the `auto` inline size of a block that
     // `justify-self` places at a position (CSS Box Alignment 3 §6.1).
-    let button = horizontal && tree.nodes[node].is_html_button() || justify_positions(tree, node);
+    let fits_auto = keyword.expand() == ExpandedDimension::Auto
+        && (horizontal && tree.nodes[node].is_html_button() || justify_positions(tree, node));
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -4058,7 +4066,7 @@ fn content_keyword_width(
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),
-        ExpandedDimension::Auto if button => Some(OwnWidth::Fit {
+        ExpandedDimension::Auto if fits_auto => Some(OwnWidth::Fit {
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),
@@ -4081,7 +4089,9 @@ fn content_keyword_width(
 /// Whether `justify-self` places the block child `node` at a position along
 /// the inline axis rather than leaving it to stretch.
 fn justify_positions(tree: &LayoutSession<'_>, node: usize) -> bool {
-    justified_offset(tree, node, false, 0.0).is_some()
+    tree.taffy_parent_of(node).is_some_and(|parent| {
+        crate::layout::dispatch::block_flow::justify_fits_content(tree, node, parent)
+    })
 }
 
 /// Where `justify-self` puts the block child `node` in a room `free` wider
