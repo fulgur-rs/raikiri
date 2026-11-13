@@ -67,6 +67,7 @@ pub fn items(value: A) -> values::AlignItems {
 /// of the alignment container). Line-left is the inline start of a
 /// left-to-right line in every writing mode, so only the direction decides.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-left
+#[doc(hidden)]
 #[must_use]
 pub fn line_relative(value: A, rtl: bool) -> A {
     let resolve = |position| match position {
