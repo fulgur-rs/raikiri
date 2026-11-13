@@ -147,15 +147,24 @@ fn justify_position_of(
     let parent = tree.taffy_parent_of(child)?;
     let style = tree.query_style(child, ReadRole::BlockItem);
     let container = tree.query_style(parent, ReadRole::BlockContainer);
-    let position = position_of(
-        style
-            .bridge_justify_self()
-            .unwrap_or_else(|| container.justify_items()),
-        style.direction(),
-        container.direction(),
-    )?;
+    // `justify-items` does not apply to an inline box, so `auto` is `normal`
+    // for a block inside one, whatever its containing block says.
+    let alignment = match style.bridge_justify_self() {
+        Some(alignment) => alignment,
+        None if inline_parent(tree, child) => return None,
+        None => container.justify_items(),
+    };
+    let position = position_of(alignment, style.direction(), container.direction())?;
     let margin = style.margin();
     Some((position, margin.left.is_auto() || margin.right.is_auto()))
+}
+
+/// Whether the parent box of `child`, past `display: contents`, is an inline
+/// box.
+fn inline_parent(tree: &LayoutSession<'_>, child: usize) -> bool {
+    std::iter::successors(tree.parent_of(child), |&parent| tree.parent_of(parent))
+        .find(|&parent| tree.nodes[parent].display() != DisplayValue::Contents)
+        .is_some_and(|parent| tree.nodes[parent].display() == DisplayValue::Inline)
 }
 
 /// Whether `justify-self` places the in-flow block `child` at a position,

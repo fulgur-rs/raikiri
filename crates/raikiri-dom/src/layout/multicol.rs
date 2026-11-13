@@ -5437,6 +5437,8 @@ fn justify_self_positions(doc: &Document, cascade: &CascadeResult, id: usize) ->
         // any `display: contents` parent.
         _ => std::iter::successors(doc.parent_of(id), |&parent| doc.parent_of(parent))
             .find(|&parent| doc.nodes[parent].display() != DisplayValue::Contents)
+            // `justify-items` does not apply to an inline box.
+            .filter(|&parent| doc.nodes[parent].display() != DisplayValue::Inline)
             .map_or(SelfAlignmentValue::Normal, |parent| {
                 cascade.computed[parent].justify_items
             }),

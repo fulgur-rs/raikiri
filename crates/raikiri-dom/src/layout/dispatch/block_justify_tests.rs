@@ -290,3 +290,19 @@ fn a_block_beside_a_float_is_placed_in_the_room_the_float_leaves() {
         assert_eq!((left, width), (x, 20.0), "{container}");
     }
 }
+
+#[test]
+fn justify_items_does_not_reach_a_block_inside_an_inline() {
+    let (left, _, width, _) = block_rect(
+        &format!("{LTR};justify-items:right"),
+        "display:block",
+        |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:inline;justify-items:center"),
+            )
+        },
+    );
+    assert_eq!((left, width), (0.0, 200.0));
+}
