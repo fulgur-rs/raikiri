@@ -298,8 +298,11 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].exported_first_baseline = None;
         doc.nodes[idx].opposed_baseline_group = false;
         doc.nodes[idx].border_collapse = cv.border_collapse;
-        doc.nodes[idx].computed_border = Some(cv.border);
+        // Collapsed table borders move between boxes, so `currentcolor` is
+        // resolved against the box that declares it before they do.
+        doc.nodes[idx].computed_border = Some(current_colors_resolved(cv.border, cv.color));
         doc.nodes[idx].collapsed_border = None;
+        doc.nodes[idx].collapsed_corners = None;
         doc.nodes[idx]
             .flags
             .remove(NodeFlags::CENTERED_COLLAPSED_BLOCK_BORDERS);
@@ -1383,5 +1386,27 @@ fn shodo_group_align(
         P::Center => S::Center,
         // `none`, and any value the cascade does not produce.
         _ => S::None,
+    }
+}
+
+/// `border` with each `currentcolor` side given the box's `color`.
+fn current_colors_resolved(
+    border: raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    color: raikiri_style::property::CssColor,
+) -> raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder> {
+    let resolve = |mut side: raikiri_style::resolve::ComputedBorder| {
+        if matches!(
+            side.color,
+            raikiri_style::property::BorderColor::CurrentColor
+        ) {
+            side.color = raikiri_style::property::BorderColor::Resolved(color);
+        }
+        side
+    };
+    raikiri_style::property::Sides {
+        top: resolve(border.top),
+        right: resolve(border.right),
+        bottom: resolve(border.bottom),
+        left: resolve(border.left),
     }
 }

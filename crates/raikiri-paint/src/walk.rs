@@ -3909,6 +3909,26 @@ fn paint_element_border(
     );
 }
 
+/// Paint a collapsed table cell border whose junction squares belong to the
+/// sides named by `corners`, so no corner is split diagonally.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_collapsed_cell_border(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+    corners: raikiri_dom::paint_rules::CollapsedCorners,
+) {
+    if let Some(border) =
+        ElementBorder::new(width, height, abs_x, abs_y, border, current_color, true)
+    {
+        border.with_corners(corners).paint(scene);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_element_border_with_top(
     scene: &mut impl PaintScene,

@@ -635,9 +635,12 @@ impl LayoutSession<'_> {
     ///   `aspect-ratio: 1; max-width: 50px` around a 200px high child at
     ///   50px by 200px.
     ///
-    /// A grid whose columns have a `min-content` or `max-content` minimum
-    /// takes the contribution of the item instead, so it leaves the item to
-    /// the library.
+    /// For a `min-height`, a grid whose columns have a `min-content` or
+    /// `max-content` minimum takes the contribution of the item instead, so
+    /// it leaves the item to the library. Such a column still sizes the item
+    /// under a `max-width` at its content height: `aspect-ratio: 1;
+    /// max-width: 50px` around a 200px high child in a `max-content` column
+    /// is 50px by 200px too.
     fn grid_item_content_outweighs_carried_minimum(
         &self,
         idx: usize,
@@ -664,15 +667,16 @@ impl LayoutSession<'_> {
             && item.size().width.is_auto()
             && item.size().height.is_auto()
             && item.min_size().width.is_auto()
-            && match item.min_size().height.expand() {
-                ExpandedLengthPercentageAuto::Length(_) => true,
-                ExpandedLengthPercentageAuto::Auto => !item.max_size().width.is_auto(),
-                _ => false,
-            }
             && self.taffy_parent_of(idx).is_some_and(|container| {
-                crate::layout::taffy_adapter::columns_have_no_content_minimum(
-                    &self.physical_style(container),
-                )
+                match item.min_size().height.expand() {
+                    ExpandedLengthPercentageAuto::Length(_) => {
+                        crate::layout::taffy_adapter::columns_have_no_content_minimum(
+                            &self.physical_style(container),
+                        )
+                    }
+                    ExpandedLengthPercentageAuto::Auto => !item.max_size().width.is_auto(),
+                    _ => false,
+                }
             })
     }
 

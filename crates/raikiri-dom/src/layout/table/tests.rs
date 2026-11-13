@@ -776,6 +776,7 @@ fn collapsed_candidate(
     super::CollapsedBorderCandidate {
         border,
         taffy_width: LengthPercentage::length(border.width().px()),
+        origin: 0,
     }
 }
 
