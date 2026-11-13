@@ -2041,6 +2041,8 @@ fn layout_after_column_floats(
     // block flow holds it to, as it fills the column; any other width is the
     // one the box has in the column.
     let stretches = inputs.known_dimensions.width.is_some();
+    // A box `justify-self` places at a position fits its content to that room.
+    let fits = stretches && crate::layout::dispatch::block_flow::justify_fits_content(tree, child);
     let at_width = |width: f32| {
         let mut input = inputs;
         input.known_dimensions.width = Some(width);
@@ -2055,6 +2057,17 @@ fn layout_after_column_floats(
         |probe| match probe {
             BoxProbe::Width { stretch } => {
                 if stretches {
+                    let stretch = if fits {
+                        column_fit_content_width(
+                            tree,
+                            child,
+                            column_width,
+                            inputs.parent_size.height,
+                            stretch.max(0.0),
+                        )
+                    } else {
+                        stretch
+                    };
                     crate::layout::dispatch::block_flow::clamp_child_width(
                         tree,
                         NodeId::from(child),
@@ -2091,8 +2104,12 @@ fn layout_after_column_floats(
             (None, None) => free / 2.0,
             (None, Some(_)) => free,
             (Some(_), None) => 0.0,
-            (Some(_), Some(_)) if rtl => free,
-            (Some(_), Some(_)) => 0.0,
+            // `justify-self` places a box whose margins are not auto in the
+            // room the floats leave.
+            (Some(_), Some(_)) => {
+                crate::layout::dispatch::block_flow::justified_offset(tree, child, rtl, free)
+                    .unwrap_or(if rtl { free } else { 0.0 })
+            }
         };
     let top = run.start + slot.y - margin_top;
     // Below some of the floats, less of the column is left.

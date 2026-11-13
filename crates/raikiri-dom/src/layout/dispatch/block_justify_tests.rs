@@ -398,3 +398,44 @@ fn a_vertical_block_beside_a_float_is_placed_in_the_room_the_float_leaves() {
         assert_eq!((top, height), (y, 20.0), "{direction} {side} | {item}");
     }
 }
+
+#[test]
+fn a_block_beside_a_float_in_a_column_is_placed_in_the_room_the_float_leaves() {
+    for (container, side, item, x, w) in [
+        ("", "left", "width:20px;justify-self:end", 80.0, 20.0),
+        ("", "left", "justify-self:center", 55.0, 20.0),
+        ("", "right", "justify-self:end", 50.0, 20.0),
+        (
+            "",
+            "left",
+            "justify-self:start;margin-left:auto",
+            80.0,
+            20.0,
+        ),
+        ("direction:rtl", "left", "justify-self:end", 130.0, 20.0),
+        (
+            "direction:rtl",
+            "right",
+            "width:20px;justify-self:start",
+            150.0,
+            20.0,
+        ),
+        ("", "left", "justify-self:normal", 30.0, 70.0),
+    ] {
+        let (left, _, width, _) = block_rect(
+            &format!("display:block;width:200px;columns:2;column-gap:0;{container}"),
+            &format!("display:flow-root;height:20px;{item}"),
+            |doc, root| {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    Some(&format!(
+                        "display:block;float:{side};width:30px;height:50px"
+                    )),
+                );
+                root
+            },
+        );
+        assert_eq!((left, width), (x, w), "{container} {side} | {item}");
+    }
+}
