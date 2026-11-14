@@ -23,10 +23,10 @@ use raikiri_html::{
     parse_html_with_resources,
 };
 
-struct Counting;
-static MEASURING: AtomicBool = AtomicBool::new(false);
-static LIVE: AtomicIsize = AtomicIsize::new(0);
-static PEAK: AtomicIsize = AtomicIsize::new(0);
+struct Counting; // cov:ignore: benchmark-only allocator state.
+static MEASURING: AtomicBool = AtomicBool::new(false); // cov:ignore: benchmark-only allocator state.
+static LIVE: AtomicIsize = AtomicIsize::new(0); // cov:ignore: benchmark-only allocator state.
+static PEAK: AtomicIsize = AtomicIsize::new(0); // cov:ignore: benchmark-only allocator state.
 
 // cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn record(delta: isize) {
@@ -81,7 +81,7 @@ unsafe impl GlobalAlloc for Counting {
 }
 
 #[global_allocator]
-static ALLOCATOR: Counting = Counting;
+static ALLOCATOR: Counting = Counting; // cov:ignore: benchmark-only allocator state.
 
 /// Peak live heap above the starting point, and the heap still live at the end.
 // cov:ignore: benchmark harness; workspace coverage does not build this target.
