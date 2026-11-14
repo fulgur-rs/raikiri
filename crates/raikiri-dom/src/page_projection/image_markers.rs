@@ -38,6 +38,46 @@ enum MarkerRoot {
     Inline(Vec<(f32, f32, PositionedMarker)>),
 }
 
+/// The first line of `owner` that an outside image marker aligns with, in a
+/// flow that paginates along Y when `vertical_flow` holds.
+///
+/// The shared first-line metrics describe the horizontal baseline. Vertical
+/// items and flows that paginate along the other axis keep physical
+/// placement, and have none.
+pub(crate) fn aligned_first_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    vertical_flow: bool,
+) -> Option<super::text_runs::FirstLine> {
+    (vertical_flow && !document.nodes[owner].used_writing_mode.is_vertical())
+        .then(|| super::text_runs::first_line(document, cascade, owner))
+        .flatten()
+        .filter(|line| line.horizontal && line.baseline.is_finite() && line.center.is_finite())
+}
+
+/// How far an outside image marker `height` tall moves down from the border
+/// edge of `owner`, whose first line `line` it sits on: its bottom meets the
+/// line's baseline.
+pub(crate) fn image_offset_y(
+    document: &Document,
+    owner: usize,
+    line: Option<&super::text_runs::FirstLine>,
+    height: f32,
+) -> f32 {
+    line.map_or(0.0, |line| {
+        let top = line.baseline - height;
+        // An oversized outside marker stays above the column flow's
+        // text, but not above the item's content-box start.
+        if document.nodes[owner].multicol.is_some() {
+            let layout = document.nodes[owner].layout;
+            top.max(layout.border.top + layout.padding.top)
+        } else {
+            top
+        }
+    })
+}
+
 pub(super) fn prepare(
     document: &Document,
     cascade: &CascadeResult,
@@ -139,29 +179,11 @@ pub(super) fn prepare(
                     pending.extend(node.layout_children());
                 }
             }
-            // The shared first-line metrics describe the horizontal
-            // baseline. Keep physical placement for vertical items and
-            // flows that paginate along the other axis.
-            let line = (vertical_flow && !document.nodes[*owner].used_writing_mode.is_vertical())
-                .then(|| super::text_runs::first_line(document, cascade, *owner))
-                .flatten()
-                .filter(|line| {
-                    line.horizontal && line.baseline.is_finite() && line.center.is_finite()
-                });
+            let line = aligned_first_line(document, cascade, *owner, vertical_flow);
             first_lines.insert(*owner, line);
             line
         };
-        *offset_y = line.map_or(0.0, |line| {
-            let top = line.baseline - size.height;
-            // An oversized outside marker stays above the column flow's
-            // text, but not above the item's content-box start.
-            if document.nodes[*owner].multicol.is_some() {
-                let layout = document.nodes[*owner].layout;
-                top.max(layout.border.top + layout.padding.top)
-            } else {
-                top
-            }
-        });
+        *offset_y = image_offset_y(document, *owner, line.as_ref(), size.height);
         let first = first_pages.get(&NodeId::new(*owner as u64)).copied();
         let selected = super::text_runs::marker_page(
             line.filter(|_| counts[owner] == 1)

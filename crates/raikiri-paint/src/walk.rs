@@ -1588,7 +1588,15 @@ fn paint_list_marker_with_snapshots(
             match document.list_marker_image_top(node_id, (page_flow.0, page_flow.2), paint_y) {
                 Some(Some(top)) => top,
                 Some(None) => return,
-                None => paint_y,
+                // Unprojected pages align the image with the first line here.
+                None => document.unprojected_list_marker_image_top(
+                    cascade,
+                    node_id,
+                    document
+                        .list_marker_image_size(node_id)
+                        .map_or(decoded.height as f32, |size| size.height),
+                    paint_y,
+                ),
             };
         // Empty items use a minimum paint extent above, but their marker
         // still starts from the actual principal border box.
@@ -1625,7 +1633,14 @@ fn paint_list_marker_with_snapshots(
     else {
         return;
     };
-    let Some(top) = list_marker_text_top(document, cascade, node_id, page_flow, paint_y) else {
+    let Some(top) = list_marker_text_top(
+        document,
+        cascade,
+        node_id,
+        (&shaped, computed),
+        page_flow,
+        paint_y,
+    ) else {
         return;
     };
     crate::standalone_text::draw(
@@ -1734,16 +1749,19 @@ fn list_marker_image_transform(
         )
 }
 
-/// The top at which the text of the marker of `node_id` paints, or `None`
-/// when the item's page is not the one that draws it.
+/// The top at which the text `marker` (the shaped marker and its style) of
+/// the marker of `node_id` paints, or `None` when the item's page is not the
+/// one that draws it.
 ///
 /// The marker's baseline meets the item's first line (CSS Lists 3 §3.1),
 /// where the page's text runs place it. It belongs to the page holding that
-/// line, so the item's other pages draw none.
+/// line, so the item's other pages draw none. Pages that were not projected
+/// align the two baselines here.
 fn list_marker_text_top(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    marker: (&raikiri_dom::StandaloneText, &ComputedValues),
     page_flow: (f32, f32, bool),
     paint_y: f32,
 ) -> Option<f32> {
@@ -1756,7 +1774,15 @@ fn list_marker_text_top(
             paint_y,
             page_bottom,
         )
-        .unwrap_or(Some(paint_y))
+        .unwrap_or_else(|| {
+            Some(document.unprojected_list_marker_text_top(
+                cascade,
+                node_id,
+                marker,
+                paint_y,
+                page_bottom,
+            ))
+        })
 }
 
 /// Lay out the page-margin boxes of a page for the page context in

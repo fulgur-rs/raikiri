@@ -66,23 +66,40 @@ impl MarkerText {
     /// page could be found for it, the marker stays at the bottom of this one
     /// rather than past its edge.
     pub(super) fn line_top(&self, top: f32, page_bottom: f32) -> f32 {
-        let height = self
-            .shaped
-            .lines()
-            .first()
-            .map_or(0.0, |line| line.block_size());
-        let aligned = top + self.offset_y;
-        // The aligned line's page is decided by its middle, as it is for the
-        // line itself; without one, by the marker's top.
-        let next_page = match self.line_center {
-            Some(center) => top + center >= page_bottom - 0.001,
-            None => aligned >= page_bottom,
-        };
-        if next_page {
-            (page_bottom - height).max(top)
-        } else {
-            aligned
-        }
+        marker_line_top(
+            &self.shaped,
+            self.offset_y,
+            self.line_center,
+            top,
+            page_bottom,
+        )
+    }
+}
+
+/// The top of the line of the shaped marker `shaped`, moved by `offset_y`
+/// from an item whose border edge is at `top` on a page whose content ends
+/// at `page_bottom`; see [`MarkerText::line_top`]. `line_center` is the
+/// middle of the item's first line from its border edge, when the marker is
+/// aligned with one.
+pub(crate) fn marker_line_top(
+    shaped: &crate::StandaloneText,
+    offset_y: f32,
+    line_center: Option<f32>,
+    top: f32,
+    page_bottom: f32,
+) -> f32 {
+    let height = shaped.lines().first().map_or(0.0, |line| line.block_size());
+    let aligned = top + offset_y;
+    // The aligned line's page is decided by its middle, as it is for the
+    // line itself; without one, by the marker's top.
+    let next_page = match line_center {
+        Some(center) => top + center >= page_bottom - 0.001,
+        None => aligned >= page_bottom,
+    };
+    if next_page {
+        (page_bottom - height).max(top)
+    } else {
+        aligned
     }
 }
 
@@ -172,13 +189,6 @@ pub(super) fn prepare_markers(
         if let Some((shaped, offset_x)) =
             document.shape_list_marker_text(&content, style, layout.padding.left)
         {
-            // CSS Lists 3 §3.1: an outside marker sits on the baseline of
-            // its item's first line. When the item lays out its own first
-            // line, the two baselines are matched directly, which covers a
-            // marker or a first line with other font metrics.
-            let marker_baseline = shaped.lines().first().map(|line| {
-                line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
-            });
             let item_line = first_line(document, cascade, owner);
             let page = marker_page(
                 item_line
@@ -187,20 +197,7 @@ pub(super) fn prepare_markers(
                 flow.as_ref(),
                 first_pages.get(&owner).copied(),
             );
-            let offset_y = match (item_line.map(|line| line.baseline), marker_baseline) {
-                (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
-                // Otherwise the marker is shaped with `line-height: normal`.
-                // An item with another line height centres its first line's
-                // content area in that height (CSS Inline 3 §5.1
-                // half-leading), so the marker's line moves by half the
-                // difference.
-                _ => match style.line_height {
-                    raikiri_style::ComputedLineHeight::Normal => 0.0,
-                    _ => shaped.lines().first().map_or(0.0, |line| {
-                        (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
-                    }),
-                },
-            };
+            let offset_y = marker_offset_y(item_line.as_ref(), &shaped, style);
             markers.insert(
                 owner,
                 MarkerText {
@@ -217,6 +214,37 @@ pub(super) fn prepare_markers(
         }
     }
     Ok(markers)
+}
+
+/// How far the line of the shaped marker `shaped` moves down from its item's
+/// border edge, given the item's first line `item_line`.
+///
+/// CSS Lists 3 §3.1: an outside marker sits on the baseline of its item's
+/// first line. When the item lays out its own first line, the two baselines
+/// are matched directly, which covers a marker or a first line with other
+/// font metrics.
+pub(crate) fn marker_offset_y(
+    item_line: Option<&FirstLine>,
+    shaped: &crate::StandaloneText,
+    style: &ComputedValues,
+) -> f32 {
+    let marker_baseline = shaped
+        .lines()
+        .first()
+        .map(|line| line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic));
+    match (item_line.map(|line| line.baseline), marker_baseline) {
+        (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
+        // Otherwise the marker is shaped with `line-height: normal`. An item
+        // with another line height centres its first line's content area in
+        // that height (CSS Inline 3 §5.1 half-leading), so the marker's line
+        // moves by half the difference.
+        _ => match style.line_height {
+            raikiri_style::ComputedLineHeight::Normal => 0.0,
+            _ => shaped.lines().first().map_or(0.0, |line| {
+                (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
+            }),
+        },
+    }
 }
 
 /// The page (its index and flow origin) that draws the marker of a list item,

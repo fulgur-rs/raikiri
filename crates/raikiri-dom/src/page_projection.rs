@@ -179,6 +179,22 @@ impl Document {
             })
     }
 
+    /// The top of the outside image marker `height` tall of `owner` when the
+    /// pages were not projected, for the painter: its bottom meets the item's
+    /// first line as [`Self::list_marker_image_top`] places it. `top` is
+    /// where the list item's border edge is painted.
+    #[doc(hidden)]
+    pub fn unprojected_list_marker_image_top(
+        &self,
+        cascade: &CascadeResult,
+        owner: usize,
+        height: f32,
+        top: f32,
+    ) -> f32 {
+        let line = image_markers::aligned_first_line(self, cascade, owner, true);
+        top + image_markers::image_offset_y(self, owner, line.as_ref(), height)
+    }
+
     /// Where an outside text marker is drawn, for the painter.
     ///
     /// `page` is the flow start of the page being painted and whether the
@@ -221,6 +237,32 @@ impl Document {
                 marker.line_top(top - moved, page_bottom) + moved
             })
         })
+    }
+
+    /// Where the outside text marker `shaped` of `owner` is drawn when the
+    /// pages were not projected, for the painter: the top of the marker's
+    /// line, whose baseline meets the item's first line as
+    /// [`Self::list_marker_text_top`] places it. `top` is where the list
+    /// item's border edge is painted and `page_bottom` the end of the page's
+    /// content.
+    #[doc(hidden)]
+    pub fn unprojected_list_marker_text_top(
+        &self,
+        cascade: &CascadeResult,
+        owner: usize,
+        (shaped, style): (&crate::StandaloneText, &raikiri_style::ComputedValues),
+        top: f32,
+        page_bottom: f32,
+    ) -> f32 {
+        let item_line = text_runs::first_line(self, cascade, owner);
+        let offset_y = text_runs::marker_offset_y(item_line.as_ref(), shaped, style);
+        text_runs::marker_line_top(
+            shaped,
+            offset_y,
+            item_line.map(|line| line.center),
+            top,
+            page_bottom,
+        )
     }
 
     /// The line holding one image of `::before` or `::after` content placed
