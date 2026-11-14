@@ -2591,9 +2591,15 @@ fn layout_column_group(
             }
             let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
             let (fragments, height) = root_column_fragments(lines, context);
-            // Lines that need all of a definite height go in turn, as they did.
+            // Lines that need all of a definite height fill the columns in
+            // turn, and those past the last column go on in overflow columns
+            // beside it. The pieces still stand at the tops of their columns,
+            // inside the container's box, as a paragraph of the container's
+            // own does: placing the chain as one block in turn would leave its
+            // lines at their offsets in one column, past the container's box,
+            // and print would give them pages of their own.
             if let Some(definite) = fragment_height {
-                balanced_below(height, definite)?;
+                (height > 0.0 && height <= definite).then_some(())?;
             }
             let (first, last) = (lines.lines.first()?, lines.lines.last()?);
             let stacked = last.block_offset() + last.block_size() - first.block_offset();
