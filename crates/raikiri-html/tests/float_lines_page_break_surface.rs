@@ -321,6 +321,14 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
     let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:right;width:20px'>X X X</div><div style='clear:left;height:20px'></div></div>";
     assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 20.0)]);
     assert_eq!(wide_boxes(body, 1), [(0.0, 30.0)]);
+    // A box that clears it from inside a block moves in the block, which
+    // grows with it, and the box after the block follows.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='clear:left;height:20px'></div></div><div style='height:10px'></div></div>";
+    assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 80.0)]);
+    assert_eq!(
+        wide_boxes(body, 1),
+        [(0.0, 60.0), (0.0, 50.0), (30.0, 20.0), (50.0, 10.0)]
+    );
 }
 
 #[test]
@@ -549,6 +557,82 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
                 (0, 'X', 25),
                 (0, 'X', 55),
                 (1, 'C', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        // A box that clears the grown float from inside a block of the same
+        // formatting context moves below it, the block grows with it and the
+        // boxes after it follow.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='clear:left'>Z</div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div>A</div><div style='clear:left'>Z</div><div>B</div></div><div>C</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'B', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+                (2, 'C', 5),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div><div style='clear:left'>Z</div></div>W</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'W', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='height:20px'><div style='clear:left'>Z</div></div><div>C</div></div>",
+            &[
+                (0, 'C', 45),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        // A block that holds its floats is not searched.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='overflow:hidden'><div style='clear:left'>Z</div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
+        // A float below the grown float inside a block moves with it.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='float:left;width:60px'>Y</div></div><div>C</div></div>",
+            &[
+                (0, 'C', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        // Text before the clearing box in the block stays beside the float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>A<div style='clear:left'>Z</div></div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='display:flow-root'>A</div><div><div style='clear:left'>Z</div></div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
                 (1, 'X', 5),
                 (1, 'Z', 35),
             ],

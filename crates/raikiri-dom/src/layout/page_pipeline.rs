@@ -12990,16 +12990,43 @@ fn grow_ancestors_walk(
             }
             // A box after the float that clears it starts below it, and
             // takes the boxes after it along.
-            if let Some((before, clearing, clearance)) = below.clearing {
-                let box_parent = document.parent_of(clearing).unwrap_or(parent);
-                shifts.from_box.push((
-                    box_parent,
-                    child_index(document, box_parent, clearing),
-                    clearance,
-                ));
+            if let Some(clearing) = below.clearing {
+                let ClearingBox {
+                    before,
+                    node,
+                    outer,
+                    shift,
+                } = clearing;
+                let box_parent = document.parent_of(node).unwrap_or(parent);
+                shifts
+                    .from_box
+                    .push((box_parent, child_index(document, box_parent, node), shift));
                 shifted_after = Some(before);
-                flow_delta = clearance;
-                size_delta = clearance;
+                flow_delta = shift;
+                size_delta = shift;
+                if outer != node {
+                    // A box that clears the float from inside a block of the
+                    // same formatting context moves in that block, which
+                    // grows with it: the boxes after the block follow by as
+                    // much as the block grew.
+                    document.translate_pagination_y(node, shift);
+                    let (inner_bounded, passed) = grow_ancestors_below(
+                        document,
+                        cascade,
+                        node,
+                        shift,
+                        body_id,
+                        shifts,
+                        flow_page,
+                        &IfcBoxShifts::default(),
+                        Some(parent),
+                        true,
+                    );
+                    bounded |= inner_bounded;
+                    shifted_after = Some(outer);
+                    flow_delta = passed;
+                    size_delta = passed;
+                }
             }
         }
         if stop.is_none()
@@ -13098,7 +13125,8 @@ fn grow_ancestors_walk(
 /// Whether the walk at `node_id` has reached the child of `parent` at index
 /// `from`: `node_id` is in that child or in one after it, or comes after
 /// `parent` in tree order. A node before `parent`, such as a box before the
-/// `display: contents` element `parent` is, has not reached it.
+/// `display: contents` element `parent` is or an element that holds
+/// `parent`, has not reached it.
 fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize) -> bool {
     let index = |up: usize, child: usize| {
         document.nodes[up]
@@ -13125,7 +13153,7 @@ fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize
             toward
                 .iter()
                 .find(|&&(ancestor, _)| ancestor == up)
-                .map(|&(_, branch)| index(up, child) >= index(up, branch))
+                .map(|&(_, branch)| index(up, child) > index(up, branch))
         })
         .find_map(|reached| reached)
         .unwrap_or(true)
@@ -13147,9 +13175,42 @@ struct BelowGrownFloat {
     /// The floats placed below a float that moves, each with how far it
     /// moves down.
     floats: Vec<(usize, f32)>,
-    /// The first in-flow box that clears a float that moves, with the box
-    /// before it and how far it moves down.
-    clearing: Option<(usize, usize, f32)>,
+    /// The first in-flow box that clears a float that moves.
+    clearing: Option<ClearingBox>,
+}
+
+/// An in-flow box that clears a float that moves (see [`BelowGrownFloat`]).
+struct ClearingBox {
+    /// The box of the float's parent before the one that holds `node`.
+    before: usize,
+    /// The box that clears the float.
+    node: usize,
+    /// The box of the float's parent that is `node` or holds it.
+    outer: usize,
+    /// How far `node` moves down.
+    shift: f32,
+}
+
+/// The children of `node_id` that are laid out as its boxes: the children
+/// of `display: contents` elements take their places.
+fn laid_out_children(document: &Document, node_id: usize) -> Vec<usize> {
+    let mut boxes = Vec::new();
+    let mut stack: Vec<usize> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        if document.nodes[id].kind() == NodeKind::Element
+            && document.nodes[id].display() == DisplayValue::Contents
+        {
+            stack.extend(document.nodes[id].children.iter().rev().copied());
+        } else {
+            boxes.push(id);
+        }
+    }
+    boxes
 }
 
 /// The boxes after `float` in `parent` that have to move down to stay below
@@ -13175,24 +13236,7 @@ fn below_grown_float(
     if !inside_float {
         return None;
     }
-    // The children of `display: contents` elements are laid out as the
-    // children of `parent`.
-    let mut boxes = Vec::new();
-    let mut stack: Vec<usize> = document.nodes[parent]
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    while let Some(id) = stack.pop() {
-        if document.nodes[id].kind() == NodeKind::Element
-            && document.nodes[id].display() == DisplayValue::Contents
-        {
-            stack.extend(document.nodes[id].children.iter().rev().copied());
-        } else {
-            boxes.push(id);
-        }
-    }
+    let boxes = laid_out_children(document, parent);
     let index = boxes.iter().position(|&id| id == float)?;
     let mut below = BelowGrownFloat::default();
     // Clearance is measured in normal-flow coordinates, without the
@@ -13208,7 +13252,17 @@ fn below_grown_float(
     // ended before and after the move.
     let bottom = margin_bottom(float);
     let mut moved = vec![(cascade.computed[float].float, bottom - grown, bottom)];
-    for (&before, &next) in boxes[index..].iter().zip(&boxes[index + 1..]) {
+    // The boxes after the float in tree order, each with the box of
+    // `parent` that is it or holds it. The blocks of the same formatting
+    // context are searched inside too.
+    let mut stack: Vec<(usize, usize)> = boxes[index + 1..]
+        .iter()
+        .rev()
+        .map(|&id| (id, id))
+        .collect();
+    let mut before = float;
+    while let Some((next, outer)) = stack.pop() {
+        let previous = std::mem::replace(&mut before, outer);
         // Text, an element that generates no box and a box out of the flow
         // neither clear nor move.
         if document.nodes[next].kind() != NodeKind::Element
@@ -13248,8 +13302,25 @@ fn below_grown_float(
                 .filter(|&&(side, _, _)| clears_float_side(clear, side))
                 .map(|&(_, _, new)| new - top)
                 .fold(0.0, f32::max);
-            below.clearing = (shift > 0.001).then_some((before, next, shift));
+            below.clearing = (shift > 0.001).then_some(ClearingBox {
+                before: previous,
+                node: next,
+                outer,
+                shift,
+            });
             break;
+        }
+        if matches!(
+            document.nodes[next].display(),
+            DisplayValue::Block | DisplayValue::ListItem
+        ) && !holds_floats(document, cascade, next)
+        {
+            stack.extend(
+                laid_out_children(document, next)
+                    .into_iter()
+                    .rev()
+                    .map(|id| (id, outer)),
+            );
         }
     }
     Some(below)
