@@ -3,12 +3,14 @@
 //!
 //! The physical width of such a box is its block size and its height is its
 //! inline size. A box whose width is `auto`, or an intrinsic keyword that
-//! behaves as `auto` on that axis, and whose parent does not fix that width (an inline-block, a float, an absolutely positioned box, or an
-//! inline flex or grid container) settles its inline size first, from the
-//! height it states or from its content, and the preferred aspect ratio then
-//! gives the block size for it (CSS Sizing 4 §5.1). Its content raises that
-//! width unless the box scrolls or states a `min-width`, as the automatic
-//! minimum size of a ratio-dependent axis does.
+//! behaves as `auto` on that axis, and whose parent does not fix that width
+//! (an inline-block, a float, an absolutely positioned box, an inline flex or
+//! grid container, a block in an orthogonal flow, or a flex or grid item whose
+//! width the container measures as its content size) settles its inline size
+//! first, from the height it states or from its content, and the preferred
+//! aspect ratio then gives the block size for it (CSS Sizing 4 §5.1). Its
+//! content raises that width unless the box scrolls or states a `min-width`,
+//! as the automatic minimum size of a ratio-dependent axis does.
 //!
 //! The block layouts below take the width they are given, so the box is
 //! measured without its ratio and laid out again at the width the ratio gives.
@@ -39,8 +41,9 @@ pub(super) fn takes_width_from_ratio(
 /// Whether the style of `idx` leaves its width to its aspect ratio: a
 /// vertical box, neither the root nor replaced nor a table, that states a
 /// ratio and a width that is `auto` or an intrinsic keyword, which behaves as
-/// `auto` on the block axis (CSS Sizing 3 §3.1), and that is no item a flex or
-/// grid container sizes.
+/// `auto` on the block axis (CSS Sizing 3 §3.1). Of the items of a flex or
+/// grid container, only one whose width the container measures as its content
+/// size along a horizontal axis, and whose width is `auto`.
 pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = &tree.nodes[idx];
     if !node.used_writing_mode.is_vertical()
@@ -61,13 +64,25 @@ pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool 
         return false;
     }
     // The flex and grid algorithms size their items along the ratio
-    // themselves; an absolutely positioned child is no item of theirs.
+    // themselves, except the width of a vertical item, its block size, where
+    // they measure that width as the item's content size: along the
+    // horizontal main axis of a flex container, or the columns of a
+    // horizontal grid container. The ratio gives it there from the height the
+    // content of the item settles, as for an inline-block. Chromium gives an
+    // item with an intrinsic keyword width that width, not one along its
+    // ratio. An absolutely positioned child is no item of theirs.
     node.layout_position() == Position::Absolute
-        || !tree.taffy_parent_of(idx).is_some_and(|parent| {
-            matches!(
-                tree.nodes[parent].layout_display(),
-                Display::Flex | Display::Grid
-            )
+        || tree.taffy_parent_of(idx).is_none_or(|parent| {
+            let container = &tree.nodes[parent];
+            let horizontal_main = match container.layout_display() {
+                Display::Flex => {
+                    tree.physical_style(parent).flex_direction_is_row()
+                        != container.used_writing_mode.is_vertical()
+                }
+                Display::Grid => !container.used_writing_mode.is_vertical(),
+                _ => return true,
+            };
+            horizontal_main && style.size().width.is_auto()
         })
 }
 
@@ -185,8 +200,11 @@ fn ratio_size(
         .height
         .or_else(|| unbounded.preferred.height.filter(|_| states_height));
     // A flex or grid container takes its width from a height it states along
-    // its ratio already, raised to the content its algorithm lays out.
+    // its ratio already, raised to the content its algorithm lays out. A
+    // measure of its content (`ContentSize`) leaves the ratio out, as for the
+    // height a flex or grid container measures its item at.
     if stated_height.is_some()
+        && inputs.sizing_mode == SizingMode::InherentSize
         && matches!(
             tree.nodes[idx].formatting_context,
             FormattingContext::Flex | FormattingContext::Grid
