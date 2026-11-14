@@ -2591,10 +2591,14 @@ fn layout_column_group(
             }
             let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
             let (fragments, height) = root_column_fragments(lines, context);
-            // Lines that need all of a definite height go in turn, as they did.
-            if let Some(definite) = fragment_height {
-                balanced_below(height, definite)?;
-            }
+            // Lines that need all of a definite height, or more, fill the
+            // columns in turn, and those past the last column go on in
+            // overflow columns beside it. The pieces still stand at the tops
+            // of their columns, inside the container's box, as a paragraph of
+            // the container's own does: placing the chain as one block in
+            // turn would leave its lines at their offsets in one column, past
+            // the container's box, and print would give them pages of their
+            // own.
             let (first, last) = (lines.lines.first()?, lines.lines.last()?);
             let stacked = last.block_offset() + last.block_size() - first.block_offset();
             (fragments.len() > 1).then_some(ParagraphBalance {
@@ -3222,6 +3226,9 @@ fn layout_column_group(
                 let columns = context.column_count.saturating_sub(context.column_index);
                 let divided = (margin_top + balance.stacked + margin_bottom) / columns as f32;
                 cursor = (cursor - margin_bottom).max(divided);
+                // Lines past the last column of a container with a definite
+                // height go on in overflow columns beside it, not below it.
+                cursor = fragment_height.map_or(cursor, |height| cursor.min(height));
             }
         }
         if tree.nodes[child].kind() == NodeKind::Element {
