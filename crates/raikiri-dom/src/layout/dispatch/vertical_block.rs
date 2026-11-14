@@ -988,18 +988,16 @@ fn width_follows_content(
     if super::vertical_oof::has_content_decided_width(tree, idx) {
         return true;
     }
-    let Some(parent) = tree.taffy_parent_of(idx) else {
-        return false;
-    };
-    if tree.nodes[idx].layout_position() == Position::Absolute || is_vertical(tree, parent) {
-        return false;
-    }
+    let parent = tree.taffy_parent_of(idx).filter(|&parent| {
+        tree.nodes[idx].layout_position() != Position::Absolute && !is_vertical(tree, parent)
+    });
+    let Some(parent) = parent else { return false };
     let container = tree.physical_style(parent);
     match tree.nodes[parent].formatting_context {
         FormattingContext::Grid => {
             let justify = style
                 .bridge_justify_self()
-                .unwrap_or_else(|| container.justify_items());
+                .unwrap_or(container.justify_items());
             let margin = style.margin();
             !matches!(
                 justify.keyword,
