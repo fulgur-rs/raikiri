@@ -360,6 +360,10 @@ struct Paragraph {
     edge_start: f32,
     /// Block size of the padding and border below the last line.
     edge_end: f32,
+    /// The edges repeat in every piece (`box-decoration-break: clone`):
+    /// each piece holds the edge above its first line and the edge below its
+    /// last, not only the pieces that hold the first and last lines.
+    cloned: bool,
     /// For a box the columns hold whole, the number of lines it holds: the one
     /// fragment of such a box reaches all of them, however many extents the
     /// plan gives it.
@@ -382,6 +386,7 @@ impl Paragraph {
             widows: 1,
             edge_start: 0.0,
             edge_end: 0.0,
+            cloned: false,
             held_lines: lines,
             sliced: false,
         }
@@ -513,7 +518,15 @@ pub(super) fn fill_definite(
         let edges: f32 = paragraphs
             .iter()
             .flatten()
-            .map(|paragraph| paragraph.edge_start + paragraph.edge_end)
+            .map(|paragraph| {
+                // Cloned edges repeat in each piece, one per line at most.
+                let pieces = if paragraph.cloned {
+                    paragraph.extents.len().min(context.column_count)
+                } else {
+                    1
+                };
+                (paragraph.edge_start + paragraph.edge_end) * pieces as f32
+            })
             .sum();
         if let Some((group, balanced)) = balanced(&paragraphs, context, ceiling + edges)
             && let Some(balanced) = balanced_below(balanced, height)
@@ -574,6 +587,7 @@ fn collect(
                 widows: 1,
                 edge_start: 0.0,
                 edge_end: 0.0,
+                cloned: false,
                 held_lines: None,
                 sliced: false,
             }));
@@ -705,6 +719,7 @@ fn collect(
                 widows: node.paragraph_widows,
                 edge_start: 0.0,
                 edge_end: 0.0,
+                cloned: false,
                 held_lines: None,
                 sliced: false,
             }));
@@ -732,6 +747,7 @@ fn collect(
             widows: node.paragraph_widows,
             edge_start,
             edge_end,
+            cloned: node.clones_box_decorations && edge_start + edge_end > 0.0,
             held_lines: None,
             sliced: false,
         }));
@@ -945,17 +961,23 @@ fn fill_chunk(
         while start < line_count {
             // The padding and border above the first line sit in the piece
             // that holds it, and those below the last line in the piece that
-            // holds that.
-            let lead = if start == 0 {
+            // holds that; cloned ones sit in every piece.
+            let lead = if start == 0 || paragraph.cloned {
                 paragraph.edge_start
+            } else {
+                0.0
+            };
+            let tail = if paragraph.cloned {
+                paragraph.edge_end
             } else {
                 0.0
             };
             let origin = paragraph.extents[start].0;
             let available = height - top;
             let mut end = start
-                + paragraph.extents[start..]
-                    .partition_point(|extent| extent.1 - origin + lead <= available + f32::EPSILON);
+                + paragraph.extents[start..].partition_point(|extent| {
+                    extent.1 - origin + lead + tail <= available + f32::EPSILON
+                });
             // The last line stays with the edge below it: when the edge does
             // not fit after it, the line goes to the next column, to be
             // followed there by the edge, so that the paragraph does not
@@ -1011,7 +1033,7 @@ fn fill_chunk(
                 first_y = top;
                 continue;
             }
-            let trail = if end == line_count {
+            let trail = if end == line_count || paragraph.cloned {
                 paragraph.edge_end
             } else {
                 0.0
@@ -1027,10 +1049,10 @@ fn fill_chunk(
                 x: context.column_offset_x(column) - context.column_offset_x(first_column),
                 // Lines are measured from the content box, which lies below
                 // the edge above them in the piece that holds the first line
-                // only.
+                // only, or in every piece when the edges are cloned.
                 y: top
                     - first_y
-                    - if start == 0 {
+                    - if start == 0 || paragraph.cloned {
                         0.0
                     } else {
                         paragraph.edge_start
@@ -1124,7 +1146,12 @@ fn relaxed_piece_end(
 /// last, fit a column of `height` together.
 fn lines_fit_column(paragraph: &Paragraph, first: usize, height: f32) -> bool {
     paragraph.extents.get(first).is_some_and(|&(top, _)| {
-        paragraph.extents[paragraph.extents.len() - 1].1 - top + paragraph.edge_end
+        let lead = if paragraph.cloned {
+            paragraph.edge_start
+        } else {
+            0.0
+        };
+        paragraph.extents[paragraph.extents.len() - 1].1 - top + lead + paragraph.edge_end
             <= height + f32::EPSILON
     })
 }
@@ -1303,17 +1330,27 @@ pub(super) fn fill_rows(
 /// paragraph. The inline axis is represented separately and has no limit.
 pub(super) const BLOCK_INK_REACH: f32 = 1.0e5;
 
-/// The column's block cut with an unbounded inline axis.
+/// The column's block cut with an unbounded inline axis, for the piece
+/// `index` of `count` pieces of a box. The first piece is not cut above the
+/// column, nor the last below it: only the breaks cut the box, so what it
+/// paints beyond its true start and end, such as a shadow, shows.
 pub(super) fn column_window(
     rect: crate::fragment::FragmentRect,
     context: FragmentationContext,
     height: f32,
+    (index, count): (usize, usize),
 ) -> raikiri_traits::PaintClip {
+    let above = if index == 0 { BLOCK_INK_REACH } else { 0.0 };
+    let below = if index + 1 >= count {
+        BLOCK_INK_REACH
+    } else {
+        0.0
+    };
     inline_open_clip(crate::fragment::FragmentRect {
         x: rect.x,
-        y: context.origin_y,
+        y: context.origin_y - above,
         width: rect.width,
-        height,
+        height: height + above + below,
     })
 }
 

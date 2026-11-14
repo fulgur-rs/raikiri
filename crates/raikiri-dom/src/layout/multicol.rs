@@ -999,8 +999,7 @@ fn multicol_has_only_paragraph_children(
         // A paragraph that stands alone with padding or border at its sides
         // also needs the planner: the path it would take otherwise lays it
         // out at the width of the container.
-        decorated |= block_edges
-            || (lineless::has_inline_edge_decorations(&style) && slices_block_edges(node));
+        decorated |= block_edges || lineless::has_inline_edge_decorations(&style);
         paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
         // stream gives the lines it places; the planner collapses the adjoining
@@ -1013,7 +1012,6 @@ fn multicol_has_only_paragraph_children(
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical)
             && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
-            && (!block_edges || slices_block_edges(node))
             && !margin.top.is_auto()
             && !margin.bottom.is_auto()
             && node.layout_position() != Position::Absolute
@@ -1121,7 +1119,7 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0;
-    (undecorated || edges == BlockEdges::Sliced && slices_block_edges(node))
+    (undecorated || edges == BlockEdges::Sliced)
         && (matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
             // A `flow-root` box of lines breaks between them as a paragraph
             // does; an empty one starts a formatting context, so margins do
@@ -1234,15 +1232,6 @@ fn block_edges(layout: &BoxLayout) -> (f32, f32) {
         layout.padding.top + layout.border.top,
         layout.padding.bottom + layout.border.bottom,
     )
-}
-
-/// Whether the pieces of the box `node` cut at a column end slice its block
-/// edges (CSS Fragmentation 3, 5.4): each paints the whole box, clipped to
-/// its column, so the padding and border of an edge show where the box begins
-/// or ends only. A box that repeats them at every break, or paints effects
-/// sized from its whole border box, is not sliced.
-fn slices_block_edges(node: &crate::node::Node) -> bool {
-    !node.clones_box_decorations && !node.paints_whole_box_effects
 }
 
 /// Whether a right-to-left parent aligns `child` to its right edge, which
@@ -4156,19 +4145,50 @@ fn record_nested_ifc_box_fragments(
                     && origins_recorded
                     && root_owns_fragments
                     && fragment_count > 1
-                    && slices_block_edges(layout_node(tree, node_id))
                 {
                     block_edges(&tree.nodes[node_id].layout)
                 } else {
                     (0.0, 0.0)
                 };
-                let sliced = edge_start > 0.0 || edge_end > 0.0;
+                // With `box-decoration-break: clone` each piece is a box of
+                // its own, which holds both edges around its lines, so none
+                // is cut; a piece that the paragraph goes on from runs to the
+                // end of its column (CSS Fragmentation 3, 5.4).
+                let cloned = (edge_start > 0.0 || edge_end > 0.0)
+                    && layout_node(tree, node_id).clones_box_decorations;
+                let sliced = (edge_start > 0.0 || edge_end > 0.0) && !cloned;
                 // How far the box of the piece begins above its first line.
-                let piece_lead = if fragment_index > 0 { edge_start } else { 0.0 };
+                let piece_lead = if fragment_index > 0 && sliced {
+                    edge_start
+                } else {
+                    0.0
+                };
                 if root_owns_fragments && let Some(range) = line_range {
                     let base = tree.fragment_tree.fragments[parent_fragment];
-                    let fragment_height = slice_height(range, origins_recorded, base)
-                        + if sliced { piece_lead + edge_end } else { 0.0 };
+                    let extent = slice_height(range, origins_recorded, base);
+                    let last = fragment_index + 1 == fragment_count;
+                    let fragment_height = extent
+                        + if sliced {
+                            piece_lead + edge_end
+                        } else if cloned && last && fragment_index > 0 {
+                            edge_start + edge_end
+                        } else {
+                            0.0
+                        };
+                    if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
+                        let pieces = &mut root.multicol_piece_extents;
+                        if fragment_index == 0 {
+                            pieces.clear();
+                        }
+                        pieces.resize(fragment_count, None);
+                        // The last piece holds the edge below the box.
+                        let end = if fragment_index + 1 == fragment_count {
+                            edge_end
+                        } else {
+                            0.0
+                        };
+                        pieces[fragment_index] = Some((extent + end, piece_lead));
+                    }
                     let fragment_id = if base.fragmentainer == column {
                         let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
                         fragment.rect.height = fragment_height;
@@ -4181,6 +4201,7 @@ fn record_nested_ifc_box_fragments(
                                 fragment.rect,
                                 context,
                                 height,
+                                (fragment_index, fragment_count),
                             ));
                         }
                         parent_fragment
@@ -4198,8 +4219,14 @@ fn record_nested_ifc_box_fragments(
                                 parent: base.parent,
                                 fragmentainer: column,
                                 rect,
-                                fragmentainer_clip: sliced
-                                    .then(|| paragraph_group::column_window(rect, context, height)),
+                                fragmentainer_clip: sliced.then(|| {
+                                    paragraph_group::column_window(
+                                        rect,
+                                        context,
+                                        height,
+                                        (fragment_index, fragment_count),
+                                    )
+                                }),
                                 fragment_index,
                                 fragment_count,
                                 line_start: Some(range.line_start),
