@@ -70,6 +70,34 @@ fn an_out_of_flow_ratio_box_between_top_and_bottom_is_no_narrower_than_its_conte
     // A height the box states does the same as the insets.
     assert_rows(&[
         (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:100px;bottom:100px;align-self:stretch'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 100, 150, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:100px;bottom:100px;align-self:stretch'><div style='width:50px;height:10px'></div></div></div>",
+            &[("c", [0, 100, 100, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:0;bottom:0;max-height:20%'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 60])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:0;bottom:0;max-height:60px'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 60])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-height:60px'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 60])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:100px;bottom:100px;max-height:60px'><div style='width:150px;height:250px'></div></div></div>",
+            &[("c", [0, 100, 150, 60])],
+        ),
+        (
+            "<div style='display:grid;align-items:center;width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px'><div style='width:150px;height:10px'></div></div></div>",
+            &[("c", [0, 0, 150, 150])],
+        ),
+        (
             "<div style='width:500px;height:300px;position:relative'><div id=c style='aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px'><div style='width:150px;height:10px'></div></div></div>",
             &[("c", [0, 0, 150, 150])],
         ),

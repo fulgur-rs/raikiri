@@ -633,6 +633,14 @@ fn a_contained_out_of_flow_box_between_top_and_bottom_is_no_narrower_than_its_co
     // or an overflow other than `visible` leave the width it states.
     assert_rows(&[
         (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;max-height:60px'></div></div>",
+            &[("c", [0, 0, 200, 60])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:100px;bottom:100px;align-self:stretch'></div></div>",
+            &[("c", [0, 100, 200, 100])],
+        ),
+        (
             "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px'></div></div>",
             &[("c", [0, 0, 200, 200])],
         ),
