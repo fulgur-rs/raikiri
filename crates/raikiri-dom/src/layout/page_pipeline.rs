@@ -7954,25 +7954,152 @@ fn push_in_flow_boxes_rev(
     }
 }
 
+/// The items that sit beside `source`, or beside a box that holds it, on a
+/// flex line or grid row and come after it: a break forced after `source`
+/// does not fall before them, but waits for what follows the line or row
+/// (CSS Flexbox 1 §10, CSS Grid 1 §12: a break between items of one line or
+/// row is taken after it). Items of a later line or row, out-of-flow boxes
+/// and the anonymous items of text are not among them.
+fn later_line_peers(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    source: usize,
+) -> Vec<usize> {
+    let mut peers = Vec::new();
+    let mut item = source;
+    while let Some(container) = document.layout_parent_of(item) {
+        let node = &document.nodes[container];
+        if !node.used_writing_mode.is_vertical() {
+            match node.display() {
+                DisplayValue::Flex | DisplayValue::InlineFlex => {
+                    break_flex_line_peers(document, cascade, body_id, container, item, &mut peers);
+                }
+                DisplayValue::Grid | DisplayValue::InlineGrid => {
+                    grid_row_peers(document, container, item, &mut peers);
+                }
+                _ => {}
+            }
+        }
+        item = container;
+    }
+    peers
+}
+
+/// The in-flow element children of `container` after `item`.
+fn later_in_flow_items(document: &Document, container: usize, item: usize) -> Vec<usize> {
+    in_flow_items(document, container)
+        .into_iter()
+        .skip_while(|&child| child != item)
+        .skip(1)
+        .collect()
+}
+
+/// The in-flow element children of `container`.
+fn in_flow_items(document: &Document, container: usize) -> Vec<usize> {
+    document.nodes[container]
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| {
+            let node = &document.nodes[child];
+            node.kind() == NodeKind::Element
+                && !matches!(node.display(), DisplayValue::None | DisplayValue::Contents)
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        })
+        .collect()
+}
+
+/// Push the later items of the row flex container `container` that share
+/// the flex line of its item `item`: every item when the container does not
+/// wrap, and otherwise those on the line of `item` (see [`flex_line_of`]).
+/// The lines of a container that wraps in reverse stack upwards, above the
+/// line of `item`, so all of its later items stay with it, as Chromium prints
+/// them.
+fn break_flex_line_peers(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    container: usize,
+    item: usize,
+    peers: &mut Vec<usize>,
+) {
+    let computed = &cascade.computed[container];
+    if !matches!(
+        computed.flex_direction,
+        FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+    ) {
+        return;
+    }
+    let later = later_in_flow_items(document, container, item);
+    if computed.flex_wrap == FlexWrapValue::Wrap {
+        let line = flex_line_of(
+            document,
+            cascade,
+            body_id,
+            container,
+            in_flow_items(document, container),
+            item,
+        );
+        peers.extend(later.into_iter().filter(|id| line.contains(id)));
+    } else {
+        peers.extend(later);
+    }
+}
+
+/// Push the later items of the grid `container` that start within the rows
+/// its item `item` spans.
+fn grid_row_peers(document: &Document, container: usize, item: usize, peers: &mut Vec<usize>) {
+    let rows = &document.nodes[container].grid_item_rows;
+    let row_of = |id: usize| rows.iter().find(|row| row.item == id);
+    // An item the grid placed no row for has no row to share.
+    let span = row_of(item);
+    peers.extend(
+        later_in_flow_items(document, container, item)
+            .into_iter()
+            .filter(|&later| {
+                span.zip(row_of(later))
+                    .is_some_and(|(span, row)| row.start >= span.start && row.start < span.end)
+            }),
+    );
+}
+
 /// A forced break after a box, kept attached to that box until its
 /// descendants have been visited. Applying it to the first flex child would
 /// turn a break-after on the flex container into an extra blank page.
 #[derive(Default)]
 struct PendingBreak {
     source: Option<usize>,
+    /// The boxes beside the source on its flex line or grid row, which the
+    /// break does not fall before (see [`later_line_peers`]).
+    line_peers: Vec<usize>,
 }
 
 impl PendingBreak {
     /// Whether the pending break falls before `node_id`, which is outside the
     /// box that forced it.
+    ///
+    /// A break forced after an item of a flex line or grid row does not fall
+    /// between that item and the later items of the same line or row, which
+    /// sit beside it: it waits for the box after the line, as browsers print
+    /// it.
     fn applies_to(&self, document: &Document, node_id: usize) -> bool {
-        self.source
-            .is_some_and(|source| !is_descendant_or_self(document, node_id, source))
+        self.source.is_some_and(|source| {
+            !is_descendant_or_self(document, node_id, source)
+                && !self
+                    .line_peers
+                    .iter()
+                    .any(|&peer| is_descendant_or_self(document, node_id, peer))
+        })
     }
 
     /// Drop the pending break once a later box has consumed it.
     fn clear(&mut self) {
         self.source = None;
+        self.line_peers.clear();
     }
 
     /// Make `node_id` the source of the pending break when it forces a break
@@ -7982,6 +8109,7 @@ impl PendingBreak {
         &mut self,
         document: &Document,
         cascade: &CascadeResult,
+        body_id: usize,
         node_id: usize,
         deferred_named_break_after: bool,
     ) {
@@ -7996,6 +8124,7 @@ impl PendingBreak {
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
         if breaks_after && !source_is_ancestor {
             self.source = Some(node_id);
+            self.line_peers = later_line_peers(document, cascade, body_id, node_id);
         }
     }
 }
@@ -11726,36 +11855,14 @@ fn items_on_line_of(
         if cascade.computed[container].flex_wrap == FlexWrapValue::NoWrap {
             same.extend(placed.iter().map(|child| child.id));
         } else {
-            let mut ordered: Vec<usize> = placed.iter().map(|child| child.id).collect();
-            ordered.sort_by_key(|&id| cascade.computed[id].order);
-            // Lines are found in normal flow: a relative offset only moves
-            // the paint of an item.
-            let span = |id: usize| {
-                let layout = &document.nodes[id].layout;
-                let x =
-                    layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
-                (
-                    x - layout.margin.left,
-                    x + layout.size.width + layout.margin.right,
-                )
-            };
-            let mut line: Vec<usize> = Vec::new();
-            let mut lines = Vec::new();
-            for id in ordered {
-                let (start, end) = span(id);
-                let starts_over = line.iter().any(|&other| {
-                    let (other_start, other_end) = span(other);
-                    start < other_end - 0.001 && end > other_start + 0.001
-                });
-                if starts_over {
-                    lines.push(std::mem::take(&mut line));
-                }
-                line.push(id);
-            }
-            lines.push(line);
-            if let Some(line) = lines.into_iter().find(|line| line.contains(&item)) {
-                same.extend(line);
-            }
+            same.extend(flex_line_of(
+                document,
+                cascade,
+                body_id,
+                container,
+                placed.iter().map(|child| child.id).collect(),
+                item,
+            ));
         }
     } else if let Some(rows) = node.grid_item_rows.iter().find(|row| row.item == item) {
         same.extend(
@@ -11766,6 +11873,58 @@ fn items_on_line_of(
         );
     }
     same
+}
+
+/// The items of `items`, children of the multi-line row flex container
+/// `container`, that share the flex line of `item`. The items fill a line in
+/// `order`, each one further along the main axis than the one before, until
+/// one starts back before the end of the previous item: gaps and
+/// `justify-content` can leave the items of two lines side by side without
+/// overlapping, but never send an item of the same line backwards. Lines are
+/// found in normal flow and in the inline axis, which pagination never
+/// moves: a relative offset only moves the paint of an item.
+fn flex_line_of(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    container: usize,
+    mut items: Vec<usize>,
+    item: usize,
+) -> Vec<usize> {
+    items.sort_by_key(|&id| cascade.computed[id].order);
+    let computed = &cascade.computed[container];
+    let forward = (computed.flex_direction == FlexDirectionValue::Row)
+        == (computed.direction == raikiri_style::property::Direction::Ltr);
+    let span = |id: usize| {
+        let layout = &document.nodes[id].layout;
+        let x = layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
+        (
+            x - layout.margin.left,
+            x + layout.size.width + layout.margin.right,
+        )
+    };
+    let mut line: Vec<usize> = Vec::new();
+    let mut lines = Vec::new();
+    for id in items {
+        let (start, end) = span(id);
+        let starts_over = line.last().is_some_and(|&previous| {
+            let (previous_start, previous_end) = span(previous);
+            if forward {
+                start < previous_end - 0.001
+            } else {
+                end > previous_start + 0.001
+            }
+        });
+        if starts_over {
+            lines.push(std::mem::take(&mut line));
+        }
+        line.push(id);
+    }
+    lines.push(line);
+    lines
+        .into_iter()
+        .find(|line| line.contains(&item))
+        .unwrap_or_default()
 }
 
 /// Stretches the items of `row` that stretch to the height of their row or
