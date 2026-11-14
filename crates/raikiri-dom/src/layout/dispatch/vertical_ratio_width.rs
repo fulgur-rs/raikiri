@@ -42,8 +42,9 @@ pub(super) fn takes_width_from_ratio(
 /// vertical box, neither the root nor replaced nor a table, that states a
 /// ratio and a width that is `auto` or an intrinsic keyword, which behaves as
 /// `auto` on the block axis (CSS Sizing 3 §3.1). Of the items of a flex or
-/// grid container, only one whose width the container measures as its content
-/// size along a horizontal axis, and whose width is `auto`.
+/// grid container, one whose width the container measures as its content
+/// size along a horizontal axis, and one whose width is an intrinsic keyword
+/// along any axis.
 pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = &tree.nodes[idx];
     if !node.used_writing_mode.is_vertical()

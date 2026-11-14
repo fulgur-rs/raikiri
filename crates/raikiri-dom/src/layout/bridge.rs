@@ -1062,7 +1062,10 @@ fn uses_vertical_writing_mode(cv: &ComputedValues) -> bool {
 /// (CSS Sizing 3 §3.1.1), so the width of either sizes nothing.
 pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
-    let keyword = match cv.width {
+    // A vertical box takes its width from its logical sizes, as its layout
+    // reads it (see `sizing_flags`).
+    let width = vertical_logical_size(cascade, idx).map_or(&cv.width, |size| &size.width);
+    let keyword = match width {
         ComputedLengthPercentageOrAuto::MinContent => !min_content_width_is_auto(doc, cascade, idx),
         ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent

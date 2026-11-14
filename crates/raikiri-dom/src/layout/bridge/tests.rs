@@ -2416,6 +2416,22 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
 }
 
 #[test]
+fn a_vertical_flex_or_grid_item_keeps_its_fit_content_width() {
+    for (keyword, expected) in [
+        ("fit-content", Dimension::fit_content()),
+        ("fit-content(50px)", Dimension::fit_content_px(50.0)),
+        ("fit-content(50%)", Dimension::fit_content_percent(0.5)),
+    ] {
+        let width = format!("display:block;width:{keyword};writing-mode:vertical-rl");
+        let widths = bridged_widths(&[
+            ("display:flex", "div", &width),
+            ("display:grid", "div", &width),
+        ]);
+        assert_eq!(widths, [expected; 2], "{keyword}");
+    }
+}
+
+#[test]
 fn a_vertical_box_takes_its_inline_size_keyword_from_the_height() {
     for keyword in ["max-content", "fit-content"] {
         let vertical = format!("display:block;writing-mode:vertical-rl;inline-size:{keyword}");
