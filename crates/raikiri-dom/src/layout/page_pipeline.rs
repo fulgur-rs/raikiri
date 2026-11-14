@@ -3851,7 +3851,12 @@ fn layout_pages_core(
     let mut resumptions = float_resumption::Plan::default();
     let mut unpaged_plain_columns = false;
     let mut spanning_origins = HashMap::new();
-    for _ in 0..3 {
+    let mut page_filled_origins = HashMap::new();
+    // Each container whose columns are filled page by page may take one
+    // more attempt, to fill them from where the walk moved it.
+    let mut attempts = 0;
+    while attempts < 3 + page_filled_origins.len() {
+        attempts += 1;
         let next = layout_pages_attempt(
             document,
             cascade,
@@ -3863,17 +3868,20 @@ fn layout_pages_core(
                 unpaged_plain_columns,
                 resumptions: &resumptions,
                 spanning_origins: &spanning_origins,
+                page_filled_origins: &page_filled_origins,
             },
         )?;
         if !next.moved_columns
             && next.resumptions == resumptions
             && next.spanning_origins == spanning_origins
+            && next.page_filled_origins == page_filled_origins
         {
             return Ok(next.slices);
         }
         unpaged_plain_columns |= next.moved_columns;
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
+        page_filled_origins = next.page_filled_origins;
     }
     // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
@@ -3885,6 +3893,7 @@ struct PageAttempt<'a> {
     unpaged_plain_columns: bool,
     resumptions: &'a float_resumption::Plan,
     spanning_origins: &'a HashMap<usize, f32>,
+    page_filled_origins: &'a HashMap<usize, f32>,
 }
 
 struct PageAttemptResult {
@@ -3892,6 +3901,7 @@ struct PageAttemptResult {
     moved_columns: bool,
     resumptions: float_resumption::Plan,
     spanning_origins: HashMap<usize, f32>,
+    page_filled_origins: HashMap<usize, f32>,
 }
 
 /// Lay out and break `document` into pages once, retaining the reasons to
@@ -3913,7 +3923,11 @@ fn layout_pages_attempt(
     session.context.unpaged_plain_columns = attempt.unpaged_plain_columns;
     session.context.float_resumptions = attempt.resumptions.clone();
     session.context.spanning_page_origins = attempt.spanning_origins.clone();
-    if !attempt.resumptions.is_empty() || !attempt.spanning_origins.is_empty() {
+    session.context.page_filled_origins = attempt.page_filled_origins.clone();
+    if !attempt.resumptions.is_empty()
+        || !attempt.spanning_origins.is_empty()
+        || !attempt.page_filled_origins.is_empty()
+    {
         session.layout_dirty = true;
     }
     // A root with `display: none` generates no boxes, so there is nothing to
@@ -3937,6 +3951,7 @@ fn layout_pages_attempt(
             moved_columns: false,
             resumptions: float_resumption::Plan::default(),
             spanning_origins: HashMap::new(),
+            page_filled_origins: HashMap::new(),
         });
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
@@ -4003,6 +4018,7 @@ fn layout_pages_attempt(
         moved_columns: session.context.page_filled_columns_moved,
         resumptions,
         spanning_origins: session.context.spanning_page_origins.clone(),
+        page_filled_origins: session.context.page_filled_origins.clone(),
     })
 }
 
@@ -4358,6 +4374,7 @@ fn paginate_flow(
             .context
             .spanning_page_origins
             .get(&owner)
+            .or_else(|| document.context.page_filled_origins.get(&owner))
             .copied()
             .unwrap_or(source_y);
         let tracked = document.context.spanning_page_origins.contains_key(&owner)
@@ -4399,13 +4416,19 @@ fn paginate_flow(
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
-    // Where the columns of each container were filled page by page, from the
-    // position the container has now.
+    // Where the columns of each container were filled page by page: from
+    // where an earlier attempt's walk moved it, when it did, else from the
+    // position it has now. The flag tells the first case.
     let refilled: Vec<_> = document
         .context
         .page_filled_columns
         .iter()
-        .map(|&owner| (owner, current_abs_y(document, owner)))
+        .map(
+            |&owner| match document.context.page_filled_origins.get(&owner) {
+                Some(&origin) => (owner, origin - root_flow_offset, true),
+                None => (owner, current_abs_y(document, owner), false),
+            },
+        )
         .collect();
     let roots = candidates::FlowRoots::new(document, body_id);
     let mut candidates = Vec::new();
@@ -4573,13 +4596,24 @@ fn paginate_flow(
         }
     }
 
-    // A container the walk moved has its columns filled for another place,
-    // and its caller lays the document out again without that.
-    if refilled
-        .iter()
-        .any(|&(owner, y)| (current_abs_y(document, owner) - y).abs() > 1e-3)
-    {
-        document.context.page_filled_columns_moved = true;
+    // A container the walk moved, as a forced break does, has its columns
+    // filled for another place. The first one is filled again from where the
+    // walk put it, on the next attempt; the containers after it move with it
+    // and wait for their own attempt. A container that moves away from such
+    // a place too has the document laid out without filling any columns.
+    let moved = refilled.iter().find_map(|&(owner, planned_y, replanned)| {
+        let y = current_abs_y(document, owner);
+        let tolerance = 1e-3_f32.max(y.abs() * 1e-6);
+        ((y - planned_y).abs() > tolerance).then_some((owner, y, replanned))
+    });
+    if let Some((owner, y, replanned)) = moved {
+        document.context.page_filled_columns_moved = replanned;
+        if !replanned {
+            document
+                .context
+                .page_filled_origins
+                .insert(owner, root_flow_offset + y);
+        }
         return Ok(Vec::new());
     }
     place_repeated_table_footers(document, &mut state.table_headers, &page_origins);

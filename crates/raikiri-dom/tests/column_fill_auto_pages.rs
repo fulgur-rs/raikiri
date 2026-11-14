@@ -277,3 +277,85 @@ fn a_box_with_whole_box_effects_keeps_the_column_the_pages_cut() {
     let (_, a) = pieces.iter().find(|(id, _)| id == "a").expect("a");
     assert!(a.iter().all(|piece| piece.1 == 0.0), "one column: {a:?}");
 }
+
+/// A container that a forced break or a box kept whole moves down fills the
+/// columns of each page from where it lands, as one that starts there does.
+#[test]
+fn a_container_the_pages_move_fills_the_columns_where_it_lands() {
+    let lands_on_the_second_page: &[(&str, &[Piece])] = &[
+        ("g", &[(0, 0.0, 0.0, 60.0)]),
+        ("a", &[(1, 0.0, 0.0, 192.0), (1, 200.0, 0.0, 108.0)]),
+        ("k", &[(2, 0.0, 0.0, 16.0)]),
+    ];
+    let container = format!("<div style='{COLUMNS}'><div id=a style='height: 300px'></div></div>");
+    for (label, body) in [
+        (
+            "break-before",
+            format!(
+                "<div id=g style='height: 60px'></div>\
+                 <div style='{COLUMNS}; break-before: page'><div id=a style='height: 300px'></div></div>"
+            ),
+        ),
+        (
+            "break-before on a wrapper",
+            format!(
+                "<div id=g style='height: 60px'></div><div style='break-before: page'>{container}</div>"
+            ),
+        ),
+        (
+            "break-after",
+            format!("<div id=g style='height: 60px; break-after: page'></div>{container}"),
+        ),
+    ] {
+        check(
+            label,
+            &format!("{body}{AFTER}"),
+            3,
+            lands_on_the_second_page,
+        );
+    }
+    check(
+        "kept whole",
+        &format!(
+            "<div id=g style='height: 150px'></div>\
+             <div id=h style='break-inside: avoid; height: 60px'></div>\
+             {container}{AFTER}"
+        ),
+        3,
+        &[
+            ("h", &[(1, 0.0, 0.0, 60.0)]),
+            (
+                "a",
+                &[
+                    (1, 0.0, 60.0, 132.0),
+                    (1, 200.0, 60.0, 132.0),
+                    (2, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 36.0, 16.0)]),
+        ],
+    );
+}
+
+/// Two containers that a forced break moves together each fill the columns
+/// of their own pages: the first fills both columns of the page it lands on,
+/// which leaves nothing of that page for the second.
+#[test]
+fn containers_that_a_forced_break_moves_together_fill_their_own_pages() {
+    for (label, second) in [("one break", ""), ("two breaks", "; break-before: page")] {
+        check(
+            label,
+            &format!(
+                "<div id=g style='height: 60px'></div>\
+                 <div style='{COLUMNS}; break-before: page'><div id=a style='height: 300px'></div></div>\
+                 <div style='{COLUMNS}{second}'><div id=b style='height: 300px'></div></div>{AFTER}"
+            ),
+            4,
+            &[
+                ("a", &[(1, 0.0, 0.0, 192.0), (1, 200.0, 0.0, 108.0)]),
+                ("b", &[(2, 0.0, 0.0, 192.0), (2, 200.0, 0.0, 108.0)]),
+                ("k", &[(3, 0.0, 0.0, 16.0)]),
+            ],
+        );
+    }
+}
