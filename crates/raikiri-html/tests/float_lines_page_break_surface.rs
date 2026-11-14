@@ -315,3 +315,56 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
     assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 20.0)]);
     assert_eq!(wide_boxes(body, 1), [(0.0, 30.0)]);
 }
+
+#[test]
+fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
+    assert_rows(&[
+        // Too wide to sit beside the grown float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Y', 35)],
+        ),
+        // Beside the grown float, it stays.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:20px'>Y</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Y', 25), (1, 'X', 5)],
+        ),
+        // A box beside the floats keeps its place.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div><div>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (0, 'Z', 25),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        // A float that clears the grown float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;width:20px;clear:left'>Y</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Y', 35)],
+        ),
+        // Text beside the grown float, and a box out of the flow, keep their
+        // places.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div>Y</div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Y', 25), (1, 'X', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='position:absolute;width:60px;clear:left'>Y</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Y', 25), (1, 'X', 5)],
+        ),
+        // A box that clears both floats follows the moved one.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div><div style='clear:both'>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+    ]);
+}
