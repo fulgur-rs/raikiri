@@ -846,7 +846,8 @@ pub(super) fn line_left_is_inline_end(cv: &ComputedValues, vertical_axes: bool) 
 /// The computed values the layout of element `idx` reads: `vertical_sized` when
 /// a vertical box takes its sizes from its logical properties, else the
 /// cascade's own. A `max-content` or `fit-content` size a box is not sized by
-/// (see [`sized_by_content_keyword`]) is `auto` here, and so is a `min-*` or
+/// (see [`sized_by_content_keyword`] and [`width_sized_by_content_keyword`])
+/// is `auto` here, and so is a `min-*` or
 /// `max-*` size that is a sizing keyword the box does not honor (see
 /// [`honors_content_limits`]). The `min-content` width of a replaced box is
 /// `auto` as well. A vertical box takes its inline size from `height`.
@@ -1066,7 +1067,7 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
         ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
         | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
-            sized_by_content_keyword(doc, cascade, idx, cv)
+            width_sized_by_content_keyword(doc, idx)
         }
         _ => false,
     };
@@ -1084,7 +1085,8 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
 /// - a vertical flex or grid item takes its inline size from the height, which
-///   the container's algorithm sizes along its own axes.
+///   the container's algorithm sizes along its own axes. Its width is sized
+///   by the keyword (see [`width_sized_by_content_keyword`]).
 pub(super) fn sized_by_content_keyword(
     doc: &Document,
     cascade: &CascadeResult,
@@ -1098,6 +1100,18 @@ pub(super) fn sized_by_content_keyword(
         return true;
     }
     !is_flex_or_grid_item(doc, cascade, idx) || !lays_out_vertically(cascade, idx)
+}
+
+/// Whether the layout of element `idx` sizes its physical width by a
+/// `max-content` or `fit-content` size (CSS Sizing 3 §3.1.1).
+///
+/// Every box but a replaced one does (see [`sized_by_content_keyword`]). A
+/// flex or grid item in a vertical writing mode does as well: its width is its
+/// block size, which the keyword sizes to its content instead of leaving the
+/// item to stretch, as an `auto` width would (CSS Flexbox 1 §9.4, CSS Grid 1
+/// §6.2).
+pub(super) fn width_sized_by_content_keyword(doc: &Document, idx: usize) -> bool {
+    !crate::paint_rules::is_replaced_element(doc, idx)
 }
 
 /// Whether the box of element `idx` is an item of a flex or grid container:

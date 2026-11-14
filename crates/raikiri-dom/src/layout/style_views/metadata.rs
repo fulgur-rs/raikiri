@@ -152,15 +152,14 @@ pub(in crate::layout) fn sizing_flags(
     if min_content_width_is_auto(doc, cascade, idx) {
         flags = flags.union(F::MIN_CONTENT_WIDTH_AUTO);
     }
-    if (content_keyword(width) || (logical.is_some() && content_keyword(height)))
+    if content_keyword(width) && !width_sized_by_content_keyword(doc, idx) {
+        flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
+    }
+    if logical.is_some()
+        && content_keyword(height)
         && !sized_by_content_keyword(doc, cascade, idx, cv)
     {
-        if content_keyword(width) {
-            flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
-        }
-        if logical.is_some() && content_keyword(height) {
-            flags = flags.union(F::IGNORE_HEIGHT_KEYWORD);
-        }
+        flags = flags.union(F::IGNORE_HEIGHT_KEYWORD);
     }
     if !honors_content_limits(doc, cascade, idx, cv) {
         flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
