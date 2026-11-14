@@ -356,6 +356,22 @@ fn a_grid_item_follows_its_area_only_when_stretched() {
             ("c", (0.0, 0.0, 400.0, 20.0)),
         ],
     );
+    // An auto margin keeps it from stretching too.
+    let area = "display:grid;grid-template-columns:500px;height:300px";
+    check(
+        &nested(area, "margin-left:auto"),
+        &[
+            ("p", (100.0, 0.0, 400.0, 300.0)),
+            ("c", (100.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+    check(
+        &nested(area, "margin-right:auto"),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
 }
 
 #[test]
