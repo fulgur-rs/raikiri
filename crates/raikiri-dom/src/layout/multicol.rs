@@ -983,8 +983,9 @@ fn multicol_has_only_paragraph_children(
             return true;
         }
         // A box of lines with a height of its own goes whole to a column, so
-        // it needs the planner as a box of lines does.
-        if is_sized_paragraph(tree, child) {
+        // it needs the planner as a box of lines does. So does a box that
+        // makes a formatting context of its own.
+        if is_sized_paragraph(tree, child) || is_whole_formatting_context_box(tree, child) {
             paragraphs += 1;
             return insets_are_a_relative_offset(tree, child);
         }
@@ -1008,7 +1009,7 @@ fn multicol_has_only_paragraph_children(
             && !node
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical)
-            && matches!(node.display(), DisplayValue::Block)
+            && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
             && (!block_edges || slices_block_edges(node))
             && !margin.top.is_auto()
             && !margin.bottom.is_auto()
@@ -1118,7 +1119,10 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0;
     (undecorated || edges == BlockEdges::Sliced && slices_block_edges(node))
-        && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(
+            node.display(),
+            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
+        )
         && node.break_inside == raikiri_style::property::BreakInside::Auto
         && {
             let style = style_of(tree, child);
@@ -1147,6 +1151,27 @@ fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
         && style_dimension_length(style.size().height).is_some_and(|height| height > 0.0)
         && style.min_size().height.is_auto()
         && style.max_size().height.is_auto()
+        && !style.margin().top.is_auto()
+        && !style.margin().bottom.is_auto()
+}
+
+/// Whether `child` is an in-flow block-level box that makes a formatting
+/// context of its own (a `flow-root`, flex, grid or table box) and that the
+/// planner places whole in a column, at the column width.
+pub(super) fn is_whole_formatting_context_box(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    (matches!(
+        node.display(),
+        DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
+    ) || node.display() == DisplayValue::FlowRoot && node.ifc.is_none())
+        && lineless::is_plain_box_apart_from_display(tree, child, false)
+        && !node
+            .authored_writing_mode
+            .is_some_and(WritingMode::is_vertical)
+        && !multicol_subtree_has_float(tree, child)
+        && !multicol_has_out_of_flow_descendant(tree, child)
+        && !multicol_has_nested_descendant(tree, child)
         && !style.margin().top.is_auto()
         && !style.margin().bottom.is_auto()
 }

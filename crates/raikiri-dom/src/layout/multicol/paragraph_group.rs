@@ -630,6 +630,23 @@ fn collect(
             paragraph_count += 1;
             continue;
         }
+        // A box that makes a formatting context of its own goes whole to a
+        // column as well, with what it holds.
+        if boxes && output.size.height > 0.0 && is_whole_formatting_context_box(tree, child) {
+            // One that a column end could break between its rows or lines is
+            // left to the other strategies, which this planner does not cut.
+            (margin_top.is_finite() && margin_bottom.is_finite() && holds_one_row(tree, child))
+                .then_some(())?;
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph::whole_box(
+                output.size.height,
+                margin_top,
+                margin_bottom,
+                None,
+            )));
+            paragraph_count += 1;
+            continue;
+        }
         let empty = output.size.height == 0.0
             && node.ifc.as_ref().is_none_or(|root| {
                 root.lines
@@ -657,7 +674,10 @@ fn collect(
                 } else {
                     can_balance_single_paragraph(tree, child)
                 })
-            || !matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+            || !matches!(
+                node.display(),
+                DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
+            )
             || is_right_aligned_in_parent(tree, child)
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
@@ -1593,4 +1613,47 @@ fn visited(paragraphs: &[Option<Paragraph>], resume: FlowCursor, chunk: Option<&
     chunk.map_or(paragraphs.len().saturating_sub(resume.paragraph), |chunk| {
         chunk.group.placements.len()
     }) + 1
+}
+
+/// Whether nothing inside `id` stands below something else in its flow: its
+/// lines are one at most, and the in-flow boxes it holds sit side by side,
+/// each holding one row in turn. A column end then finds no place to break
+/// inside the box (CSS Fragmentation 3, 4.1), so the box goes whole to a
+/// column, as browsers place it. Boxes with no block size take no room and
+/// are left aside.
+fn holds_one_row(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let mut pending = vec![id];
+    while let Some(id) = pending.pop() {
+        let node = layout_node(tree, id);
+        if node
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .is_some_and(|lines| lines.lines.len() > 1)
+        {
+            return false;
+        }
+        let mut lowest_top = f32::NEG_INFINITY;
+        let mut highest_bottom = f32::INFINITY;
+        for child in tree.children_through_contents(id) {
+            let child_node = layout_node(tree, child);
+            if child_node.kind() != NodeKind::Element
+                || !child_node.is_in_document()
+                || child_node.is_display_none()
+                || child_node.layout_position() == Position::Absolute
+            {
+                continue;
+            }
+            let layout = child_node.layout;
+            if layout.size.height > 0.0 {
+                lowest_top = lowest_top.max(layout.location.y);
+                highest_bottom = highest_bottom.min(layout.location.y + layout.size.height);
+            }
+            pending.push(child);
+        }
+        if lowest_top >= highest_bottom {
+            return false;
+        }
+    }
+    true
 }
