@@ -48,6 +48,11 @@ pub(crate) struct FlowGeometry {
     /// in while the height of the root is open. `None` for a root without a
     /// length `max-height`.
     pub(crate) height_cap: Option<f32>,
+    /// The most that a vertical root's `max-width` allows its content box,
+    /// the limit of the room a horizontal child fits its width in while the
+    /// width of the root is open. `None` for a root without a length
+    /// `max-width`.
+    pub(crate) width_cap: Option<f32>,
     /// A vertical root's definite physical content width, its block extent,
     /// the basis for the percentage widths of its empty atomic `::before`
     /// and `::after` boxes. `None` when the width depends on the content.
@@ -80,6 +85,7 @@ impl FlowGeometry {
             top_edge,
             definite_height: None,
             height_cap: None,
+            width_cap: None,
             vertical_width: None,
             held_margins: Line::TRUE,
             blocks_apart: false,

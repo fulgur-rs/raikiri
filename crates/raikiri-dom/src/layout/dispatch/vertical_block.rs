@@ -572,6 +572,7 @@ impl LayoutSession<'_> {
                 block_ctx.is_some() && same_vertical_block_mode(tree, block.container, idx);
             let inputs = orthogonal_child_inputs(
                 tree,
+                block.container,
                 idx,
                 transpose_inputs(inputs, share_context),
                 block.block_space,
@@ -686,9 +687,13 @@ pub(crate) fn pads_by_percentage_on_physical_axes(tree: &LayoutSession<'_>, idx:
 /// fit-content width of its content in the physical width of the
 /// container's content box, `block_space`, less its margins, when that is
 /// definite (§7.3.1), so an auto width does not stretch to fill the
-/// container.
+/// container. While that width is open, the percentages of the child's width
+/// refer to the room [`open_width_room`] gives inside `container` instead.
+///
+/// [`open_width_room`]: crate::layout::ifc::boxes::open_width_room
 fn orthogonal_child_inputs(
     tree: &LayoutSession<'_>,
+    container: usize,
     idx: usize,
     inputs: LayoutInput,
     block_space: Option<f32>,
@@ -713,6 +718,17 @@ fn orthogonal_child_inputs(
             .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
         inputs.available_space.width =
             AvailableSpace::Definite((space - margin.left - margin.right).max(0.0));
+    }
+    if inputs.parent_size.width.is_none() {
+        // The physical width of the container is indefinite, even once its
+        // content sized it, so percentages of the child's width resolve
+        // against the fallback the inline size of an orthogonal flow takes:
+        // the width of the initial containing block within the container's
+        // `max-width` (CSS Writing Modes 4 §7.3).
+        inputs.parent_size.width = crate::layout::ifc::boxes::open_width_room(
+            tree,
+            crate::layout::ifc::boxes::max_width_cap(tree, container),
+        );
     }
     inputs
 }
