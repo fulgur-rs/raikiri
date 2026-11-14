@@ -111,6 +111,22 @@ fn a_page_the_line_already_has_wins_over_a_nested_name() {
 }
 
 #[test]
+fn a_flex_item_own_page_name_does_not_name_the_line() {
+    // A flex item's own `page` value is not used, so only a box nested inside
+    // an item names the page of the line.
+    assert_rows(&[
+        (
+            "<div style='display:flex'><div>E</div><div style='page:c'>G</div><div><div style='page:a'>F</div></div></div><div>Z</div>",
+            &[(Some("a"), "EGF"), (None, "Z")],
+        ),
+        (
+            "<div style='display:flex'><div>E</div><div style='page:c'><div style='page:a'>F</div></div></div><div>Z</div>",
+            &[(Some("a"), "EF"), (None, "Z")],
+        ),
+    ]);
+}
+
+#[test]
 fn an_inline_flex_container_names_no_page() {
     // An inline-level box takes the page of its containing block, so the
     // names inside it neither name a page nor start one after it.

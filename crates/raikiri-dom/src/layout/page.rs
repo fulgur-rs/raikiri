@@ -1591,8 +1591,10 @@ fn is_in_flow_page_child(cascade: &CascadeResult, boxes: BoxTree<'_>, child_id: 
 /// The start page value of the first in-flow item of the flex container
 /// `node_id` that has one, in the order the items are paginated, with
 /// `inherited_page_name` as the page of an item that names none. The items of
-/// a row flex line sit side by side, so the first item that names a page
-/// names the page of the whole line, whichever item it is.
+/// a row flex line sit side by side, so the first item whose content names a
+/// page names the page of the whole line, whichever item it is. A flex item's
+/// own `page` value is not used, as it is not used anywhere else a flex item
+/// is paginated; only boxes nested inside an item pass a name up.
 pub(crate) fn first_named_item_start_page<'name>(
     document: &Document,
     cascade: &'name CascadeResult,
@@ -1605,12 +1607,14 @@ pub(crate) fn first_named_item_start_page<'name>(
         .iter()
         .filter(|&&child_id| is_in_flow_page_child(cascade, boxes, child_id))
         .find_map(|&child_id| {
-            propagated_start_page_name_with_transposed_axes(
+            start_page_name(
                 document,
                 cascade,
                 child_id,
                 inherited_page_name,
+                true,
                 pagination_on_transposed_axes,
+                true,
             )
             .1
         })
@@ -1624,6 +1628,30 @@ fn propagated_start_page_name_with_order<'name>(
     resolved_layout: bool,
     pagination_on_transposed_axes: bool,
 ) -> (bool, Option<&'name str>) {
+    start_page_name(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        resolved_layout,
+        pagination_on_transposed_axes,
+        false,
+    )
+}
+
+/// The start page value of `node_id`. With `ignore_root_page_name`, the
+/// `page` value of `node_id` itself is not used, while its descendants' values
+/// still are.
+fn start_page_name<'name>(
+    document: &Document,
+    cascade: &'name CascadeResult,
+    root_id: usize,
+    inherited_page_name: Option<&'name str>,
+    resolved_layout: bool,
+    pagination_on_transposed_axes: bool,
+    ignore_root_page_name: bool,
+) -> (bool, Option<&'name str>) {
+    let node_id = root_id;
     let boxes = if resolved_layout {
         BoxTree::for_layout(document)
     } else {
@@ -1685,7 +1713,8 @@ fn propagated_start_page_name_with_order<'name>(
             continue;
         }
 
-        let page_applies = page_applies_with_boxes(boxes, node_id);
+        let page_applies = page_applies_with_boxes(boxes, node_id)
+            && (!ignore_root_page_name || node_id != root_id);
         let explicit_page_name = if page_applies {
             selected_page_name(cascade, node_id)
         } else {
