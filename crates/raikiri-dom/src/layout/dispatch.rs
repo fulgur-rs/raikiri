@@ -4813,6 +4813,7 @@ fn flex_layout_at_height(
         None => {
             let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
             let inputs = with_open_wrapping_column_height(tree, node_id, inputs);
+            let inputs = with_definite_wrapping_row_main(tree, node_id, inputs);
             layout(tree, inputs)
         }
     }
@@ -5026,6 +5027,36 @@ fn with_open_wrapping_column_width(
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
         _ => {}
+    }
+    inputs
+}
+
+/// `inputs` with the main size of a wrapping row flex container taken as
+/// definite once its parent has given it one.
+///
+/// The main axis of a row is the inline axis of the container, and its lines
+/// break against its inline size, which its parent settles: a vertical
+/// container's height, a horizontal one's width (CSS Flexbox 1 §9.3). A parent
+/// that sizes the container from its content, as an orthogonal flow or a flex
+/// item is sized, passes that size on as one that is not definite, and Taffy
+/// puts every item on one line under a main size that is not definite.
+fn with_definite_wrapping_row_main(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let style = tree.physical_style(idx);
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || !style.flex_wraps()
+        || !style.flex_direction_is_row()
+    {
+        return inputs;
+    }
+    if tree.has_vertical_writing_mode(idx) {
+        inputs.known_dimensions_are_definite.height |= inputs.known_dimensions.height.is_some();
+    } else {
+        inputs.known_dimensions_are_definite.width |= inputs.known_dimensions.width.is_some();
     }
     inputs
 }
