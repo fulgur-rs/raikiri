@@ -4813,7 +4813,7 @@ fn flex_layout_at_height(
         None => {
             let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
             let inputs = with_open_wrapping_column_height(tree, node_id, inputs);
-            let inputs = with_definite_wrapping_row_main(tree, node_id, inputs);
+            let inputs = with_definite_orthogonal_wrapping_row_main(tree, node_id, inputs);
             layout(tree, inputs)
         }
     }
@@ -5031,29 +5031,35 @@ fn with_open_wrapping_column_width(
     inputs
 }
 
-/// `inputs` with the main size of a wrapping row flex container taken as
-/// definite once its parent has given it one.
+/// `inputs` with the main size of a wrapping row flex container in a writing
+/// mode orthogonal to its parent's taken as definite once the parent has
+/// given it one.
 ///
 /// The main axis of a row is the inline axis of the container, and its lines
-/// break against its inline size, which its parent settles: a vertical
-/// container's height, a horizontal one's width (CSS Flexbox 1 §9.3). A parent
-/// that sizes the container from its content, as an orthogonal flow or a flex
-/// item is sized, passes that size on as one that is not definite, and Taffy
-/// puts every item on one line under a main size that is not definite.
-fn with_definite_wrapping_row_main(
+/// break against its inline size. A parent in the orthogonal writing mode
+/// sizes that inline size from the content of the container (CSS Writing
+/// Modes 4 §7.3) and passes it on as one that is not definite, and Taffy puts
+/// every item on one line under a main size that is not definite. A flex
+/// container in the same writing mode as its parent keeps its own account of
+/// whether the size it flexes an item to is definite.
+fn with_definite_orthogonal_wrapping_row_main(
     tree: &LayoutSession<'_>,
     node_id: NodeId,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
     let idx = usize::from(node_id);
-    let style = tree.physical_style(idx);
-    if tree.nodes[idx].formatting_context != FormattingContext::Flex
-        || !style.flex_wraps()
-        || !style.flex_direction_is_row()
+    let vertical = tree.has_vertical_writing_mode(idx);
+    let orthogonal = tree
+        .taffy_parent_of(idx)
+        .is_some_and(|parent| tree.has_vertical_writing_mode(parent) != vertical);
+    if !orthogonal
+        || tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || !tree.physical_style(idx).flex_wraps()
+        || !tree.physical_style(idx).flex_direction_is_row()
     {
         return inputs;
     }
-    if tree.has_vertical_writing_mode(idx) {
+    if flex_main_is_height(tree, idx) {
         inputs.known_dimensions_are_definite.height |= inputs.known_dimensions.height.is_some();
     } else {
         inputs.known_dimensions_are_definite.width |= inputs.known_dimensions.width.is_some();
