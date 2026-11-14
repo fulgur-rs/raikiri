@@ -785,5 +785,58 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='display:contents'><div style='clear:left'>Z</div></div></div></div>",
             &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
         ),
+        // A box after one that clears a float by less than another float moved
+        // still clears that float, and the boxes after it follow.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:100px'></div><div style='clear:left'></div><div style='clear:right'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:100px'></div><div style='clear:left'>A</div><div style='clear:right'>Z</div><div>B</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'A', 35),
+                (1, 'X', 5),
+                (2, 'B', 35),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px'>Y Y</div><div style='clear:left'>A</div><div style='clear:right'>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'A', 35),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+                (1, 'Y', 65),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:100px'></div><div style='clear:left'></div><div><div style='clear:right'>Z</div></div><div>B</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (2, 'B', 35),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:100px'></div><div style='clear:left'></div><div style='float:left;width:60px'>Y</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Y', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>A</div><div style='clear:left'>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'A', 35),
+                (1, 'X', 5),
+                (1, 'Z', 65),
+            ],
+        ),
     ]);
 }

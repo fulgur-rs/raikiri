@@ -13015,9 +13015,9 @@ fn grow_ancestors_walk(
             };
             // The floats placed below it move down once the walk is done,
             // so that the content ends here are measured before they move.
-            for (follower, shift) in below.floats {
+            for (follower, shift, is_float) in below.later {
                 let box_parent = document.parent_of(follower).unwrap_or(parent);
-                followers.push((box_parent, follower, shift, true));
+                followers.push((box_parent, follower, shift, is_float));
             }
             // A box after the float that clears it starts below it, and
             // takes the boxes after it along.
@@ -13212,9 +13212,11 @@ fn child_index(document: &Document, parent: usize, child: usize) -> usize {
 /// have to move down to stay below it (see [`below_grown_float`]).
 #[derive(Default)]
 struct BelowGrownFloat {
-    /// The floats placed below a float that moves, each with how far it
-    /// moves down.
-    floats: Vec<(usize, f32)>,
+    /// The boxes after the first one in `clearing` that move by themselves:
+    /// the floats placed below a float that moves and the boxes that clear
+    /// one further than the boxes before them moved. Each comes with how far
+    /// it moves down and whether it is a float.
+    later: Vec<(usize, f32, bool)>,
     /// The first in-flow box that clears a float that moves.
     clearing: Option<ClearingBox>,
 }
@@ -13317,7 +13319,10 @@ fn below_grown_float(
         .collect();
     let mut before = float;
     let mut scope = parent;
-    'search: loop {
+    // How far the boxes from here on move with the boxes before them that
+    // clear a float.
+    let mut carried = 0.0;
+    loop {
         while let Some((next, outer)) = stack.pop() {
             let previous = std::mem::replace(&mut before, outer.unwrap_or(next));
             // Text, an element that generates no box and a box out of the flow
@@ -13335,16 +13340,16 @@ fn below_grown_float(
                 // A float that did not fit beside a float that moves, or
                 // cleared it, starts at or below where that float ended before
                 // it moved.
-                let top = flow_y(next) - document.nodes[next].layout.margin.top;
+                let top = flow_y(next) + carried - document.nodes[next].layout.margin.top;
                 let shift = moved
                     .iter()
                     .filter(|&&(_, old, _)| top >= old - 0.01)
                     .map(|&(_, _, new)| new - top)
                     .fold(0.0, f32::max);
                 if shift > 0.001 {
-                    let bottom = margin_bottom(next);
+                    let bottom = margin_bottom(next) + carried;
                     moved.push((cascade.computed[next].float, bottom, bottom + shift));
-                    below.floats.push((next, shift));
+                    below.later.push((next, shift, true));
                 }
                 continue;
             }
@@ -13355,22 +13360,27 @@ fn below_grown_float(
                     .iter()
                     .any(|&(side, _, _)| clears_float_side(clear, side))
             {
-                let top = flow_y(next);
+                let top = flow_y(next) + carried;
                 let shift = moved
                     .iter()
                     .filter(|&&(side, _, _)| clears_float_side(clear, side))
                     .map(|&(_, _, new)| new - top)
                     .fold(0.0, f32::max);
                 // A box that is already below the floats it clears leaves
-                // the boxes after it to clear the others.
+                // the boxes after it to clear the others, and the boxes
+                // after one that moves move with it.
                 if shift > 0.001 {
-                    below.clearing = Some(ClearingBox {
-                        before: previous,
-                        node: next,
-                        outer,
-                        shift,
-                    });
-                    break 'search;
+                    if below.clearing.is_none() {
+                        below.clearing = Some(ClearingBox {
+                            before: previous,
+                            node: next,
+                            outer,
+                            shift,
+                        });
+                    } else {
+                        below.later.push((next, shift, false));
+                    }
+                    carried += shift;
                 }
             }
             if shares_formatting_context(document, cascade, next) {
