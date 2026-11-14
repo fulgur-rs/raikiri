@@ -3,7 +3,9 @@
 //! Run `cargo bench -p raikiri-bench --bench table_memory`.
 //! `RAIKIRI_TABLE_ROWS=2500,5000,20000` selects the row counts. Each row of
 //! output reports the peak live heap during a stage and the heap that stage
-//! leaves behind, then the time of a separate run without counting.
+//! leaves behind, then the time of that same run. The time includes the
+//! counter updates of every allocation, so it compares runs of this bench
+//! with each other, not with an uninstrumented layout.
 
 // cov:ignore: benchmark harness; workspace coverage does not build this target.
 mod common {

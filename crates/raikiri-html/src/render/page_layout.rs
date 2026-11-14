@@ -14,6 +14,7 @@ use raikiri_dom::{
 use raikiri_style::property::PageValue;
 use raikiri_style::{CascadeOptions, CascadeResult, PageCascadeResult, cascade_with_options};
 use raikiri_traits::{LayoutError, PageBox, RenderError};
+use std::collections::HashSet;
 
 /// The pages of a run, laid out.
 pub(super) struct LaidOut {
@@ -65,9 +66,10 @@ impl PageLayout<'_, '_> {
     /// context the run can ask for is therefore known before layout.
     fn page_areas_can_differ(&self) -> bool {
         let mut names: Vec<Option<&str>> = vec![None];
+        let mut seen = HashSet::new();
         for value in &self.first_cascade.page_values {
             if let PageValue::Named(name) = value
-                && !names.contains(&Some(name.0.as_str()))
+                && seen.insert(name.0.as_str())
             {
                 names.push(Some(name.0.as_str()));
             }
