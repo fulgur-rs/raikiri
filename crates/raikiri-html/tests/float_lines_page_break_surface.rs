@@ -303,6 +303,13 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
         wide_boxes(body, 1),
         [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
     );
+    // An empty box between them stays beside the float.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div></div><div style='clear:left;height:20px'></div><div style='height:10px'></div></div>";
+    assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 0.0)]);
+    assert_eq!(
+        wide_boxes(body, 1),
+        [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
+    );
     // A relative offset moves the clearing box from there, and not the boxes
     // after it.
     let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div> <div style='clear:left;height:20px;position:relative;top:10px'></div><div style='height:10px'></div></div>";
@@ -359,6 +366,28 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
         (
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='display:none;clear:both'></div><div>Z</div></div>",
             &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
+        // A box beside the grown float keeps its place, and a float or a
+        // box that clears it after that box still moves below it.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>Z</div><div style='float:left;width:60px'>Y</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (0, 'Z', 25),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>Z</div><div style='clear:left'>W</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (0, 'Z', 25),
+                (1, 'W', 35),
+                (1, 'X', 5),
+            ],
         ),
         // A box that clears both floats follows the moved one.
         (
