@@ -231,3 +231,39 @@ fn a_float_in_a_paragraph_breaks_its_own_lines() {
         ),
     ]);
 }
+
+#[test]
+fn a_float_moves_apart_from_its_wrapper_and_its_later_paragraphs_follow_its_lines() {
+    assert_rows(&[
+        (
+            "<div style='height:60px'></div><div><div style='float:left;width:20px'>X X X</div></div><div style='height:30px'>Z</div>",
+            &[(0, 'Z', 65), (1, 'X', 5), (1, 'X', 35), (1, 'X', 65)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='float:left;width:20px'><p style='margin:0'>X X X</p><p style='margin:0'>Y Y Y</p><p style='margin:0'>W W W</p></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+                (1, 'Y', 65),
+                (2, 'W', 35),
+                (2, 'W', 65),
+                (2, 'Y', 5),
+                (3, 'W', 5),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='float:left;width:20px'><p style='margin:0;orphans:1;widows:1'>X X X</p><p style='margin:0;orphans:1;widows:1'>Y Y Y Y</p></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+                (1, 'Y', 65),
+                (2, 'Y', 5),
+                (2, 'Y', 35),
+            ],
+        ),
+    ]);
+}
