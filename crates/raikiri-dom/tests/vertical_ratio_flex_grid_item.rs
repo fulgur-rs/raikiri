@@ -4,7 +4,9 @@
 //! over through the ratio (CSS Sizing 4 §5.1), as a vertical inline-block
 //! does: `aspect-ratio: 1; max-width: 50px` over a 200px column of text makes
 //! a 50px square item, not one as wide as its column. The flex and grid
-//! algorithms take that width as the item's content size. A vertical flex or
+//! algorithms take that width as the item's content size. The same holds for
+//! the horizontal main axis of a vertical column flex container. An item with
+//! an intrinsic keyword width keeps that width, as in Chromium. A vertical flex or
 //! grid container item measured for its content leaves its stated sizes out,
 //! so the ratio gives its width there as well.
 //!
@@ -264,5 +266,75 @@ const CASES: &[Case] = &[
         "g20",
         r#"<div style="display:grid;width:500px;writing-mode:vertical-rl;height:300px"><div id=b style="aspect-ratio:1;max-width:50px;writing-mode:horizontal-tb">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
         &[("b", (450.0, 0.0, 50.0, 50.0))],
+    ),
+    (
+        "v01",
+        r#"<div style="display:flex;writing-mode:vertical-rl;flex-direction:column;height:500px;align-items:start"><div id=b style="aspect-ratio:1">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 20.0, 20.0))],
+    ),
+    (
+        "v02",
+        r#"<div style="display:flex;writing-mode:vertical-rl;flex-direction:column;height:500px;align-items:start"><div id=b style="aspect-ratio:1;max-width:50px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 50.0, 50.0))],
+    ),
+    (
+        "v03",
+        r#"<div style="display:flex;writing-mode:vertical-rl;flex-direction:column;height:500px"><div id=b style="aspect-ratio:1;max-width:50px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 50.0, 500.0))],
+    ),
+    (
+        "v04",
+        r#"<div style="display:grid;writing-mode:vertical-rl;height:500px;align-items:start"><div id=b style="aspect-ratio:1;max-width:50px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 50.0, 50.0))],
+    ),
+    (
+        "v05",
+        r#"<div style="display:grid;writing-mode:vertical-rl;height:500px"><div id=b style="aspect-ratio:1">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 500.0, 500.0))],
+    ),
+    (
+        "v07",
+        r#"<div style="display:flex;width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 20.0, 20.0))],
+    ),
+    (
+        "v08",
+        r#"<div style="display:grid;width:500px;justify-items:start"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 20.0, 20.0))],
+    ),
+    (
+        "v09",
+        r#"<div style="float:left"><div id=b style="display:inline-flex;aspect-ratio:1;writing-mode:vertical-rl;max-width:50px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 50.0, 50.0))],
+    ),
+    (
+        "v10",
+        r#"<div style="float:left"><div id=b style="display:inline-grid;aspect-ratio:2;writing-mode:vertical-rl">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 40.0, 20.0))],
+    ),
+    (
+        "v11",
+        r#"<div style="display:inline-block"><div id=b style="float:left;display:flex;aspect-ratio:1;writing-mode:vertical-rl;height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 30.0))],
+    ),
+    (
+        "v12",
+        r#"<div style="width:500px"><div id=b style="display:inline-flex;aspect-ratio:1;writing-mode:vertical-rl;height:30px">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 30.0))],
+    ),
+    (
+        "v13",
+        r#"<div style="display:flex;width:500px"><div id=b style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 30.0))],
+    ),
+    (
+        "v14",
+        r#"<div style="display:flex;width:500px"><div id=b style="display:grid;aspect-ratio:2;writing-mode:vertical-rl">XX</div></div>"#,
+        &[("b", (0.0, 0.0, 40.0, 20.0))],
+    ),
+    (
+        "v15",
+        r#"<div style="position:relative"><div id=b style="position:absolute;display:flex;aspect-ratio:1;writing-mode:vertical-rl;max-width:50px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[("b", (0.0, 0.0, 50.0, 50.0))],
     ),
 ];
