@@ -222,3 +222,38 @@ fn a_box_with_room_to_break_inside_is_laid_out_at_the_column_width() {
         );
     }
 }
+
+#[test]
+fn boxes_that_break_on_their_own_terms_inside_keep_the_other_strategies() {
+    // A float, an absolutely positioned box or a column container inside the
+    // box breaks on its own terms, which placing the box whole would ignore.
+    for inner in [
+        "<div><span style='float:left'>x</span>xx</div>",
+        "<div><span style='position:absolute'>x</span>xx</div>",
+        "<div style='columns:2'>xx</div>",
+    ] {
+        let body = columns(
+            "balance",
+            LEADS[0],
+            &format!("<div id=i style='display:flex'>{inner}</div>"),
+        );
+        assert_eq!(fragments(&body, "i").len(), 1, "{body}");
+    }
+}
+
+#[test]
+fn a_box_holding_many_boxes_keeps_the_other_strategies() {
+    // Checking every box inside a very large box would cost too much, so the
+    // planner leaves it alone. 128 items of one letter make 256 boxes with
+    // their text, which only the walk over the laid-out box counts past its
+    // limit with the box itself; 200 such items are past both limits.
+    for count in [128, 200] {
+        let items = "<span>x</span>".repeat(count);
+        let body = columns(
+            "balance",
+            LEADS[0],
+            &format!("<div id=i style='display:flex;flex-wrap:nowrap'>{items}</div>"),
+        );
+        assert_eq!(fragments(&body, "i").len(), 1, "{count}");
+    }
+}
