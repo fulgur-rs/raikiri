@@ -69,36 +69,35 @@ fn lay_out(body: &str) -> (u32, Vec<(String, u32, f32, f32)>) {
     (result.page_count(), pieces)
 }
 
-/// Lays out `body` and checks that it prints on one page, with its `lines`
-/// lines `per_column` to a column, each column 60px right of the one before,
-/// and the box `after`, if given, at that top.
-fn check(label: &str, body: &str, lines: usize, per_column: usize, after: Option<f32>) {
+/// Checks that `pieces` puts the element `id` on the first page at `left`
+/// and `top`.
+fn assert_at(label: &str, pieces: &[(String, u32, f32, f32)], id: &str, left: f32, top: f32) {
+    let (_, page, x, y) = pieces
+        .iter()
+        .find(|(name, ..)| name == id)
+        .unwrap_or_else(|| panic!("{label}: no fragment for #{id}"));
+    assert!(
+        *page == 0 && (*x - left).abs() <= 0.05 && (*y - top).abs() <= 0.05,
+        "{label}: #{id} on page {page} at {x},{y}, expected {left},{top}"
+    );
+}
+
+/// Lays out `body` and checks that it prints on one page, with as many lines
+/// in each column as `columns` gives, each column 60px right of the one
+/// before, and the box `after`, if given, at that top.
+fn check(label: &str, body: &str, columns: &[usize], after: Option<f32>) {
     let (pages, pieces) = lay_out(body);
     assert_eq!(pages, 1, "{label}: pages, pieces {pieces:?}");
-    for line in 0..lines {
-        let id = format!("l{line}");
-        let (_, page, x, y) = pieces
-            .iter()
-            .find(|(name, ..)| *name == id)
-            .unwrap_or_else(|| panic!("{label}: no fragment for #{id}"));
-        let expected = (
-            60.0 * (line / per_column) as f32,
-            20.0 * (line % per_column) as f32,
-        );
-        assert!(
-            *page == 0 && (*x - expected.0).abs() <= 0.05 && (*y - expected.1).abs() <= 0.05,
-            "{label}: #{id} on page {page} at {x},{y}, expected {expected:?}"
-        );
+    let mut line = 0;
+    for (column, &count) in columns.iter().enumerate() {
+        for row in 0..count {
+            let left = 60.0 * column as f32;
+            assert_at(label, &pieces, &format!("l{line}"), left, 20.0 * row as f32);
+            line += 1;
+        }
     }
     if let Some(top) = after {
-        let (_, page, _, y) = pieces
-            .iter()
-            .find(|(name, ..)| name == "after")
-            .unwrap_or_else(|| panic!("{label}: no fragment for #after"));
-        assert!(
-            *page == 0 && (*y - top).abs() <= 0.05,
-            "{label}: #after on page {page} at {y}, expected {top}"
-        );
+        assert_at(label, &pieces, "after", 0.0, top);
     }
 }
 
@@ -107,8 +106,7 @@ fn a_wrapped_paragraph_that_fills_the_definite_height_prints_on_one_page() {
     check(
         "ten_lines",
         &format!("<div class=mc><div><p>{}</p></div></div>", spans(10)),
-        10,
-        5,
+        &[5, 5],
         None,
     );
     check(
@@ -117,8 +115,7 @@ fn a_wrapped_paragraph_that_fills_the_definite_height_prints_on_one_page() {
             "<div class=mc><div><div><p>{}</p></div></div></div>",
             spans(9)
         ),
-        9,
-        5,
+        &[5, 4],
         None,
     );
     check(
@@ -127,8 +124,7 @@ fn a_wrapped_paragraph_that_fills_the_definite_height_prints_on_one_page() {
             "<div class=mc style=\"height:140px\"><div><p>{}</p></div></div>",
             spans(14)
         ),
-        14,
-        7,
+        &[7, 7],
         None,
     );
 }
@@ -141,8 +137,36 @@ fn lines_past_the_last_column_go_on_beside_it_and_the_flow_continues_below_the_b
             "<div class=mc><div><p>{}</p></div></div><div id=after style=\"height:20px\"></div>",
             spans(12)
         ),
-        12,
-        5,
+        &[5, 5, 2],
         Some(100.0),
     );
+}
+
+#[test]
+fn the_default_widows_move_lines_into_the_last_overflow_column() {
+    check(
+        "eleven_lines",
+        &format!(
+            "<div class=mc style=\"orphans:2;widows:2\"><div><p>{}</p></div></div>",
+            spans(11)
+        ),
+        &[5, 4, 2],
+        None,
+    );
+}
+
+#[test]
+fn a_line_taller_than_the_columns_starts_the_next_column_on_the_same_page() {
+    let label = "tall_line";
+    let (pages, pieces) = lay_out(&format!(
+        "<div class=mc><div><p>{}<br><span id=t style=\"display:inline-block;\
+         width:20px;height:120px\"></span></p></div></div><div id=after style=\"height:20px\"></div>",
+        spans(3)
+    ));
+    assert_eq!(pages, 1, "{label}: pages, pieces {pieces:?}");
+    for line in 0..3 {
+        assert_at(label, &pieces, &format!("l{line}"), 0.0, 20.0 * line as f32);
+    }
+    assert_at(label, &pieces, "t", 60.0, 0.0);
+    assert_at(label, &pieces, "after", 0.0, 100.0);
 }
