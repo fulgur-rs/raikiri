@@ -3881,12 +3881,7 @@ fn layout_pages_core(
         unpaged_plain_columns |= next.moved_columns;
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
-        // Columns that are not filled page by page have no origins to keep.
-        page_filled_origins = if unpaged_plain_columns {
-            HashMap::new()
-        } else {
-            next.page_filled_origins
-        };
+        page_filled_origins = next.page_filled_origins;
     }
     // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
@@ -4612,9 +4607,8 @@ fn paginate_flow(
         ((y - planned_y).abs() > tolerance).then_some((owner, y, replanned))
     });
     if let Some((owner, y, replanned)) = moved {
-        if replanned {
-            document.context.page_filled_columns_moved = true;
-        } else {
+        document.context.page_filled_columns_moved = replanned;
+        if !replanned {
             document
                 .context
                 .page_filled_origins
