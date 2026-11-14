@@ -1474,9 +1474,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // the break falls before the next box that holds a line. The
                 // box before it is the last box in the flow ahead of it, a
                 // float or an out-of-flow box between the two not counted,
-                // and only a block that moves its later siblings has one.
+                // and only a block that moves its later siblings, or a table
+                // cell, has one. The box may sit in a flex item or a table
+                // cell: Chromium breaks there as in block flow.
                 let after_forced_break = self.forces_break_after
-                    && in_flow_block
+                    && participates_in_flow
+                    && !out_of_flow_subtree
+                    && !inside_float
+                    && !inline_level
+                    && !is_float
+                    && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame.previous_box.is_some_and(|previous| {
                         page_edge_constraint(document, cascade, previous, false).0
@@ -2008,9 +2015,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
-                // the last box that the closing edges follow.
+                // the last box that the closing edges follow. A table cell's
+                // children need the box before them only to take a forced
+                // break, so they get it only when the document has one.
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
-                    || (child_order.len() > 1 && moves_later_siblings(document, node_id))
+                    || (child_order.len() > 1
+                        && (moves_later_siblings(document, node_id)
+                            || (self.forces_break_after
+                                && node.display() == DisplayValue::TableCell)))
                 {
                     let mut boxes = Vec::new();
                     child_order

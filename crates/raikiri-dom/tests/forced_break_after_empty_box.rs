@@ -1,5 +1,6 @@
 //! A box that holds no line takes the forced break that the box before it
-//! ends in, wherever the two sit in the flow (CSS Fragmentation 3, section
+//! ends in, wherever the two sit in the flow, a flex item, a grid item and a
+//! table cell included (CSS Fragmentation 3, section
 //! 3.1: a forced break falls between the boxes it is set between).
 //!
 //! The pages are 480px by 288px with 48px margins, so the page area is 384px
@@ -204,4 +205,103 @@ fn a_box_with_no_height_after_a_forced_break_adds_no_page() {
     let (nested_pages, _) = place(&format!("{nested}<div id=b></div>"), "b");
     let (flat_pages, _) = place(&format!("{flat}<div id=b></div>"), "b");
     assert_eq!(nested_pages, flat_pages);
+}
+
+/// The empty box after a forced break starts the next page inside a flex
+/// item, a grid item or a table cell too, with its block-start margin kept,
+/// as in Chromium. The same box holding a line lands at the same place.
+#[test]
+fn an_empty_box_in_a_flex_item_grid_item_or_table_cell_takes_the_break() {
+    let a = "<div style='break-after: page'>first</div>";
+    for (name, open, close) in [
+        (
+            "flex item",
+            "<div style='display: flex'><div style='flex: 1'>",
+            "</div></div>",
+        ),
+        (
+            "column flex item",
+            "<div style='display: flex; flex-direction: column'><div>",
+            "</div></div>",
+        ),
+        (
+            "block in a flex item",
+            "<div style='display: flex'><div style='flex: 1'><div>",
+            "</div></div></div>",
+        ),
+        (
+            "grid item",
+            "<div style='display: grid'><div>",
+            "</div></div>",
+        ),
+        ("table cell", "<table><tr><td>", "</td></tr></table>"),
+        (
+            "block in a table cell",
+            "<table><tr><td><div>",
+            "</div></td></tr></table>",
+        ),
+    ] {
+        for (text, margin, top) in [
+            ("", "", 0.0),
+            ("x", "", 0.0),
+            ("", "margin-top: 10px; ", 10.0),
+        ] {
+            let body = format!(
+                "{open}{a}<div id=b style='{margin}height: 40px; background: blue'>{text}</div>{close}"
+            );
+            let (pages, b) = place(&body, "b");
+            assert_eq!(pages, 2, "{name} {text:?} {margin:?}: pages");
+            assert_at(b, (1, top, 40.0), &format!("{name} {text:?} {margin:?}"));
+        }
+    }
+}
+
+/// Beside another flex item or table cell the box takes the break as well;
+/// an inline-level container is no box to break inside, so its box stays on
+/// the first page, as in Chromium.
+#[test]
+fn an_empty_box_beside_a_sibling_takes_the_break_and_an_inline_level_one_does_not() {
+    let a = "<div style='break-after: page'>first</div>";
+    for (name, open, close, expected) in [
+        (
+            "flex item beside another",
+            "<div style='display: flex'><div style='flex: 1'>",
+            "</div><div style='flex: 1'>y</div></div>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "table cell beside another",
+            "<table><tr><td>",
+            "</td><td>y</td></tr></table>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "inline flex item",
+            "<div style='display: inline-flex; width: 200px'><div style='flex: 1'>",
+            "</div></div>",
+            (1, (0, 20.0, 40.0)),
+        ),
+        (
+            "inline table cell",
+            "<div style='display: inline-table'><div style='display: table-cell'>",
+            "</div></div>",
+            (1, (0, 20.0, 40.0)),
+        ),
+        (
+            "inline block",
+            "<div style='display: inline-block; width: 200px'>",
+            "</div>",
+            (1, (0, 20.0, 40.0)),
+        ),
+    ] {
+        for text in ["", "x"] {
+            let body = format!(
+                "<div style='line-height: 20px'>{open}{a}\
+                 <div id=b style='height: 40px; background: blue'>{text}</div>{close}</div>"
+            );
+            let (pages, b) = place(&body, "b");
+            assert_eq!(pages, expected.0, "{name} {text:?}: pages");
+            assert_at(b, expected.1, &format!("{name} {text:?}"));
+        }
+    }
 }
