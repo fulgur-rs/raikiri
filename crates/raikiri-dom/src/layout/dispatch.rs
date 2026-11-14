@@ -4813,6 +4813,7 @@ fn flex_layout_at_height(
         None => {
             let inputs = with_open_wrapping_column_width(tree, node_id, inputs);
             let inputs = with_open_wrapping_column_height(tree, node_id, inputs);
+            let inputs = with_definite_orthogonal_wrapping_row_main(tree, node_id, inputs);
             layout(tree, inputs)
         }
     }
@@ -5026,6 +5027,42 @@ fn with_open_wrapping_column_width(
             inputs.available_space.width = AvailableSpace::MaxContent;
         }
         _ => {}
+    }
+    inputs
+}
+
+/// `inputs` with the main size of a wrapping row flex container in a writing
+/// mode orthogonal to its parent's taken as definite once the parent has
+/// given it one.
+///
+/// The main axis of a row is the inline axis of the container, and its lines
+/// break against its inline size. A parent in the orthogonal writing mode
+/// sizes that inline size from the content of the container (CSS Writing
+/// Modes 4 §7.3) and passes it on as one that is not definite, and Taffy puts
+/// every item on one line under a main size that is not definite. A flex
+/// container in the same writing mode as its parent keeps its own account of
+/// whether the size it flexes an item to is definite.
+fn with_definite_orthogonal_wrapping_row_main(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    let vertical = tree.has_vertical_writing_mode(idx);
+    let orthogonal = tree
+        .taffy_parent_of(idx)
+        .is_some_and(|parent| tree.has_vertical_writing_mode(parent) != vertical);
+    if !orthogonal
+        || tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || !tree.physical_style(idx).flex_wraps()
+        || !tree.physical_style(idx).flex_direction_is_row()
+    {
+        return inputs;
+    }
+    if flex_main_is_height(tree, idx) {
+        inputs.known_dimensions_are_definite.height |= inputs.known_dimensions.height.is_some();
+    } else {
+        inputs.known_dimensions_are_definite.width |= inputs.known_dimensions.width.is_some();
     }
     inputs
 }
