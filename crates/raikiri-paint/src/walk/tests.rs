@@ -8787,3 +8787,20 @@ fn centered_cells_use_used_border_insets_for_background_clipping_and_origin() {
 }
 
 mod fragment_clip_tests;
+
+#[test]
+fn a_formatting_context_box_in_definite_height_columns_paints_its_text_in_its_column() {
+    // The columns balance at 15px: the empty box above is cut there, and the
+    // box with the text goes whole to the second column, 5px down.
+    for display in ["flow-root", "flex", "grid", "table"] {
+        let markup = format!(
+            "<!doctype html><html><body style='margin:0;font:10px/10px Ahem'><div style='width:200px;columns:2;column-gap:0;height:30px'><div style='height:20px'></div><div style='display:{display}'>xx</div></div></body></html>"
+        );
+        let rgba = paint_ahem_page(&markup, square_page(200.0), 0);
+        let pixel = |x: usize, y: usize| rgba[(y * 200 + x) * 4..][..3].to_vec();
+        assert_eq!(pixel(105, 10), [0, 0, 0], "{display}");
+        assert_eq!(pixel(115, 10), [0, 0, 0], "{display}");
+        assert_eq!(pixel(125, 10), [255, 255, 255], "{display}");
+        assert_eq!(pixel(5, 25), [255, 255, 255], "{display}");
+    }
+}

@@ -406,7 +406,7 @@ pub(super) fn balance(
         Some(&flow.roles),
         true,
         BlockEdges::Refused,
-        false,
+        None,
     )?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
@@ -488,7 +488,7 @@ pub(super) fn fill_definite(
         Some(&flow.roles),
         true,
         BlockEdges::Sliced,
-        true,
+        Some(height),
     )?;
     let flow = flow.has_wrappers().then_some(flow);
     // A chain of wrappers around one paragraph keeps the strategies of such
@@ -541,16 +541,18 @@ pub(super) fn fill_definite(
 /// so they pass `false` and leave such a paragraph to the other strategies.
 /// With `edges` sliced, a paragraph may have padding and border above its
 /// first line and below its last, which its pieces slice; only a stream that
-/// places those edges with the lines passes that. With `boxes`, a sized box with
-/// nothing inside it may stand between the paragraphs; a column end slices it,
-/// and only a stream that fills definite-height columns passes that.
+/// places those edges with the lines passes that. With `boxes`, the height of
+/// the columns of a stream that fills definite-height columns, a sized box with
+/// nothing inside it may stand between the paragraphs, which a column end
+/// slices, and so may a box that makes a formatting context of its own and
+/// holds one row of lines no taller than a column, which goes whole to one.
 fn collect(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
     roles: Option<&[Role]>,
     atomics: bool,
     edges: BlockEdges,
-    boxes: bool,
+    boxes: Option<f32>,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
@@ -588,7 +590,7 @@ fn collect(
         // extent that a column end cuts.
         // One that avoids breaks, or that a cut would paint wrong, goes whole
         // to a column that holds it.
-        if boxes && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+        if boxes.is_some() && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
             paragraphs.push(Some(Paragraph {
@@ -600,7 +602,7 @@ fn collect(
         // A box of lines with a height of its own goes whole to a column that
         // holds it, unlike a box with no lines, and is cut nowhere. Its lines
         // must lie inside its height, or they would reach past the column.
-        if boxes && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
+        if boxes.is_some() && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
             let lines = node.ifc.as_ref()?.lines.as_ref()?;
             let (before, after) = block_edges(&layout);
             let reach = lines
@@ -627,6 +629,29 @@ fn collect(
             )));
             // The plan needs a paragraph, and this box holds lines, unlike one
             // with none.
+            paragraph_count += 1;
+            continue;
+        }
+        // A box that makes a formatting context of its own and holds one row
+        // of lines has nowhere to break, so it goes whole to a column, with
+        // what it holds. One that a column end could break inside is left to
+        // the other strategies, which this planner does not cut.
+        if let Some(column_height) = boxes
+            && is_whole_formatting_context_box(tree, child)
+        {
+            (output.size.height > 0.0
+                && output.size.height <= column_height
+                && margin_top.is_finite()
+                && margin_bottom.is_finite()
+                && holds_one_row_of_lines(tree, child))
+            .then_some(())?;
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph::whole_box(
+                output.size.height,
+                margin_top,
+                margin_bottom,
+                None,
+            )));
             paragraph_count += 1;
             continue;
         }
@@ -657,7 +682,8 @@ fn collect(
                 } else {
                     can_balance_single_paragraph(tree, child)
                 })
-            || !matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+            || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+                || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
             || is_right_aligned_in_parent(tree, child)
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
@@ -1167,7 +1193,7 @@ pub(super) fn fill_rows(
     budget: usize,
 ) -> Result<Rows, RowsStop> {
     let (paragraphs, count, _, ceiling) =
-        collect(tree, entries, None, false, BlockEdges::Refused, false)
+        collect(tree, entries, None, false, BlockEdges::Refused, None)
             .ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
@@ -1374,7 +1400,7 @@ pub(super) fn paginate(
         Some(&flow.roles),
         false,
         BlockEdges::Refused,
-        false,
+        None,
     ) else {
         return Ok(None);
     };
@@ -1593,4 +1619,65 @@ fn visited(paragraphs: &[Option<Paragraph>], resume: FlowCursor, chunk: Option<&
     chunk.map_or(paragraphs.len().saturating_sub(resume.paragraph), |chunk| {
         chunk.group.placements.len()
     }) + 1
+}
+
+/// Whether `id` holds one row of lines and nothing else to break between:
+/// one line at most in each box, at least one line in all, and the in-flow
+/// boxes inside each box side by side, each holding one row in turn. A column
+/// end then finds no place to break inside the box (CSS Fragmentation 3, 4.1),
+/// so the box goes whole to a column, as browsers place it. A box with no
+/// lines would instead be sliced at a column end. Boxes with no block size
+/// take no room and are left aside. At most [`MAX_WHOLE_BOX_DESCENDANTS`]
+/// boxes are looked at.
+fn holds_one_row_of_lines(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let mut pending = vec![id];
+    let mut seen = 0usize;
+    let mut has_line = false;
+    while let Some(id) = pending.pop() {
+        seen += 1;
+        if seen > super::MAX_WHOLE_BOX_DESCENDANTS {
+            return false;
+        }
+        let node = layout_node(tree, id);
+        let lines = node
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map_or(0, |lines| lines.lines.len());
+        if lines > 1 {
+            return false;
+        }
+        has_line |= lines == 1;
+        let mut lowest_top = f32::NEG_INFINITY;
+        let mut highest_bottom = f32::INFINITY;
+        // Text that a table, row group or row wraps in anonymous cells sits
+        // in those cells.
+        let anonymous_cells: Vec<usize> =
+            tree.anonymous_table_cells(id).map(|(key, _)| key).collect();
+        for child in tree
+            .children_through_contents(id)
+            .into_iter()
+            .chain(anonymous_cells)
+        {
+            // Text that a flex or grid box wraps in an anonymous item holds
+            // the lines of that item.
+            let child_node = layout_node(tree, child);
+            if !matches!(child_node.kind(), NodeKind::Element | NodeKind::Text)
+                || !child_node.is_in_document()
+                || child_node.is_display_none()
+            {
+                continue;
+            }
+            let layout = child_node.layout;
+            if layout.size.height > 0.0 {
+                lowest_top = lowest_top.max(layout.location.y);
+                highest_bottom = highest_bottom.min(layout.location.y + layout.size.height);
+            }
+            pending.push(child);
+        }
+        if lowest_top >= highest_bottom {
+            return false;
+        }
+    }
+    has_line
 }

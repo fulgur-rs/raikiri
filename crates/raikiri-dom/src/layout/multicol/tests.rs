@@ -5235,8 +5235,20 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(paragraphs(
         "display:block;margin:0 0 4px;height:20px;padding:2px"
     ));
+    // A box that makes a formatting context of its own goes whole to a
+    // column when it holds one row of lines, and a flow-root box of lines
+    // breaks between them.
     for style in [
         "display:grid",
+        "display:flex",
+        "display:table",
+        "display:flow-root",
+    ] {
+        assert!(paragraphs(style), "{style}");
+    }
+    assert!(!paragraphs("display:grid;float:left"));
+    assert!(!paragraphs("display:flex;margin-top:auto"));
+    for style in [
         "display:list-item",
         "display:block;position:absolute",
         "display:block;float:left",
