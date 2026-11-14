@@ -131,7 +131,9 @@ fn the_line_of_a_break_after_an_item_reaches_past_nesting_spans_and_alignment() 
 fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
     // An item on the next flex line, the next item of a column flex
     // container, and the next row of a one-column grid start the next page.
-    // A break before an item beside another is not taken at all.
+    // A break before an item beside another is not taken at all. An item
+    // that a break before it already moved to a new page keeps the next line
+    // off that page.
     assert_rows(&[
         (
             "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='break-after:page;width:60px'>A</div><div style='width:60px'>B</div></div><div>Z</div>",
@@ -148,6 +150,20 @@ fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
         (
             "<div style='display:flex'><div style='width:40px'>A</div><div style='break-before:page;width:40px'>B</div></div><div>Z</div>",
             &[(0, 'A', 5), (0, 'B', 5), (0, 'Z', 35)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:60px'>X</div><div style='break-before:page;break-after:page;width:60px'>A</div><div style='width:60px'>B</div></div><div>Z</div>",
+            &[(0, 'X', 5), (1, 'A', 5), (2, 'B', 5), (2, 'Z', 35)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:60px'>X</div><div style='break-before:page;break-after:page;width:40px'>A</div><div style='width:40px'>B</div><div style='width:60px'>C</div></div><div>Z</div>",
+            &[
+                (0, 'A', 5),
+                (0, 'X', 5),
+                (1, 'B', 5),
+                (1, 'C', 5),
+                (1, 'Z', 35),
+            ],
         ),
     ]);
 }
