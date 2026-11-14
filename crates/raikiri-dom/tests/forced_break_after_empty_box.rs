@@ -256,11 +256,12 @@ fn an_empty_box_in_a_flex_item_grid_item_or_table_cell_takes_the_break() {
     }
 }
 
-/// Beside another flex item or table cell the box takes the break as well;
-/// an inline-level container is no box to break inside, so its box stays on
-/// the first page, as in Chromium.
+/// Beside another flex item or table cell, in an anonymous table cell, and
+/// with text after it the box takes the break as well; an inline-level
+/// container is no box to break inside, so its box stays on the first page,
+/// as in Chromium.
 #[test]
-fn an_empty_box_beside_a_sibling_takes_the_break_and_an_inline_level_one_does_not() {
+fn an_empty_box_in_other_block_flows_takes_the_break_and_an_inline_level_one_does_not() {
     let a = "<div style='break-after: page'>first</div>";
     for (name, open, close, expected) in [
         (
@@ -273,6 +274,30 @@ fn an_empty_box_beside_a_sibling_takes_the_break_and_an_inline_level_one_does_no
             "table cell beside another",
             "<table><tr><td>",
             "</td><td>y</td></tr></table>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "anonymous cell of a table",
+            "<div style='display: table'>",
+            "</div>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "anonymous cell of a table row",
+            "<div style='display: table-row'>",
+            "</div>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "table cell with text after the box",
+            "<table><tr><td>",
+            "tail</td></tr></table>",
+            (2, (1, 0.0, 40.0)),
+        ),
+        (
+            "block with text after the box",
+            "<div>",
+            "tail</div>",
             (2, (1, 0.0, 40.0)),
         ),
         (

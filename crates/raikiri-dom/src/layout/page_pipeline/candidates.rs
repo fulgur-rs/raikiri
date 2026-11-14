@@ -1458,12 +1458,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !out_of_flow_subtree;
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
-                let in_container_flow = participates_in_flow
-                    && !inside_table
+                let in_any_flow = participates_in_flow
                     && !out_of_flow_subtree
                     && !inside_float
                     && !inline_level
                     && !is_float;
+                let in_container_flow = in_any_flow && !inside_table;
                 let in_flow_block_level = in_container_flow && !inside_flex;
                 // A block box in the flow that is a candidate to move to the
                 // next page, along with the box it holds or the edges it ends.
@@ -1474,15 +1474,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // the break falls before the next box that holds a line. The
                 // box before it is the last box in the flow ahead of it, a
                 // float or an out-of-flow box between the two not counted,
-                // and only a block that moves its later siblings, or a table
-                // cell, has one. The box may sit in a flex item or a table
-                // cell: Chromium breaks there as in block flow.
+                // and only a box that lays its children out in block flow
+                // has one (see `lays_out_children_in_block_flow`). Chromium
+                // takes the break there whatever holds that box: a flex item,
+                // a grid item or a table cell, anonymous or not.
                 let after_forced_break = self.forces_break_after
-                    && participates_in_flow
-                    && !out_of_flow_subtree
-                    && !inside_float
-                    && !inline_level
-                    && !is_float
+                    && in_any_flow
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame.previous_box.is_some_and(|previous| {
@@ -2015,14 +2012,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
-                // the last box that the closing edges follow. A table cell's
-                // children need the box before them only to take a forced
-                // break, so they get it only when the document has one.
+                // the last box that the closing edges follow. The children of
+                // other boxes that lay them out in block flow need the box
+                // before them only to take a forced break, so they get it only
+                // when the document forces one.
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
                     || (child_order.len() > 1
                         && (moves_later_siblings(document, node_id)
                             || (self.forces_break_after
-                                && node.display() == DisplayValue::TableCell)))
+                                && lays_out_children_in_block_flow(document, node_id))))
                 {
                     let mut boxes = Vec::new();
                     child_order
@@ -2477,4 +2475,24 @@ fn renders_in_flow_before(document: &Document, parent: usize, child: usize) -> b
                         PositionValue::Absolute | PositionValue::Fixed
                     ))
         })
+}
+
+/// Whether `parent` lays its children out one under the other in block flow,
+/// so that a forced break after one child falls before the next. Besides the
+/// blocks that move their later siblings, that is a block that also holds
+/// inline content, a table cell, and a table or table row whose block
+/// children an anonymous cell holds (CSS Tables 3, section 3.9). An inline
+/// block and a multi-column container lay their children out otherwise.
+fn lays_out_children_in_block_flow(document: &Document, parent: usize) -> bool {
+    let node = &document.nodes[parent];
+    matches!(
+        node.display(),
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::Table
+            | DisplayValue::TableRow
+    ) && node.multicol.is_none()
 }
