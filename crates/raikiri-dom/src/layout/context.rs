@@ -189,9 +189,13 @@ pub(crate) struct LayoutContext {
     /// The multicol containers without a spanner whose columns pagination
     /// filled page by page.
     pub(crate) page_filled_columns: Vec<usize>,
-    /// Whether the page walk moved any of those containers from where the
-    /// pagination placed their columns, which are then in the wrong pages.
+    /// Whether the page walk moved any of those containers away from the
+    /// origin in [`Self::page_filled_origins`] that their columns were filled
+    /// from, which leaves them in the wrong pages.
     pub(crate) page_filled_columns_moved: bool,
+    /// Where an earlier attempt's page walk moved a container whose columns
+    /// are filled page by page, which fills them from there.
+    pub(crate) page_filled_origins: std::collections::HashMap<usize, f32>,
     /// Accepted owner origins used to replan leading spanners from source layout.
     pub(crate) spanning_page_origins: std::collections::HashMap<usize, f32>,
     /// How deeply the child layouts of this pass are nested, and whether that

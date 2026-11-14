@@ -1602,7 +1602,17 @@ pub(super) fn paginate(
                 }
             }
         }
-        let height = if chunk.next.is_some() {
+        // Columns that fill in turn reach the end of the page once their
+        // content goes on past the first of them there, as the columns broke
+        // (CSS Multi-column 1, 8.2).
+        let broke = context.column_fill == ColumnFillValue::Auto
+            && chunk.group.placements.iter().flatten().any(|placement| {
+                placement
+                    .fragments
+                    .iter()
+                    .any(|range| range.fragmentainer > 0)
+            });
+        let height = if chunk.next.is_some() || broke {
             capacity
         } else {
             chunk.group.height.max(divided)

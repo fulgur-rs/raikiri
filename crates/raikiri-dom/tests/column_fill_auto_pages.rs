@@ -8,9 +8,15 @@
 //! and 192px high, and `columns: 2` leaves 184px columns and a 16px gap.
 
 use raikiri_html::{
-    LayoutOptions, LayoutStatus, RenderResources, layout, parse_html_with_resources,
+    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
+    parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
+
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/text-autospace/Ahem.ttf"
+));
 
 /// The margin of the page, which fragments are placed inside.
 const MARGIN: f32 = 48.0;
@@ -26,7 +32,11 @@ fn pieces_of(body: &str) -> (usize, Vec<(String, Vec<Piece>)>) {
         "<!DOCTYPE html><style>@page {{ size: 480px 288px; margin: 48px }} \
          body {{ margin: 0 }}</style>{body}"
     );
-    let resources = RenderResources::new();
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
     let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
     let status = layout(
         &doc,
@@ -276,4 +286,396 @@ fn a_box_with_whole_box_effects_keeps_the_column_the_pages_cut() {
     assert_eq!(pages, 3, "{pieces:?}");
     let (_, a) = pieces.iter().find(|(id, _)| id == "a").expect("a");
     assert!(a.iter().all(|piece| piece.1 == 0.0), "one column: {a:?}");
+}
+
+/// A container that a forced break or a box kept whole moves down fills the
+/// columns of each page from where it lands, as one that starts there does.
+#[test]
+fn a_container_the_pages_move_fills_the_columns_where_it_lands() {
+    let lands_on_the_second_page: &[(&str, &[Piece])] = &[
+        ("g", &[(0, 0.0, 0.0, 60.0)]),
+        ("a", &[(1, 0.0, 0.0, 192.0), (1, 200.0, 0.0, 108.0)]),
+        ("k", &[(2, 0.0, 0.0, 16.0)]),
+    ];
+    let container = format!("<div style='{COLUMNS}'><div id=a style='height: 300px'></div></div>");
+    for (label, body) in [
+        (
+            "break-before",
+            format!(
+                "<div id=g style='height: 60px'></div>\
+                 <div style='{COLUMNS}; break-before: page'><div id=a style='height: 300px'></div></div>"
+            ),
+        ),
+        (
+            "break-before on a wrapper",
+            format!(
+                "<div id=g style='height: 60px'></div><div style='break-before: page'>{container}</div>"
+            ),
+        ),
+        (
+            "break-after",
+            format!("<div id=g style='height: 60px; break-after: page'></div>{container}"),
+        ),
+    ] {
+        check(
+            label,
+            &format!("{body}{AFTER}"),
+            3,
+            lands_on_the_second_page,
+        );
+    }
+    check(
+        "kept whole",
+        &format!(
+            "<div id=g style='height: 150px'></div>\
+             <div id=h style='break-inside: avoid; height: 60px'></div>\
+             {container}{AFTER}"
+        ),
+        3,
+        &[
+            ("h", &[(1, 0.0, 0.0, 60.0)]),
+            (
+                "a",
+                &[
+                    (1, 0.0, 60.0, 132.0),
+                    (1, 200.0, 60.0, 132.0),
+                    (2, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 36.0, 16.0)]),
+        ],
+    );
+}
+
+/// Two containers that a forced break moves together each fill the columns
+/// of their own pages: the first fills both columns of the page it lands on,
+/// which leaves nothing of that page for the second.
+#[test]
+fn containers_that_a_forced_break_moves_together_fill_their_own_pages() {
+    for (label, second) in [("one break", ""), ("two breaks", "; break-before: page")] {
+        check(
+            label,
+            &format!(
+                "<div id=g style='height: 60px'></div>\
+                 <div style='{COLUMNS}; break-before: page'><div id=a style='height: 300px'></div></div>\
+                 <div style='{COLUMNS}{second}'><div id=b style='height: 300px'></div></div>{AFTER}"
+            ),
+            4,
+            &[
+                ("a", &[(1, 0.0, 0.0, 192.0), (1, 200.0, 0.0, 108.0)]),
+                ("b", &[(2, 0.0, 0.0, 192.0), (2, 200.0, 0.0, 108.0)]),
+                ("k", &[(3, 0.0, 0.0, 16.0)]),
+            ],
+        );
+    }
+}
+
+/// Boxes that plain wrappers hold fill the columns of each page in turn, as
+/// boxes the container holds itself do, and the wrappers break with them.
+#[test]
+fn boxes_inside_wrappers_fill_the_columns_of_each_page() {
+    let tall_in_columns: &[Piece] = &[
+        (0, 0.0, 0.0, 192.0),
+        (0, 200.0, 0.0, 192.0),
+        (1, 0.0, 0.0, 96.0),
+    ];
+    check(
+        "one wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 480px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("w", tall_in_columns),
+            ("a", tall_in_columns),
+            ("k", &[(1, 0.0, 96.0, 16.0)]),
+        ],
+    );
+    check(
+        "nested wrappers",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w><div id=v>\
+             <div id=a style='height: 480px'></div></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("w", tall_in_columns),
+            ("v", tall_in_columns),
+            ("a", tall_in_columns),
+            ("k", &[(1, 0.0, 96.0, 16.0)]),
+        ],
+    );
+    let continued: &[Piece] = &[
+        (0, 0.0, 100.0, 92.0),
+        (0, 200.0, 0.0, 192.0),
+        (1, 0.0, 0.0, 16.0),
+    ];
+    check(
+        "two boxes in a wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 100px'></div>\
+             <div id=b style='height: 300px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 100.0)]),
+            ("b", continued),
+            ("k", &[(1, 0.0, 16.0, 16.0)]),
+        ],
+    );
+    check(
+        "a box and a wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 100px'></div>\
+             <div id=w><div id=b style='height: 300px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 100.0)]),
+            ("w", continued),
+            ("b", continued),
+            ("k", &[(1, 0.0, 16.0, 16.0)]),
+        ],
+    );
+    check(
+        "a box with a top margin",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='margin-top: 20px; height: 400px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 20.0, 172.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "a padded wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w style='padding: 10px 0'>\
+             <div id=a style='height: 400px'></div></div></div>{AFTER}"
+        ),
+        2,
+        // The wrapper slices its padding, so each of its pieces is the whole
+        // box moved up, which the pages show in parts; the box it holds
+        // shows where the padding leaves it.
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 10.0, 182.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 26.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "boxes split by an empty box",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 200px'></div><div style='height: 20px'></div>\
+             <div id=b style='height: 200px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            (
+                "w",
+                &[
+                    (0, 0.0, 0.0, 192.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("a", &[(0, 0.0, 0.0, 192.0), (0, 200.0, 0.0, 8.0)]),
+            ("b", &[(0, 200.0, 28.0, 164.0), (1, 0.0, 0.0, 36.0)]),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "a wrapper partway down a page",
+        &format!(
+            "<div style='height: 60px'></div><div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 480px'></div></div></div>{AFTER}"
+        ),
+        3,
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 60.0, 132.0),
+                    (0, 200.0, 60.0, 132.0),
+                    (1, 0.0, 0.0, 192.0),
+                    (1, 200.0, 0.0, 24.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+}
+
+/// A wrapper with 10px of padding above and below the boxes it holds.
+fn padded(inner: &str) -> String {
+    format!("<div id=w style='padding: 10px 0'>{inner}</div>")
+}
+
+/// A box inside a wrapper that slices its padding at a column end goes on at
+/// the top of the next column, though the wrapper's piece there is the whole
+/// wrapper moved up (CSS Fragmentation 3, 5.4), whether the columns fill in
+/// turn or balance.
+#[test]
+fn boxes_in_a_sliced_wrapper_go_on_in_the_next_column() {
+    let one = padded("<div id=a style='height: 200px'></div>");
+    check(
+        "column-fill: auto",
+        &format!("<div style='columns: 2; column-fill: auto; height: 150px'>{one}</div>"),
+        1,
+        &[("a", &[(0, 0.0, 10.0, 140.0), (0, 200.0, 0.0, 60.0)])],
+    );
+    check(
+        "balanced",
+        &format!("<div style='columns: 2; height: 150px'>{one}</div>"),
+        1,
+        &[("a", &[(0, 0.0, 10.0, 100.0), (0, 200.0, 0.0, 100.0)])],
+    );
+    let two =
+        padded("<div id=a style='height: 100px'></div><div id=b style='height: 100px'></div>");
+    check(
+        "two boxes",
+        &format!("<div style='columns: 2; column-fill: auto; height: 150px'>{two}</div>"),
+        1,
+        &[
+            ("a", &[(0, 0.0, 10.0, 100.0)]),
+            ("b", &[(0, 0.0, 110.0, 40.0), (0, 200.0, 0.0, 60.0)]),
+        ],
+    );
+}
+
+/// Columns that break before the content ends on a page reach the end of
+/// that page, even on the last page the container fills, so what follows the
+/// container starts the next page. Content that ends in the first column of
+/// its page ends the container there.
+#[test]
+fn columns_that_break_on_the_last_page_reach_its_end() {
+    let avoid =
+        |height: u32| format!("<div id=b style='height: {height}px; break-inside: avoid'></div>");
+    check(
+        "a box that avoids breaks moves to the second column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 150.0)]),
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "a shorter first column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 100px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "on a later page",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 500px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        3,
+        &[
+            ("b", &[(1, 200.0, 0.0, 150.0)]),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "partway down a page",
+        &format!(
+            "<div style='height: 60px'></div><div style='{COLUMNS}'>\
+             <div id=a style='height: 100px'></div>{}</div>{AFTER}",
+            avoid(100)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 60.0, 100.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "the last box in the first column of the next page",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}\
+             <div id=c style='height: 100px; break-inside: avoid'></div></div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("c", &[(1, 0.0, 0.0, 100.0)]),
+            ("k", &[(1, 0.0, 100.0, 16.0)]),
+        ],
+    );
+    // The block-end padding and border of the container follow on the next
+    // page.
+    check(
+        "block-end padding and border",
+        &format!(
+            "<div style='{COLUMNS}; padding-bottom: 10px; border-bottom: 4px solid'>\
+             <div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 14.0, 16.0)]),
+        ],
+    );
+    check(
+        "content that ends in the first column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(30)
+        ),
+        2,
+        &[
+            ("b", &[(0, 0.0, 150.0, 30.0)]),
+            ("k", &[(0, 0.0, 180.0, 12.0), (1, 0.0, 0.0, 4.0)]),
+        ],
+    );
+}
+
+/// Lines of a paragraph do the same: the lines that go on in the second
+/// column of the last page break the columns there, so the box after the
+/// container starts the next page.
+#[test]
+fn lines_that_go_on_in_the_second_column_of_the_last_page_reach_its_end() {
+    let lines = vec!["x"; 30].join("<br>");
+    check(
+        "30 lines of 10px",
+        &format!(
+            "<div style='{COLUMNS}'><p id=p style='margin: 0; font: 10px/10px Ahem'>{lines}</p></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("p", &[(0, 0.0, 0.0, 192.0), (0, 200.0, 0.0, 110.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
 }

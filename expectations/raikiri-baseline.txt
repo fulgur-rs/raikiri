@@ -5572,3 +5572,7 @@ css/css-text/line-breaking/line-breaking-atomic-009.html
 css/css-text/line-breaking/line-breaking-replaced-001.html
 css/css-text/line-breaking/line-breaking-replaced-006.html
 css/css-flexbox/align-baseline.html
+
+# --- A tab before a combining mark inside a left-to-right override in a right-to-left line (WPT pin 97ea26e2, EXACT, Linux, 2026-11-14) ---
+# `bdo` is `unicode-bidi: isolate-override` (HTML rendering 15.3.4), and the text engine now places a combining-mark cluster after a tab inside a left-to-right override where a right-to-left override puts it, so the pair matches again. It was an expected failure since `bdo` began to override.
+css/css-text/white-space/tab-bidi-001.html

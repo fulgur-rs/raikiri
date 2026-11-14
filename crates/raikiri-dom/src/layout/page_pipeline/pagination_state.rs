@@ -661,6 +661,7 @@ impl PaginationState {
         self.pending_break.note_after(
             document,
             cascade,
+            env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
         );
@@ -753,11 +754,21 @@ impl PaginationState {
             return None;
         }
         // Every recorded in-flow item follows the deferred first row, including
-        // later rows. The grid's leading edges keep their original position.
-        let items = document.nodes[candidate.node_id].grid_item_rows.to_vec();
+        // later rows. The container's leading edges keep their original position.
+        let items: Vec<usize> = if document.nodes[candidate.node_id].display()
+            == raikiri_style::property::DisplayValue::Flex
+        {
+            super::grid_rows::flex_items(document, candidate.node_id)?
+        } else {
+            document.nodes[candidate.node_id]
+                .grid_item_rows
+                .iter()
+                .map(|row| row.item)
+                .collect()
+        };
         for item in items {
-            let top = current_abs_y(document, item.item);
-            materialize_y(document, item.item, top + delta);
+            let top = current_abs_y(document, item);
+            materialize_y(document, item, top + delta);
         }
         document.nodes[candidate.node_id].layout.size.height += delta;
         document.mark_pagination_extent_dirty(candidate.node_id);
@@ -1087,6 +1098,7 @@ impl PaginationState {
         self.pending_break.note_after(
             document,
             cascade,
+            env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
         );
@@ -1671,7 +1683,11 @@ impl PaginationState {
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
         }) || closing_edges_move(candidate, &fit)
-            || (grid_content_break.is_none() && leading_edges_move(candidate, &fit))
+            // A flex container goes on with its edges first; its line may then
+            // break after them on the page it moves to.
+            || ((grid_content_break.is_none()
+                || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
+                && leading_edges_move(candidate, &fit))
             || run_tail_move(candidate, &fit);
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
