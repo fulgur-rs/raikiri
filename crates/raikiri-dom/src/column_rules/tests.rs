@@ -214,6 +214,30 @@ fn paragraph_in_three_columns(css: &str) -> (Document, usize, Vec<usize>) {
     (document, paragraph, pieces)
 }
 
+/// The block offset of each line range of `paragraph` from where the
+/// paragraph would draw it unbroken, and whether each piece is cut above and
+/// below its column.
+fn lines_and_cuts(
+    document: &Document,
+    paragraph: usize,
+    pieces: &[usize],
+) -> (Vec<f32>, Vec<Option<(bool, bool)>>) {
+    let ys = document.nodes[paragraph]
+        .ifc_multicol_fragments()
+        .unwrap()
+        .iter()
+        .map(|range| range.y)
+        .collect();
+    let cuts = pieces
+        .iter()
+        .map(|&piece| {
+            let clip = document.fragment_tree.fragments[piece].fragmentainer_clip?;
+            Some((clip.rect.y > -1.0, clip.rect.y + clip.rect.height < 101.0))
+        })
+        .collect();
+    (ys, cuts)
+}
+
 #[test]
 fn the_pieces_of_a_sliced_paragraph_stitch_into_one_box() {
     let (document, paragraph, pieces) =
@@ -235,13 +259,30 @@ fn the_pieces_of_a_sliced_paragraph_stitch_into_one_box() {
             Some((190.0, 270.0))
         ]
     );
+    // The lines of a later piece begin at the top of its column, below the
+    // padding cut away above it. A rounded box shows its corners where it
+    // begins and ends only, so the first piece is not cut above its column,
+    // nor the last below it.
+    assert_eq!(
+        lines_and_cuts(&document, paragraph, &pieces),
+        (
+            vec![0.0, -10.0, -10.0],
+            vec![Some((false, true)), Some((true, true)), Some((true, false))]
+        )
+    );
+    // Plain padding is cut at the column on both sides.
+    let (document, paragraph, pieces) = paragraph_in_three_columns("background:green");
+    assert_eq!(
+        lines_and_cuts(&document, paragraph, &pieces).1,
+        [Some((true, true)); 3]
+    );
 }
 
 #[test]
 fn a_cloned_paragraph_has_a_closed_box_in_each_column() {
-    let (document, _, pieces) =
+    let (document, paragraph, pieces) =
         paragraph_in_three_columns("box-decoration-break:clone;background:green");
-    let pieces: Vec<_> = pieces
+    let boxes: Vec<_> = pieces
         .iter()
         .map(|&piece| {
             let fragment = &document.fragment_tree.fragments[piece];
@@ -255,7 +296,13 @@ fn a_cloned_paragraph_has_a_closed_box_in_each_column() {
     // Each piece holds one line between the padding above and below it, 80px
     // tall; one the paragraph goes on from runs to the end of its column.
     assert_eq!(
-        pieces,
+        boxes,
         [(0, Some(0), 100.0), (1, Some(1), 100.0), (2, Some(2), 80.0)]
+    );
+    // The lines of each piece sit below its own top padding, as in the
+    // first, and no piece is cut.
+    assert_eq!(
+        lines_and_cuts(&document, paragraph, &pieces),
+        (vec![0.0, 0.0, 0.0], vec![None, None, None])
     );
 }

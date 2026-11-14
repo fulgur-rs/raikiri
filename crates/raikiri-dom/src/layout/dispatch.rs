@@ -3030,6 +3030,7 @@ fn measure_ifc_root(
         });
         root.lines = Some(lines);
         root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
+        root.multicol_piece_extents.clear();
         tree.nodes[idx].ifc = Some(root);
     }
     IfcMeasurement {

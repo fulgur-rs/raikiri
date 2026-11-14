@@ -251,6 +251,7 @@ pub(super) fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
         if let Some(root) = node.ifc.as_mut() {
             root.multicol_fragments = None;
             root.multicol_fragment_origins_recorded = false;
+            root.multicol_piece_extents.clear();
         }
         pending.extend(node.children.iter().copied());
     }

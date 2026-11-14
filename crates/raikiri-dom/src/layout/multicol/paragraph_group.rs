@@ -1330,22 +1330,17 @@ pub(super) fn fill_rows(
 /// paragraph. The inline axis is represented separately and has no limit.
 pub(super) const BLOCK_INK_REACH: f32 = 1.0e5;
 
-/// The column's block cut with an unbounded inline axis, for the piece
-/// `index` of `count` pieces of a box. The first piece is not cut above the
-/// column, nor the last below it: only the breaks cut the box, so what it
-/// paints beyond its true start and end, such as a shadow, shows.
+/// The column's block cut with an unbounded inline axis. With `open`, the
+/// cut leaves the box open above the column, for the first piece of a box,
+/// and below it, for the last: only the breaks cut such a box.
 pub(super) fn column_window(
     rect: crate::fragment::FragmentRect,
     context: FragmentationContext,
     height: f32,
-    (index, count): (usize, usize),
+    (open_above, open_below): (bool, bool),
 ) -> raikiri_traits::PaintClip {
-    let above = if index == 0 { BLOCK_INK_REACH } else { 0.0 };
-    let below = if index + 1 >= count {
-        BLOCK_INK_REACH
-    } else {
-        0.0
-    };
+    let above = if open_above { BLOCK_INK_REACH } else { 0.0 };
+    let below = if open_below { BLOCK_INK_REACH } else { 0.0 };
     inline_open_clip(crate::fragment::FragmentRect {
         x: rect.x,
         y: context.origin_y - above,
