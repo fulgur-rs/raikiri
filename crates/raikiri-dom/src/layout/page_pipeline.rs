@@ -7920,25 +7920,138 @@ fn push_in_flow_boxes_rev(
     }
 }
 
+/// The items that sit beside `source`, or beside a box that holds it, on a
+/// flex line or grid row and come after it: a break forced after `source`
+/// does not fall before them, but waits for what follows the line or row
+/// (CSS Flexbox 1 §10, CSS Grid 1 §12: a break between items of one line or
+/// row is taken after it). Items of a later line or row, out-of-flow boxes
+/// and the anonymous items of text are not among them.
+fn later_line_peers(document: &Document, cascade: &CascadeResult, source: usize) -> Vec<usize> {
+    let mut peers = Vec::new();
+    let mut item = source;
+    while let Some(container) = document.layout_parent_of(item) {
+        let node = &document.nodes[container];
+        if !node.used_writing_mode.is_vertical() {
+            match node.display() {
+                DisplayValue::Flex | DisplayValue::InlineFlex => {
+                    break_flex_line_peers(document, cascade, container, item, &mut peers);
+                }
+                DisplayValue::Grid | DisplayValue::InlineGrid => {
+                    grid_row_peers(document, container, item, &mut peers);
+                }
+                _ => {}
+            }
+        }
+        item = container;
+    }
+    peers
+}
+
+/// The in-flow element children of `container` after `item`.
+fn later_in_flow_items(document: &Document, container: usize, item: usize) -> Vec<usize> {
+    document.nodes[container]
+        .children
+        .iter()
+        .copied()
+        .skip_while(|&child| child != item)
+        .skip(1)
+        .filter(|&child| {
+            let node = &document.nodes[child];
+            node.kind() == NodeKind::Element
+                && !matches!(node.display(), DisplayValue::None | DisplayValue::Contents)
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        })
+        .collect()
+}
+
+/// Push the later items of the row flex container `container` that share
+/// the flex line of its item `item`: every item when the container does not
+/// wrap, and otherwise those that begin above the end of `item`'s margin
+/// box. The lines of a container that wraps in reverse stack upwards, above
+/// the line of `item`, so all of its later items stay with it, as Chromium
+/// prints them.
+fn break_flex_line_peers(
+    document: &Document,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+    peers: &mut Vec<usize>,
+) {
+    let computed = &cascade.computed[container];
+    if !matches!(
+        computed.flex_direction,
+        FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+    ) {
+        return;
+    }
+    let one_line = computed.flex_wrap != FlexWrapValue::Wrap;
+    let end = document.pagination_local_y(item)
+        + document.nodes[item].layout.size.height
+        + document.nodes[item].layout.margin.bottom;
+    peers.extend(
+        later_in_flow_items(document, container, item)
+            .into_iter()
+            .filter(|&later| {
+                one_line
+                    || document.pagination_local_y(later) - document.nodes[later].layout.margin.top
+                        < end - 0.01
+            }),
+    );
+}
+
+/// Push the later items of the grid `container` that start within the rows
+/// its item `item` spans.
+fn grid_row_peers(document: &Document, container: usize, item: usize, peers: &mut Vec<usize>) {
+    let rows = &document.nodes[container].grid_item_rows;
+    let row_of = |id: usize| rows.iter().find(|row| row.item == id);
+    // An item the grid placed no row for has no row to share.
+    let span = row_of(item);
+    peers.extend(
+        later_in_flow_items(document, container, item)
+            .into_iter()
+            .filter(|&later| {
+                span.zip(row_of(later))
+                    .is_some_and(|(span, row)| row.start >= span.start && row.start < span.end)
+            }),
+    );
+}
+
 /// A forced break after a box, kept attached to that box until its
 /// descendants have been visited. Applying it to the first flex child would
 /// turn a break-after on the flex container into an extra blank page.
 #[derive(Default)]
 struct PendingBreak {
     source: Option<usize>,
+    /// The boxes beside the source on its flex line or grid row, which the
+    /// break does not fall before (see [`later_line_peers`]).
+    line_peers: Vec<usize>,
 }
 
 impl PendingBreak {
     /// Whether the pending break falls before `node_id`, which is outside the
     /// box that forced it.
+    ///
+    /// A break forced after an item of a flex line or grid row does not fall
+    /// between that item and the later items of the same line or row, which
+    /// sit beside it: it waits for the box after the line, as browsers print
+    /// it.
     fn applies_to(&self, document: &Document, node_id: usize) -> bool {
-        self.source
-            .is_some_and(|source| !is_descendant_or_self(document, node_id, source))
+        self.source.is_some_and(|source| {
+            !is_descendant_or_self(document, node_id, source)
+                && !self
+                    .line_peers
+                    .iter()
+                    .any(|&peer| is_descendant_or_self(document, node_id, peer))
+        })
     }
 
     /// Drop the pending break once a later box has consumed it.
     fn clear(&mut self) {
         self.source = None;
+        self.line_peers.clear();
     }
 
     /// Make `node_id` the source of the pending break when it forces a break
@@ -7962,6 +8075,7 @@ impl PendingBreak {
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
         if breaks_after && !source_is_ancestor {
             self.source = Some(node_id);
+            self.line_peers = later_line_peers(document, cascade, node_id);
         }
     }
 }
