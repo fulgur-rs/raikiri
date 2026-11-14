@@ -622,6 +622,196 @@ fn a_contained_out_of_flow_box_with_top_and_bottom_takes_its_height_from_its_wid
 }
 
 #[test]
+fn a_contained_out_of_flow_box_between_top_and_bottom_is_no_narrower_than_its_contained_width() {
+    // An absolutely positioned box whose `top` and `bottom` give it its
+    // height takes its width from that height through its ratio, so its
+    // automatic minimum width is its min-content width, the width
+    // `contain-intrinsic-size` names, held to its `max-width`. The ratio
+    // gives its height from the width that minimum raises it to, unless
+    // `align-self: stretch` stretches it. A `center`, `start` or `end`
+    // alignment, `left` and `right` that stretch the width, a `min-width`,
+    // or an overflow other than `visible` leave the width it states.
+    assert_rows(&[
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;max-height:60px'></div></div>",
+            &[("c", [0, 0, 200, 60])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:100px;bottom:100px;align-self:stretch'></div></div>",
+            &[("c", [0, 100, 200, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:250px'></div></div>",
+            &[("c", [0, 0, 250, 250])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:400px'></div></div>",
+            &[("c", [0, 0, 400, 400])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 200, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;padding:5px'></div></div>",
+            &[("c", [0, 0, 210, 210])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;border:5px solid;box-sizing:border-box'></div></div>",
+            &[("c", [0, 0, 210, 210])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;min-width:100px'></div></div>",
+            &[("c", [0, 0, 100, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;contain-intrinsic-size:200px 100px'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;contain-intrinsic-size:200px 400px'></div></div>",
+            &[("c", [0, 0, 200, 400])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;overflow:hidden'></div></div>",
+            &[("c", [0, 0, 80, 80])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;overflow:clip'></div></div>",
+            &[("c", [0, 0, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-height:100px'></div></div>",
+            &[("c", [0, 0, 200, 100])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:20%'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-width:50px'></div></div>",
+            &[("c", [0, 0, 50, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-width:120px'></div></div>",
+            &[("c", [0, 0, 120, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:10px;bottom:10px;width:80px'></div></div>",
+            &[("c", [0, 10, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;aspect-ratio:1/2'></div></div>",
+            &[("c", [0, 0, 200, 400])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;aspect-ratio:2'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;margin:auto 0'></div></div>",
+            &[("c", [0, 50, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;margin-top:auto'></div></div>",
+            &[("c", [0, 100, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;align-self:center'></div></div>",
+            &[("c", [0, 50, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;align-self:start'></div></div>",
+            &[("c", [0, 0, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;align-self:end'></div></div>",
+            &[("c", [0, 100, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;display:flex'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;display:grid'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;min-height:100px'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;min-width:0'></div></div>",
+            &[("c", [0, 0, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0;right:0'></div></div>",
+            &[("c", [0, 0, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0;right:0;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 200, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0;right:0;justify-self:start'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;right:0'></div></div>",
+            &[("c", [300, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;justify-self:stretch'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;width:80px;height:100%'></div></div>",
+            &[("c", [0, 0, 200, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;width:80px'></div></div>",
+            &[("c", [0, 0, 80, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;position:fixed'></div></div>",
+            &[("c", [0, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:100px;bottom:100px'></div></div>",
+            &[("c", [0, 100, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:100px;bottom:100px;max-width:150px'></div></div>",
+            &[("c", [0, 100, 150, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0;right:0;justify-self:center'></div></div>",
+            &[("c", [150, 0, 200, 200])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;left:0;right:0;margin-left:auto;align-self:stretch'></div></div>",
+            &[("c", [300, 0, 200, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-width:50px;align-self:stretch'></div></div>",
+            &[("c", [0, 0, 50, 300])],
+        ),
+        (
+            "<div style='width:500px;height:300px;position:relative'><div id=c style='contain:size;contain-intrinsic-size:200px 200px;aspect-ratio:1;position:absolute;top:0;bottom:0;width:80px;max-width:20%'></div></div>",
+            &[("c", [0, 0, 100, 200])],
+        ),
+    ]);
+}
+
+#[test]
 fn a_contained_item_with_an_auto_cross_margin_or_in_a_grid_keeps_its_contained_height() {
     // A row flex item with an `auto` margin across the line is not stretched,
     // so it keeps the height `contain-intrinsic-size` names; so does a grid
