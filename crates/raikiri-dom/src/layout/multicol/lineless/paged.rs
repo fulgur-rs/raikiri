@@ -33,6 +33,9 @@ pub(in crate::layout::multicol) struct PagedPiece {
 /// in the container's coordinates.
 pub(in crate::layout::multicol) struct Paged {
     pub(in crate::layout::multicol) pieces: Vec<PagedPiece>,
+    /// Each box or wrapper inside a wrapper that has pieces, with where it now
+    /// stands in the wrapper.
+    pub(in crate::layout::multicol) nested: Vec<(usize, Point<f32>)>,
     pub(in crate::layout::multicol) groups: Vec<MulticolGroup>,
     pub(in crate::layout::multicol) end: f32,
 }
@@ -154,7 +157,16 @@ pub(in crate::layout::multicol) fn paginate(
     };
     // The pieces of each child: those of its box, or for a wrapper, those
     // from the first box it holds to the last, with its own insets.
-    let planned = planned_child_pieces(&wrapped, &spans, &placement, Columns::Each(&height_of));
+    // Where each column starts in the stream, which places the pieces of the
+    // wrappers.
+    let starts: Vec<f32> = std::iter::once(0.0)
+        .chain((0..placement.columns_used()).scan(0.0, |end, column| {
+            *end += height_of(column);
+            Some(*end)
+        }))
+        .collect();
+    let grid = Columns::Starts(&starts);
+    let planned = planned_child_pieces(&wrapped, &spans, &placement, grid);
     let Some((child_pieces, leaf_pieces)) = planned else {
         return Ok(None);
     };
@@ -196,7 +208,11 @@ pub(in crate::layout::multicol) fn paginate(
         })
         .collect();
     let mut occupied = vec![std::collections::BTreeSet::new(); kept];
-    let mut pieces = Vec::new();
+    let tops: Vec<f32> = (0..kept).map(|row| row_at(row).top - owner_y).collect();
+    let mut out = Out {
+        pieces: Vec::new(),
+        nested: Vec::new(),
+    };
     for (order, (&child, child_pieces)) in children.iter().zip(&child_pieces).enumerate() {
         let size = tree.nodes[child].layout.size;
         let own: Vec<_> = child_pieces
@@ -214,7 +230,7 @@ pub(in crate::layout::multicol) fn paginate(
             ),
             _ => child_pieces.iter().map(|piece| piece.height).collect(),
         };
-        let first_piece = pieces.len();
+        let first_piece = out.pieces.len();
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(own.len());
         let mut taken = 0.0f32;
@@ -234,7 +250,7 @@ pub(in crate::layout::multicol) fn paginate(
             if piece.height > 0.0 {
                 occupied[row].insert(column);
             }
-            pieces.push(PagedPiece {
+            out.pieces.push(PagedPiece {
                 child,
                 fragmentainer,
                 rect: sliced_rect(
@@ -263,8 +279,9 @@ pub(in crate::layout::multicol) fn paginate(
                 columns,
                 kept,
                 heights: &heights,
+                tops: &tops,
                 column_width: context.column_width,
-                grid: Columns::Each(&height_of),
+                grid,
             };
             let parent = Parent {
                 node: child,
@@ -272,14 +289,7 @@ pub(in crate::layout::multicol) fn paginate(
                 pieces: child_pieces,
                 shifts: &shifts,
             };
-            let pushed = push_nested(
-                tree,
-                &frame,
-                wrapped_tree,
-                leaf_pieces,
-                &parent,
-                &mut pieces,
-            );
+            let pushed = push_nested(tree, &frame, wrapped_tree, leaf_pieces, &parent, &mut out);
             let Some(()) = pushed else { return Ok(None) };
         }
     }
@@ -298,7 +308,8 @@ pub(in crate::layout::multicol) fn paginate(
         })
         .collect();
     Ok(Some(Paged {
-        pieces,
+        pieces: out.pieces,
+        nested: out.nested,
         groups,
         end: row_at(last).top - owner_y + heights[last],
     }))
@@ -340,8 +351,24 @@ struct Frame<'a> {
     kept: usize,
     /// The block size of the columns of each page kept.
     heights: &'a [f32],
+    /// Where the columns of each page kept start in the container.
+    tops: &'a [f32],
     column_width: f32,
     grid: Columns<'a>,
+}
+
+impl Frame<'_> {
+    /// Where `piece` starts in the container's block axis.
+    fn top_of(&self, piece: &Piece) -> f32 {
+        self.tops[piece.column / self.columns] + piece.top
+    }
+}
+
+/// The pieces made so far, and where each box or wrapper inside a wrapper
+/// now stands (see [`Paged::nested`]).
+struct Out {
+    pieces: Vec<PagedPiece>,
+    nested: Vec<(usize, Point<f32>)>,
 }
 
 /// The wrapper the pieces of a box or wrapper inside it are placed in.
@@ -365,7 +392,7 @@ fn push_nested(
     wrapped: &WrappedBlockTree,
     leaf_pieces: &[Vec<Piece>],
     parent: &Parent<'_>,
-    out: &mut Vec<PagedPiece>,
+    out: &mut Out,
 ) -> Option<()> {
     let mut offset = 0usize;
     for child in &wrapped.children {
@@ -378,7 +405,7 @@ fn push_nested(
                 let end = offset.checked_add(nested.leaf_count)?;
                 let nested_leaf_pieces = leaf_pieces.get(offset..end)?;
                 let pieces = wrapper_pieces_for_tree(nested, nested_leaf_pieces, frame.grid)?;
-                let first = out.len();
+                let first = out.pieces.len();
                 push_inside(tree, frame, nested.node, &pieces, parent, out)?;
                 let inner = Parent {
                     node: nested.node,
@@ -403,7 +430,7 @@ fn push_inside(
     node: usize,
     pieces: &[Piece],
     parent: &Parent<'_>,
-    out: &mut Vec<PagedPiece>,
+    out: &mut Out,
 ) -> Option<()> {
     let own: Vec<_> = pieces
         .iter()
@@ -414,14 +441,20 @@ fn push_inside(
     let size = layout.size;
     let sliced = own.len() > 1 && slices_decorations(tree, node);
     let first_parent = parent.pieces.first()?;
+    // The node stands as far down the wrapper as its first piece starts below
+    // the wrapper's, in the flow of the container.
+    out.nested.extend(own.first().map(|first| {
+        let y = frame.top_of(first) - frame.top_of(first_parent);
+        (node, Point { x, y })
+    }));
     let mut taken = 0.0f32;
     for (index, piece) in own.iter().enumerate() {
         // The pieces of a wrapper cover one run of columns.
         let parent_index = piece.column.checked_sub(first_parent.column)?;
         let parent_piece = parent.pieces.get(parent_index)?;
         let shift = parent.shifts.get(parent_index).copied().unwrap_or(0.0);
-        let fragmentainer = out.get(parent.first + parent_index)?.fragmentainer;
-        out.push(PagedPiece {
+        let fragmentainer = out.pieces.get(parent.first + parent_index)?.fragmentainer;
+        out.pieces.push(PagedPiece {
             child: node,
             fragmentainer,
             rect: sliced_rect(

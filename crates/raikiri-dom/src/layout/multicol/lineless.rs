@@ -1505,15 +1505,17 @@ fn wrapper_pieces_for_tree(
 enum Columns<'a> {
     /// Columns of one block size.
     Uniform(f32),
-    /// A block size of its own for each column.
-    Each(&'a dyn Fn(usize) -> f32),
+    /// Where each column starts in the stream, with the end of the last.
+    Starts(&'a [f32]),
 }
 
 impl Columns<'_> {
     fn height(self, column: usize) -> f32 {
         match self {
             Self::Uniform(height) => height,
-            Self::Each(height_of) => height_of(column),
+            Self::Starts(starts) => starts
+                .get(column + 1)
+                .map_or(f32::INFINITY, |end| end - starts[column]),
         }
     }
 
@@ -1521,7 +1523,7 @@ impl Columns<'_> {
     fn start(self, column: usize) -> f32 {
         match self {
             Self::Uniform(height) => column as f32 * height,
-            Self::Each(height_of) => (0..column).map(height_of).sum(),
+            Self::Starts(starts) => starts[column.min(starts.len() - 1)],
         }
     }
 
@@ -1529,15 +1531,9 @@ impl Columns<'_> {
     fn at(self, offset: f32) -> usize {
         match self {
             Self::Uniform(height) => (offset / height).floor() as usize,
-            Self::Each(height_of) => {
-                let mut column = 0;
-                let mut end = height_of(0);
-                while offset >= end {
-                    column += 1;
-                    end += height_of(column);
-                }
-                column
-            }
+            Self::Starts(starts) => starts
+                .partition_point(|&start| start <= offset)
+                .saturating_sub(1),
         }
     }
 }

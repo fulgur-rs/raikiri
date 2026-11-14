@@ -165,12 +165,13 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 .flatten()
             {
                 groups.extend(planned.groups);
+                let placed = (planned.pieces, planned.nested);
                 refilled_lineless |= install_lineless_pieces(
                     tree,
                     edits,
                     segment,
                     container,
-                    planned.pieces,
+                    placed,
                     delta,
                     &mut shifts,
                 );
@@ -496,14 +497,14 @@ impl CutLimits {
 /// a box with pieces is replaced by them and stands where its first one is,
 /// and a box without any moves by `delta` like the rest of the flow. The
 /// pieces of what a wrapper holds follow the wrapper's and are placed in
-/// them. Whether any box was replaced.
-#[allow(clippy::too_many_arguments)]
+/// them; `nested` says where each box or wrapper inside a wrapper stands.
+/// Whether any box was replaced.
 fn install_lineless_pieces(
     tree: &mut Document,
     edits: &mut FragmentEdits,
     segment: &[usize],
     container: usize,
-    pieces: Vec<lineless::PagedPiece>,
+    (pieces, nested): (Vec<lineless::PagedPiece>, Vec<(usize, Point<f32>)>),
     delta: f32,
     shifts: &mut HashMap<usize, f32>,
 ) -> bool {
@@ -526,11 +527,7 @@ fn install_lineless_pieces(
             .map(|piece| LayoutFragment {
                 node_id: piece.child,
                 parent: Some(piece.parent.map_or(container, |(wrapper, index)| {
-                    edits
-                        .records(wrapper)
-                        .get(index)
-                        .copied()
-                        .unwrap_or(container)
+                    edits.record(wrapper, index).unwrap_or(container)
                 })),
                 fragmentainer: piece.fragmentainer,
                 rect: piece.rect,
@@ -546,6 +543,9 @@ fn install_lineless_pieces(
             y: fragments[0].rect.y,
         };
         edits.replace(id, fragments);
+    }
+    for (id, location) in nested {
+        tree.nodes[id].layout.location = location;
     }
     for &id in segment.iter().filter(|id| !placed.contains(id)) {
         shift_child(tree, shifts, id, delta);
@@ -593,6 +593,11 @@ impl FragmentEdits {
     /// The first record of `node` in tree order.
     pub(in crate::layout) fn first(&self, node: usize) -> Option<usize> {
         self.by_node.get(&node)?.first().copied()
+    }
+
+    /// The record of `node` at `index` among its records.
+    fn record(&self, node: usize, index: usize) -> Option<usize> {
+        self.by_node.get(&node)?.get(index).copied()
     }
 
     fn records(&self, node: usize) -> Vec<usize> {

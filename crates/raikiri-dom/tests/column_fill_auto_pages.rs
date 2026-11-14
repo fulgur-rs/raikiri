@@ -513,3 +513,40 @@ fn boxes_inside_wrappers_fill_the_columns_of_each_page() {
         ],
     );
 }
+
+/// A wrapper with 10px of padding above and below the boxes it holds.
+fn padded(inner: &str) -> String {
+    format!("<div id=w style='padding: 10px 0'>{inner}</div>")
+}
+
+/// A box inside a wrapper that slices its padding at a column end goes on at
+/// the top of the next column, though the wrapper's piece there is the whole
+/// wrapper moved up (CSS Fragmentation 3, 5.4), whether the columns fill in
+/// turn or balance.
+#[test]
+fn boxes_in_a_sliced_wrapper_go_on_in_the_next_column() {
+    let one = padded("<div id=a style='height: 200px'></div>");
+    check(
+        "column-fill: auto",
+        &format!("<div style='columns: 2; column-fill: auto; height: 150px'>{one}</div>"),
+        1,
+        &[("a", &[(0, 0.0, 10.0, 140.0), (0, 200.0, 0.0, 60.0)])],
+    );
+    check(
+        "balanced",
+        &format!("<div style='columns: 2; height: 150px'>{one}</div>"),
+        1,
+        &[("a", &[(0, 0.0, 10.0, 100.0), (0, 200.0, 0.0, 100.0)])],
+    );
+    let two =
+        padded("<div id=a style='height: 100px'></div><div id=b style='height: 100px'></div>");
+    check(
+        "two boxes",
+        &format!("<div style='columns: 2; column-fill: auto; height: 150px'>{two}</div>"),
+        1,
+        &[
+            ("a", &[(0, 0.0, 10.0, 100.0)]),
+            ("b", &[(0, 0.0, 110.0, 40.0), (0, 200.0, 0.0, 60.0)]),
+        ],
+    );
+}
