@@ -8858,3 +8858,16 @@ fn a_block_after_a_float_in_a_column_starts_at_the_top_of_the_float() {
         [(0.0, 0.0), (100.0, 10.0)]
     );
 }
+
+#[test]
+fn widows_that_cloned_edges_leave_no_room_for_yield() {
+    // Each piece holds 6px of padding above and below its lines, so a 50px
+    // column takes three 10px lines. A paragraph with edges keeps the lines
+    // that fit an empty column, so the widows yield.
+    let (doc, _, paragraph) = padded_paragraph_columns(
+        "padding:6px 0;box-decoration-break:clone;widows:4",
+        9,
+    );
+    let (ranges, _) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 6, 1), (6, 9, 2)]);
+}

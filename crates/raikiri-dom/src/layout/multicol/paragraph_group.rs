@@ -1146,12 +1146,7 @@ fn relaxed_piece_end(
 /// last, fit a column of `height` together.
 fn lines_fit_column(paragraph: &Paragraph, first: usize, height: f32) -> bool {
     paragraph.extents.get(first).is_some_and(|&(top, _)| {
-        let lead = if paragraph.cloned {
-            paragraph.edge_start
-        } else {
-            0.0
-        };
-        paragraph.extents[paragraph.extents.len() - 1].1 - top + lead + paragraph.edge_end
+        paragraph.extents[paragraph.extents.len() - 1].1 - top + paragraph.edge_end
             <= height + f32::EPSILON
     })
 }
