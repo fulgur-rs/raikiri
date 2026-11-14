@@ -550,3 +550,88 @@ fn boxes_in_a_sliced_wrapper_go_on_in_the_next_column() {
         ],
     );
 }
+
+/// Columns that break before the content ends on a page reach the end of
+/// that page, even on the last page the container fills, so what follows the
+/// container starts the next page. Content that ends in the first column of
+/// its page ends the container there.
+#[test]
+fn columns_that_break_on_the_last_page_reach_its_end() {
+    let avoid =
+        |height: u32| format!("<div id=b style='height: {height}px; break-inside: avoid'></div>");
+    check(
+        "a box that avoids breaks moves to the second column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 150.0)]),
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "a shorter first column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 100px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "on a later page",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 500px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        3,
+        &[
+            ("b", &[(1, 200.0, 0.0, 150.0)]),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "partway down a page",
+        &format!(
+            "<div style='height: 60px'></div><div style='{COLUMNS}'>\
+             <div id=a style='height: 100px'></div>{}</div>{AFTER}",
+            avoid(100)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 60.0, 100.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "the last box in the first column of the next page",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}\
+             <div id=c style='height: 100px; break-inside: avoid'></div></div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("c", &[(1, 0.0, 0.0, 100.0)]),
+            ("k", &[(1, 0.0, 100.0, 16.0)]),
+        ],
+    );
+    check(
+        "content that ends in the first column",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(30)
+        ),
+        2,
+        &[
+            ("b", &[(0, 0.0, 150.0, 30.0)]),
+            ("k", &[(0, 0.0, 180.0, 12.0), (1, 0.0, 0.0, 4.0)]),
+        ],
+    );
+}

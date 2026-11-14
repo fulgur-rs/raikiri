@@ -195,11 +195,14 @@ pub(in crate::layout::multicol) fn paginate(
         return Ok(None);
     }
     let last = kept - 1;
-    // The last set of columns is as tall as its content; the others reach the
-    // end of their page.
+    // The columns of a page reach its end: a set the content runs on from
+    // reached it in its first column, and a set whose content went on to
+    // another column broke there (CSS Multi-column 1, 8.2). Only the last set
+    // that holds its content in its first column is as tall as that content.
+    let ends_in_first_column = placement.columns_used() <= natural_last * columns + 1;
     let heights: Vec<f32> = (0..kept)
         .map(|row| {
-            if row == natural_last {
+            if row == natural_last && ends_in_first_column {
                 placement.extent_after(row * columns)
             } else {
                 row_at(row).capacity()
