@@ -995,15 +995,13 @@ fn width_follows_content(
     let container = tree.physical_style(parent);
     match tree.nodes[parent].formatting_context {
         FormattingContext::Grid => {
+            use AlignItemsKeyword as Keyword;
             let justify = style
                 .bridge_justify_self()
                 .unwrap_or(container.justify_items());
             let margin = style.margin();
-            !matches!(
-                justify.keyword,
-                AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
-            ) || margin.left.is_auto()
-                || margin.right.is_auto()
+            let stretches = matches!(justify.keyword, Keyword::Stretch | Keyword::Normal);
+            !stretches || margin.left.is_auto() || margin.right.is_auto()
         }
         FormattingContext::Flex if !container.flex_direction_is_row() => {
             !super::content_limits::alignment_stretches(&container, &style, false)
