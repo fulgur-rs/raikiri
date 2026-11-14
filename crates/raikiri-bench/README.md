@@ -21,6 +21,7 @@ cargo bench -p raikiri-bench --bench streaming_document -- first_page_document
 | `streaming_document` | `streaming_document`: 10/100/500 forced pages; `first_page_document`: 1,500/3,000/6,000 forced pages | Full streaming parse/cascade/layout, or elapsed time from stream creation to first page callback entry | HTML generation, fonts and a warm-up stream |
 | `fulgur_baseline` | Historical single-page table-shaped workload | HTML → first-page PNG | Input generation and warm-up |
 | `streaming_memory` | Text document lengths from `RAIKIRI_STREAM_SECTIONS` | Batch vs streaming peak live heap and elapsed time | Input generation and cache warm-up |
+| `table_memory` | One three-column table; row counts from `RAIKIRI_TABLE_ROWS` | Peak live heap and retained heap of parsing and of batch layout, streaming peak, and elapsed time | Input generation and cache warm-up |
 | `pseudo_output_sharing` | Repeated pseudo-element styles | Pseudo output sharing costs | See target module documentation |
 
 The five stage/page targets add 48 Criterion cases. Fixture generation and

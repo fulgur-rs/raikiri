@@ -103,3 +103,7 @@ harness = false
 [[bench]]
 name = "insertion_cycle"
 harness = false
+
+[[bench]]
+name = "table_memory"
+harness = false

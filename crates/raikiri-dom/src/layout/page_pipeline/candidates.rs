@@ -10,14 +10,15 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, box_forces_break_after, box_is_unbreakable, boxes_are_tied,
     breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, first_owned_text_line_top,
-    has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
-    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    container_item_tail, content_bottom_edges, edges_break_container, first_named_item_start_page,
+    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
+    height_follows_content, holds_floats, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_flow_table_caption,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
+    lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
+    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
@@ -1270,8 +1271,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
+                // An inline-level flex container takes the page of its
+                // containing block, and one inside an item of a row flex
+                // container sits on the page that row's line is printed on,
+                // so the names inside either neither name a page nor force
+                // one after it.
                 let deferred_named_break_after = self.has_named_pages
                     && !float_subtree
+                    && !inline_level
+                    && (!inside_flex || named_flex_context.is_some())
                     && document.nodes[node_id].display().is_flex_container()
                     && !column_flex
                     && has_nested_named_page_descendant(
@@ -1289,12 +1297,35 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let flex_names_stay_on_items = column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after);
+                // Such a container takes its start page value from the first of
+                // its items that has one, as Chromium prints the line on the
+                // page that item names.
+                let propagated_page_name = if deferred_named_break_after && row_flex {
+                    propagated_page_name.or_else(|| {
+                        first_named_item_start_page(
+                            document,
+                            cascade,
+                            node_id,
+                            frame.inherited_page_name,
+                            document.context.pagination_on_transposed_axes,
+                        )
+                    })
+                } else {
+                    propagated_page_name
+                };
                 let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
                     own_page_name.or(frame.inherited_page_name)
                 };
-                let child_page_name = own_page_name.or(frame.inherited_page_name);
+                // A row flex container that takes the start page value of a
+                // named box nested in its items puts all its items on that
+                // page, so the boxes inside them inherit it.
+                let child_page_name = if deferred_named_break_after && row_flex {
+                    page_name
+                } else {
+                    own_page_name.or(frame.inherited_page_name)
+                };
                 let is_body = node_id == body_id || node_id == roots.element;
                 let participates_in_flow = matches!(
                     document.nodes[node_id].position(),
@@ -1458,12 +1489,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !out_of_flow_subtree;
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
-                let in_container_flow = participates_in_flow
-                    && !inside_table
+                let in_any_flow = participates_in_flow
                     && !out_of_flow_subtree
                     && !inside_float
                     && !inline_level
                     && !is_float;
+                let in_container_flow = in_any_flow && !inside_table;
                 let in_flow_block_level = in_container_flow && !inside_flex;
                 // A block box in the flow that is a candidate to move to the
                 // next page, along with the box it holds or the edges it ends.
@@ -1474,9 +1505,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // the break falls before the next box that holds a line. The
                 // box before it is the last box in the flow ahead of it, a
                 // float or an out-of-flow box between the two not counted,
-                // and only a block that moves its later siblings has one.
+                // and only a box that lays its children out in block flow
+                // has one (see `lays_out_children_in_block_flow`). Chromium
+                // takes the break there whatever holds that box: a flex item,
+                // a grid item or a table cell, anonymous or not.
                 let after_forced_break = self.forces_break_after
-                    && in_flow_block
+                    && in_any_flow
+                    && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame.previous_box.is_some_and(|previous| {
                         page_edge_constraint(document, cascade, previous, false).0
@@ -1600,20 +1635,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (Some(run), Some(leading)) => Some(run.max(leading)),
                     (run, leading) => run.or(leading),
                 };
-                // A flex container or grid whose padding or border above its
-                // items would be left alone at the foot of a page, because
-                // the first piece of its content does not fit after them,
-                // moves to the next page whole.
+                // A grid breaks between its padding or border and a first
+                // row that does not fit after them; the line of a flex
+                // container may do so on the page it moves to (see
+                // `grid_rows`).
                 let first_grid_row = (in_flow_container && !is_body && free_to_break_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
+                // A flex container whose padding or border above its items
+                // would be left alone at the foot of a page, because the first
+                // piece of its content does not fit after them, moves to the
+                // next page whole. So does a grid whose rows cannot be read,
+                // when its first item cannot be split from them either.
+                let display = document.nodes[node_id].display();
                 let leading_piece = (in_flow_container
                     && !is_body
                     && free_to_break_before
-                    && matches!(
-                        document.nodes[node_id].display(),
-                        DisplayValue::Flex | DisplayValue::Grid
-                    )
+                    && (display == DisplayValue::Flex
+                        || display == DisplayValue::Grid
+                            && first_grid_row.is_none()
+                            && super::grid_rows::first_item_is_unbreakable(
+                                document, cascade, node_id,
+                            ))
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
@@ -2008,9 +2051,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 // For each child of a block container, its last in-flow box and
                 // whether it floats: they tell the box before each child, and
-                // the last box that the closing edges follow.
+                // the last box that the closing edges follow. The children of
+                // other boxes that lay them out in block flow need the box
+                // before them only to take a forced break, so they get it only
+                // when the document forces one.
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
-                    || (child_order.len() > 1 && moves_later_siblings(document, node_id))
+                    || (child_order.len() > 1
+                        && (moves_later_siblings(document, node_id)
+                            || (self.forces_break_after
+                                && lays_out_children_in_block_flow(document, node_id))))
                 {
                     let mut boxes = Vec::new();
                     child_order
@@ -2465,4 +2514,24 @@ fn renders_in_flow_before(document: &Document, parent: usize, child: usize) -> b
                         PositionValue::Absolute | PositionValue::Fixed
                     ))
         })
+}
+
+/// Whether `parent` lays its children out one under the other in block flow,
+/// so that a forced break after one child falls before the next. Besides the
+/// blocks that move their later siblings, that is a block that also holds
+/// inline content, a table cell, and a table or table row whose block
+/// children an anonymous cell holds (CSS Tables 3, section 3.9). An inline
+/// block and a multi-column container lay their children out otherwise.
+fn lays_out_children_in_block_flow(document: &Document, parent: usize) -> bool {
+    let node = &document.nodes[parent];
+    matches!(
+        node.display(),
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::Table
+            | DisplayValue::TableRow
+    ) && node.multicol.is_none()
 }

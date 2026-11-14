@@ -12,7 +12,7 @@
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::first_letter::{FirstLetter, LetterStyle};
-use super::first_line::{FirstLine, FirstLineStyles};
+use super::first_line::FirstLineStyles;
 use super::generated_atomics::GeneratedAtomic;
 use super::generated_blocks::GeneratedBlock;
 use super::style;
@@ -940,7 +940,7 @@ pub(crate) fn project_ifc_text_run_builder(
             letter_styles: Vec::new(),
             // An anonymous item has no first formatted line of an element.
             first_line_opacity: None,
-            first_line_styles: Arc::default(),
+            first_line_styles: FirstLineStyles::none(),
         },
     })
 }
@@ -1614,12 +1614,11 @@ fn project_children_builder(
             text_nowrap: Arc::new(text_nowrap),
             letter_styles: first_letter.styles,
             first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
-            first_line_styles: Arc::new(
-                first_letter
-                    .first_line
-                    .map(FirstLine::into_styles)
-                    .unwrap_or_default(),
-            ),
+            first_line_styles: first_letter
+                .first_line
+                .map_or_else(FirstLineStyles::none, |first_line| {
+                    Arc::new(first_line.into_styles())
+                }),
         },
     })
 }

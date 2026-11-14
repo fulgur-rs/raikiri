@@ -1,4 +1,6 @@
-//! First-row constraints that keep grid items together across page boundaries.
+//! First-row constraints that keep the items of the first row of a grid, or
+//! of the line of a single-line flex container, together across page
+//! boundaries.
 
 use super::*;
 use crate::layout::context::LayoutSession;
@@ -47,12 +49,21 @@ pub(super) fn first_row(
 ) -> Option<FirstRow> {
     let node = &document.nodes[grid];
     let computed = &cascade.computed[grid];
-    if node.display() != DisplayValue::Grid
+    let flex_line = node.display() == DisplayValue::Flex
+        && matches!(
+            computed.flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        )
+        && computed.flex_wrap == FlexWrapValue::NoWrap;
+    // A single column of several items stacks them as block flow, which
+    // breaks between them; one item alone is the first row.
+    let grid_rows = node.display() == DisplayValue::Grid
+        && (node.grid_column_count > 1 || node.grid_item_rows.len() == 1);
+    if !(flex_line || grid_rows)
         || node.used_writing_mode.is_vertical()
         || document.context.pagination_on_transposed_axes
         || !height_follows_content(document, grid)
         || !grid_rows_size_to_content(document, grid)
-        || node.grid_column_count <= 1
         || computed.overflow.x != OverflowValue::Visible
         || computed.overflow.y != OverflowValue::Visible
         || selected_page_name(cascade, grid).is_some()
@@ -61,6 +72,9 @@ pub(super) fn first_row(
         || !readable_subtree(document, cascade, grid)
     {
         return None;
+    }
+    if node.display() == DisplayValue::Flex {
+        return first_flex_line(document, cascade, body_id, grid);
     }
     let rows = &node.grid_item_rows;
     if rows.len() != node.grid_item_row_starts.len()
@@ -95,6 +109,84 @@ pub(super) fn first_row(
         })
         .reduce(f32::max)?;
     (end.is_finite() && end > start).then_some(FirstRow { start, end })
+}
+
+/// The first line of a single-line row flex container whose items no break
+/// goes through, all of them at the top of its content box. Like the first
+/// row of a grid, the line breaks after the padding or border above it
+/// rather than leaving them alone, and a container that already starts a
+/// page sends the line on to the next one.
+fn first_flex_line(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    flex: usize,
+) -> Option<FirstRow> {
+    let node = &document.nodes[flex];
+    let start = node.layout.border.top + node.layout.padding.top;
+    let mut end = None::<f32>;
+    for item in flex_items(document, flex)? {
+        let top = normal_flow_y(document, cascade, body_id, item);
+        if (top - start).abs() > TOLERANCE {
+            return None;
+        }
+        // A box that only avoids a break inside it splits on the page it
+        // moves to, as browsers print it, so only one that no break goes
+        // through takes the line past the edges.
+        if !is_monolithic_for_pagination_with_transposed_axes(document, cascade, item, false) {
+            return None;
+        }
+        let piece = top + document.nodes[item].layout.size.height;
+        end = Some(end.map_or(piece, |end| end.max(piece)));
+    }
+    let end = end?;
+    (start > TOLERANCE && end.is_finite() && end > start).then_some(FirstRow { start, end })
+}
+
+/// The in-flow items of the flex container `flex`, or `None` when text of its
+/// own makes an anonymous item.
+pub(super) fn flex_items(document: &Document, flex: usize) -> Option<Vec<usize>> {
+    let mut items = Vec::new();
+    for &child in &document.nodes[flex].children {
+        let node = &document.nodes[child];
+        match &node.data {
+            // Only white space that the white-space property can affect
+            // makes no anonymous item.
+            crate::node::NodeData::Text(text)
+                if text
+                    .text_content
+                    .chars()
+                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')) => {}
+            crate::node::NodeData::Element(_) if node.display() == DisplayValue::None => {}
+            crate::node::NodeData::Element(_) if node.display() != DisplayValue::Contents => {
+                items.push(child);
+            }
+            crate::node::NodeData::Comment(_)
+            | crate::node::NodeData::ProcessingInstruction { .. } => {}
+            _ => return None,
+        }
+    }
+    Some(items)
+}
+
+/// Whether the first item of the grid `grid` is a box that no break goes
+/// through or that avoids a break inside it, which takes the grid's top
+/// edges along where [`first_row`] cannot read the grid.
+pub(super) fn first_item_is_unbreakable(
+    document: &Document,
+    cascade: &CascadeResult,
+    grid: usize,
+) -> bool {
+    document.nodes[grid]
+        .grid_item_rows
+        .iter()
+        .min_by_key(|row| row.start)
+        .is_some_and(|row| {
+            avoids_page_break_inside(cascade.computed[row.item].break_inside)
+                || is_monolithic_for_pagination_with_transposed_axes(
+                    document, cascade, row.item, false,
+                )
+        })
 }
 
 fn unbreakable_piece(

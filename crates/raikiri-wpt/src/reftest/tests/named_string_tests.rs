@@ -9,9 +9,14 @@ const FIVE: &str = r#"<h2>A1</h2><p>x</p><h2>A2</h2><p>x</p><p style="break-befo
 /// families, sits next to the build.
 const FAMILY: &str = "NamedStringTest";
 
+/// A family with real glyph outlines and metrics, whose content area is
+/// taller than its `10px` line height, unlike Ahem's.
+const GLYPH_FAMILY: &str = "NamedStringGlyphs";
+
 /// A directory laid out as the `fonts/` folder of a WPT checkout, holding the
-/// Ahem font that [`FAMILY`] names; the font loader recognises a checkout by
-/// that file.
+/// Ahem font that [`FAMILY`] names, and the Noto Sans subset that
+/// [`GLYPH_FAMILY`] names; the font loader recognises a checkout by the Ahem
+/// file.
 fn font_root() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     let fonts = root.path().join("fonts");
@@ -20,6 +25,12 @@ fn font_root() -> tempfile::TempDir {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../raikiri-dom/tests/data/text-autospace/Ahem.ttf"),
         fonts.join("Ahem.ttf"),
+    )
+    .unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../raikiri-paint/tests/data/noto-sans-latin/NotoSans-LatinSubset.ttf"),
+        fonts.join("NotoSans-LatinSubset.ttf"),
     )
     .unwrap();
     root
@@ -38,7 +49,7 @@ fn render(body: &str, contents: [&str; 4], extra: &str, images: bool) -> Rendere
         .map(|(slot, value)| format!("@{slot}{{content:{value};font:10px {FAMILY}}} "))
         .collect::<String>();
     let html = format!(
-        "<!doctype html><style>@font-face{{font-family:{FAMILY};src:url(/fonts/Ahem.ttf)}}@page{{size:300px 200px;margin:40px;{rules}}}body{{margin:0;font:10px/10px {FAMILY}}}p,h2{{margin:0}}{assignment}{extra}</style>{body}"
+        "<!doctype html><style>@font-face{{font-family:{FAMILY};src:url(/fonts/Ahem.ttf)}}@font-face{{font-family:{GLYPH_FAMILY};src:url(/fonts/NotoSans-LatinSubset.ttf)}}@page{{size:300px 200px;margin:40px;{rules}}}body{{margin:0;font:10px/10px {FAMILY}}}p,h2{{margin:0}}{assignment}{extra}</style>{body}"
     );
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fonts = font_root();
@@ -188,18 +199,27 @@ fn builtin_print_named_strings_use_height_only_page_geometry() {
 #[test]
 fn builtin_print_named_strings_projection_preserves_generated_marker_and_column_paint() {
     let body = "<h2>ALPHA</h2><ul><li>item</li></ul><div class='columns'><p>one</p><p>two</p></div><h2 style='break-before:page'>BETA</h2>";
-    let extra = "p::before{content:'P'}ul{margin:0;padding-left:20px}.columns{columns:2;height:20px;column-rule:1px solid green}";
-    let actual = render(
-        body,
-        ["string(title)", "none", "none", "none"],
-        extra,
-        false,
-    );
-    assert_eq!(actual.pages.len(), 2);
-    for (index, text) in ["ALPHA", "BETA"].into_iter().enumerate() {
-        let literal = format!("'{text}'");
-        let expected = render(body, [&literal, "none", "none", "none"], extra, false);
-        assert!(actual.pages[index].rgba == expected.pages[index].rgba);
+    let base = "p::before{content:'P'}ul{margin:0;padding-left:20px}.columns{columns:2;height:20px;column-rule:1px solid green}";
+    // The glyph family's first line puts its baseline above the marker's
+    // own, so only a marker that meets that baseline paints the same with
+    // and without the page projection that `string(title)` needs.
+    for family in [String::new(), format!("body{{font-family:{GLYPH_FAMILY}}}")] {
+        let extra = format!("{base}{family}");
+        let actual = render(
+            body,
+            ["string(title)", "none", "none", "none"],
+            &extra,
+            false,
+        );
+        assert_eq!(actual.pages.len(), 2);
+        for (index, text) in ["ALPHA", "BETA"].into_iter().enumerate() {
+            let literal = format!("'{text}'");
+            let expected = render(body, [&literal, "none", "none", "none"], &extra, false);
+            assert!(
+                actual.pages[index].rgba == expected.pages[index].rgba,
+                "{family} page {index}"
+            );
+        }
     }
 }
 

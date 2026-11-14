@@ -3598,8 +3598,10 @@ fn the_last_block_of_a_padded_wrapper_moves_with_the_padding_that_would_break_aw
     // The second block fills the rest of the first column and the padding
     // does not fit, so the block follows the padding to the second column
     // instead of leaving it alone there.
+    // The block's piece sits in the wrapper's second piece, which is moved up
+    // by 50px, so it is 50px down that piece: at the top of the column.
     assert_eq!(fragment_rects(&doc, first), vec![(0, 0.0, 0.0, 50.0)]);
-    assert_eq!(fragment_rects(&doc, last), vec![(1, 0.0, 0.0, 50.0)]);
+    assert_eq!(fragment_rects(&doc, last), vec![(1, 0.0, 50.0, 50.0)]);
     // The wrapper's second piece shows the last 100px of its 150px, the
     // block and the padding, not the 50px of padding that the gap above the
     // block would leave.
@@ -3654,8 +3656,9 @@ fn the_margin_a_column_break_cuts_is_still_part_of_the_box_a_wrapper_shows() {
     // border do not fit, so it follows them to the second column, where the
     // 10px margin above it is cut. The wrapper is 150px tall with the margin,
     // so its second piece is moved up by the 40px of the first block and the
-    // margin, and the border ends the column.
-    assert_eq!(fragment_rects(&doc, last)[0], (1, 0.0, 0.0, 50.0));
+    // margin, and the border ends the column. The last block is as far down
+    // that piece, which puts it at the top of the column.
+    assert_eq!(fragment_rects(&doc, last)[0], (1, 0.0, 50.0, 50.0));
     assert_eq!(
         fragment_rects(&doc, wrapper),
         vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
@@ -3704,7 +3707,8 @@ fn the_margin_a_column_break_cuts_is_still_part_of_the_box_a_wrapper_shows() {
         Some("display:block;height:80px;margin-top:10px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(fragment_rects(&doc, second)[0], (1, 0.0, 0.0, 80.0));
+    // The second block starts the column, 110px down the wrapper's piece.
+    assert_eq!(fragment_rects(&doc, second)[0], (1, 0.0, 110.0, 80.0));
     assert_eq!(
         fragment_rects(&doc, wrapper),
         vec![(0, 0.0, 0.0, 200.0), (1, 100.0, -110.0, 200.0)]

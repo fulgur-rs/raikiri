@@ -3,7 +3,9 @@
 //! `<br>` alone, and a line holding only an inline-block, inline flex
 //! container, inline grid or inline table, whose box no page break goes
 //! through. The same holds for a flex container whose first item is taller
-//! than a page. What does not fit the next page either runs past its end.
+//! than a page, and for the first row of a grid, which leaves the border or
+//! padding above it behind. What does not fit the next page either runs past
+//! its end.
 //! Where each glyph falls is what Chromium prints for the same documents on
 //! pages 100px tall, with Ahem lines of 20px and a line height of 30px; only
 //! the glyphs printed wholly inside a page are compared.
@@ -185,5 +187,142 @@ fn a_flex_container_whose_first_item_is_taller_than_a_page_starts_the_next_page(
             "<div style='height:94px'></div><div style='display:flex;padding-top:6px'><div style='break-inside:avoid;height:120px;width:20px'>X</div></div><div>Z</div>",
             &[(1, 'X', 11), (2, 'Z', 31)],
         ),
+        (
+            "<div style='height:150px'></div><div style='display:flex;border-top:5px solid'><div style='width:20px;height:120px;break-inside:avoid'>X</div></div><div>Z</div>",
+            &[(2, 'X', 10), (3, 'Z', 30)],
+        ),
     ]);
+}
+
+#[test]
+fn an_image_taller_than_a_page_breaks_from_the_top_edges_of_its_flex_container() {
+    // The container moves to the next page with its border or padding, and
+    // the image, which does not fit after them, goes on to the page after.
+    // At the top of a page the edges stay there and the image starts the
+    // next page. An image that fits after the edges stays with them.
+    assert_rows(&[
+        (
+            "<div style='height:150px'></div><div style='display:flex;border-top:5px solid'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(4, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:flex;padding-top:10px'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(4, 'Z', 25)],
+        ),
+        (
+            "<div style='display:flex;border-top:5px solid'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(2, 'Z', 25)],
+        ),
+        (
+            "<div style='display:flex;border-top:5px solid'> <!-- an image --> <img style='width:20px;height:120px'><span style='display:none'>Y</span></div><div>Z</div>",
+            &[(2, 'Z', 25)],
+        ),
+        (
+            "<div style='height:60px'></div><div style='display:flex;border-top:5px solid'><img style='width:20px;height:50px'></div><div>Z</div>",
+            &[(1, 'Z', 60)],
+        ),
+        (
+            "<div style='height:80px'></div><div style='display:flex;border-top:5px solid'><div>X</div></div><div>Z</div>",
+            &[(1, 'X', 10), (1, 'Z', 40)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_grid_moves_its_first_row_to_the_next_page_and_keeps_its_top_edges() {
+    // A grid with nothing above its first row moves whole with it, an image
+    // or a line taller than a page included. Below a border or padding the
+    // page breaks between those edges and the row instead, which starts the
+    // next page whatever its height.
+    assert_rows(&[
+        (
+            "<div style='height:150px'></div><div style='display:grid'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(3, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:grid'><div style='width:20px;line-height:120px'>X</div></div><div>Z</div>",
+            &[(2, 'X', 50), (3, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:grid'><div style='width:20px;contain:size;height:120px'><p style='margin:0'>X X X X</p></div></div><div>Z</div>",
+            &[(2, 'X', 5), (2, 'X', 35), (2, 'X', 65), (3, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:grid;border-top:5px solid'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(3, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:grid;border-top:5px solid'><div style='width:20px;line-height:120px'>X</div></div><div>Z</div>",
+            &[(2, 'X', 50), (3, 'Z', 25)],
+        ),
+        (
+            "<div style='height:150px'></div><div style='display:grid;padding-top:10px'><div style='width:20px;line-height:120px'>X</div></div><div>Z</div>",
+            &[(2, 'X', 50), (3, 'Z', 25)],
+        ),
+        (
+            "<div style='display:grid;border-top:5px solid'><img style='width:20px;height:120px'></div><div>Z</div>",
+            &[(2, 'Z', 25)],
+        ),
+        (
+            "<div style='height:80px'></div><div style='display:grid;border-top:5px solid'><div>X</div></div><div>Z</div>",
+            &[(1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:80px'></div><div style='display:grid;padding-top:10px'><div>X</div></div><div>Z</div>",
+            &[(1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:80px'></div><div style='display:grid;grid-template-columns:20px 20px;border-top:5px solid'><div>X</div><div>Y</div></div><div>Z</div>",
+            &[(1, 'X', 5), (1, 'Y', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:80px'></div><div style='display:grid;border-top:5px solid'><div style='width:20px'>X X X</div></div><div>Z</div>",
+            &[(1, 'X', 5), (1, 'X', 35), (1, 'X', 65), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:60px'></div><div style='display:grid;border-top:5px solid'><img style='width:20px;height:50px'></div><div>Z</div>",
+            &[(1, 'Z', 55)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_line_taller_than_a_page_below_top_edges_starts_the_next_page() {
+    // Border or padding above a line at the top of the first page is
+    // content the page can break after, so the line moves on, in a block,
+    // a grid or a flex container. With nothing above it, it stays.
+    assert_rows(&[
+        (
+            "<div style='border-top:5px solid'><div style='line-height:120px'>X</div></div><div>Z</div>",
+            &[(1, 'X', 50), (2, 'Z', 25)],
+        ),
+        (
+            "<div style='padding-top:5px'><div style='line-height:120px'>X</div></div><div>Z</div>",
+            &[(1, 'X', 50), (2, 'Z', 25)],
+        ),
+        (
+            "<div style='display:grid;border-top:5px solid'><div style='line-height:120px'>X</div></div><div>Z</div>",
+            &[(1, 'X', 50), (2, 'Z', 25)],
+        ),
+        (
+            "<div style='display:flex;border-top:5px solid'><div style='line-height:120px'>X</div></div><div>Z</div>",
+            &[(1, 'X', 50), (2, 'Z', 25)],
+        ),
+        (
+            "<div style='line-height:120px'>X</div><div>Z</div>",
+            &[(0, 'X', 50), (1, 'Z', 25)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_grid_whose_rows_cannot_be_followed_moves_whole_with_an_unbreakable_first_item() {
+    // A grid that clips its overflow gives its rows no first-row placement,
+    // so the border goes with an image that cannot be split from it, rather
+    // than leaving the image cut by the page end. (Chromium keeps the border
+    // and starts the image on the next page, five pixels higher.)
+    assert_rows(&[(
+        "<div style='height:60px'></div><div style='display:grid;border-top:5px solid;overflow:hidden'><img style='width:20px;height:50px'></div><div>Z</div>",
+        &[(1, 'Z', 60)],
+    )]);
 }

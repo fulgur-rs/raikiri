@@ -9,6 +9,7 @@ use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
 use shodo::node::{InlineEdgePercents, InlineEdges};
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 /// The `::first-line` styles that reach the first formatted line of one
 /// paragraph, and the values its text has there (CSS Pseudo 4 §2.1.2).
@@ -50,6 +51,13 @@ pub(crate) struct FirstLineStyles {
 }
 
 impl FirstLineStyles {
+    /// The values of a paragraph without a styled first line. Every such
+    /// paragraph shares the one empty set.
+    pub(crate) fn none() -> Arc<Self> {
+        static NONE: OnceLock<Arc<FirstLineStyles>> = OnceLock::new();
+        NONE.get_or_init(Arc::default).clone()
+    }
+
     /// The values text has on the first line when it sits directly in the
     /// element or generated box `owner`.
     pub(crate) fn text(&self, owner: usize) -> Option<&ComputedValues> {
