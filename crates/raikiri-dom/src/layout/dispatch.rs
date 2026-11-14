@@ -1199,6 +1199,8 @@ impl LayoutSession<'_> {
                 && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
             {
+                // Either no height was asked for, or the one asked for is the
+                // one containment gave the box in place of its content.
                 return orthogonal_flow::compute_orthogonal_block(
                     tree,
                     node_id,
@@ -1687,7 +1689,7 @@ mod replaced_size;
 mod transposed_axes;
 mod vertical_block;
 mod vertical_oof;
-mod vertical_ratio_width;
+pub(crate) mod vertical_ratio_width;
 pub(crate) use oof::{
     compute_root_layout_with_content_limits, layout_container_candidates,
     refresh_container_candidates,

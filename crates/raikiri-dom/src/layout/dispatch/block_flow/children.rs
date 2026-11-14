@@ -675,11 +675,10 @@ pub(super) fn layout(
                 if let Some(along) = along.filter(|_| {
                     let node = &tree.nodes[usize::from(child)];
                     (node.display().is_flex_or_grid_container() || node.is_ifc_root())
-                        && !(node.used_writing_mode.is_vertical()
-                            && tree
-                                .physical_style(usize::from(child))
-                                .stated_aspect_ratio()
-                                .is_some())
+                        && !crate::layout::dispatch::vertical_ratio_width::width_follows_ratio(
+                            tree,
+                            usize::from(child),
+                        )
                 }) {
                     let mut measure = child_input;
                     measure.run_mode = RunMode::ComputeSize;

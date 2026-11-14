@@ -318,8 +318,9 @@ const BLOCK_LEVEL: &[Case] = &[
     ),
 ];
 
-/// Vertical boxes whose width is an intrinsic keyword, and heights that
-/// behave as `auto` or not.
+/// Vertical boxes whose width is an intrinsic keyword, heights that behave as
+/// `auto` (`max-content`, `fit-content`) or not (`min-content`, a percentage),
+/// and contained boxes whose percentage children resolve against the height.
 const KEYWORD_WIDTH: &[Case] = &[
     (
         "k01",
@@ -380,6 +381,56 @@ const KEYWORD_WIDTH: &[Case] = &[
         "k12",
         r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;height:50%">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
         &[("b", (0.0, 0.0, 300.0, 300.0))],
+    ),
+    (
+        "m01",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;height:min-content">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 40.0, 20.0))],
+    ),
+    (
+        "m02",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;height:max-content">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 110.0, 110.0))],
+    ),
+    (
+        "m03",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;height:fit-content">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 110.0, 110.0))],
+    ),
+    (
+        "m04",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 110.0, 110.0))],
+    ),
+    (
+        "m05",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;max-width:30px;writing-mode:vertical-rl;height:min-content">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 20.0))],
+    ),
+    (
+        "m06",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;max-width:30px;writing-mode:vertical-rl;height:max-content">AA BB CC DD</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 30.0))],
+    ),
+    (
+        "m07",
+        r#"<div style="width:50px"><div id=b style="aspect-ratio:1;max-width:30px;writing-mode:vertical-rl;height:max-content">AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ KKKK LLLL MMMM NNNN OOOO PPPP QQQQ RRRR</div></div>"#,
+        &[("b", (0.0, 0.0, 30.0, 30.0))],
+    ),
+    (
+        "m08",
+        r#"<div style="width:50px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;height:min-content">AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ KKKK LLLL MMMM NNNN OOOO PPPP QQQQ RRRR</div></div>"#,
+        &[("b", (0.0, 0.0, 180.0, 40.0))],
+    ),
+    (
+        "m09",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;display:flex;contain:size;contain-intrinsic-size:30px 40px"><div id=c style="height:50%;width:5px"></div></div></div>"#,
+        &[("b", (0.0, 0.0, 40.0, 40.0)), ("c", (35.0, 0.0, 5.0, 20.0))],
+    ),
+    (
+        "m10",
+        r#"<div style="width:500px"><div id=b style="aspect-ratio:1;writing-mode:vertical-rl;contain:size;contain-intrinsic-size:30px 40px"><div id=c style="height:50%;width:5px"></div></div></div>"#,
+        &[("b", (0.0, 0.0, 40.0, 40.0)), ("c", (35.0, 0.0, 5.0, 20.0))],
     ),
 ];
 
