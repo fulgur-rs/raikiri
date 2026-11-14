@@ -401,18 +401,30 @@ const FLEX: &str = "display:flex;padding-top:6px";
 const GRID: &str = "display:grid;grid-template-columns:30px 30px;border-top:6px solid";
 
 #[test]
-fn a_container_whose_first_items_do_not_fit_after_its_padding_moves_whole() {
+fn a_flex_container_whose_first_items_do_not_fit_after_its_padding_moves_whole() {
     // The padding fits and the lines of the items do not, or the padding
     // ends the page: the page breaks before the container, not between its
     // edges and the items.
     for lead in [97, 94, 90] {
-        for css in [FLEX, GRID] {
-            assert_eq!(
-                container_after(lead, css, &["", ""], 1),
-                (100.0, 106.0, 2),
-                "{lead} {css}"
-            );
-        }
+        assert_eq!(
+            container_after(lead, FLEX, &["", ""], 1),
+            (100.0, 106.0, 2),
+            "{lead}"
+        );
+    }
+}
+
+#[test]
+fn a_grid_keeps_its_border_when_its_first_items_do_not_fit_after_it() {
+    // A grid breaks between its border and its first row instead, as
+    // Chromium prints it: the row starts the next page, or goes on below a
+    // border that the page end cuts.
+    for (lead, item) in [(97, 103.0), (94, 100.0), (90, 100.0)] {
+        assert_eq!(
+            container_after(lead, GRID, &["", ""], 1),
+            (lead as f32, item, 2),
+            "{lead}"
+        );
     }
 }
 

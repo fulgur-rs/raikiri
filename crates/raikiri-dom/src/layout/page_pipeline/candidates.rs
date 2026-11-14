@@ -1604,20 +1604,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (Some(run), Some(leading)) => Some(run.max(leading)),
                     (run, leading) => run.or(leading),
                 };
-                // A flex container or grid whose padding or border above its
-                // items would be left alone at the foot of a page, because
-                // the first piece of its content does not fit after them,
-                // moves to the next page whole.
+                // A grid breaks between its padding or border and a first
+                // row that does not fit after them; the line of a flex
+                // container may do so on the page it moves to (see
+                // `grid_rows`).
                 let first_grid_row = (in_flow_container && !is_body && free_to_break_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
+                // A flex container whose padding or border above its items
+                // would be left alone at the foot of a page, because the first
+                // piece of its content does not fit after them, moves to the
+                // next page whole. So does a grid whose rows cannot be read,
+                // when its first item cannot be split from them either.
+                let display = document.nodes[node_id].display();
                 let leading_piece = (in_flow_container
                     && !is_body
                     && free_to_break_before
-                    && matches!(
-                        document.nodes[node_id].display(),
-                        DisplayValue::Flex | DisplayValue::Grid
-                    )
+                    && (display == DisplayValue::Flex
+                        || display == DisplayValue::Grid
+                            && first_grid_row.is_none()
+                            && super::grid_rows::first_item_is_unbreakable(
+                                document, cascade, node_id,
+                            ))
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| leading_piece_end(document, cascade, body_id, node_id))
                     .flatten();
