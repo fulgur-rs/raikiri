@@ -8,9 +8,15 @@
 //! and 192px high, and `columns: 2` leaves 184px columns and a 16px gap.
 
 use raikiri_html::{
-    LayoutOptions, LayoutStatus, RenderResources, layout, parse_html_with_resources,
+    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
+    parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
+
+const AHEM: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/text-autospace/Ahem.ttf"
+));
 
 /// The margin of the page, which fragments are placed inside.
 const MARGIN: f32 = 48.0;
@@ -26,7 +32,11 @@ fn pieces_of(body: &str) -> (usize, Vec<(String, Vec<Piece>)>) {
         "<!DOCTYPE html><style>@page {{ size: 480px 288px; margin: 48px }} \
          body {{ margin: 0 }}</style>{body}"
     );
-    let resources = RenderResources::new();
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
     let doc = parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
     let status = layout(
         &doc,
@@ -622,6 +632,21 @@ fn columns_that_break_on_the_last_page_reach_its_end() {
             ("k", &[(1, 0.0, 100.0, 16.0)]),
         ],
     );
+    // The block-end padding and border of the container follow on the next
+    // page.
+    check(
+        "block-end padding and border",
+        &format!(
+            "<div style='{COLUMNS}; padding-bottom: 10px; border-bottom: 4px solid'>\
+             <div id=a style='height: 150px'></div>{}</div>{AFTER}",
+            avoid(150)
+        ),
+        2,
+        &[
+            ("b", &[(0, 200.0, 0.0, 150.0)]),
+            ("k", &[(1, 0.0, 14.0, 16.0)]),
+        ],
+    );
     check(
         "content that ends in the first column",
         &format!(
@@ -632,6 +657,25 @@ fn columns_that_break_on_the_last_page_reach_its_end() {
         &[
             ("b", &[(0, 0.0, 150.0, 30.0)]),
             ("k", &[(0, 0.0, 180.0, 12.0), (1, 0.0, 0.0, 4.0)]),
+        ],
+    );
+}
+
+/// Lines of a paragraph do the same: the lines that go on in the second
+/// column of the last page break the columns there, so the box after the
+/// container starts the next page.
+#[test]
+fn lines_that_go_on_in_the_second_column_of_the_last_page_reach_its_end() {
+    let lines = vec!["x"; 30].join("<br>");
+    check(
+        "30 lines of 10px",
+        &format!(
+            "<div style='{COLUMNS}'><p id=p style='margin: 0; font: 10px/10px Ahem'>{lines}</p></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("p", &[(0, 0.0, 0.0, 192.0), (0, 200.0, 0.0, 110.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
         ],
     );
 }

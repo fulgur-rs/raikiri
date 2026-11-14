@@ -182,7 +182,8 @@ pub(in crate::layout::multicol) fn paginate(
         }
     }
     work.charge(placement.pieces.iter().map(Vec::len).sum::<usize>())?;
-    let natural_last = (placement.columns_used().max(1) - 1) / columns;
+    let last_column = placement.columns_used().max(1) - 1;
+    let natural_last = last_column / columns;
     // Past the last page the control allows there is nothing to cut.
     let mut kept = natural_last + 1;
     for index in 0..=natural_last {
@@ -199,7 +200,15 @@ pub(in crate::layout::multicol) fn paginate(
     // reached it in its first column, and a set whose content went on to
     // another column broke there (CSS Multi-column 1, 8.2). Only the last set
     // that holds its content in its first column is as tall as that content.
-    let ends_in_first_column = placement.columns_used() <= natural_last * columns + 1;
+    // A box with no block size on its own in a later column breaks nothing
+    // that shows.
+    let shown_last = placement
+        .pieces
+        .iter()
+        .flatten()
+        .filter(|piece| piece.height > 0.0);
+    let ends_in_first_column =
+        shown_last.map(|piece| piece.column).max().unwrap_or(0) <= natural_last * columns;
     let heights: Vec<f32> = (0..kept)
         .map(|row| {
             if row == natural_last && ends_in_first_column {
