@@ -12796,9 +12796,14 @@ fn clearance_below_grown_float(
     {
         return None;
     }
+    // Clearance is measured in normal-flow coordinates, without the
+    // relative offsets of the two boxes and their ancestors.
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
     let layout = &document.nodes[float].layout;
-    let float_bottom = current_abs_y(document, float) + layout.size.height + layout.margin.bottom;
-    Some(float_bottom - current_abs_y(document, clearing)).filter(|&shift| shift > 0.001)
+    let float_bottom = flow_y(float) + layout.size.height + layout.margin.bottom;
+    Some(float_bottom - flow_y(clearing)).filter(|&shift| shift > 0.001)
 }
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a

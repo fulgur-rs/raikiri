@@ -303,6 +303,13 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
         wide_boxes(body, 1),
         [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
     );
+    // A relative offset moves the clearing box from there, and not the boxes
+    // after it.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div> <div style='clear:left;height:20px;position:relative;top:10px'></div><div style='height:10px'></div></div>";
+    assert_eq!(
+        wide_boxes(body, 1),
+        [(0.0, 60.0), (40.0, 20.0), (50.0, 10.0)]
+    );
     // A box that clears only the other side stays beside the float.
     let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:right;width:20px'>X X X</div><div style='clear:left;height:20px'></div></div>";
     assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 20.0)]);
