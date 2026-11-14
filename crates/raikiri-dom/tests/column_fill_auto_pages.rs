@@ -359,3 +359,157 @@ fn containers_that_a_forced_break_moves_together_fill_their_own_pages() {
         );
     }
 }
+
+/// Boxes that plain wrappers hold fill the columns of each page in turn, as
+/// boxes the container holds itself do, and the wrappers break with them.
+#[test]
+fn boxes_inside_wrappers_fill_the_columns_of_each_page() {
+    let tall_in_columns: &[Piece] = &[
+        (0, 0.0, 0.0, 192.0),
+        (0, 200.0, 0.0, 192.0),
+        (1, 0.0, 0.0, 96.0),
+    ];
+    check(
+        "one wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 480px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("w", tall_in_columns),
+            ("a", tall_in_columns),
+            ("k", &[(1, 0.0, 96.0, 16.0)]),
+        ],
+    );
+    check(
+        "nested wrappers",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w><div id=v>\
+             <div id=a style='height: 480px'></div></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("w", tall_in_columns),
+            ("v", tall_in_columns),
+            ("a", tall_in_columns),
+            ("k", &[(1, 0.0, 96.0, 16.0)]),
+        ],
+    );
+    let continued: &[Piece] = &[
+        (0, 0.0, 100.0, 92.0),
+        (0, 200.0, 0.0, 192.0),
+        (1, 0.0, 0.0, 16.0),
+    ];
+    check(
+        "two boxes in a wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 100px'></div>\
+             <div id=b style='height: 300px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 100.0)]),
+            ("b", continued),
+            ("k", &[(1, 0.0, 16.0, 16.0)]),
+        ],
+    );
+    check(
+        "a box and a wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=a style='height: 100px'></div>\
+             <div id=w><div id=b style='height: 300px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("a", &[(0, 0.0, 0.0, 100.0)]),
+            ("w", continued),
+            ("b", continued),
+            ("k", &[(1, 0.0, 16.0, 16.0)]),
+        ],
+    );
+    check(
+        "a box with a top margin",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='margin-top: 20px; height: 400px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 20.0, 172.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "a padded wrapper",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w style='padding: 10px 0'>\
+             <div id=a style='height: 400px'></div></div></div>{AFTER}"
+        ),
+        2,
+        // The wrapper slices its padding, so each of its pieces is the whole
+        // box moved up, which the pages show in parts; the box it holds
+        // shows where the padding leaves it.
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 10.0, 182.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 26.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "boxes split by an empty box",
+        &format!(
+            "<div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 200px'></div><div style='height: 20px'></div>\
+             <div id=b style='height: 200px'></div></div></div>{AFTER}"
+        ),
+        2,
+        &[
+            (
+                "w",
+                &[
+                    (0, 0.0, 0.0, 192.0),
+                    (0, 200.0, 0.0, 192.0),
+                    (1, 0.0, 0.0, 36.0),
+                ],
+            ),
+            ("a", &[(0, 0.0, 0.0, 192.0), (0, 200.0, 0.0, 8.0)]),
+            ("b", &[(0, 200.0, 28.0, 164.0), (1, 0.0, 0.0, 36.0)]),
+            ("k", &[(1, 0.0, 36.0, 16.0)]),
+        ],
+    );
+    check(
+        "a wrapper partway down a page",
+        &format!(
+            "<div style='height: 60px'></div><div style='{COLUMNS}'><div id=w>\
+             <div id=a style='height: 480px'></div></div></div>{AFTER}"
+        ),
+        3,
+        &[
+            (
+                "a",
+                &[
+                    (0, 0.0, 60.0, 132.0),
+                    (0, 200.0, 60.0, 132.0),
+                    (1, 0.0, 0.0, 192.0),
+                    (1, 200.0, 0.0, 24.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+}

@@ -1485,7 +1485,7 @@ fn make_wrapped_leaf_pieces(
 fn wrapper_pieces_for_tree(
     wrapped: &WrappedBlockTree,
     leaf_pieces: &[Vec<Piece>],
-    column_height: f32,
+    columns: Columns<'_>,
 ) -> Option<Vec<Piece>> {
     let layout = wrapped.layout?;
     let first = leaf_pieces
@@ -1497,7 +1497,49 @@ fn wrapper_pieces_for_tree(
         .rev()
         .flat_map(|pieces| pieces.iter().rev())
         .find(|piece| piece.height > 0.0)?;
-    wrapper_pieces(first, last, layout.leading, layout.trailing, column_height)
+    wrapper_pieces(first, last, layout.leading, layout.trailing, columns)
+}
+
+/// The block sizes of the columns a stream fills, one after the other.
+#[derive(Clone, Copy)]
+enum Columns<'a> {
+    /// Columns of one block size.
+    Uniform(f32),
+    /// A block size of its own for each column.
+    Each(&'a dyn Fn(usize) -> f32),
+}
+
+impl Columns<'_> {
+    fn height(self, column: usize) -> f32 {
+        match self {
+            Self::Uniform(height) => height,
+            Self::Each(height_of) => height_of(column),
+        }
+    }
+
+    /// Where `column` starts in the stream.
+    fn start(self, column: usize) -> f32 {
+        match self {
+            Self::Uniform(height) => column as f32 * height,
+            Self::Each(height_of) => (0..column).map(height_of).sum(),
+        }
+    }
+
+    /// The column that holds the stream offset `offset`.
+    fn at(self, offset: f32) -> usize {
+        match self {
+            Self::Uniform(height) => (offset / height).floor() as usize,
+            Self::Each(height_of) => {
+                let mut column = 0;
+                let mut end = height_of(0);
+                while offset >= end {
+                    column += 1;
+                    end += height_of(column);
+                }
+                column
+            }
+        }
+    }
 }
 
 fn wrapper_pieces(
@@ -1505,31 +1547,31 @@ fn wrapper_pieces(
     last: &Piece,
     leading: f32,
     trailing: f32,
-    column_height: f32,
+    columns: Columns<'_>,
 ) -> Option<Vec<Piece>> {
-    let start = first.column as f32 * column_height + first.top - leading;
-    let end = last.column as f32 * column_height + last.top + last.height + trailing;
+    let start = columns.start(first.column) + first.top - leading;
+    let end = columns.start(last.column) + last.top + last.height + trailing;
     if !start.is_finite() || !end.is_finite() || start < 0.0 || end < start {
         return None;
     }
-    let first_column = (start / column_height).floor() as usize;
+    let first_column = columns.at(start);
     let last_column = if end - start <= EPSILON {
         first_column
     } else {
-        ((end - EPSILON).max(start) / column_height).floor() as usize
+        columns.at((end - EPSILON).max(start))
     };
     Some(
         (first_column..=last_column)
             .map(|column| {
                 let top = if column == first_column {
-                    start - column as f32 * column_height
+                    start - columns.start(column)
                 } else {
                     0.0
                 };
                 let bottom = if column == last_column {
-                    end - column as f32 * column_height
+                    end - columns.start(column)
                 } else {
-                    column_height
+                    columns.height(column)
                 };
                 Piece {
                     column,
@@ -1546,7 +1588,8 @@ fn count_wrapped_fragments(
     leaf_pieces: &[Vec<Piece>],
     column_height: f32,
 ) -> Option<usize> {
-    let mut count = wrapper_pieces_for_tree(wrapped, leaf_pieces, column_height)?.len();
+    let mut count =
+        wrapper_pieces_for_tree(wrapped, leaf_pieces, Columns::Uniform(column_height))?.len();
     let mut offset = 0usize;
     for child in &wrapped.children {
         match child {
@@ -1565,12 +1608,18 @@ fn count_wrapped_fragments(
     (offset == leaf_pieces.len()).then_some(count)
 }
 
+/// Record what `wrapped` holds in the pieces `parent_pieces` of the wrapper,
+/// whose fragments are `parent_records`. A piece of a wrapper that slices its
+/// decorations sits higher than its place in the column by its entry in
+/// `parent_shifts`, which what it holds makes up for.
+#[allow(clippy::too_many_arguments)]
 fn push_wrapped_children(
     tree: &mut LayoutSession<'_>,
     wrapped: &WrappedBlockTree,
     leaf_pieces: &[Vec<Piece>],
     parent_pieces: &[Piece],
     parent_records: &[usize],
+    parent_shifts: &[f32],
     context: FragmentationContext,
     column_height: f32,
 ) -> Option<()> {
@@ -1583,7 +1632,7 @@ fn push_wrapped_children(
                     *leaf,
                     leaf_pieces.get(offset)?,
                     parent_pieces,
-                    parent_records,
+                    (parent_records, parent_shifts),
                     context,
                     column_height,
                 )?;
@@ -1592,13 +1641,17 @@ fn push_wrapped_children(
             WrappedBlockChild::Wrapper(nested) => {
                 let end = offset.checked_add(nested.leaf_count)?;
                 let nested_leaf_pieces = leaf_pieces.get(offset..end)?;
-                let pieces = wrapper_pieces_for_tree(nested, nested_leaf_pieces, column_height)?;
+                let pieces = wrapper_pieces_for_tree(
+                    nested,
+                    nested_leaf_pieces,
+                    Columns::Uniform(column_height),
+                )?;
                 let records = push_wrapped_wrapper(
                     tree,
                     nested.node,
                     &pieces,
                     parent_pieces,
-                    parent_records,
+                    (parent_records, parent_shifts),
                     context,
                     column_height,
                 )?;
@@ -1608,6 +1661,7 @@ fn push_wrapped_children(
                     nested_leaf_pieces,
                     &pieces,
                     &records,
+                    &[],
                     context,
                     column_height,
                 )?;
@@ -1623,7 +1677,7 @@ fn push_wrapped_wrapper(
     wrapper: usize,
     pieces: &[Piece],
     parents: &[Piece],
-    parent_records: &[usize],
+    (parent_records, parent_shifts): (&[usize], &[f32]),
     context: FragmentationContext,
     column_height: f32,
 ) -> Option<Vec<usize>> {
@@ -1646,6 +1700,7 @@ fn push_wrapped_wrapper(
             tests::record_parent_comparison(0);
             parent.column == piece.column
         })?;
+        let shift = parent_shifts.get(parent_index).copied().unwrap_or(0.0);
         let x_offset =
             context.column_offset_x(piece.column) - context.column_offset_x(parent.column);
         let record = tree.fragment_tree.try_push(LayoutFragment {
@@ -1654,14 +1709,14 @@ fn push_wrapped_wrapper(
             fragmentainer: context.column_index + piece.column,
             rect: FragmentRect {
                 x: x + x_offset,
-                y: piece.top - parent.top,
+                y: piece.top - parent.top + shift,
                 width: size.width,
                 height: piece.height,
             },
             fragmentainer_clip: (pieces.len() > 1).then_some(
                 FragmentRect {
                     x: x_offset,
-                    y: -parent.top,
+                    y: shift - parent.top,
                     width: (x + size.width).max(context.column_width),
                     height: column_height,
                 }
@@ -1702,7 +1757,7 @@ fn push_wrapped_block(
     leaf: usize,
     pieces: &[Piece],
     parents: &[Piece],
-    records: &[usize],
+    (records, parent_shifts): (&[usize], &[f32]),
     context: FragmentationContext,
     column_height: f32,
 ) -> Option<()> {
@@ -1727,6 +1782,7 @@ fn push_wrapped_block(
             tests::record_parent_comparison(1);
             parent.column == piece.column
         })?;
+        let shift = parent_shifts.get(parent_index).copied().unwrap_or(0.0);
         tree.fragment_tree.try_push(LayoutFragment {
             node_id: leaf,
             parent: Some(records[parent_index]),
@@ -1734,7 +1790,7 @@ fn push_wrapped_block(
             rect: sliced_rect(
                 FragmentRect {
                     x,
-                    y: piece.top - parent.top,
+                    y: piece.top - parent.top + shift,
                     width: size.width,
                     height: piece.height,
                 },
@@ -1744,7 +1800,7 @@ fn push_wrapped_block(
             fragmentainer_clip: (pieces.len() > 1).then_some(
                 FragmentRect {
                     x: 0.0,
-                    y: -parent.top,
+                    y: shift - parent.top,
                     width: (x + size.width).max(context.column_width),
                     height: column_height,
                 }
@@ -2298,7 +2354,7 @@ pub(super) fn layout(
                 child_pieces.push(wrapper_pieces_for_tree(
                     wrapped_tree,
                     &leaf_pieces,
-                    column_height,
+                    Columns::Uniform(column_height),
                 )?);
                 wrapped_leaf_pieces.push(Some(leaf_pieces));
             }
@@ -2360,7 +2416,6 @@ pub(super) fn layout(
         && outer_height.is_none()
         && tree.context.fragmentation_stack.len() <= 1
         && !tree.context.unpaged_plain_columns
-        && wrapped.iter().all(Option::is_none)
         && absolute.iter().all(Vec::is_empty)
         && !sliced_flex.contains(&true)
     {
@@ -2517,6 +2572,7 @@ pub(super) fn layout(
                 leaf_pieces,
                 pieces,
                 &records,
+                &shifts,
                 context,
                 column_height,
             )?;

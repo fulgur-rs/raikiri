@@ -66,7 +66,7 @@ fn wrapped_parent_column_work_scales_with_emitted_pieces() {
 
 #[test]
 fn wrapper_producer_keeps_contiguous_columns_at_rounding_and_inset_boundaries() {
-    use super::super::{Piece, wrapper_pieces};
+    use super::super::{Columns, Piece, wrapper_pieces};
     for start in [0, 3, 128] {
         for span in [0, 1, 129] {
             for (leading, trailing) in [(0.0, 0.0), (0.25, 0.75), (1.0, 1.0)] {
@@ -80,7 +80,9 @@ fn wrapper_producer_keeps_contiguous_columns_at_rounding_and_inset_boundaries() 
                     top: 1.0,
                     height: 0.0,
                 };
-                let pieces = wrapper_pieces(&first, &last, leading, trailing, 10.0).unwrap();
+                let pieces =
+                    wrapper_pieces(&first, &last, leading, trailing, Columns::Uniform(10.0))
+                        .unwrap();
                 let initial = pieces.first().unwrap().column;
                 for (index, piece) in pieces.iter().enumerate() {
                     assert_eq!(piece.column, initial + index);
@@ -96,7 +98,7 @@ fn wrapper_producer_keeps_contiguous_columns_at_rounding_and_inset_boundaries() 
         top: 0.0,
         height: 10.0,
     };
-    let pieces = wrapper_pieces(&first, &first, 0.0, 0.0, 10.0).unwrap();
+    let pieces = wrapper_pieces(&first, &first, 0.0, 0.0, Columns::Uniform(10.0)).unwrap();
     assert_eq!(pieces.len(), 1);
     assert_eq!(pieces[0].column, 5);
 }

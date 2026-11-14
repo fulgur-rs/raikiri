@@ -108,9 +108,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
         return Ok(0.0);
     }
     // The boxes of a container of boxes that hold no lines, which the columns
-    // fill from their own layout instead of from lines.
+    // fill from their own layout instead of from lines. The boxes that
+    // wrappers hold take their place, as in the layout that kept the groups.
     let leaves = spanner_free
-        .then(|| lineless::supported(tree, owner, false))
+        .then(|| lineless::supported_with_wrappers(tree, owner))
         .flatten();
     let Some(container) = edits.first(owner) else {
         return Ok(0.0); // cov:ignore: retained groups are created only after the owner source fragment exists.
@@ -123,6 +124,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     let mut start = 0;
     let mut group_index = 0;
     let mut delta = 0.0;
+    let mut refilled_lineless = false;
     for end in 0..=children.len() {
         let spanner = children
             .get(end)
@@ -163,14 +165,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 .flatten()
             {
                 groups.extend(planned.groups);
-                install_lineless_pieces(
+                refilled_lineless |= install_lineless_pieces(
                     tree,
+                    edits,
                     segment,
                     container,
                     planned.pieces,
                     delta,
                     &mut shifts,
-                    &mut replacements,
                 );
                 delta = planned.end - (old.context.origin_y + old.height);
             } else if let Some(planned) =
@@ -337,7 +339,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         start = end + 1;
     }
     edits.shift_children(container, &shifts);
-    let refilled = !replacements.is_empty();
+    let refilled = refilled_lineless || !replacements.is_empty();
     for (id, fragments) in replacements {
         edits.replace(id, fragments);
     }
@@ -492,24 +494,44 @@ impl CutLimits {
 
 /// Install the pieces the pages cut the boxes `segment` of a container into:
 /// a box with pieces is replaced by them and stands where its first one is,
-/// and a box without any moves by `delta` like the rest of the flow.
+/// and a box without any moves by `delta` like the rest of the flow. The
+/// pieces of what a wrapper holds follow the wrapper's and are placed in
+/// them. Whether any box was replaced.
+#[allow(clippy::too_many_arguments)]
 fn install_lineless_pieces(
     tree: &mut Document,
+    edits: &mut FragmentEdits,
     segment: &[usize],
     container: usize,
     pieces: Vec<lineless::PagedPiece>,
     delta: f32,
     shifts: &mut HashMap<usize, f32>,
-    replacements: &mut Vec<(usize, Vec<LayoutFragment>)>,
-) {
-    let mut per_child = HashMap::<usize, Vec<LayoutFragment>>::new();
+) -> bool {
+    // The pieces of each box, in the order the boxes come, which puts a
+    // wrapper before what it holds.
+    let mut order = Vec::<usize>::new();
+    let mut per_child = HashMap::<usize, Vec<lineless::PagedPiece>>::new();
     for piece in pieces {
-        per_child
-            .entry(piece.child)
-            .or_default()
-            .push(LayoutFragment {
+        let own = per_child.entry(piece.child).or_default();
+        if own.is_empty() {
+            order.push(piece.child);
+        }
+        own.push(piece);
+    }
+    let placed: HashSet<usize> = order.iter().copied().collect();
+    for id in order {
+        let pieces = per_child.remove(&id).unwrap_or_default();
+        let fragments: Vec<LayoutFragment> = pieces
+            .iter()
+            .map(|piece| LayoutFragment {
                 node_id: piece.child,
-                parent: Some(container),
+                parent: Some(piece.parent.map_or(container, |(wrapper, index)| {
+                    edits
+                        .records(wrapper)
+                        .get(index)
+                        .copied()
+                        .unwrap_or(container)
+                })),
                 fragmentainer: piece.fragmentainer,
                 rect: piece.rect,
                 fragmentainer_clip: piece.clip.map(Into::into),
@@ -517,19 +539,18 @@ fn install_lineless_pieces(
                 fragment_count: piece.count,
                 line_start: None,
                 line_end: None,
-            });
-    }
-    for &id in segment {
-        let Some(fragments) = per_child.remove(&id) else {
-            shift_child(tree, shifts, id, delta);
-            continue;
-        };
+            })
+            .collect();
         tree.nodes[id].layout.location = Point {
             x: fragments[0].rect.x,
             y: fragments[0].rect.y,
         };
-        replacements.push((id, fragments));
+        edits.replace(id, fragments);
     }
+    for &id in segment.iter().filter(|id| !placed.contains(id)) {
+        shift_child(tree, shifts, id, delta);
+    }
+    !placed.is_empty()
 }
 
 /// Move a child now and record the same move for its container fragments.
