@@ -337,22 +337,22 @@ fn ifc_parent_inline_size(
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
 ///
-/// An item that is itself a flex container records its own size for its own
-/// items while it lays them out; that entry is passed over, so the item still
-/// finds the size of the container it sits in.
+/// The size is looked up by the container itself: an item that is a flex
+/// container records its own size for its own items while it lays them out,
+/// above the size of the container it sits in.
 pub(crate) fn flex_item_percent_basis(
     tree: &LayoutSession<'_>,
     node: usize,
 ) -> Option<Size<Option<f32>>> {
+    if tree.nodes[node].layout_position() == Position::Absolute {
+        return None;
+    }
+    let parent = tree.taffy_parent_of(node)?;
     tree.context
         .flex_item_percent_bases
         .iter()
         .rev()
-        .find(|&&(container, _)| container != node)
-        .filter(|&&(container, _)| {
-            tree.nodes[node].layout_position() != Position::Absolute
-                && tree.taffy_parent_of(node) == Some(container)
-        })
+        .find(|&&(container, _)| container == parent)
         .map(|&(_, basis)| basis)
 }
 

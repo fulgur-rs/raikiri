@@ -321,9 +321,10 @@ pub(super) fn stretches_to_grid_row(tree: &LayoutSession<'_>, idx: usize) -> boo
 }
 
 /// The border-box `height` of the box `idx` within its `min-height` and
-/// `max-height`. `basis` is the size of its containing block: its height is
-/// what the percentages of the limits refer to, and its width what those of
-/// the padding do.
+/// `max-height`. `basis` is the physical size of its containing block: its
+/// height is what the percentages of the limits refer to. Those of the padding
+/// and border refer to the inline size of the containing block (see
+/// `ifc_parent_inline_size`).
 pub(super) fn clamp_to_height_limits(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -331,7 +332,8 @@ pub(super) fn clamp_to_height_limits(
     height: f32,
 ) -> f32 {
     let style = tree.physical_style(idx);
-    let adjustment = box_sizing_height_adjustment(tree, idx, basis.width.unwrap_or(0.0));
+    let edge_basis = super::ifc_parent_inline_size(tree, idx, basis).unwrap_or(0.0);
+    let adjustment = box_sizing_height_adjustment(tree, idx, edge_basis);
     let max = style
         .max_size()
         .height

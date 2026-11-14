@@ -284,3 +284,47 @@ fn a_vertical_flex_item_resolves_its_percentage_padding_against_its_flex_contain
         ),
     ]);
 }
+
+#[test]
+fn a_vertical_flex_item_keeps_its_percentage_padding_inside_its_border_box_max_height() {
+    // A border-box `max-height` holds the 30px of padding above and below
+    // that `padding: 10% 0` resolves to in a 300px wide parent: the box is
+    // 100px tall and its single 10px wide column of items does not widen it.
+    // How the items break into lines there is another matter, left out.
+    assert_cases(&[(
+        "display:flex;align-items:flex-start;width:300px;height:200px",
+        "writing-mode:vertical-rl;display:inline-flex;flex-wrap:wrap;box-sizing:border-box;max-height:100px;padding:10% 0",
+        &[("c", [0.0, 0.0, 30.0, 100.0])],
+    )]);
+}
+
+#[test]
+fn a_vertical_flex_item_adds_its_percentage_padding_to_its_min_height() {
+    // In a 200px tall vertical parent, `padding: 5%` is 10px on every side
+    // and `padding: 10% 0` 20px above and below; a content-box `min-height`
+    // of 150px leaves the items 150px to grow into.
+    let parent =
+        "writing-mode:vertical-rl;display:flex;align-items:flex-start;width:300px;height:200px";
+    assert_cases(&[
+        (
+            parent,
+            "writing-mode:vertical-rl;display:inline-flex;flex-wrap:wrap;min-height:150px;padding:5%",
+            &[
+                ("c", [270.0, 0.0, 30.0, 170.0]),
+                ("a", [280.0, 10.0, 10.0, 55.0]),
+                ("b", [280.0, 65.0, 10.0, 65.0]),
+                ("d", [280.0, 130.0, 10.0, 30.0]),
+            ],
+        ),
+        (
+            parent,
+            "writing-mode:vertical-rl;display:flex;flex-wrap:wrap;min-height:150px;padding:10% 0",
+            &[
+                ("c", [290.0, 0.0, 10.0, 190.0]),
+                ("a", [290.0, 20.0, 10.0, 55.0]),
+                ("b", [290.0, 75.0, 10.0, 65.0]),
+                ("d", [290.0, 140.0, 10.0, 30.0]),
+            ],
+        ),
+    ]);
+}
