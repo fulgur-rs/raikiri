@@ -335,6 +335,35 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
         wide_boxes(body, 1),
         [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
     );
+    // The room that `min-height` keeps below a block's content takes the move
+    // of a box in it that clears the float, so a box after the block that
+    // clears a right float placed below the grown float still moves below
+    // that float, at 50 on the second page.
+    for (wrapper, end) in [
+        ("<div style='min-height:120px'>", "</div>"),
+        ("<div style='min-height:100px'>", "</div>"),
+        ("<div style='min-height:120px;max-height:125px'>", "</div>"),
+        (
+            "<div style='min-height:120px;padding-bottom:10px'>",
+            "</div>",
+        ),
+        ("<div><div style='min-height:120px'>", "</div></div>"),
+        ("<div>", "</div>"),
+    ] {
+        for right in [
+            "<div style='float:right;width:20px;clear:left;height:20px'></div>",
+            "<div style='float:right;width:50px;height:20px'></div>",
+        ] {
+            let body = format!(
+                "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div>{right}{wrapper}<div style='clear:left;height:10px'></div>{end}<div style='clear:right;height:10px'></div></div>"
+            );
+            assert_eq!(
+                wide_boxes(&body, 1).last(),
+                Some(&(50.0, 10.0)),
+                "{wrapper} {right}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -13229,16 +13229,67 @@ enum SearchStep {
     Leave(usize, f32),
 }
 
-/// How much of a move of `moved` by the boxes inside `block` the boxes
-/// after it take: as much as the block can grow, up to its `max-height`.
-fn passed_growth(document: &super::context::LayoutSession<'_>, block: usize, moved: f32) -> f32 {
+/// How much of a move of `moved` by the boxes at the end of `block` the
+/// boxes after it take: as much as the block grows, which the room below
+/// its content that `min-height` keeps takes first, up to its `max-height`
+/// (CSS 2.1 §10.7).
+fn passed_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    moved: f32,
+) -> f32 {
     if !height_can_grow(document, block) {
         return 0.0;
     }
-    let (_, max) = border_box_height_bounds(document, block);
-    moved
-        .min(max - document.nodes[block].layout.size.height)
-        .max(0.0)
+    let layout = &document.nodes[block].layout;
+    let edges_below = layout.padding.bottom + layout.border.bottom;
+    let end = flow_content_end(document, cascade, body_id, block);
+    let (height, _) = grown_height(
+        layout.size.height,
+        border_box_height_bounds(document, block),
+        edges_below,
+        (end, end + moved),
+    );
+    (height - layout.size.height).max(0.0)
+}
+
+/// Where the in-flow content of `block`, a block that does not hold its
+/// floats, ends in its border box: its in-flow children and lines, with the
+/// last child's bottom margin when bottom padding or border keeps it inside
+/// (CSS 2.1 §8.3.1, §10.6.3).
+fn flow_content_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+) -> f32 {
+    let layout = &document.nodes[block].layout;
+    let mut end = layout.padding.top + layout.border.top;
+    let mut last_margin = 0.0;
+    for child in laid_out_children(document, block) {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element
+            || node.display() == DisplayValue::None
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        let top =
+            pagination_child_parent_y(document, block, child, document.pagination_local_y(child))
+                - layout_relative_offset_y(document, cascade, body_id, child);
+        end = end.max(top + node.layout.size.height);
+        last_margin = node.layout.margin.bottom;
+    }
+    if layout.padding.bottom + layout.border.bottom > 0.0 {
+        end += last_margin;
+    }
+    content_bottom(document, block).map_or(end, |lines| end.max(lines))
 }
 
 /// An in-flow box that clears a float that moves (see [`BelowGrownFloat`]).
@@ -13349,7 +13400,8 @@ fn below_grown_float(
                 // The boxes after a block move by as much as the block grew
                 // with the boxes in it that moved.
                 SearchStep::Leave(block, entered) => {
-                    carried = entered + passed_growth(document, block, carried - entered);
+                    carried = entered
+                        + passed_growth(document, cascade, body_id, block, carried - entered);
                     continue;
                 }
             };
@@ -13428,7 +13480,7 @@ fn below_grown_float(
         else {
             break;
         };
-        carried = passed_growth(document, scope, carried);
+        carried = passed_growth(document, cascade, body_id, scope, carried);
         stack = laid_out_children(document, up)
             .into_iter()
             .skip_while(|&id| id != scope)
