@@ -7926,7 +7926,12 @@ fn push_in_flow_boxes_rev(
 /// (CSS Flexbox 1 §10, CSS Grid 1 §12: a break between items of one line or
 /// row is taken after it). Items of a later line or row, out-of-flow boxes
 /// and the anonymous items of text are not among them.
-fn later_line_peers(document: &Document, cascade: &CascadeResult, source: usize) -> Vec<usize> {
+fn later_line_peers(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    source: usize,
+) -> Vec<usize> {
     let mut peers = Vec::new();
     let mut item = source;
     while let Some(container) = document.layout_parent_of(item) {
@@ -7934,7 +7939,7 @@ fn later_line_peers(document: &Document, cascade: &CascadeResult, source: usize)
         if !node.used_writing_mode.is_vertical() {
             match node.display() {
                 DisplayValue::Flex | DisplayValue::InlineFlex => {
-                    break_flex_line_peers(document, cascade, container, item, &mut peers);
+                    break_flex_line_peers(document, cascade, body_id, container, item, &mut peers);
                 }
                 DisplayValue::Grid | DisplayValue::InlineGrid => {
                     grid_row_peers(document, container, item, &mut peers);
@@ -7972,10 +7977,12 @@ fn later_in_flow_items(document: &Document, container: usize, item: usize) -> Ve
 /// wrap, and otherwise those that begin above the end of `item`'s margin
 /// box. The lines of a container that wraps in reverse stack upwards, above
 /// the line of `item`, so all of its later items stay with it, as Chromium
-/// prints them.
+/// prints them. Lines are found in normal flow: a relative offset only moves
+/// where an item is painted.
 fn break_flex_line_peers(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     container: usize,
     item: usize,
     peers: &mut Vec<usize>,
@@ -7988,16 +7995,17 @@ fn break_flex_line_peers(
         return;
     }
     let one_line = computed.flex_wrap != FlexWrapValue::Wrap;
-    let end = document.pagination_local_y(item)
+    let flow_y = |id: usize| {
+        document.pagination_local_y(id) - layout_relative_offset_y(document, cascade, body_id, id)
+    };
+    let end = flow_y(item)
         + document.nodes[item].layout.size.height
         + document.nodes[item].layout.margin.bottom;
     peers.extend(
         later_in_flow_items(document, container, item)
             .into_iter()
             .filter(|&later| {
-                one_line
-                    || document.pagination_local_y(later) - document.nodes[later].layout.margin.top
-                        < end - 0.01
+                one_line || flow_y(later) - document.nodes[later].layout.margin.top < end - 0.01
             }),
     );
 }
@@ -8061,6 +8069,7 @@ impl PendingBreak {
         &mut self,
         document: &Document,
         cascade: &CascadeResult,
+        body_id: usize,
         node_id: usize,
         deferred_named_break_after: bool,
     ) {
@@ -8075,7 +8084,7 @@ impl PendingBreak {
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
         if breaks_after && !source_is_ancestor {
             self.source = Some(node_id);
-            self.line_peers = later_line_peers(document, cascade, node_id);
+            self.line_peers = later_line_peers(document, cascade, body_id, node_id);
         }
     }
 }

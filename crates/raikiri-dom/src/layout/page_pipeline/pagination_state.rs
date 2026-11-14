@@ -661,6 +661,7 @@ impl PaginationState {
         self.pending_break.note_after(
             document,
             cascade,
+            env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
         );
@@ -1097,6 +1098,7 @@ impl PaginationState {
         self.pending_break.note_after(
             document,
             cascade,
+            env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
         );

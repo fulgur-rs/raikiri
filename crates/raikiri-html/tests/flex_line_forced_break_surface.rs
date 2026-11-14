@@ -95,7 +95,8 @@ fn the_line_of_a_break_after_an_item_reaches_past_nesting_spans_and_alignment() 
     // An item of a nested flex line keeps the items beside its container; a
     // grid item spanning two rows keeps the items that start in them; the
     // lines of a container that wraps in reverse stay together; and an item
-    // pushed down its line by a margin stays on it.
+    // pushed down its line by a margin stays on it. A relative offset moves
+    // no item onto or off a line: the next line still starts a new page.
     assert_rows(&[
         (
             "<div style='display:flex'><div style='display:flex'><div style='width:20px'>X</div><div style='break-after:page;width:20px'>A</div></div><div style='width:20px'>B</div></div><div>Z</div>",
@@ -118,6 +119,10 @@ fn the_line_of_a_break_after_an_item_reaches_past_nesting_spans_and_alignment() 
         (
             "<div style='display:flex'><div style='break-after:page;width:20px'>A</div><div style='width:20px;margin-top:50px'>B</div><div style='width:20px;height:90px'></div></div><div>Z</div>",
             &[(0, 'A', 5), (0, 'B', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='position:relative;top:10px;break-after:page;width:60px'>A</div><div style='width:60px'>B</div></div><div>Z</div>",
+            &[(0, 'A', 15), (1, 'B', 5), (1, 'Z', 35)],
         ),
     ]);
 }
