@@ -3,6 +3,28 @@ use super::*;
 const THREE: &str = r#"<h2>Introduction</h2><p>A</p><p style="break-before:page">B</p><h2 style="break-before:page">Background</h2><p>C</p>"#;
 const FIVE: &str = r#"<h2>A1</h2><p>x</p><h2>A2</h2><p>x</p><p style="break-before:page">y</p><h2 style="break-before:page">C1</h2><p>z</p><h2>C2</h2><p>z</p><p style="break-before:page">w</p><h2>D1</h2><p style="break-before:page">v</p>"#;
 
+/// The family the pages of [`render`] are drawn in: Ahem from the repository,
+/// so that the pages do not depend on the host's fonts or on whether a WPT
+/// checkout, whose `fonts/` folder would otherwise supply the generic
+/// families, sits next to the build.
+const FAMILY: &str = "NamedStringTest";
+
+/// A directory laid out as the `fonts/` folder of a WPT checkout, holding the
+/// Ahem font that [`FAMILY`] names; the font loader recognises a checkout by
+/// that file.
+fn font_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let fonts = root.path().join("fonts");
+    std::fs::create_dir(&fonts).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../raikiri-dom/tests/data/text-autospace/Ahem.ttf"),
+        fonts.join("Ahem.ttf"),
+    )
+    .unwrap();
+    root
+}
+
 fn render(body: &str, contents: [&str; 4], extra: &str, images: bool) -> RenderedDocument {
     let assignment = if contents.iter().any(|value| value.contains("string(")) {
         "h2{string-set:title content(text)}"
@@ -13,13 +35,14 @@ fn render(body: &str, contents: [&str; 4], extra: &str, images: bool) -> Rendere
     let rules = slots
         .into_iter()
         .zip(contents)
-        .map(|(slot, value)| format!("@{slot}{{content:{value};font:10px monospace}} "))
+        .map(|(slot, value)| format!("@{slot}{{content:{value};font:10px {FAMILY}}} "))
         .collect::<String>();
     let html = format!(
-        "<!doctype html><style>@page{{size:300px 200px;margin:40px;{rules}}}body{{margin:0;font:10px/10px monospace}}p,h2{{margin:0}}{assignment}{extra}</style>{body}"
+        "<!doctype html><style>@font-face{{font-family:{FAMILY};src:url(/fonts/Ahem.ttf)}}@page{{size:300px 200px;margin:40px;{rules}}}body{{margin:0;font:10px/10px {FAMILY}}}p,h2{{margin:0}}{assignment}{extra}</style>{body}"
     );
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
-    render_raikiri_pages_inner(&html, 800, 600, images.then_some(base), None).unwrap()
+    let fonts = font_root();
+    render_raikiri_pages_inner(&html, 800, 600, images.then_some(base), Some(fonts.path())).unwrap()
 }
 
 fn margin_pixels(image: &RenderedImage) -> Vec<u8> {
@@ -96,7 +119,7 @@ fn builtin_print_named_strings_use_actual_width_continuations() {
         "<h2>ALPHA</h2><section style='page:narrow'><p>{}</p><h2>BETA</h2></section>",
         "<span class='atom'></span>".repeat(27)
     );
-    let extra = "@page narrow{size:180px 200px}h2{font:10px/10px monospace}p{font-size:0}.atom{display:inline-block;width:40px;height:10px;vertical-align:top;background:green}";
+    let extra = "@page narrow{size:180px 200px}h2{font:10px/10px NamedStringTest}p{font-size:0}.atom{display:inline-block;width:40px;height:10px;vertical-align:top;background:green}";
     let actual = render(
         &body,
         [
