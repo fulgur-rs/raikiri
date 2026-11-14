@@ -567,6 +567,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
     }
 
+    all_lines.shrink_to_fit();
     let mut lines = std::sync::Arc::new(all_lines);
     if perform {
         truncate_for_text_overflow(tree, &root, &mut lines, geometry.width);
@@ -1589,6 +1590,8 @@ fn run_boxes_segment(
     } else {
         0.0
     };
+    // Most paragraphs keep fewer lines than a vector grows room for.
+    lines.shrink_to_fit();
     RunBoxesOutcome {
         lines: IfcLines {
             width,

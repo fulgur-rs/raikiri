@@ -320,6 +320,8 @@ pub(crate) fn place_lines(
         token = line.break_token();
         lines.push(line);
     }
+    // Most paragraphs keep fewer lines than a vector grows room for.
+    lines.shrink_to_fit();
     IfcLines {
         width: first_width.unwrap_or(0.0),
         height: y,
