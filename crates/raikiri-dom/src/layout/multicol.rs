@@ -946,7 +946,10 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // nothing inside it may stand among them, if one of the others holds lines: one
 // with a block size of its own, which the planner places whole in a column, or
 // one with no room of its own, whose margins collapse through it. So may a box
-// of lines with a height of its own (see `is_sized_paragraph`).
+// of lines with a height of its own (see `is_sized_paragraph`), and a box that
+// makes a formatting context of its own (see `is_whole_formatting_context_box`),
+// which the planner places whole when it holds one row of lines. A `flow-root`
+// box of lines counts as a paragraph.
 //
 // One undecorated paragraph also counts when `balances` is set: the columns of
 // a definite-height container that balance take their height from the planner,
@@ -1119,10 +1122,11 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0;
     (undecorated || edges == BlockEdges::Sliced && slices_block_edges(node))
-        && matches!(
-            node.display(),
-            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
-        )
+        && (matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+            // A `flow-root` box of lines breaks between them as a paragraph
+            // does; an empty one starts a formatting context, so margins do
+            // not collapse through it.
+            || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
         && node.break_inside == raikiri_style::property::BreakInside::Auto
         && {
             let style = style_of(tree, child);
@@ -1156,24 +1160,52 @@ fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
 }
 
 /// Whether `child` is an in-flow block-level box that makes a formatting
-/// context of its own (a `flow-root`, flex, grid or table box) and that the
-/// planner places whole in a column, at the column width.
+/// context of its own (a flex, grid or table box, or a `flow-root` box that
+/// holds blocks rather than lines) and that the paragraph planner may place
+/// whole in a column, at the column width, once it is laid out (see
+/// [`paragraph_group`]). Nothing inside it may break on its own terms: a float,
+/// an absolutely positioned box or a column container. A `flow-root` box of
+/// lines is a paragraph that breaks between them instead.
 pub(super) fn is_whole_formatting_context_box(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
-    (matches!(
+    matches!(
         node.display(),
-        DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
-    ) || node.display() == DisplayValue::FlowRoot && node.ifc.is_none())
-        && lineless::is_plain_box_apart_from_display(tree, child, false)
+        DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
+    ) && lineless::is_plain_box_apart_from_display(tree, child, false)
         && !node
             .authored_writing_mode
             .is_some_and(WritingMode::is_vertical)
-        && !multicol_subtree_has_float(tree, child)
-        && !multicol_has_out_of_flow_descendant(tree, child)
-        && !multicol_has_nested_descendant(tree, child)
         && !style.margin().top.is_auto()
         && !style.margin().bottom.is_auto()
+        && holds_no_breaking_box(tree, child)
+}
+
+/// The most boxes a formatting-context box may hold for the planner to place
+/// it whole, so that checking a very large one stays cheap.
+pub(super) const MAX_WHOLE_BOX_DESCENDANTS: usize = 256;
+
+/// Whether the boxes inside `id`, at most [`MAX_WHOLE_BOX_DESCENDANTS`] of
+/// them, include no float, no absolutely positioned box and no column
+/// container.
+fn holds_no_breaking_box(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let mut pending = layout_node(tree, id).children.clone();
+    let mut seen = 0usize;
+    while let Some(child) = pending.pop() {
+        seen += 1;
+        let node = layout_node(tree, child);
+        if seen > MAX_WHOLE_BOX_DESCENDANTS
+            || node.is_in_document()
+                && !node.is_display_none()
+                && (is_floated(tree, child)
+                    || node.layout_position() == Position::Absolute
+                    || node.multicol.is_some())
+        {
+            return false;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    true
 }
 
 /// Whether the padding and border above the first line and below the last of
