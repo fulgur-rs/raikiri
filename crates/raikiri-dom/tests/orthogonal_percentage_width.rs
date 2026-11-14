@@ -465,6 +465,28 @@ fn a_width_that_only_matches_the_content_size_is_classified_by_how_it_was_given(
             ("c", (0.0, 0.0, 400.0, 20.0)),
         ],
     );
+    // A scroll container has no content-based minimum, so its flex basis
+    // is definite even when it matches the content size.
+    for overflow in ["hidden", "scroll"] {
+        check(
+            &nested(
+                "display:flex;width:600px;height:300px",
+                &format!("flex:0 0 400px;overflow:{overflow}"),
+            ),
+            &[
+                ("p", (0.0, 0.0, 400.0, 300.0)),
+                ("c", (200.0, 0.0, 200.0, 20.0)),
+            ],
+        );
+    }
+    // With a content basis, a scroll container still keeps its width open.
+    check(
+        &nested("display:flex;width:600px;height:300px", "overflow:hidden"),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
     // Without an automatic minimum, a flexed size is definite even when it
     // comes to the content size.
     check(

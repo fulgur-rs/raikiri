@@ -1007,7 +1007,9 @@ fn width_follows_content(
             !super::content_limits::alignment_stretches(&container, &style, false)
         }
         FormattingContext::Flex => {
-            let automatic_minimum = style.min_size().width.is_auto();
+            // A scroll container's automatic minimum is zero, not its content.
+            let automatic_minimum =
+                style.min_size().width.is_auto() && !style.overflow().x.is_scroll_container();
             let content_basis = matches!(
                 style.flex_basis().expand(),
                 ExpandedDimension::Auto | ExpandedDimension::MaxContent
