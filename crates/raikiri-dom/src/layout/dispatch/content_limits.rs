@@ -853,8 +853,96 @@ fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && tree.physical_style(idx).stated_aspect_ratio().is_some()
 }
 
+/// Whether the insets of the out-of-flow box `idx` with an aspect ratio and
+/// an `auto` height give it a height its width depends on through the ratio,
+/// as a `height` the box states would: its `top` and `bottom` are both set
+/// and it aligns to `normal` or `stretch` along the vertical axis. With
+/// `left` and `right` both set too and a `normal` or `stretch` horizontal
+/// alignment, a `normal` vertical alignment leaves the width the axis they
+/// stretch instead, and only an explicit `stretch` keeps the height.
+///
+/// Chromium sizes `position: absolute; top: 0; bottom: 0; width: 80px;
+/// aspect-ratio: 1` around content 150px wide at 150px by 150px, and keeps it
+/// at 80px by 80px with `align-self: center` or with `left: 0; right: 0`.
+fn oof_height_from_insets(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    use raikiri_layout_style::values::{AlignItemsKeyword, AlignSelf};
+    if !is_oof_box(tree, idx)
+        || tree.oof_alignment_swapped(idx)
+        || tree.transposed_child_view(idx).is_some()
+    {
+        return false;
+    }
+    let style = tree.physical_style(idx);
+    // `auto` aligns an out-of-flow box as `normal`.
+    let keyword = |alignment: Option<AlignSelf>| {
+        alignment.map_or(AlignItemsKeyword::Normal, |alignment| alignment.keyword)
+    };
+    let stretches = |keyword| {
+        matches!(
+            keyword,
+            AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+        )
+    };
+    let (align, justify) = (
+        keyword(style.bridge_align_self()),
+        keyword(style.bridge_justify_self()),
+    );
+    let inset = style.inset();
+    let width_stretched = !inset.left.is_auto() && !inset.right.is_auto() && stretches(justify);
+    style.size().height.is_auto()
+        && !inset.top.is_auto()
+        && !inset.bottom.is_auto()
+        && stretches(align)
+        && (align == AlignItemsKeyword::Stretch || !width_stretched)
+}
+
+/// Whether the box `idx` with an aspect ratio takes the content floor of
+/// [`ratio_width_floors`] as its minimum width: its `min-width` is `auto` and
+/// it is not a scroll container. An out-of-flow box that clips its overflow
+/// takes none either: Chromium keeps `position: absolute; top: 0; bottom: 0;
+/// width: 80px; aspect-ratio: 1; overflow: clip` at 80px by 80px around
+/// content 150px wide.
+fn takes_content_width_floor(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    let overflow = style.overflow().x;
+    style.min_size().width.is_auto()
+        && !overflow.is_scroll_container()
+        && !(is_oof_box(tree, idx) && overflow == raikiri_layout_style::values::Overflow::Clip)
+}
+
+/// Whether the out-of-flow box `idx` aligns to an explicit `stretch` along the
+/// vertical axis.
+fn oof_aligns_stretch(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.physical_style(idx)
+        .bridge_align_self()
+        .is_some_and(|alignment| {
+            alignment.keyword == raikiri_layout_style::values::AlignItemsKeyword::Stretch
+        })
+}
+
+/// The min-content width of the box `node_id` in a containing block
+/// `containing_width` wide, measured without its sizes, their bounds and its
+/// aspect ratio: the automatic minimum width of a box whose width its ratio
+/// depends on.
+fn ratio_content_min_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    containing_width: f32,
+) -> f32 {
+    // Intrinsic width is measured without height constraints: a wrapping
+    // column breaks at the room it is offered.
+    let mut unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
+    unlimited.extend(neutral_size_overrides(&[
+        LengthProperty::Height,
+        LengthProperty::MinHeight,
+        LengthProperty::MaxHeight,
+    ]));
+    min_content_width_without_limits(tree, node_id, containing_width, unlimited)
+}
+
 /// The automatic minimum width of the `candidates`, out-of-flow boxes or items
-/// of a grid, with an aspect ratio and a height they state: their min-content
+/// of a grid, with an aspect ratio and a height they state, or that their
+/// insets give them (see [`oof_height_from_insets`]): their min-content
 /// width, which the content raises that width to unless the box scrolls or
 /// states a `min-width` (CSS Sizing 4 §5.1). The `max-width` of the box caps
 /// it.
@@ -901,11 +989,12 @@ pub(super) fn ratio_width_floors(
                     ExpandedDimension::MinContent | ExpandedDimension::MaxContent
                 ) || width.maybe_resolve(Some(containing_size.width)).is_some());
             (width.is_auto() || oof_width)
-                && style
+                && (style
                     .size()
                     .height
                     .maybe_resolve(Some(containing_size.height))
                     .is_some()
+                    || oof_height_from_insets(tree, idx))
         })
         .collect::<Vec<_>>();
     if following.is_empty() {
@@ -917,9 +1006,23 @@ pub(super) fn ratio_width_floors(
             .flat_map(|node_id| {
                 let idx = usize::from(node_id);
                 let style = tree.physical_style(idx);
-                let content_minimum =
-                    style.min_size().width.is_auto() && !style.overflow().x.is_scroll_container();
-                let automatic_height = style.min_size().height.is_auto();
+                let content_minimum = takes_content_width_floor(tree, idx);
+                // A height the insets give the box is not one it states: the
+                // width the ratio relates to it may carry over as before.
+                let height_from_insets = style.size().height.is_auto();
+                let automatic_height = style.min_size().height.is_auto() && !height_from_insets;
+                // The library takes the height the ratio gives a width the
+                // box states before it raises that width to its minimum, so
+                // a box whose insets give it its height takes the raised
+                // width as the one it states, from which the ratio gives the
+                // height. An explicit `stretch` stretches the height to the
+                // insets whatever the width, so the ratio has nothing to give.
+                let stated_width = style
+                    .size()
+                    .width
+                    .maybe_resolve(Some(containing_width))
+                    .filter(|_| height_from_insets);
+                let stretched = height_from_insets && oof_aligns_stretch(tree, idx);
                 let mut floors = Vec::with_capacity(2);
                 let box_style = super::block_flow::style_input::physical(tree, idx);
                 let metrics = super::block_flow::Metrics::resolve(
@@ -960,29 +1063,17 @@ pub(super) fn ratio_width_floors(
                         .map_or(minimum, |max| minimum.min(max))
                 };
                 if content_minimum {
-                    // Intrinsic width is measured without height constraints:
-                    // a wrapping column breaks at the room it is offered.
-                    let mut unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
-                    unlimited.extend(neutral_size_overrides(&[
-                        LengthProperty::Height,
-                        LengthProperty::MinHeight,
-                        LengthProperty::MaxHeight,
-                    ]));
-                    let minimum = min_content_width_without_limits(
-                        tree,
-                        node_id,
-                        containing_width,
-                        unlimited,
-                    );
+                    let minimum = ratio_content_min_width(tree, node_id, containing_width);
                     // Installing a content floor must preserve a minimum
                     // legitimately transferred from an authored min-height.
                     let minimum = minimum
                         .max(metrics.min.width.unwrap_or(0.0))
                         .max(edge_floor);
-                    floors.push((
-                        LengthProperty::MinWidth,
-                        (capped(minimum) - adjustment).max(0.0),
-                    ));
+                    let minimum = (capped(minimum) - adjustment).max(0.0);
+                    floors.push((LengthProperty::MinWidth, minimum));
+                    if stated_width.is_some_and(|width| !stretched && minimum > width) {
+                        floors.push((LengthProperty::Width, minimum));
+                    }
                 } else {
                     // A `min-width` or an overflow that opts out of the content
                     // floor leaves the box as narrow as it states. The floor the
@@ -997,15 +1088,20 @@ pub(super) fn ratio_width_floors(
                     floors.push((LengthProperty::MinHeight, 0.0));
                 }
                 let key = tree.nodes.box_key(idx).expect("live box");
-                floors.into_iter().map(move |(property, size)| {
-                    let entry = OwnedPropertyOverride::length(
-                        property,
-                        raikiri_style::ComputedLengthPercentageOrAuto::Px(size),
-                        true,
-                    )
-                    .expect("resolved pixel bound");
-                    (key, entry)
-                })
+                let unrelated = (stretched && stated_width.is_some())
+                    .then(|| (key, OwnedPropertyOverride::aspect_ratio(None)));
+                floors
+                    .into_iter()
+                    .map(move |(property, size)| {
+                        let entry = OwnedPropertyOverride::length(
+                            property,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Px(size),
+                            true,
+                        )
+                        .expect("resolved pixel bound");
+                        (key, entry)
+                    })
+                    .chain(unrelated)
             })
             .collect()
     })
@@ -1245,6 +1341,9 @@ pub(super) fn ratio_bound_overrides(
         key: BoxKey,
         node_id: NodeId,
         width: f32,
+        /// The maximum border-box width, if the min-content width raises
+        /// `width` up to it.
+        content_width_floor: Option<Option<f32>>,
         adjustment: f32,
         transferred: f32,
         own_max: Option<f32>,
@@ -1278,7 +1377,12 @@ pub(super) fn ratio_bound_overrides(
         // minimum height it carries across the ratio, nor from the floor
         // installed below: its own `min-width` is the only one.
         let carries_minimum = !min.height.is_auto() || !scrolls;
-        if min.width.is_auto() && carries_minimum {
+        // A box whose insets give it its height takes the automatic minimum
+        // width of [`ratio_width_floors`] instead, and its content height at
+        // the width that minimum raises it to.
+        let content_width_floor =
+            oof_height_from_insets(tree, idx) && takes_content_width_floor(tree, idx);
+        if min.width.is_auto() && carries_minimum && !content_width_floor {
             entries.push((key, px_length(LengthProperty::MinWidth, 0.0)));
         }
         let adjustment = if border_box {
@@ -1332,10 +1436,13 @@ pub(super) fn ratio_bound_overrides(
             max: own_max.width.map(|size| size + adjustment.width),
         }
         .apply(stated_width + adjustment.width);
+        let content_width_floor =
+            content_width_floor.then_some(own_max.width.map(|size| size + adjustment.width));
         floors.push(HeightFloor {
             key,
             node_id: candidate,
             width,
+            content_width_floor,
             adjustment: adjustment.height,
             transferred,
             own_max: own_max_height,
@@ -1346,8 +1453,11 @@ pub(super) fn ratio_bound_overrides(
     }
     scoped(tree, |tree| {
         for floor in floors {
-            let content =
-                height_without_ratio(tree, floor.node_id, containing_size.width, floor.width);
+            let width = floor.content_width_floor.map_or(floor.width, |cap| {
+                let minimum = ratio_content_min_width(tree, floor.node_id, containing_size.width);
+                floor.width.max(cap.map_or(minimum, |cap| minimum.min(cap)))
+            });
+            let content = height_without_ratio(tree, floor.node_id, containing_size.width, width);
             // The floor installed as the `min-height` replaces the minimum
             // that the `min-width` carries across the ratio, so it holds that
             // one too.
