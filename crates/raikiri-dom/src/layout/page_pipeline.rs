@@ -8006,6 +8006,7 @@ fn break_flex_line_peers(
             document,
             cascade,
             body_id,
+            container,
             in_flow_items(document, container),
             item,
         );
@@ -11824,6 +11825,7 @@ fn items_on_line_of(
                 document,
                 cascade,
                 body_id,
+                container,
                 placed.iter().map(|child| child.id).collect(),
                 item,
             ));
@@ -11839,19 +11841,26 @@ fn items_on_line_of(
     same
 }
 
-/// The items of `items`, children of one multi-line row flex container, that
-/// share the flex line of `item`. The items fill a line in `order` until one
-/// starts over at the inline start of an item already on it. Lines are found
-/// in normal flow and in the inline axis, which pagination never moves: a
-/// relative offset only moves the paint of an item.
+/// The items of `items`, children of the multi-line row flex container
+/// `container`, that share the flex line of `item`. The items fill a line in
+/// `order`, each one further along the main axis than the one before, until
+/// one starts back before the end of the previous item: gaps and
+/// `justify-content` can leave the items of two lines side by side without
+/// overlapping, but never send an item of the same line backwards. Lines are
+/// found in normal flow and in the inline axis, which pagination never
+/// moves: a relative offset only moves the paint of an item.
 fn flex_line_of(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
+    container: usize,
     mut items: Vec<usize>,
     item: usize,
 ) -> Vec<usize> {
     items.sort_by_key(|&id| cascade.computed[id].order);
+    let computed = &cascade.computed[container];
+    let forward = (computed.flex_direction == FlexDirectionValue::Row)
+        == (computed.direction == raikiri_style::property::Direction::Ltr);
     let span = |id: usize| {
         let layout = &document.nodes[id].layout;
         let x = layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
@@ -11864,9 +11873,13 @@ fn flex_line_of(
     let mut lines = Vec::new();
     for id in items {
         let (start, end) = span(id);
-        let starts_over = line.iter().any(|&other| {
-            let (other_start, other_end) = span(other);
-            start < other_end - 0.001 && end > other_start + 0.001
+        let starts_over = line.last().is_some_and(|&previous| {
+            let (previous_start, previous_end) = span(previous);
+            if forward {
+                start < previous_end - 0.001
+            } else {
+                end > previous_start + 0.001
+            }
         });
         if starts_over {
             lines.push(std::mem::take(&mut line));

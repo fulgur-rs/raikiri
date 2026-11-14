@@ -133,7 +133,8 @@ fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
     // container, and the next row of a one-column grid start the next page.
     // A break before an item beside another is not taken at all. An item
     // that a break before it already moved to a new page keeps the next line
-    // off that page.
+    // off that page. Gaps and centring that leave the next line between the
+    // items of the line do not join the lines, in either main-axis direction.
     assert_rows(&[
         (
             "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='break-after:page;width:60px'>A</div><div style='width:60px'>B</div></div><div>Z</div>",
@@ -164,6 +165,18 @@ fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
                 (1, 'C', 5),
                 (1, 'Z', 35),
             ],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;column-gap:60px;justify-content:center'><div style='width:20px'>A</div><div style='break-after:page;width:20px'>B</div><div style='width:40px'>C</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 5), (1, 'C', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;flex-direction:row-reverse;width:100px;column-gap:60px;justify-content:center'><div style='width:20px'>A</div><div style='break-after:page;width:20px'>B</div><div style='width:40px'>C</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 5), (1, 'C', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div dir=rtl style='display:flex;flex-wrap:wrap;width:100px;column-gap:60px;justify-content:center'><div style='width:20px'>A</div><div style='break-after:page;width:20px'>B</div><div style='width:40px'>C</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 5), (1, 'C', 5), (1, 'Z', 35)],
         ),
     ]);
 }
