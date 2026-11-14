@@ -1414,7 +1414,7 @@ pub(super) fn ratio_bound_overrides(
         // installed below: its own `min-width` is the only one.
         let carries_minimum = !min.height.is_auto() || !scrolls;
         // A box whose insets give it its height takes the automatic minimum
-        // width of [`ratio_width_floors`] instead, and its content height at
+        // width of `ratio_width_floors` instead, and its content height at
         // the width that minimum raises it to.
         let content_width_floor =
             oof_height_from_insets(tree, idx).is_some() && takes_content_width_floor(tree, idx);
