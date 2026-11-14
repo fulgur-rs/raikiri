@@ -336,13 +336,19 @@ fn ifc_parent_inline_size(
 
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
+///
+/// An item that is itself a flex container records its own size for its own
+/// items while it lays them out; that entry is passed over, so the item still
+/// finds the size of the container it sits in.
 pub(crate) fn flex_item_percent_basis(
     tree: &LayoutSession<'_>,
     node: usize,
 ) -> Option<Size<Option<f32>>> {
     tree.context
         .flex_item_percent_bases
-        .last()
+        .iter()
+        .rev()
+        .find(|&&(container, _)| container != node)
         .filter(|&&(container, _)| {
             tree.nodes[node].layout_position() != Position::Absolute
                 && tree.taffy_parent_of(node) == Some(container)
@@ -3302,15 +3308,21 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
-/// against `parent_width`, the maximum no smaller than the minimum and neither
-/// smaller than the padding and border.
+/// against the width of `parent_size`, the maximum no smaller than the minimum
+/// and neither smaller than the padding and border.
+///
+/// The percentages of the padding and border refer to the inline size of the
+/// containing block (see [`ifc_parent_inline_size`]): the height of a vertical
+/// parent, and the size of the flex container an item is measured in without
+/// a parent size.
 fn border_box_width_bounds(
     tree: &LayoutSession<'_>,
     idx: usize,
-    parent_width: Option<f32>,
+    parent_size: Size<Option<f32>>,
 ) -> (f32, f32) {
     let style = tree.physical_style(idx);
-    let basis = parent_width.unwrap_or(0.0);
+    let parent_width = parent_size.width;
+    let basis = ifc_parent_inline_size(tree, idx, parent_size).unwrap_or(0.0);
     let adjustment = crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, basis);
     let edges = crate::layout::ifc::boxes::horizontal_padding_border(tree, idx, basis);
     let resolve = |value, auto: f32| {
@@ -3958,7 +3970,7 @@ fn compute_inline_block_shrink_wrap(
         )
     };
     let (min_w, max_w) = if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
-        let (_, max_width) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+        let (_, max_width) = border_box_width_bounds(tree, idx, inputs.parent_size);
         let (min_w, max_w) = with_flex_intrinsic_probe(tree, node_id, measure);
         (min_w.min(max_width), max_w.min(max_width))
     } else {
@@ -4570,7 +4582,7 @@ fn wrapping_row_min_content_width(
         size.height.map(|height| (height - inset.height).max(0.0)),
         inputs,
     );
-    let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+    let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size);
     let width = with_compressible_item_widths(tree, node_id, |tree| {
         wrapping_min_content_width(tree, node_id, room)
     }) + inset.width;
@@ -5166,7 +5178,7 @@ fn flex_layout_items(
         )
     });
     if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
-        let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+        let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size);
         output.size.width = width.clamp(min, max);
     }
     if let Some(width) = max_content_floor {
@@ -5999,7 +6011,7 @@ fn wrapping_row_max_content_size(
                 output.size.height,
             );
         } else {
-            let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+            let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size);
             output.size.width = output.size.width.clamp(min, max);
         }
     }
