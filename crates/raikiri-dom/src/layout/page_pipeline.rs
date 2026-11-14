@@ -13221,6 +13221,26 @@ struct BelowGrownFloat {
     clearing: Option<ClearingBox>,
 }
 
+/// A step of the search in [`below_grown_float`]: a box to visit, with the
+/// box of the float's parent that is it or holds it, or the end of a block
+/// it searched inside, with how far the boxes had moved when it began.
+enum SearchStep {
+    Visit(usize, Option<usize>),
+    Leave(usize, f32),
+}
+
+/// How much of a move of `moved` by the boxes inside `block` the boxes
+/// after it take: as much as the block can grow, up to its `max-height`.
+fn passed_growth(document: &super::context::LayoutSession<'_>, block: usize, moved: f32) -> f32 {
+    if !height_can_grow(document, block) {
+        return 0.0;
+    }
+    let (_, max) = border_box_height_bounds(document, block);
+    moved
+        .min(max - document.nodes[block].layout.size.height)
+        .max(0.0)
+}
+
 /// An in-flow box that clears a float that moves (see [`BelowGrownFloat`]).
 struct ClearingBox {
     /// The box of the float's parent before the one that holds `node`.
@@ -13312,10 +13332,10 @@ fn below_grown_float(
     // `parent` that is it or holds it. The blocks of the same formatting
     // context are searched inside too, and the boxes after `parent` when
     // it is one of them.
-    let mut stack: Vec<(usize, Option<usize>)> = boxes[index + 1..]
+    let mut stack: Vec<SearchStep> = boxes[index + 1..]
         .iter()
         .rev()
-        .map(|&id| (id, Some(id)))
+        .map(|&id| SearchStep::Visit(id, Some(id)))
         .collect();
     let mut before = float;
     let mut scope = parent;
@@ -13323,7 +13343,16 @@ fn below_grown_float(
     // clear a float.
     let mut carried = 0.0;
     loop {
-        while let Some((next, outer)) = stack.pop() {
+        while let Some(step) = stack.pop() {
+            let (next, outer) = match step {
+                SearchStep::Visit(next, outer) => (next, outer),
+                // The boxes after a block move by as much as the block grew
+                // with the boxes in it that moved.
+                SearchStep::Leave(block, entered) => {
+                    carried = entered + passed_growth(document, block, carried - entered);
+                    continue;
+                }
+            };
             let previous = std::mem::replace(&mut before, outer.unwrap_or(next));
             // Text, an element that generates no box and a box out of the flow
             // neither clear nor move.
@@ -13384,11 +13413,12 @@ fn below_grown_float(
                 }
             }
             if shares_formatting_context(document, cascade, next) {
+                stack.push(SearchStep::Leave(next, carried));
                 stack.extend(
                     laid_out_children(document, next)
                         .into_iter()
                         .rev()
-                        .map(|id| (id, outer)),
+                        .map(|id| SearchStep::Visit(id, outer)),
                 );
             }
         }
@@ -13398,11 +13428,12 @@ fn below_grown_float(
         else {
             break;
         };
+        carried = passed_growth(document, scope, carried);
         stack = laid_out_children(document, up)
             .into_iter()
             .skip_while(|&id| id != scope)
             .skip(1)
-            .map(|id| (id, None))
+            .map(|id| SearchStep::Visit(id, None))
             .collect();
         stack.reverse();
         scope = up;

@@ -838,5 +838,68 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
                 (1, 'Z', 65),
             ],
         ),
+        // A block that keeps its height holds the move of a clearing box in it,
+        // and a box after the block still clears the float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='height:20px'><div style='clear:left'>Z</div></div><div style='clear:left'>C</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 35),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='max-height:40px'><div style='clear:left'>Z</div></div><div style='clear:left'>C</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 35),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='clear:left'>Z</div></div><div style='clear:left'>C</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='height:20px'><div style='clear:left'>Z</div></div><div>C</div><div style='clear:left'>D</div></div>",
+            &[
+                (0, 'C', 45),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'D', 35),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='height:20px'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div></div><div style='clear:left'>C</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 35),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='min-height:60px'><div style='clear:left'>Z</div></div><div style='clear:left'>C</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
     ]);
 }
