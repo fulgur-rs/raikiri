@@ -1637,11 +1637,8 @@ fn push_wrapped_children(
             WrappedBlockChild::Wrapper(nested) => {
                 let end = offset.checked_add(nested.leaf_count)?;
                 let nested_leaf_pieces = leaf_pieces.get(offset..end)?;
-                let pieces = wrapper_pieces_for_tree(
-                    nested,
-                    nested_leaf_pieces,
-                    Columns::Uniform(column_height),
-                )?;
+                let grid = Columns::Uniform(column_height);
+                let pieces = wrapper_pieces_for_tree(nested, nested_leaf_pieces, grid)?;
                 let records = push_wrapped_wrapper(
                     tree,
                     nested.node,
