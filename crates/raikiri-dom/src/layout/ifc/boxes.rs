@@ -2067,15 +2067,17 @@ fn fit_child(
     };
     let available = (geometry.width - inline_margins).max(0.0);
     // A child that lays out across a vertical paragraph's lines fits the
-    // root's physical width. The page area stands in for it while the content
-    // of the root decides it, as the initial containing block does for an
-    // orthogonal flow (CSS Writing Modes 4 §7.3.1).
-    let page_width = page_area_width(tree);
+    // root's physical width. The page area within the root's `max-width`
+    // stands in for it while the content of the root decides it, as the
+    // initial containing block does for an orthogonal flow (CSS Writing
+    // Modes 4 §7.3.1).
     // The root's physical width, the basis for the percentages of the child's
     // own width in a vertical paragraph.
-    let width_basis = geometry
-        .vertical_width
-        .or_else(|| page_width.filter(|_| orthogonal));
+    let width_basis = geometry.vertical_width.or_else(|| {
+        orthogonal
+            .then(|| open_width_room(tree, geometry.width_cap))
+            .flatten()
+    });
     // The room along the line is the room along the paragraph's inline axis,
     // the physical height of a vertical one.
     let room = AvailableSpace::Definite(available);
@@ -2428,6 +2430,32 @@ pub(crate) fn max_height_cap(tree: &LayoutSession<'_>, container: usize) -> Opti
     Some((max.max(min) - edges).max(0.0))
 }
 
+/// The most width that the content box of the vertical container `container`
+/// gives a horizontal box in it, when its `max-width` is a length: that length
+/// raised to its `min-width`, less the padding and border of the container
+/// where the limits are measured to the border box; the counterpart of
+/// [`max_height_cap`] along the other axis.
+pub(crate) fn max_width_cap(tree: &LayoutSession<'_>, container: usize) -> Option<f32> {
+    let style = tree.physical_style(container);
+    let max = style.max_size().width.maybe_resolve(None::<f32>)?;
+    let min = style
+        .min_size()
+        .width
+        .maybe_resolve(None::<f32>)
+        .unwrap_or(0.0);
+    let edges = if style.box_sizing() == BoxSizing::ContentBox {
+        0.0
+    } else {
+        let padding = style.padding();
+        let border = style.border().resolve_or_zero(None::<f32>);
+        padding.left.maybe_resolve(None::<f32>)?
+            + padding.right.maybe_resolve(None::<f32>)?
+            + border.left
+            + border.right
+    };
+    Some((max.max(min) - edges).max(0.0))
+}
+
 /// The content height that the table cell `container` offers a vertical box
 /// in it as definite, when the cell states a length `height` (see
 /// `layout_cell_contents` in [`crate::layout::table`]).
@@ -2500,6 +2528,15 @@ pub(crate) fn open_height_room(tree: &LayoutSession<'_>, cap: Option<f32>) -> Op
         .reduce(f32::min)
 }
 
+/// The room along its width that a horizontal box in a vertical container is
+/// offered while the width of the container is open: the width of the page
+/// area within `cap`, the most that the container allows (CSS Writing Modes 4
+/// §7.3.1). `None` without a page area.
+pub(crate) fn open_width_room(tree: &LayoutSession<'_>, cap: Option<f32>) -> Option<f32> {
+    let page_width = page_area_width(tree)?;
+    Some(cap.map_or(page_width, |cap| cap.min(page_width)))
+}
+
 /// The room along its height that `node`, a float or an atomic inline of a
 /// horizontal paragraph, is offered when it is vertical: the paragraph's
 /// `definite_height` or else the open room of its height
@@ -2535,6 +2572,7 @@ fn across_lines_of_child(
     node: usize,
     margin: Edges<f32>,
     physical_width: Option<f32>,
+    width_cap: Option<f32>,
     inline_basis: f32,
 ) -> AcrossLines {
     if crate::layout::dispatch::used_writing_mode(tree, node).is_vertical() {
@@ -2542,9 +2580,9 @@ fn across_lines_of_child(
     }
     // Without the width of the paragraph or of a page there is nothing for it
     // to fit.
-    physical_width.or_else(|| page_area_width(tree)).map_or(
-        AcrossLines::MaxContent,
-        |width_basis| {
+    physical_width
+        .or_else(|| open_width_room(tree, width_cap))
+        .map_or(AcrossLines::MaxContent, |width_basis| {
             known_atomic_width(tree, node, width_basis, inline_basis).map_or_else(
                 || {
                     // A box that shrinks to fit stays within its `min-width` and
@@ -2560,8 +2598,7 @@ fn across_lines_of_child(
                 },
                 AcrossLines::Width,
             )
-        },
-    )
+        })
 }
 
 /// How tall a float or an atomic inline `node` of a horizontal paragraph is
@@ -3094,11 +3131,12 @@ fn layout_vertical_block_child_with_edges(
     // percentage of the root's block size, which reads as `auto` while the
     // root's content decides it (CSS Sizing 3 §5.2.1). A horizontal child is
     // an orthogonal flow, whose percentage inline size refers to the initial
-    // containing block, the page area, then (CSS Writing Modes 4 §7.3).
+    // containing block, the page area within the root's `max-width`, then
+    // (CSS Writing Modes 4 §7.3).
     let child_vertical = crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
     let basis = geometry
         .vertical_width
-        .or_else(|| page_area_width(tree).filter(|_| !child_vertical));
+        .or_else(|| open_width_room(tree, geometry.width_cap).filter(|_| !child_vertical));
     let mut margin = resolved_margins(tree, node, inline_basis);
     let style_margin = tree.physical_style(node).margin();
     let vertical_rl = matches!(
@@ -5362,6 +5400,9 @@ pub(crate) fn intrinsics_of_boxes(
     // The room that a vertical float or atomic inline of a horizontal paragraph
     // fits its lines in is cut at the `max-height` of the paragraph's root.
     let height_cap = (!vertical).then(|| max_height_cap(tree, idx)).flatten();
+    // And the room a horizontal one of a vertical paragraph fits its width in
+    // is cut at the `max-width` of the root.
+    let width_cap = vertical.then(|| max_width_cap(tree, idx)).flatten();
     for b in boxes {
         let replaced = crate::paint_rules::is_replaced_element(tree.document, b.node);
         let percent = if !replaced {
@@ -5385,6 +5426,7 @@ pub(crate) fn intrinsics_of_boxes(
                         b.node,
                         margin,
                         physical_width,
+                        width_cap,
                         inline_basis.unwrap_or(0.0),
                     );
                     content_heights(
@@ -5489,6 +5531,7 @@ pub(crate) fn intrinsics_of_boxes(
                         b.node,
                         margin,
                         physical_width,
+                        width_cap,
                         inline_basis.unwrap_or(0.0),
                     );
                     content_heights(

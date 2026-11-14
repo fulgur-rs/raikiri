@@ -2731,6 +2731,9 @@ fn measure_ifc_root(
     let height_cap = (!vertical)
         .then(|| crate::layout::ifc::boxes::max_height_cap(tree, idx))
         .flatten();
+    let width_cap = vertical
+        .then(|| crate::layout::ifc::boxes::max_width_cap(tree, idx))
+        .flatten();
     let held_margins = if vertical {
         crate::layout::ifc::boxes::held_block_margins(
             tree,
@@ -2746,6 +2749,7 @@ fn measure_ifc_root(
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
         geometry.height_cap = height_cap;
+        geometry.width_cap = width_cap;
         geometry.vertical_width = vertical_width;
         geometry.held_margins = held_margins;
         // The spanners are laid out across the columns once the lines are
