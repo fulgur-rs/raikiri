@@ -1272,11 +1272,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
                 // An inline-level flex container takes the page of its
-                // containing block, so the names inside it neither name a page
-                // nor force one after it.
+                // containing block, and one inside an item of a row flex
+                // container sits on the page that row's line is printed on,
+                // so the names inside either neither name a page nor force
+                // one after it.
                 let deferred_named_break_after = self.has_named_pages
                     && !float_subtree
                     && !inline_level
+                    && (!inside_flex || named_flex_context.is_some())
                     && document.nodes[node_id].display().is_flex_container()
                     && !column_flex
                     && has_nested_named_page_descendant(
@@ -1297,18 +1300,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // Such a container takes its start page value from the first of
                 // its items that has one, as Chromium prints the line on the
                 // page that item names.
-                let propagated_page_name =
-                    if deferred_named_break_after && row_flex && own_page_name.is_none() {
+                let propagated_page_name = if deferred_named_break_after && row_flex {
+                    propagated_page_name.or_else(|| {
                         first_named_item_start_page(
                             document,
                             cascade,
                             node_id,
+                            frame.inherited_page_name,
                             document.context.pagination_on_transposed_axes,
                         )
-                        .or(propagated_page_name)
-                    } else {
-                        propagated_page_name
-                    };
+                    })
+                } else {
+                    propagated_page_name
+                };
                 let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {

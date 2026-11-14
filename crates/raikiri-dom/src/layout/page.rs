@@ -1576,31 +1576,40 @@ pub(crate) fn propagated_start_page_name_with_transposed_axes<'name>(
     )
 }
 
+/// Whether `child_id` is an in-flow child whose start page value can pass to
+/// its parent: it has a computed style and is neither absolutely positioned
+/// nor floated.
+fn is_in_flow_page_child(cascade: &CascadeResult, boxes: BoxTree<'_>, child_id: usize) -> bool {
+    cascade.computed.get(child_id).is_some_and(|_| {
+        !matches!(
+            boxes.identity(child_id).position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) && !floating_box_with_boxes(cascade, child_id, boxes)
+    })
+}
+
 /// The start page value of the first in-flow item of the flex container
-/// `node_id` that has one, in the order the items are paginated. The items of
+/// `node_id` that has one, in the order the items are paginated, with
+/// `inherited_page_name` as the page of an item that names none. The items of
 /// a row flex line sit side by side, so the first item that names a page
 /// names the page of the whole line, whichever item it is.
 pub(crate) fn first_named_item_start_page<'name>(
     document: &Document,
     cascade: &'name CascadeResult,
     node_id: usize,
+    inherited_page_name: Option<&'name str>,
     pagination_on_transposed_axes: bool,
 ) -> Option<&'name str> {
     let boxes = BoxTree::for_layout(document);
     pagination_child_order_borrowed(document, cascade, node_id)
         .iter()
-        .filter(|&&child_id| {
-            !matches!(
-                boxes.identity(child_id).position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            ) && !floating_box_with_boxes(cascade, child_id, boxes)
-        })
+        .filter(|&&child_id| is_in_flow_page_child(cascade, boxes, child_id))
         .find_map(|&child_id| {
             propagated_start_page_name_with_transposed_axes(
                 document,
                 cascade,
                 child_id,
-                None,
+                inherited_page_name,
                 pagination_on_transposed_axes,
             )
             .1
@@ -1642,14 +1651,9 @@ fn propagated_start_page_name_with_order<'name>(
                 next,
                 page_name,
             } => {
-                let found = children[next..].iter().position(|&child_id| {
-                    cascade.computed.get(child_id).is_some_and(|_| {
-                        !matches!(
-                            boxes.identity(child_id).position(),
-                            PositionValue::Absolute | PositionValue::Fixed
-                        ) && !floating_box_with_boxes(cascade, child_id, boxes)
-                    })
-                });
+                let found = children[next..]
+                    .iter()
+                    .position(|&child_id| is_in_flow_page_child(cascade, boxes, child_id));
                 if let Some(offset) = found {
                     let next_index = next + offset;
                     let child_id = children[next_index];
@@ -1711,14 +1715,9 @@ fn propagated_start_page_name_with_order<'name>(
         if matches!(child_order, Cow::Owned(_)) {
             record_page_name_work(1);
         }
-        let next = child_order.iter().position(|&child_id| {
-            cascade.computed.get(child_id).is_some_and(|_| {
-                !matches!(
-                    boxes.identity(child_id).position(),
-                    PositionValue::Absolute | PositionValue::Fixed
-                ) && !floating_box_with_boxes(cascade, child_id, boxes)
-            })
-        });
+        let next = child_order
+            .iter()
+            .position(|&child_id| is_in_flow_page_child(cascade, boxes, child_id));
         if let Some(index) = next {
             let child_id = child_order[index];
             pending.push(Task::ContinueChildren {

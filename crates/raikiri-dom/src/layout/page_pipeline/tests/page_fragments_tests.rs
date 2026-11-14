@@ -2648,6 +2648,13 @@ fn a_row_flex_takes_the_page_a_box_nested_in_its_item_names() {
             .page_index),
         [0, 1]
     );
+    assert_eq!(
+        slices
+            .iter()
+            .map(|page| page.page_name.clone())
+            .collect::<Vec<_>>(),
+        [Some("a".to_owned()), None]
+    );
 }
 
 #[test]
@@ -2810,8 +2817,8 @@ fn a_row_inside_a_column_takes_the_page_its_nested_named_box_names() {
         let after = doc.append_element(Some(body), "div", Some("display:block"));
         let b = doc.append_text(after, "B");
         assert_eq!(
-            column_review_pages(doc, &[a, b]).1,
-            vec![0, 1],
+            column_review_pages(doc, &[a, b]),
+            (vec![Some("a".into()), None], vec![0, 1]),
             "nested item: {nested_item}"
         );
     }
@@ -2832,7 +2839,10 @@ fn a_nested_row_does_not_coalesce_a_real_preceding_column_item() {
     let a = doc.append_text(named, "A");
     let after = doc.append_element(Some(body), "div", Some("display:block"));
     let b = doc.append_text(after, "B");
-    assert_eq!(column_review_pages(doc, &[a, b]).1, vec![1, 2]);
+    assert_eq!(
+        column_review_pages(doc, &[a, b]),
+        (vec![None, Some("a".into()), None], vec![1, 2])
+    );
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! A row flex container whose items hold a named box below them prints its
 //! line on the page that box names, as Chromium does. Every row comes from
 //! Chromium's print output for the same document, with 200px pages, `@page
-//! a` 240px wide and `@page b` 260px wide, which tells the page names apart.
+//! a` 240px wide, `@page b` 260px wide and `@page c` 280px wide, which tells
+//! the page names apart.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -20,7 +21,7 @@ fn pages(body: &str) -> Vec<(Option<String>, String)> {
         .unwrap();
     let resources = RenderResources::new().fonts(fonts);
     let html = format!(
-        "<!doctype html><style>@page{{size:200px 200px;margin:10px}}@page a{{size:240px 200px}}@page b{{size:260px 200px}}html,body{{margin:0}}body{{font:10px/10px Ahem}}</style><body>{body}</body>"
+        "<!doctype html><style>@page{{size:200px 200px;margin:10px}}@page a{{size:240px 200px}}@page b{{size:260px 200px}}@page c{{size:280px 200px}}html,body{{margin:0}}body{{font:10px/10px Ahem}}</style><body>{body}</body>"
     );
     let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -85,6 +86,26 @@ fn a_row_flex_line_takes_the_page_a_box_nested_in_an_item_names() {
         (
             "<div style='display:flex;flex-direction:column'><div style='display:flex'><div><div style='page:a'>F</div></div></div></div><div>Z</div>",
             &[(Some("a"), "F"), (None, "Z")],
+        ),
+    ]);
+}
+
+#[test]
+fn a_page_the_line_already_has_wins_over_a_nested_name() {
+    // A page the container names itself or inherits names the line, and a
+    // row nested in an item of another row stays on that row's page.
+    assert_rows(&[
+        (
+            "<div style='page:c'><div style='display:flex'><div>E</div><div><div style='page:a'>F</div></div></div></div><div>Z</div>",
+            &[(Some("c"), "EF"), (None, "Z")],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column'><div style='display:flex;page:c'><div>E</div><div><div style='page:a'>F</div></div></div></div><div>Z</div>",
+            &[(Some("c"), "EF"), (None, "Z")],
+        ),
+        (
+            "<div style='display:flex'><div><div style='page:a'>E</div></div><div><div style='display:flex'><div><div style='page:b'>F</div></div></div></div></div><div>Z</div>",
+            &[(Some("a"), "EF"), (None, "Z")],
         ),
     ]);
 }
