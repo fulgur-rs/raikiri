@@ -6,7 +6,7 @@
 //! a 50px square item, not one as wide as its column. The flex and grid
 //! algorithms take that width as the item's content size. The same holds for
 //! the horizontal main axis of a vertical column flex container. An item with
-//! an intrinsic keyword width keeps that width, as in Chromium. A vertical flex or
+//! an intrinsic keyword width follows its ratio as well. A vertical flex or
 //! grid container item measured for its content leaves its stated sizes out,
 //! so the ratio gives its width there as well.
 //!

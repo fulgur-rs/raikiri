@@ -42,8 +42,9 @@ pub(super) fn takes_width_from_ratio(
 /// vertical box, neither the root nor replaced nor a table, that states a
 /// ratio and a width that is `auto` or an intrinsic keyword, which behaves as
 /// `auto` on the block axis (CSS Sizing 3 §3.1). Of the items of a flex or
-/// grid container, only one whose width the container measures as its content
-/// size along a horizontal axis, and whose width is `auto`.
+/// grid container, one whose width the container measures as its content
+/// size along a horizontal axis, and one whose width is an intrinsic keyword
+/// along any axis.
 pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = &tree.nodes[idx];
     if !node.used_writing_mode.is_vertical()
@@ -68,9 +69,11 @@ pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool 
     // they measure that width as the item's content size: along the
     // horizontal main axis of a flex container, or the columns of a
     // horizontal grid container. The ratio gives it there from the height the
-    // content of the item settles, as for an inline-block. Chromium gives an
-    // item with an intrinsic keyword width that width, not one along its
-    // ratio. An absolutely positioned child is no item of theirs.
+    // content of the item settles, as for an inline-block. An intrinsic
+    // keyword width is the content size of the item, which the ratio gives as
+    // well, so it follows the ratio along any axis, the cross axis of a
+    // column flex container included (CSS Sizing 4 §5.1). An absolutely
+    // positioned child is no item of theirs.
     node.layout_position() == Position::Absolute
         || tree.taffy_parent_of(idx).is_none_or(|parent| {
             let container = &tree.nodes[parent];
@@ -82,7 +85,7 @@ pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool 
                 Display::Grid => !container.used_writing_mode.is_vertical(),
                 _ => return true,
             };
-            horizontal_main && style.size().width.is_auto()
+            horizontal_main || !style.size().width.is_auto()
         })
 }
 
