@@ -12852,8 +12852,10 @@ fn below_grown_float(
     let side = cascade.computed[float].float;
     let children = &document.nodes[parent].children;
     let index = children.iter().position(|&id| id == float)?;
+    // An element that generates no box neither clears nor moves.
     let next = children[index + 1..].iter().copied().find(|&id| {
-        document.nodes[id].kind() == NodeKind::Element
+        (document.nodes[id].kind() == NodeKind::Element
+            && document.nodes[id].display() != DisplayValue::None)
             || document.nodes[id]
                 .text_content()
                 .is_some_and(|text| !text.trim().is_empty())

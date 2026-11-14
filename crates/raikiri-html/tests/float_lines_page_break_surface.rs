@@ -355,6 +355,11 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='position:absolute;width:60px;clear:left'>Y</div></div>",
             &[(0, 'X', 25), (0, 'X', 55), (0, 'Y', 25), (1, 'X', 5)],
         ),
+        // A hidden element that would clear the float generates no box.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='display:none;clear:both'></div><div>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
         // A box that clears both floats follows the moved one.
         (
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div><div style='clear:both'>Z</div></div>",
