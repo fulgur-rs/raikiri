@@ -21048,10 +21048,10 @@ fn a_fixed_height_block_whose_first_line_straddles_a_page_end_moves_whole() {
         // A tall block whose first line fits stays and fragments.
         (70.0, "width:20px;height:300px", "X", &[], 70.0),
         (10.0, "width:20px;height:300px", SIX_LINES, &[], 10.0),
-        // A line taller than the page gains nothing from moving, whether
-        // the block is at the top of the page or below a margin.
+        // A line taller than the page stays at the top of the page, and
+        // moves to the next one from below a margin.
         (0.0, "height:60px", "X", &[20.0], 0.0),
-        (8.0, "height:250px;line-height:250px", "X", &[], 8.0),
+        (8.0, "height:250px;line-height:250px", "X", &[], 100.0),
     ];
     for (spacer_height, style, text, page_steps, expected) in cases {
         let ys = paginated_ys(

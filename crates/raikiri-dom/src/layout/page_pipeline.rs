@@ -5851,12 +5851,7 @@ impl AvoidedBreaks {
             Some(flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin)
         } else {
             unplaced_line
-                .filter(|line| {
-                    !line.atomic
-                        && line.glyphless_height.is_none_or(|line_height| {
-                            block_fits_page_step(line_height.min(height), next_page_step)
-                        })
-                })
+                .filter(|line| !line.atomic)
                 .map(|line| flow_y + line.end.min(height))
         };
         // The blocks that a box which avoids a break inside it begins, with
@@ -8246,10 +8241,6 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
-    /// The glyphless line's block size, to avoid automatically moving a
-    /// line taller than the next page. Generated and atomic lines keep their
-    /// existing placement rules.
-    glyphless_height: Option<f32>,
 }
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
@@ -8281,9 +8272,6 @@ fn unplaced_line(
     Some(UnplacedBlockLine {
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
-        glyphless_height: unplaced
-            .glyphless
-            .then_some(unplaced.line.bottom - unplaced.line.top),
     })
 }
 
@@ -8643,26 +8631,21 @@ fn lineless_piece(
 /// CSS Break 3 §4.1), as browsers choose; a box that its page starts with would
 /// break from the edges on any page.
 ///
-/// A flex container or grid moves only when the next page can hold that piece,
-/// or moving it gains nothing. A plain block moves even when the piece is
-/// taller than the next page: browsers start the block on the next page then
-/// too, and the piece goes on below its edges, splitting there if it can be
-/// split, or going on to the page after if it is monolithic.
+/// The box moves even when the piece is taller than the next page: browsers
+/// start the box on the next page then too, and the piece goes on below its
+/// edges, splitting there if it can be split, or going on to the page after
+/// if it is monolithic.
 fn leading_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let BoxFit {
         flow_y,
         margin_top,
         page_start,
         page_end,
-        next_page_step,
         ..
     } = *fit;
     let moves =
         |end: f32| avoided_box_moves(flow_y, margin_top, flow_y + end, page_start, page_end);
-    candidate
-        .context
-        .leading_piece_end()
-        .is_some_and(|end| end <= next_page_step + 0.001 && moves(end))
+    candidate.context.leading_piece_end().is_some_and(moves)
         || candidate
             .context
             .leading_block_piece_end()
@@ -10708,15 +10691,6 @@ struct ParagraphLineFit {
 }
 
 impl ParagraphLineFit {
-    /// Whether a block taller than a page gains from moving whole to the next
-    /// page: the break leaves fewer than `orphans` lines on this page, and
-    /// the first line, `first_line_bottom` below the top of the block, fits a
-    /// page of `page_step`. A line taller than the page gains nothing by
-    /// moving.
-    fn gains_from_moving_tall_block(&self, first_line_bottom: f32, page_step: f32) -> bool {
-        self.leaves_too_few_orphans() && block_fits_page_step(first_line_bottom, page_step)
-    }
-
     /// Whether the lines all fit the page, but not with the padding and border
     /// below the last one, and the page cannot give up the `widows` lines the
     /// edges ask for and keep the `orphans`: a paragraph of one line has no
