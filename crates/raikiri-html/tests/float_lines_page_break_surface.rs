@@ -329,6 +329,12 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
         wide_boxes(body, 1),
         [(0.0, 60.0), (0.0, 50.0), (30.0, 20.0), (50.0, 10.0)]
     );
+    // A box after a block that holds the grown float clears it too.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div></div><div style='clear:left;height:20px'></div><div style='height:10px'></div></div>";
+    assert_eq!(
+        wide_boxes(body, 1),
+        [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
+    );
 }
 
 #[test]
@@ -636,6 +642,75 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
                 (1, 'X', 5),
                 (1, 'Z', 35),
             ],
+        ),
+        // A box after a block that holds the grown float, in the same
+        // formatting context, clears it too.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div></div><div>A</div><div style='clear:left'>Z</div><div>B</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'B', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div><div style='float:left;width:20px'>X X X</div></div><div>A</div></div><div><div style='clear:left'>Z</div></div><div>B</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'B', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        // A float after that block moves below the grown float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div><div>A</div></div><div style='float:left;width:60px'>Y</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        // A block that holds the grown float as its own float ends the search.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='overflow:hidden'><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div></div><div style='display:contents'><div style='clear:left'>Z</div></div><div>B</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'B', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        // A box that clears the float inside the same block, and a box after it.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div></div><div>B</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'B', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='height:40px'><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
         ),
     ]);
 }
