@@ -10285,9 +10285,12 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
 
 /// Whether in-flow content comes before the box `node_id` in the flow below
 /// `body_id`: a sibling of the box, or of an ancestor of it that is not the
-/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]). The
-/// flow can break before such a box, between it and what comes first. A box
-/// that starts the flow, below nothing but margins, cannot be broken from.
+/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]), or
+/// the top border or padding of such a block-level ancestor in horizontal
+/// writing. The flow can break before
+/// such a box, between it and what comes first, as browsers break after those
+/// edges too. A box that starts the flow, below nothing but margins, cannot be
+/// broken from.
 fn follows_flow_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -10307,7 +10310,14 @@ fn follows_flow_content(
         {
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
         }
-        if !boxes.is_empty() {
+        if !boxes.is_empty()
+            || (parent != body_id && {
+                let holder = &document.nodes[parent];
+                !holder.display().is_inline_level()
+                    && !holder.used_writing_mode.is_vertical()
+                    && holder.layout.border.top + holder.layout.padding.top > 0.0
+            })
+        {
             return true;
         }
         node = parent;
