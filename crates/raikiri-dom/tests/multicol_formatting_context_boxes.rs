@@ -213,6 +213,10 @@ fn a_box_with_room_to_break_inside_is_laid_out_at_the_column_width() {
             "auto",
             "<div id=i style='display:flex'><div style='height:25px'></div></div>",
         ),
+        (
+            "balance",
+            "<div id=i style='display:flex'><div>xx<br>xx</div></div>",
+        ),
     ] {
         let body = columns(fill, LEADS[1], rest);
         let got = fragments(&body, "i");
@@ -256,4 +260,14 @@ fn a_box_holding_many_boxes_keeps_the_other_strategies() {
         );
         assert_eq!(fragments(&body, "i").len(), 1, "{count}");
     }
+}
+
+#[test]
+fn a_hidden_box_inside_takes_no_row() {
+    let body = columns(
+        "balance",
+        LEADS[0],
+        "<div id=i style='display:flex'><span style='display:none'>x</span><span>xx</span></div>",
+    );
+    check(&body, "i", &[(100.0, 5.0, 100.0, 10.0)]);
 }
