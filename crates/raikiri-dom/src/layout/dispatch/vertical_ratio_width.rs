@@ -61,13 +61,26 @@ pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool 
         return false;
     }
     // The flex and grid algorithms size their items along the ratio
-    // themselves; an absolutely positioned child is no item of theirs.
+    // themselves, except along the block axis of a vertical item in a
+    // horizontal row flex or grid container: they measure its width, its
+    // block size, as their content contribution, where the ratio gives it
+    // from the height its content settles. An absolutely positioned child is
+    // no item of theirs.
     node.layout_position() == Position::Absolute
-        || !tree.taffy_parent_of(idx).is_some_and(|parent| {
-            matches!(
-                tree.nodes[parent].layout_display(),
-                Display::Flex | Display::Grid
-            )
+        || tree.taffy_parent_of(idx).is_none_or(|parent| {
+            let container = &tree.nodes[parent];
+            // Chromium gives such an item an intrinsic keyword width of its
+            // own, not one along its ratio.
+            let item = || style.size().width.is_auto();
+            match container.layout_display() {
+                Display::Flex => {
+                    !container.used_writing_mode.is_vertical()
+                        && tree.physical_style(parent).flex_direction_is_row()
+                        && item()
+                }
+                Display::Grid => !container.used_writing_mode.is_vertical() && item(),
+                _ => true,
+            }
         })
 }
 
@@ -185,8 +198,11 @@ fn ratio_size(
         .height
         .or_else(|| unbounded.preferred.height.filter(|_| states_height));
     // A flex or grid container takes its width from a height it states along
-    // its ratio already, raised to the content its algorithm lays out.
+    // its ratio already, raised to the content its algorithm lays out. A
+    // measure of its content (`ContentSize`) leaves the ratio out, as for the
+    // height a flex or grid container measures its item at.
     if stated_height.is_some()
+        && inputs.sizing_mode == SizingMode::InherentSize
         && matches!(
             tree.nodes[idx].formatting_context,
             FormattingContext::Flex | FormattingContext::Grid
