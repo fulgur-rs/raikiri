@@ -719,7 +719,7 @@ fn orthogonal_child_inputs(
         inputs.available_space.width =
             AvailableSpace::Definite((space - margin.left - margin.right).max(0.0));
     }
-    if inputs.parent_size.width.is_none() {
+    if inputs.parent_size.width.is_none() && has_percentage_width(tree, idx) {
         // The physical width of the container is indefinite, even once its
         // content sized it, so percentages of the child's width resolve
         // against the fallback the inline size of an orthogonal flow takes:
@@ -731,6 +731,19 @@ fn orthogonal_child_inputs(
         );
     }
     inputs
+}
+
+/// Whether the `width`, `min-width` or `max-width` of `idx` has a percentage
+/// in it.
+fn has_percentage_width(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let style = tree.physical_style(idx);
+    [
+        style.size().width,
+        style.min_size().width.into(),
+        style.max_size().width.into(),
+    ]
+    .into_iter()
+    .any(|size: raikiri_layout_style::values::Dimension| size.uses_percentage())
 }
 
 /// `inputs` for the orthogonal flow `node_id` with the width its `fit-content`,
@@ -1012,14 +1025,17 @@ fn orthogonal_width(tree: &LayoutSession<'_>, idx: usize) -> Option<OrthogonalWi
 
 /// The room the orthogonal flow `idx` is offered along its inline axis: the
 /// definite width `inputs` offer, net of its margins already; with none, the
-/// width of the initial containing block less the margins, the page area here.
+/// width of the initial containing block within the `max-width` of its
+/// parent, less the margins, the page area here.
 fn orthogonal_room(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> f32 {
     if let AvailableSpace::Definite(room) = inputs.available_space.width {
         return room;
     }
     // Without a page area there is no room to limit the child to.
-    let page_width = tree.fixed_page_area.unwrap_or_default().0;
-    let page_width = (page_width > 0.0).then_some(page_width);
+    let cap = tree
+        .taffy_parent_of(idx)
+        .and_then(|parent| crate::layout::ifc::boxes::max_width_cap(tree, parent));
+    let page_width = crate::layout::ifc::boxes::open_width_room(tree, cap);
     let margin = tree
         .physical_style(idx)
         .margin()

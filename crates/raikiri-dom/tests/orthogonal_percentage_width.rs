@@ -222,3 +222,45 @@ fn a_relative_offset_resolves_against_the_resolved_width() {
         ],
     );
 }
+
+#[test]
+fn an_auto_width_fits_within_the_max_width_of_the_parent() {
+    check(
+        &in_parent(
+            "writing-mode:vertical-rl;height:300px;max-width:100px",
+            "<div id=c style=\"writing-mode:horizontal-tb\">XXXX XXXX XXXX XXXX XXXX</div>",
+        ),
+        &[
+            ("p", (0.0, 0.0, 100.0, 300.0)),
+            ("c", (0.0, 0.0, 100.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_definite_width_of_the_parent_is_the_basis() {
+    // A column flex container stretches the parent to a definite width.
+    check(
+        "<div style=\"display:flex;flex-direction:column;width:300px;height:300px\">\
+         <div id=p style=\"writing-mode:vertical-rl\">\
+         <div id=c style=\"writing-mode:horizontal-tb;width:50%;height:20px\"></div></div></div>",
+        &[
+            ("p", (0.0, 0.0, 300.0, 20.0)),
+            ("c", (150.0, 0.0, 150.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_percentage_margin_resolves_against_the_parent_height() {
+    check(
+        &in_parent(
+            PARENT,
+            "<div id=c style=\"writing-mode:horizontal-tb;margin-top:10%;width:20px;height:20px\"></div>",
+        ),
+        &[
+            ("p", (0.0, 0.0, 20.0, 300.0)),
+            ("c", (0.0, 30.0, 20.0, 20.0)),
+        ],
+    );
+}

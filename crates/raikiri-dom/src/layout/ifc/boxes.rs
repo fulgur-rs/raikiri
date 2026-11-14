@@ -2071,12 +2071,13 @@ fn fit_child(
     // stands in for it while the content of the root decides it, as the
     // initial containing block does for an orthogonal flow (CSS Writing
     // Modes 4 §7.3.1).
-    let page_width = open_width_room(tree, geometry.width_cap);
     // The root's physical width, the basis for the percentages of the child's
     // own width in a vertical paragraph.
-    let width_basis = geometry
-        .vertical_width
-        .or_else(|| page_width.filter(|_| orthogonal));
+    let width_basis = geometry.vertical_width.or_else(|| {
+        orthogonal
+            .then(|| open_width_room(tree, geometry.width_cap))
+            .flatten()
+    });
     // The room along the line is the room along the paragraph's inline axis,
     // the physical height of a vertical one.
     let room = AvailableSpace::Definite(available);
