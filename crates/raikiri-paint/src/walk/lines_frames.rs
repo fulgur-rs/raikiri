@@ -1,7 +1,7 @@
 //! The frames that paint the lines of a paragraph: an anonymous table cell's
 //! and a block's own.
 
-use super::box_paint::collapsed_block_border_paint_rect;
+use super::box_paint::{collapsed_block_border_paint_rect, push_split_line_clip};
 use super::frames::{
     AnonymousParagraphFrame, LinesFrame, finish_lines_leaving_groups, leave_groups, leaves_groups,
 };
@@ -53,7 +53,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let probe = page_name_probe(document, cell, key);
         let logical = raikiri_traits::PaintRect::new(0.0, y, layout.size.width, layout.size.height);
         let border_reach = cell.collapsed_border().map_or(logical, |border| {
-            collapsed_block_border_paint_rect(cell, logical, border)
+            collapsed_block_border_paint_rect(
+                cell,
+                logical,
+                border,
+                raikiri_dom::paint_rules::collapsed_line_splits(self.document, key),
+            )
         });
         let extent = (y + ifc_paint_extent(cell, layout) - border_reach.y).max(border_reach.height);
         paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
@@ -84,18 +89,24 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let owner = document.ifc_source_owner(key);
         let border = cell.collapsed_border();
         let logical = raikiri_traits::PaintRect::new(x, y, layout.size.width, layout.size.height);
-        let painted = border.map_or(logical, |border| {
-            collapsed_block_border_paint_rect(cell, logical, border)
-        });
+        let splits = raikiri_dom::paint_rules::collapsed_line_splits(self.document, key);
+        // The whole lines are painted and cut where a break splits them, so
+        // the band holds the cell by what remains of them.
+        let rect = |splits| {
+            border.map_or(logical, |border| {
+                collapsed_block_border_paint_rect(cell, logical, border, splits)
+            })
+        };
+        let (painted, reach) = (rect((false, false)), rect(splits));
         let cell_on_band = inside_fixed
             || self.geometry.flow_band.is_none_or(|band| {
                 band.holds_box(
                     self.scene.transform,
                     (
-                        painted.x + self.geometry.page_offset_x + transform_x,
-                        painted.y + self.geometry.page_offset_y + transform_y,
-                        painted.width,
-                        painted.height,
+                        reach.x + self.geometry.page_offset_x + transform_x,
+                        reach.y + self.geometry.page_offset_y + transform_y,
+                        reach.width,
+                        reach.height,
                     ),
                 )
             });
@@ -103,6 +114,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             && cell_on_band
             && let Some(border) = border
         {
+            let top = y + self.geometry.page_offset_y + transform_y;
+            let split = push_split_line_clip(self.scene, (top, top + layout.size.height), splits);
             paint_element_border(
                 self.scene,
                 painted.width,
@@ -112,6 +125,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 border,
                 cascade.computed[owner].color,
             );
+            if split {
+                self.scene.pop_layer();
+            }
         }
     }
 

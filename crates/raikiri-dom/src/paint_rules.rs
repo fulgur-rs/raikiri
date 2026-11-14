@@ -2526,3 +2526,20 @@ fn lacks_visible_table_cell_content(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether a fragmentation break splits the collapsed border line on the
+/// top (`.0`) and bottom (`.1`) of the table cell `cell`.
+///
+/// The line between two rows is centered on the edge between them (CSS 2.1
+/// §17.6.2). When pagination moves the later row to a later page, the line
+/// is split at the break: the half on each side stays with the cells on
+/// that side, which paint only that half.
+#[doc(hidden)]
+pub fn collapsed_line_splits(document: &Document, cell: usize) -> (bool, bool) {
+    document
+        .table_objects
+        .split_lines
+        .get(&cell)
+        .copied()
+        .unwrap_or_default()
+}

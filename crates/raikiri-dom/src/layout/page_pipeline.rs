@@ -1070,6 +1070,7 @@ fn follow_moved_table_rows(
     let (moved_captions, moved_table_rows): (HashMap<usize, f32>, HashMap<usize, f32>) = moved
         .into_iter()
         .partition(|&(part, _)| document.nodes[part].display() == DisplayValue::TableCaption);
+    super::table::row_moves::mark_split_lines(document, &moved_table_rows);
     super::table::row_moves::follow_moved_rows(
         document,
         &moved_table_rows,

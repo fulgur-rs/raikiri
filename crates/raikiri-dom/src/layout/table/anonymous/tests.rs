@@ -25,6 +25,9 @@ fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    // The document lives on the heap: the small stack measures the depth
+    // of the walk, not the size of the document.
+    let doc = Box::new(doc);
     let actual = std::thread::Builder::new()
         .stack_size(128 * 1024)
         .spawn(move || children(&doc, &computed, owner, &mut TableObjects::default()))
@@ -246,6 +249,9 @@ fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
     for (node, cv) in doc.nodes.iter_mut().zip(&computed.computed) {
         node.set_display(cv.display);
     }
+    // The document lives on the heap: the small stack measures the depth
+    // of the walk, not the size of the document.
+    let doc = Box::new(doc);
     std::thread::Builder::new()
         .stack_size(128 * 1024)
         .spawn(move || {
@@ -488,6 +494,9 @@ fn deep_overlay_contents_metadata_is_linear_and_keeps_source_children() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    // The document lives on the heap: the small stack measures the depth
+    // of the walk, not the size of the document.
+    let mut doc = Box::new(doc);
     std::thread::Builder::new()
         .stack_size(128 * 1024)
         .spawn(move || {
