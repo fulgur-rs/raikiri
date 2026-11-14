@@ -28,7 +28,11 @@ use super::block_flow::{self, Metrics, context::BlockContext};
 /// Whether `idx` is a vertical box that takes its width from its aspect ratio
 /// under `inputs`: it states the ratio and an `auto` width, and nothing fixed
 /// the width it is laid out at.
-fn takes_width_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
+pub(super) fn takes_width_from_ratio(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> bool {
     let node = &tree.nodes[idx];
     if inputs.known_dimensions.width.is_some()
         || !node.used_writing_mode.is_vertical()
@@ -42,7 +46,10 @@ fn takes_width_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutI
         return false;
     }
     let style = tree.physical_style(idx);
-    if style.is_replaced() || style.stated_aspect_ratio().is_none() || !style.size().width.is_auto()
+    // The intrinsic keywords on the block axis behave as `auto`.
+    if style.is_replaced()
+        || style.stated_aspect_ratio().is_none()
+        || !super::orthogonal_flow::is_intrinsic_or_auto(style.size().width.expand())
     {
         return false;
     }

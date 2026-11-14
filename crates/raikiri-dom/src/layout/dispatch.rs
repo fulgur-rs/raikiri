@@ -1199,7 +1199,12 @@ impl LayoutSession<'_> {
                 && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
             {
-                return orthogonal_flow::compute_orthogonal_block(tree, node_id, inputs);
+                return orthogonal_flow::compute_orthogonal_block(
+                    tree,
+                    node_id,
+                    inputs,
+                    open_height || contained_height,
+                );
             }
             // CSS multicol is not a native Taffy display mode. Dispatch at
             // this seam so nested containers receive a local fragmentation

@@ -62,14 +62,20 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
             let style = tree.physical_style(idx);
             // The intrinsic keywords on the block axis behave as `auto` (CSS
             // Sizing 3 §3.1).
-            matches!(
-                style.size().width.expand(),
-                ExpandedDimension::Auto
-                    | ExpandedDimension::MinContent
-                    | ExpandedDimension::MaxContent
-                    | ExpandedDimension::FitContent
-            ) && style.float() == Float::None
+            is_intrinsic_or_auto(style.size().width.expand()) && style.float() == Float::None
         }
+}
+
+/// Whether `size` is `auto` or one of the intrinsic keywords that behave as
+/// `auto` on the block axis (CSS Sizing 3 §3.1).
+pub(super) fn is_intrinsic_or_auto(size: ExpandedDimension) -> bool {
+    matches!(
+        size,
+        ExpandedDimension::Auto
+            | ExpandedDimension::MinContent
+            | ExpandedDimension::MaxContent
+            | ExpandedDimension::FitContent
+    )
 }
 
 /// The height that the orthogonal flow `idx` is offered to fit its lines in
@@ -502,15 +508,36 @@ pub(super) fn compute_orthogonal_block(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
+    open_height: bool,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let height = offered_height(tree, idx, &inputs);
+    // A box that takes its width from its aspect ratio settles its height,
+    // its inline size, along with it: the content height held to the bounds
+    // that its width carries over through the ratio (CSS Sizing 4 §5.1).
+    // A height that size containment gave the box stands for its content,
+    // which the bounds hold as well.
+    let ratio_sized = open_height
+        && is_intrinsic_or_auto(tree.physical_style(idx).size().height.expand())
+        && super::vertical_ratio_width::takes_width_from_ratio(
+            tree,
+            idx,
+            &LayoutInput {
+                known_dimensions: Size::NONE,
+                ..inputs
+            },
+        );
+    let known_height = inputs.known_dimensions.height.filter(|_| !ratio_sized);
     let measure_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
-        axis: RequestedAxis::Horizontal,
+        axis: if ratio_sized {
+            RequestedAxis::Both
+        } else {
+            RequestedAxis::Horizontal
+        },
         known_dimensions: Size {
             width: None,
-            height: inputs.known_dimensions.height,
+            height: known_height,
         },
         available_space: Size {
             width: AvailableSpace::MaxContent,
@@ -518,20 +545,21 @@ pub(super) fn compute_orthogonal_block(
         },
         ..inputs
     };
-    let width = tree
+    let measured = tree
         .compute_child_layout_with_block_ctx(node_id, measure_inputs, None)
-        .size
-        .width;
+        .size;
+    let width = measured.width;
+    let known_height = known_height.or(ratio_sized.then_some(measured.height));
     // The width comes from the box's own content, so its percentage-sized
     // children do not resolve against it.
     let final_inputs = LayoutInput {
         known_dimensions: Size {
             width: Some(width),
-            height: inputs.known_dimensions.height,
+            height: known_height,
         },
         known_dimensions_are_definite: Size {
             width: false,
-            ..inputs.known_dimensions_are_definite
+            height: inputs.known_dimensions_are_definite.height || ratio_sized,
         },
         available_space: Size {
             width: AvailableSpace::Definite(width),
