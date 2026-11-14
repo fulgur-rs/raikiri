@@ -712,5 +712,78 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='height:40px'><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
             &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
         ),
+        // `clear` on an inline box has no effect.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><span style='clear:left'>Z</span></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><span style='clear:left'>Z</span></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='display:inline-block;clear:left;width:20px'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (0, 'Z', 25), (1, 'X', 5)],
+        ),
+        // A box that is already below the floats it clears leaves the boxes after
+        // it to clear the others.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:120px'></div><div style='clear:left'></div><div style='clear:right'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:120px'></div><div style='clear:right'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px'>Y Y</div><div style='clear:left'>A</div><div style='clear:right'>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'A', 35),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+                (1, 'Y', 65),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='display:flow-root;clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        // A box moved below the grown float, or the text after it, that reaches
+        // past the end of a page goes on to the next page.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;clear:left;width:20px;height:60px'></div><div style='height:120px'></div><div style='clear:right'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px;height:60px'></div><div style='height:120px'></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='height:120px'></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X X X X</div><div style='clear:left'>Z</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'X', 35),
+                (2, 'X', 5),
+                (2, 'X', 35),
+                (2, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:left;height:60px'></div><div>Z</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div><div style='display:contents'><div style='clear:left'>Z</div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+        ),
     ]);
 }

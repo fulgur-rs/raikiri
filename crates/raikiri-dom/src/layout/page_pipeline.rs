@@ -11341,6 +11341,9 @@ struct SubtreeShifts {
     /// Whether the last [`SubtreeShifts::leave`] took the flow out of an
     /// item that a growth moved into one that it left in place.
     left_later_item: bool,
+    /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
+    /// down below a float grown inside another float.
+    reached_moved_box: bool,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -11454,8 +11457,10 @@ impl SubtreeShifts {
             *flow_shift += growth;
             false
         });
+        let mut reached_moved_box = false;
         self.from_box.retain(|&(parent, from, shift)| {
             if reaches_child(document, node_id, parent, from) {
+                reached_moved_box |= shift > 0.0;
                 *flow_shift += shift;
                 return false;
             }
@@ -11509,6 +11514,7 @@ impl SubtreeShifts {
         // column of a column flex container, is on the page it was on, which
         // the caller finds from where the flow now is.
         self.left_later_item = left_later;
+        self.reached_moved_box = reached_moved_box;
         // The flow after a grown item is on the page the item ends on, past
         // the earlier page that a subtree it leaves goes back to.
         if beside_page.is_some() {
@@ -11523,6 +11529,12 @@ impl SubtreeShifts {
     /// that a growth left in place, clearing the answer.
     fn take_left_later_item(&mut self) -> bool {
         std::mem::take(&mut self.left_later_item)
+    }
+
+    /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
+    /// down below a grown float, clearing the answer.
+    fn take_reached_moved_box(&mut self) -> bool {
+        std::mem::take(&mut self.reached_moved_box)
     }
 
     /// Stretches the rows of the containers the flow has not left when it
@@ -13336,10 +13348,12 @@ fn below_grown_float(
                 }
                 continue;
             }
+            // `clear` applies to block-level boxes only.
             let clear = cascade.computed[next].clear;
-            if moved
-                .iter()
-                .any(|&(side, _, _)| clears_float_side(clear, side))
+            if is_block_level_flow_box(document.nodes[next].display())
+                && moved
+                    .iter()
+                    .any(|&(side, _, _)| clears_float_side(clear, side))
             {
                 let top = flow_y(next);
                 let shift = moved
@@ -13347,13 +13361,17 @@ fn below_grown_float(
                     .filter(|&&(side, _, _)| clears_float_side(clear, side))
                     .map(|&(_, _, new)| new - top)
                     .fold(0.0, f32::max);
-                below.clearing = (shift > 0.001).then_some(ClearingBox {
-                    before: previous,
-                    node: next,
-                    outer,
-                    shift,
-                });
-                break 'search;
+                // A box that is already below the floats it clears leaves
+                // the boxes after it to clear the others.
+                if shift > 0.001 {
+                    below.clearing = Some(ClearingBox {
+                        before: previous,
+                        node: next,
+                        outer,
+                        shift,
+                    });
+                    break 'search;
+                }
             }
             if shares_formatting_context(document, cascade, next) {
                 stack.extend(

@@ -3325,6 +3325,12 @@ impl PaginationState {
             let page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
             self.current_page = self.current_page.min(page);
         }
+        // A box that moved below a float grown inside another float starts
+        // on the page it moved to, after the page the float began on.
+        if self.subtree_shifts.take_reached_moved_box() {
+            let page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
+            self.current_page = self.current_page.max(page);
+        }
         if let Some((delta, flow_page)) = self.float_shifts.end_pending_outside(document, node_id) {
             self.flow_shift -= delta;
             self.current_page = flow_page;
