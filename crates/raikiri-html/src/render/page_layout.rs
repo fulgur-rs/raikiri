@@ -4,15 +4,17 @@
 
 use super::stop::Stop;
 use super::{
-    Continuation, PageCascader, ResumePoint, Run, continuation, page_geometry_schedule,
-    page_query_for_slice, resolve_page_geometries,
+    Continuation, PageCascader, ResumePoint, Run, continuation, page_box_for_page,
+    page_geometry_schedule, page_query_for_slice, resolve_page_geometries,
 };
 use raikiri_dom::{
     Document, PageContentInsets, PageMargins, PageSlice, ResolvedPageGeometry,
-    layout_pages_with_options,
+    layout_pages_with_options, resolve_page_geometry,
 };
+use raikiri_style::property::PageValue;
 use raikiri_style::{CascadeOptions, CascadeResult, PageCascadeResult, cascade_with_options};
 use raikiri_traits::{LayoutError, PageBox, RenderError};
+use std::collections::HashSet;
 
 /// The pages of a run, laid out.
 pub(super) struct LaidOut {
@@ -44,11 +46,50 @@ impl PageLayout<'_, '_> {
     ) -> Result<LaidOut, Stop> {
         // Pages whose content width differs from the first page's are laid out
         // again from a copy of the document as it is before any layout.
-        let pristine = dom.clone();
         match resume {
-            Some(resume) => self.lay_out_resumed(dom, pristine, resume),
-            None => self.lay_out_fresh(dom, pristine),
+            Some(resume) => {
+                let pristine = dom.clone();
+                self.lay_out_resumed(dom, pristine, resume)
+            }
+            None => {
+                let pristine = self.page_areas_can_differ().then(|| dom.clone());
+                self.lay_out_fresh(dom, pristine)
+            }
         }
+    }
+
+    /// Whether two pages of the run can have page areas of different sizes.
+    ///
+    /// The page context of a page follows from its name, whether it is the
+    /// first page, and its side (see [`page_query_for_slice`]), and a page
+    /// takes its name from the `page` value of an element. Every page
+    /// context the run can ask for is therefore known before layout.
+    fn page_areas_can_differ(&self) -> bool {
+        let mut names: Vec<Option<&str>> = vec![None];
+        let mut seen = HashSet::new();
+        for value in &self.first_cascade.page_values {
+            if let PageValue::Named(name) = value
+                && seen.insert(name.0.as_str())
+            {
+                names.push(Some(name.0.as_str()));
+            }
+        }
+        let mut areas = names.iter().flat_map(|name| {
+            // The first page is a right page; later pages take either side.
+            (0..3).map(move |page_index| {
+                let slice = PageSlice {
+                    page_index,
+                    content_origin_y: 0.0,
+                    page_name: name.map(str::to_owned),
+                };
+                let page = self.page_cascader.page(&page_query_for_slice(&slice));
+                let page_box = page_box_for_page(&page, self.run.defaults);
+                let area = resolve_page_geometry(&page, page_box).content_box;
+                (area.width, area.height)
+            })
+        });
+        let first = areas.next();
+        areas.any(|area| Some(area) != first)
     }
 
     /// A relayout of later pages runs the run's element cascade, on the same
@@ -142,7 +183,14 @@ impl PageLayout<'_, '_> {
     }
 
     /// Lay out the pages from the first page.
-    fn lay_out_fresh(&self, mut document: Document, pristine: Document) -> Result<LaidOut, Stop> {
+    ///
+    /// `pristine` is the document before any layout, which the pages of
+    /// another content width are laid out from; `None` when no page has one.
+    fn lay_out_fresh(
+        &self,
+        mut document: Document,
+        pristine: Option<Document>,
+    ) -> Result<LaidOut, Stop> {
         let run = self.run;
         let cascade_for_page = |slice: &PageSlice| self.cascade_for_page(slice);
         let page_geometries_for = |slices: &[PageSlice]| self.page_geometries(slices);
@@ -184,23 +232,34 @@ impl PageLayout<'_, '_> {
             .collect();
         self.project(&mut document, &slices, &geometries)?;
 
-        let continuations = continuation::continue_at_page_widths(
-            &continuation::ContinuationInputs {
-                pristine: &pristine,
-                cascade_for_page: &cascade_for_page,
-                page_geometries: &page_geometries_for,
-                resolver: run.resolver,
-                base_url: run.base_url,
-                max_pages: run.config.limits.max_document_pages,
-                abort_check: run.is_aborted,
-                skipped: &[],
-            },
-            &document,
-            self.first_cascade,
-            &mut slices,
-            &mut page_geometries,
-        )?;
-        drop(pristine);
+        let continuations = match pristine {
+            Some(pristine) => continuation::continue_at_page_widths(
+                &continuation::ContinuationInputs {
+                    pristine: &pristine,
+                    cascade_for_page: &cascade_for_page,
+                    page_geometries: &page_geometries_for,
+                    resolver: run.resolver,
+                    base_url: run.base_url,
+                    max_pages: run.config.limits.max_document_pages,
+                    abort_check: run.is_aborted,
+                    skipped: &[],
+                },
+                &document,
+                self.first_cascade,
+                &mut slices,
+                &mut page_geometries,
+            )?,
+            None => {
+                debug_assert!(
+                    page_geometries.windows(2).all(|pair| {
+                        let (one, other) = (pair[0].content_box, pair[1].content_box);
+                        (one.width, one.height) == (other.width, other.height)
+                    }),
+                    "a page area differs though no page context of the run has another"
+                );
+                Vec::new()
+            }
+        };
         let page_styles = if let Some(first) = continuations.first() {
             // The first layout keeps only the pages before the first continuation.
             let own = first.first_page as usize;
