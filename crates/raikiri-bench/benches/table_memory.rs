@@ -104,9 +104,9 @@ fn table_document(rows: usize) -> String {
          <table><thead><tr><th>Id</th><th>Name</th><th>Amount</th></tr></thead><tbody>",
     );
     for row in 0..rows {
-        let _ = write!(
+        let _ = writeln!(
             html,
-            "<tr><td>{row}</td><td>Item name {row}</td><td>{}.00</td></tr>\n",
+            "<tr><td>{row}</td><td>Item name {row}</td><td>{}.00</td></tr>",
             row * 7 % 10_000
         );
     }
