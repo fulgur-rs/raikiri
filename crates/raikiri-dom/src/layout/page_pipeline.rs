@@ -13095,22 +13095,40 @@ fn grow_ancestors_walk(
     (bounded, 0.0)
 }
 
-/// Whether the walk at `node_id`, inside or after `parent`, has reached
-/// the child of `parent` at index `from`: `node_id` is in that child or in
-/// one after it, or past `parent` altogether.
+/// Whether the walk at `node_id` has reached the child of `parent` at index
+/// `from`: `node_id` is in that child or in one after it, or comes after
+/// `parent` in tree order. A node before `parent`, such as a box before the
+/// `display: contents` element `parent` is, has not reached it.
 fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize) -> bool {
-    let mut child = node_id;
+    let index = |up: usize, child: usize| {
+        document.nodes[up]
+            .children
+            .iter()
+            .position(|&id| id == child)
+    };
+    // The ancestors of `parent`, each with its child toward `parent`.
+    let mut toward = Vec::new();
+    let mut child = parent;
     while let Some(up) = document.parent_of(child) {
-        if up == parent {
-            return document.nodes[parent]
-                .children
-                .iter()
-                .position(|&id| id == child)
-                .is_none_or(|index| index >= from);
-        }
+        toward.push((up, child));
         child = up;
     }
-    true
+    // Each ancestor of `node_id` with its child toward `node_id`.
+    let ancestors = std::iter::successors(Some(node_id), |&id| document.parent_of(id)).zip(
+        std::iter::successors(document.parent_of(node_id), |&id| document.parent_of(id)),
+    );
+    ancestors
+        .map(|(child, up)| {
+            if up == parent {
+                return Some(index(parent, child).is_none_or(|index| index >= from));
+            }
+            toward
+                .iter()
+                .find(|&&(ancestor, _)| ancestor == up)
+                .map(|&(_, branch)| index(up, child) >= index(up, branch))
+        })
+        .find_map(|reached| reached)
+        .unwrap_or(true)
 }
 
 /// The index of `child` among the children of `parent`.

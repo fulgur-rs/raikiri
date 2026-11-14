@@ -518,5 +518,40 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
                 (1, 'Z', 35),
             ],
         ),
+        // A box before the `display: contents` element that holds the box
+        // or float that moves keeps its place.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>A</div><div style='display:contents'><div style='clear:left'>Z</div></div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>A</div><div style='display:contents'><div style='float:left;width:60px'>Y</div></div><div>B</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'B', 55),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div>A</div><div style='display:contents'><div>B</div><div style='clear:left'>Z</div></div><div>C</div></div>",
+            &[
+                (0, 'A', 25),
+                (0, 'B', 55),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'C', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
     ]);
 }
