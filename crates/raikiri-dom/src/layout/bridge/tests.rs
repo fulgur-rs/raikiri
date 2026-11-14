@@ -2297,18 +2297,6 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
     ] {
         let width = format!("display:block;width:{keyword}");
         let widths = bridged_widths(&[
-            // A vertical flex or grid item takes its inline size from the
-            // height, which the container sizes along its physical axes.
-            (
-                "display:flex",
-                "div",
-                &format!("{width};writing-mode:vertical-rl"),
-            ),
-            (
-                "display:grid",
-                "div",
-                &format!("{width};writing-mode:vertical-rl"),
-            ),
             // A replaced element takes its natural size, also when it is
             // absolutely positioned.
             ("display:block", "img", &width),
@@ -2368,6 +2356,17 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             ("display:inline-flex", "div", width),
             ("display:grid", "div", width),
             ("display:flex", "div", "display:flex;width:max-content"),
+            // A vertical flex or grid item: its width is its block size.
+            (
+                "display:flex",
+                "div",
+                "display:block;width:max-content;writing-mode:vertical-rl"
+            ),
+            (
+                "display:grid",
+                "div",
+                "display:flex;width:max-content;writing-mode:vertical-rl"
+            ),
             // A minimum or maximum width does not change the box the keyword
             // sizes; it is clamped after the keyword is measured.
             (
@@ -2412,7 +2411,7 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
                 "display:block;column-count:2;width:max-content;"
             ),
         ]),
-        [keyword; 18],
+        [keyword; 20],
     );
 }
 
