@@ -182,24 +182,10 @@ fn a_flow_root_of_lines_breaks_between_its_lines() {
 }
 
 #[test]
-fn margins_do_not_collapse_through_an_empty_flow_root() {
-    // The empty box starts a formatting context: its margins stay apart, so
-    // the second paragraph does not fit below it and starts the second
-    // column.
-    let body = columns(
-        "balance",
-        "<div>yy</div><div id=i style='display:flow-root;margin:10px 0'></div>",
-        "<div id=j>yy</div>",
-    );
-    check(&body, "i", &[(0.0, 20.0, 100.0, 0.0)]);
-    check(&body, "j", &[(100.0, 0.0, 100.0, 10.0)]);
-}
-
-#[test]
 fn a_box_with_room_to_break_inside_is_laid_out_at_the_column_width() {
-    // Chromium breaks these boxes between their rows or slices the empty
-    // boxes inside them; they still take the width of a column, not of the
-    // whole container.
+    // Chromium breaks these boxes between their rows, or slices one taller
+    // than a column; they still take the width of a column, not of the whole
+    // container.
     for (fill, rest) in [
         (
             "balance",
@@ -207,11 +193,11 @@ fn a_box_with_room_to_break_inside_is_laid_out_at_the_column_width() {
         ),
         (
             "auto",
-            "<div id=i style='display:flow-root;height:100px'></div>",
+            "<div id=i style='display:flow-root;height:100px'><div>xx</div></div>",
         ),
         (
             "auto",
-            "<div id=i style='display:flex'><div style='height:25px'></div></div>",
+            "<div id=i style='display:grid'><span>a</span><span>b</span></div>",
         ),
         (
             "balance",

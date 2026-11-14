@@ -1178,7 +1178,7 @@ pub(super) fn is_whole_formatting_context_box(tree: &LayoutSession<'_>, child: u
             .is_some_and(WritingMode::is_vertical)
         && !style.margin().top.is_auto()
         && !style.margin().bottom.is_auto()
-        && holds_no_breaking_box(tree, child)
+        && holds_text_and_no_breaking_box(tree, child)
 }
 
 /// The most boxes a formatting-context box may hold for the planner to place
@@ -1186,26 +1186,34 @@ pub(super) fn is_whole_formatting_context_box(tree: &LayoutSession<'_>, child: u
 pub(super) const MAX_WHOLE_BOX_DESCENDANTS: usize = 256;
 
 /// Whether the boxes inside `id`, at most [`MAX_WHOLE_BOX_DESCENDANTS`] of
-/// them, include no float, no absolutely positioned box and no column
-/// container.
-fn holds_no_breaking_box(tree: &LayoutSession<'_>, id: usize) -> bool {
+/// them, hold text, which makes lines, and include no float, no absolutely
+/// positioned box and no column container. A box with no text inside has no
+/// lines to keep whole, so the strategies that slice boxes take it.
+fn holds_text_and_no_breaking_box(tree: &LayoutSession<'_>, id: usize) -> bool {
     let mut pending = layout_node(tree, id).children.clone();
     let mut seen = 0usize;
+    let mut text = false;
     while let Some(child) = pending.pop() {
         seen += 1;
         let node = layout_node(tree, child);
-        if seen > MAX_WHOLE_BOX_DESCENDANTS
-            || node.is_in_document()
-                && !node.is_display_none()
-                && (is_floated(tree, child)
-                    || node.layout_position() == Position::Absolute
-                    || node.multicol.is_some())
-        {
+        if seen > MAX_WHOLE_BOX_DESCENDANTS {
             return false;
         }
-        pending.extend(node.children.iter().copied());
+        if !node.is_in_document() || node.is_display_none() {
+            continue;
+        }
+        match &node.data {
+            NodeData::Text(content) => text |= !content.text_content.trim().is_empty(),
+            _ if is_floated(tree, child)
+                || node.layout_position() == Position::Absolute
+                || node.multicol.is_some() =>
+            {
+                return false;
+            }
+            _ => pending.extend(node.children.iter().copied()),
+        }
     }
-    true
+    text
 }
 
 /// Whether the padding and border above the first line and below the last of
