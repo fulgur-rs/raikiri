@@ -336,3 +336,26 @@ fn a_container_the_pages_move_fills_the_columns_where_it_lands() {
         ],
     );
 }
+
+/// Two containers that a forced break moves together each fill the columns
+/// of their own pages: the first fills both columns of the page it lands on,
+/// which leaves nothing of that page for the second.
+#[test]
+fn containers_that_a_forced_break_moves_together_fill_their_own_pages() {
+    for (label, second) in [("one break", ""), ("two breaks", "; break-before: page")] {
+        check(
+            label,
+            &format!(
+                "<div id=g style='height: 60px'></div>\
+                 <div style='{COLUMNS}; break-before: page'><div id=a style='height: 300px'></div></div>\
+                 <div style='{COLUMNS}{second}'><div id=b style='height: 300px'></div></div>{AFTER}"
+            ),
+            4,
+            &[
+                ("a", &[(1, 0.0, 0.0, 192.0), (1, 200.0, 0.0, 108.0)]),
+                ("b", &[(2, 0.0, 0.0, 192.0), (2, 200.0, 0.0, 108.0)]),
+                ("k", &[(3, 0.0, 0.0, 16.0)]),
+            ],
+        );
+    }
+}
