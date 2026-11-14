@@ -264,3 +264,168 @@ fn a_percentage_margin_resolves_against_the_parent_height() {
         ],
     );
 }
+
+/// A child with a percentage width inside the vertical parent `p`, whose
+/// style is `parent`, inside `outer`.
+fn nested(outer: &str, parent: &str) -> String {
+    format!(
+        "<div style=\"{outer}\"><div id=p style=\"writing-mode:vertical-rl;{parent}\">\
+         <div id=c style=\"writing-mode:horizontal-tb;width:50%;height:20px\"></div></div></div>"
+    )
+}
+
+#[test]
+fn a_flex_item_that_keeps_its_content_width_leaves_it_open() {
+    let open = [
+        ("p", (0.0, 0.0, 400.0, 300.0)),
+        ("c", (0.0, 0.0, 400.0, 20.0)),
+    ];
+    // The content size, and a basis or a flexed size the automatic minimum
+    // raises to it.
+    check(&nested("display:flex;height:300px", ""), &open);
+    check(
+        &nested("display:flex;width:500px;height:300px", "flex:0 0 300px"),
+        &open,
+    );
+    check(
+        &nested("display:flex;width:400px;height:300px", "flex:1"),
+        &open,
+    );
+    // The same within the parent's `max-width`.
+    check(
+        &nested("display:flex;height:300px", "max-width:100px"),
+        &[
+            ("p", (0.0, 0.0, 50.0, 300.0)),
+            ("c", (0.0, 0.0, 50.0, 20.0)),
+        ],
+    );
+    // A column container that does not stretch the item.
+    check(
+        &nested(
+            "display:flex;flex-direction:column;width:500px;height:300px;align-items:start",
+            "",
+        ),
+        &[
+            ("p", (0.0, 0.0, 400.0, 20.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_flexed_flex_item_width_is_the_basis() {
+    check(
+        &nested("display:flex;width:500px;height:300px", "flex:1"),
+        &[
+            ("p", (0.0, 0.0, 500.0, 300.0)),
+            ("c", (250.0, 0.0, 250.0, 20.0)),
+        ],
+    );
+    check(
+        &nested("display:flex;width:500px;height:300px", "flex:0 0 450px"),
+        &[
+            ("p", (0.0, 0.0, 450.0, 300.0)),
+            ("c", (225.0, 0.0, 225.0, 20.0)),
+        ],
+    );
+    check(
+        &nested("display:flex;width:300px;height:300px", "min-width:0"),
+        &[
+            ("p", (0.0, 0.0, 300.0, 300.0)),
+            ("c", (150.0, 0.0, 150.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_grid_item_follows_its_area_only_when_stretched() {
+    check(
+        &nested("display:grid;grid-template-columns:300px;height:300px", ""),
+        &[
+            ("p", (0.0, 0.0, 300.0, 300.0)),
+            ("c", (150.0, 0.0, 150.0, 20.0)),
+        ],
+    );
+    check(
+        &nested(
+            "display:grid;grid-template-columns:300px;height:300px;justify-items:start",
+            "",
+        ),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn an_absolutely_positioned_parent_that_shrinks_to_fit_leaves_its_width_open() {
+    let outer = "position:relative;width:500px;height:300px";
+    check(
+        &nested(outer, "position:absolute;height:300px"),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+    check(
+        &nested(outer, "position:absolute;height:300px;max-width:100px"),
+        &[
+            ("p", (0.0, 0.0, 50.0, 300.0)),
+            ("c", (0.0, 0.0, 50.0, 20.0)),
+        ],
+    );
+    // Insets on both sides give it a definite width.
+    check(
+        &nested(outer, "position:absolute;left:0;right:0;height:300px"),
+        &[
+            ("p", (0.0, 0.0, 500.0, 300.0)),
+            ("c", (250.0, 0.0, 250.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_vertical_paragraph_flex_item_follows_the_same_rule() {
+    let inline_block = "X<div id=c style=\"display:inline-block;writing-mode:horizontal-tb;width:50%;height:20px\"></div>";
+    let block = "X<div id=c style=\"writing-mode:horizontal-tb;width:50%;height:20px\"></div>";
+    let item = |outer: &str, parent: &str, child: &str| {
+        format!(
+            "<div style=\"{outer}\"><div id=p style=\"writing-mode:vertical-rl;{parent}\">{child}</div></div>"
+        )
+    };
+    // The content size stays open.
+    check(
+        &item("display:flex;height:300px", "", inline_block),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 10.0, 400.0, 20.0)),
+        ],
+    );
+    check(
+        &item("display:flex;height:300px", "", block),
+        &[
+            ("p", (0.0, 0.0, 410.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+    // A flexed size is the basis.
+    check(
+        &item(
+            "display:flex;width:500px;height:300px",
+            "flex:1",
+            inline_block,
+        ),
+        &[
+            ("p", (0.0, 0.0, 500.0, 300.0)),
+            ("c", (250.0, 10.0, 250.0, 20.0)),
+        ],
+    );
+    check(
+        &item("display:flex;width:500px;height:300px", "flex:1", block),
+        &[
+            ("p", (0.0, 0.0, 500.0, 300.0)),
+            ("c", (240.0, 0.0, 250.0, 20.0)),
+        ],
+    );
+}

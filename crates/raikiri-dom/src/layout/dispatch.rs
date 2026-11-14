@@ -334,6 +334,50 @@ fn ifc_parent_inline_size(
     })
 }
 
+/// Whether the physical width that the parent gives the vertical paragraph
+/// root `node_id`, its block size, is the one its own lines give it: a flex
+/// item that keeps its content size, say. Browsers keep such a width open for
+/// the percentage widths of the root's horizontal children, which then
+/// resolve against the initial containing block as they do while the root is
+/// measured (CSS Writing Modes 4 §7.3). A width the parent stretches or flexes
+/// away from that size, or one the root states, is definite.
+///
+/// The lines are measured only when a horizontal child has a percentage
+/// width, the one case where the answer matters.
+fn paragraph_width_follows_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    style: &Style,
+    inputs: LayoutInput,
+    shares_block_context: bool,
+) -> bool {
+    let Some(known) = inputs.known_dimensions.width else {
+        return false;
+    };
+    if shares_block_context
+        || inputs.run_mode != RunMode::PerformLayout
+        || !style.size.width.is_auto()
+        || !vertical_block::has_horizontal_percentage_child(tree, node_id)
+    {
+        return false;
+    }
+    let probe = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Horizontal,
+        known_dimensions: Size {
+            width: None,
+            ..inputs.known_dimensions
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            ..inputs.known_dimensions_are_definite
+        },
+        ..inputs
+    };
+    let content = compute_ifc_root(tree, node_id, probe, None).size.width;
+    (content - known).abs() < 0.01
+}
+
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
 pub(crate) fn flex_item_percent_basis(
@@ -1916,7 +1960,15 @@ fn compute_ifc_root(
     // width its content took, which fixes nothing for the children.
     let definite_width = (inputs.known_dimensions.width.is_some()
         && inputs.known_dimensions_are_definite.width
-        && !(vertical_paragraph && vertical_oof::has_content_decided_width(tree, idx)))
+        && !(vertical_paragraph
+            && (vertical_oof::has_content_decided_width(tree, idx)
+                || paragraph_width_follows_content(
+                    tree,
+                    node_id,
+                    &style,
+                    inputs,
+                    block_ctx.is_some(),
+                ))))
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
     let writing_mode = tree.nodes[idx]
