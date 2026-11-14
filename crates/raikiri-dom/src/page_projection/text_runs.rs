@@ -66,40 +66,23 @@ impl MarkerText {
     /// page could be found for it, the marker stays at the bottom of this one
     /// rather than past its edge.
     pub(super) fn line_top(&self, top: f32, page_bottom: f32) -> f32 {
-        marker_line_top(
-            &self.shaped,
-            self.offset_y,
-            self.line_center,
-            top,
-            page_bottom,
-        )
-    }
-}
-
-/// The top of the line of the shaped marker `shaped`, moved by `offset_y`
-/// from an item whose border edge is at `top` on a page whose content ends
-/// at `page_bottom`; see [`MarkerText::line_top`]. `line_center` is the
-/// middle of the item's first line from its border edge, when the marker is
-/// aligned with one.
-pub(crate) fn marker_line_top(
-    shaped: &crate::StandaloneText,
-    offset_y: f32,
-    line_center: Option<f32>,
-    top: f32,
-    page_bottom: f32,
-) -> f32 {
-    let height = shaped.lines().first().map_or(0.0, |line| line.block_size());
-    let aligned = top + offset_y;
-    // The aligned line's page is decided by its middle, as it is for the
-    // line itself; without one, by the marker's top.
-    let next_page = match line_center {
-        Some(center) => top + center >= page_bottom - 0.001,
-        None => aligned >= page_bottom,
-    };
-    if next_page {
-        (page_bottom - height).max(top)
-    } else {
-        aligned
+        let height = self
+            .shaped
+            .lines()
+            .first()
+            .map_or(0.0, |line| line.block_size());
+        let aligned = top + self.offset_y;
+        // The aligned line's page is decided by its middle, as it is for the
+        // line itself; without one, by the marker's top.
+        let next_page = match self.line_center {
+            Some(center) => top + center >= page_bottom - 0.001,
+            None => aligned >= page_bottom,
+        };
+        if next_page {
+            (page_bottom - height).max(top)
+        } else {
+            aligned
+        }
     }
 }
 

@@ -146,11 +146,12 @@ fn outside_image_pixels_use_the_border_box_inline_start() {
 }
 
 /// The rows of the red pixels that the marker of a list item with
-/// `item_css` paints on the first page, after layout projected the pages
-/// or, when `project` is false, as laid out.
-fn red_marker_rows(item_css: &str, project: bool) -> Option<(usize, usize)> {
+/// `item_css`, whose first line follows a block `prefix` px tall, paints on
+/// the first page, after layout projected the pages or, when `project` is
+/// false, as laid out.
+fn red_marker_rows(item_css: &str, prefix: u32, project: bool) -> Option<(usize, usize)> {
     let markup = format!(
-        "<!doctype html><style>body{{margin:0;font:20px/30px Ahem}}ul{{margin:0;padding:0 0 0 40px}}li{{color:white}}li::marker{{color:red}}{item_css}</style><ul><li>z</li></ul>"
+        "<!doctype html><style>body{{margin:0;font:20px/30px Ahem}}ul{{margin:0;padding:0 0 0 40px}}li{{color:white}}li::marker{{color:red}}{item_css}</style><ul><li><div style='height:{prefix}px'></div>z</li></ul>"
     );
     let mut parsed =
         raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
@@ -219,10 +220,18 @@ fn outside_markers_meet_the_first_baseline_with_or_without_projected_pages() {
     ] {
         for project in [true, false] {
             assert_eq!(
-                red_marker_rows(item_css, project),
+                red_marker_rows(item_css, 0, project),
                 Some(expected),
                 "{item_css}, projected {project}"
             );
         }
+        // A first line pushed to the next page leaves the unprojected
+        // marker at the item's border edge on its first page, as before,
+        // rather than past that page's end.
+        assert_eq!(
+            red_marker_rows(item_css, 85, false),
+            Some((0, 20)),
+            "{item_css}, pushed"
+        );
     }
 }

@@ -182,7 +182,8 @@ impl Document {
     /// The top of the outside image marker `height` tall of `owner` when the
     /// pages were not projected, for the painter: its bottom meets the item's
     /// first line as [`Self::list_marker_image_top`] places it. `top` is
-    /// where the list item's border edge is painted.
+    /// where the list item's border edge is painted and `page_bottom` the end
+    /// of the page's content.
     #[doc(hidden)]
     pub fn unprojected_list_marker_image_top(
         &self,
@@ -190,8 +191,13 @@ impl Document {
         owner: usize,
         height: f32,
         top: f32,
+        page_bottom: f32,
     ) -> f32 {
-        let line = image_markers::aligned_first_line(self, cascade, owner, true);
+        let vertical_flow = crate::layout::pages_follow_x_axis(self, cascade).is_none();
+        let line = image_markers::aligned_first_line(self, cascade, owner, vertical_flow);
+        if line.is_some_and(|line| pushed_past(top, line.center, page_bottom)) {
+            return top;
+        }
         top + image_markers::image_offset_y(self, owner, line.as_ref(), height)
     }
 
@@ -255,14 +261,10 @@ impl Document {
         page_bottom: f32,
     ) -> f32 {
         let item_line = text_runs::first_line(self, cascade, owner);
-        let offset_y = text_runs::marker_offset_y(item_line.as_ref(), shaped, style);
-        text_runs::marker_line_top(
-            shaped,
-            offset_y,
-            item_line.map(|line| line.center),
-            top,
-            page_bottom,
-        )
+        if item_line.is_some_and(|line| pushed_past(top, line.center, page_bottom)) {
+            return top;
+        }
+        top + text_runs::marker_offset_y(item_line.as_ref(), shaped, style)
     }
 
     /// The line holding one image of `::before` or `::after` content placed
@@ -674,3 +676,13 @@ impl Document {
 mod tests;
 #[cfg(test)]
 pub(crate) mod work_tests;
+
+/// Whether the first line whose middle sits `center` below an item's border
+/// edge at `top` lies past `page_bottom`, the end of the page's content.
+///
+/// Without projected pages nothing moves the marker to the page holding that
+/// line, so the marker stays at the border edge, on the item's first page,
+/// rather than past that page's end.
+fn pushed_past(top: f32, center: f32, page_bottom: f32) -> bool {
+    top + center >= page_bottom - 0.001
+}
