@@ -669,9 +669,16 @@ pub(super) fn layout(
                     ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
                     _ => None,
                 };
+                // In a vertical writing mode the width is the block size, where
+                // the keyword behaves as `auto` (CSS Sizing 3 §3.1), and a
+                // preferred aspect ratio gives it from the height.
                 if let Some(along) = along.filter(|_| {
                     let node = &tree.nodes[usize::from(child)];
-                    node.display().is_flex_or_grid_container() || node.is_ifc_root()
+                    (node.display().is_flex_or_grid_container() || node.is_ifc_root())
+                        && !crate::layout::dispatch::vertical_ratio_width::width_follows_ratio(
+                            tree,
+                            usize::from(child),
+                        )
                 }) {
                     let mut measure = child_input;
                     measure.run_mode = RunMode::ComputeSize;

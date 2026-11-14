@@ -2119,6 +2119,11 @@ fn fit_child(
         width_basis.and_then(|physical_width| {
             known_atomic_width(tree, node, physical_width, geometry.width)
         })
+    } else if crate::layout::dispatch::vertical_ratio_width::width_follows_ratio(tree, node) {
+        // The width of a vertical box is its block size, where an intrinsic
+        // keyword behaves as `auto` (CSS Sizing 3 §3.1): the preferred aspect
+        // ratio gives it from the height.
+        None
     } else {
         keyword_width(tree, node, geometry, available)
     };

@@ -2,8 +2,8 @@
 //! while it shrinks to fit.
 //!
 //! The physical width of such a box is its block size and its height is its
-//! inline size. A box whose width is `auto` and whose parent does not fix that
-//! width (an inline-block, a float, an absolutely positioned box, or an
+//! inline size. A box whose width is `auto`, or an intrinsic keyword that
+//! behaves as `auto` on that axis, and whose parent does not fix that width (an inline-block, a float, an absolutely positioned box, or an
 //! inline flex or grid container) settles its inline size first, from the
 //! height it states or from its content, and the preferred aspect ratio then
 //! gives the block size for it (CSS Sizing 4 §5.1). Its content raises that
@@ -26,12 +26,24 @@ use raikiri_layout_style::values::{
 use super::block_flow::{self, Metrics, context::BlockContext};
 
 /// Whether `idx` is a vertical box that takes its width from its aspect ratio
-/// under `inputs`: it states the ratio and an `auto` width, and nothing fixed
-/// the width it is laid out at.
-fn takes_width_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
+/// under `inputs`: [`width_follows_ratio`] holds for it, and nothing fixed the
+/// width it is laid out at.
+pub(super) fn takes_width_from_ratio(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> bool {
+    inputs.known_dimensions.width.is_none() && width_follows_ratio(tree, idx)
+}
+
+/// Whether the style of `idx` leaves its width to its aspect ratio: a
+/// vertical box, neither the root nor replaced nor a table, that states a
+/// ratio and a width that is `auto` or an intrinsic keyword, which behaves as
+/// `auto` on the block axis (CSS Sizing 3 §3.1), and that is no item a flex or
+/// grid container sizes.
+pub(crate) fn width_follows_ratio(tree: &LayoutSession<'_>, idx: usize) -> bool {
     let node = &tree.nodes[idx];
-    if inputs.known_dimensions.width.is_some()
-        || !node.used_writing_mode.is_vertical()
+    if !node.used_writing_mode.is_vertical()
         || node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
         || super::leaf_intrinsic_size(node).is_some()
         || matches!(
@@ -42,7 +54,9 @@ fn takes_width_from_ratio(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutI
         return false;
     }
     let style = tree.physical_style(idx);
-    if style.is_replaced() || style.stated_aspect_ratio().is_none() || !style.size().width.is_auto()
+    if style.is_replaced()
+        || style.stated_aspect_ratio().is_none()
+        || !super::orthogonal_flow::is_intrinsic_or_auto(style.size().width.expand())
     {
         return false;
     }
