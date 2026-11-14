@@ -2615,8 +2615,10 @@ fn contents_wrapping_a_flex_item_preserves_its_page_name_suppression() {
     assert_eq!(run(true), run(false));
 }
 
+/// Chromium prints the line of a row flex container on the page a box
+/// nested in one of its items names, and starts a new page after it.
 #[test]
-fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
+fn a_row_flex_takes_the_page_a_box_nested_in_its_item_names() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
@@ -2644,7 +2646,14 @@ fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
             .find(|item| item.node_id == NodeId::new(id as u64))
             .unwrap()
             .page_index),
-        [1, 2]
+        [0, 1]
+    );
+    assert_eq!(
+        slices
+            .iter()
+            .map(|page| page.page_name.clone())
+            .collect::<Vec<_>>(),
+        [Some("a".to_owned()), None]
     );
 }
 
@@ -2790,8 +2799,10 @@ fn trailing_column_item_under_contents_can_fragment_at_page_edge() {
     }
 }
 
+/// A row nested in a column flex container also takes the page its nested
+/// named box names, as Chromium prints it.
 #[test]
-fn row_inside_column_keeps_deferred_nested_named_boundary() {
+fn a_row_inside_a_column_takes_the_page_its_nested_named_box_names() {
     for nested_item in [true, false] {
         let (mut doc, body, column) = column_review_document();
         let parent = if nested_item {
@@ -2806,8 +2817,8 @@ fn row_inside_column_keeps_deferred_nested_named_boundary() {
         let after = doc.append_element(Some(body), "div", Some("display:block"));
         let b = doc.append_text(after, "B");
         assert_eq!(
-            column_review_pages(doc, &[a, b]).1,
-            vec![1, 2],
+            column_review_pages(doc, &[a, b]),
+            (vec![Some("a".into()), None], vec![0, 1]),
             "nested item: {nested_item}"
         );
     }
@@ -2828,7 +2839,10 @@ fn a_nested_row_does_not_coalesce_a_real_preceding_column_item() {
     let a = doc.append_text(named, "A");
     let after = doc.append_element(Some(body), "div", Some("display:block"));
     let b = doc.append_text(after, "B");
-    assert_eq!(column_review_pages(doc, &[a, b]).1, vec![2, 3]);
+    assert_eq!(
+        column_review_pages(doc, &[a, b]),
+        (vec![None, Some("a".into()), None], vec![1, 2])
+    );
 }
 
 #[test]

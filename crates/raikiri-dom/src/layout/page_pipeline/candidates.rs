@@ -10,14 +10,15 @@ use super::{
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, box_forces_break_after, box_is_unbreakable, boxes_are_tied,
     breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, first_owned_text_line_top,
-    has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
-    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    container_item_tail, content_bottom_edges, edges_break_container, first_named_item_start_page,
+    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
+    height_follows_content, holds_floats, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_flow_table_caption,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
+    lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
+    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
@@ -1270,8 +1271,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
+                // An inline-level flex container takes the page of its
+                // containing block, and one inside an item of a row flex
+                // container sits on the page that row's line is printed on,
+                // so the names inside either neither name a page nor force
+                // one after it.
                 let deferred_named_break_after = self.has_named_pages
                     && !float_subtree
+                    && !inline_level
+                    && (!inside_flex || named_flex_context.is_some())
                     && document.nodes[node_id].display().is_flex_container()
                     && !column_flex
                     && has_nested_named_page_descendant(
@@ -1289,12 +1297,35 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let flex_names_stay_on_items = column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after);
+                // Such a container takes its start page value from the first of
+                // its items that has one, as Chromium prints the line on the
+                // page that item names.
+                let propagated_page_name = if deferred_named_break_after && row_flex {
+                    propagated_page_name.or_else(|| {
+                        first_named_item_start_page(
+                            document,
+                            cascade,
+                            node_id,
+                            frame.inherited_page_name,
+                            document.context.pagination_on_transposed_axes,
+                        )
+                    })
+                } else {
+                    propagated_page_name
+                };
                 let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
                     own_page_name.or(frame.inherited_page_name)
                 };
-                let child_page_name = own_page_name.or(frame.inherited_page_name);
+                // A row flex container that takes the start page value of a
+                // named box nested in its items puts all its items on that
+                // page, so the boxes inside them inherit it.
+                let child_page_name = if deferred_named_break_after && row_flex {
+                    page_name
+                } else {
+                    own_page_name.or(frame.inherited_page_name)
+                };
                 let is_body = node_id == body_id || node_id == roots.element;
                 let participates_in_flow = matches!(
                     document.nodes[node_id].position(),
