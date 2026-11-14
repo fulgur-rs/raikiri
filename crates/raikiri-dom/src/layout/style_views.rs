@@ -680,6 +680,62 @@ impl LayoutSession<'_> {
             })
     }
 
+    /// The block alignment of the grid item `idx`: its own `align-self`, or
+    /// the `align-items` of its container for `auto`.
+    pub(crate) fn grid_item_align_self(
+        &self,
+        idx: usize,
+    ) -> raikiri_layout_style::values::AlignSelf {
+        use raikiri_layout_style::values::AlignSelf;
+        self.physical_style(idx)
+            .bridge_align_self()
+            .unwrap_or_else(|| {
+                self.taffy_parent_of(idx)
+                    .map_or(AlignSelf::NORMAL, |parent| {
+                        self.physical_style(parent).align_items()
+                    })
+            })
+    }
+
+    /// Whether the grid item `idx`, with a preferred aspect ratio and an
+    /// `auto` height, is kept from stretching to the height of its area, so
+    /// that its content may raise the height its ratio gives.
+    ///
+    /// The library fixes the height of such an item from its width through
+    /// the ratio. Its height is an automatic one, whose minimum is the height
+    /// of its content (CSS Sizing 4 §5.1.1), so the item measures itself:
+    /// Chromium lays `aspect-ratio: 1; align-self: start` around a 200px tall
+    /// child out 100x200 in a 100px column, not 100x100.
+    fn grid_item_content_raises_unstretched_height(
+        &self,
+        idx: usize,
+        item: &LayoutStyleView<'_>,
+    ) -> bool {
+        use raikiri_layout_style::values::AlignItemsKeyword;
+        let node = &self.nodes[idx];
+        let overflow = item.overflow();
+        let margin = item.margin();
+        let alignment = self.grid_item_align_self(idx);
+        // `normal` behaves as `start` for a box with a preferred aspect
+        // ratio (CSS Box Alignment 3 §6.1); only `stretch` fills the area.
+        let stretched = alignment.keyword == AlignItemsKeyword::Stretch
+            && !margin.top.is_auto()
+            && !margin.bottom.is_auto();
+        !stretched
+            && matches!(
+                node.formatting_context,
+                FormattingContext::Block
+                    | FormattingContext::Inline
+                    | FormattingContext::Flex
+                    | FormattingContext::Grid
+            )
+            && !node.size_containment.width
+            && !node.size_containment.height
+            && !overflow.x.is_scroll_container()
+            && !overflow.y.is_scroll_container()
+            && item.size().height.is_auto()
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -758,17 +814,13 @@ impl LayoutSession<'_> {
         // `contain-intrinsic-size` holds it to past a carried maximum.
         let measured = measured
             || crate::layout::dispatch::contained_ratio_item(self, idx)
-            || self.grid_item_content_outweighs_carried_minimum(idx, &item);
+            || self.grid_item_content_outweighs_carried_minimum(idx, &item)
+            || self.grid_item_content_raises_unstretched_height(idx, &item);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
         }
-        let alignment = item.bridge_align_self().unwrap_or_else(|| {
-            self.taffy_parent_of(idx)
-                .map_or(AlignSelf::NORMAL, |parent| {
-                    self.physical_style(parent).align_items()
-                })
-        });
+        let alignment = self.grid_item_align_self(idx);
         let alignment = if alignment.keyword == AlignItemsKeyword::Normal {
             AlignSelf::START
         } else {

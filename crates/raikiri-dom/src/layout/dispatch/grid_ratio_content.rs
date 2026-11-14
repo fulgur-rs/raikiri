@@ -1,10 +1,11 @@
 //! The width a grid item with a preferred aspect ratio takes from the height
 //! of its content.
 //!
-//! A grid item that states a ratio and neither a width nor a height, and is
-//! stretched to the height of its area, contributes to its column, and is aligned at, the wider of the width of its
-//! content and the width the ratio gives for the height its content takes at
-//! that width, held to the bounds of the box. Chromium sizes `aspect-ratio: 1`
+//! A grid item that states a ratio and neither a width nor a height, with
+//! `normal` or `stretch` block alignment, contributes to its column, and is
+//! aligned at, the wider of the width of its content and the width the ratio
+//! gives for the height its content takes at that width, or for the height
+//! of a row of a definite size, held to the bounds of the box. Chromium sizes `aspect-ratio: 1`
 //! around a 200px tall child 200px wide in a `min-content`, `max-content` or
 //! `auto` column, where the same box outside a grid (an inline-block, a float,
 //! an absolutely positioned box or a flex item) shrinks to the width of its
@@ -21,7 +22,7 @@ use crate::layout::protocol::{
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{MaybeMath, Size};
 use raikiri_layout_style::values::{
-    AlignItemsKeyword, AlignSelf, Display, ExpandedDimension, MaybeResolve, Position,
+    AlignItemsKeyword, Display, ExpandedDimension, MaybeResolve, Position, ResolveOrZero,
 };
 
 use super::block_flow::{self, Metrics, context::BlockContext};
@@ -62,16 +63,11 @@ fn takes_width_from_content_height(
     let size = style.size();
     let overflow = style.overflow();
     let margin = style.margin();
-    // Only an item stretched to the height of its area takes the height of
-    // its content over to its width: Chromium keeps the width of the content
-    // for one aligned to `start`, `center` or a baseline, or kept off the
-    // stretch by an `auto` margin.
-    let align = style.bridge_align_self().unwrap_or_else(|| {
-        tree.taffy_parent_of(idx)
-            .map_or(AlignSelf::NORMAL, |parent| {
-                tree.physical_style(parent).align_items()
-            })
-    });
+    // Only an item with `normal` or `stretch` block alignment takes the
+    // height of its content over to its width: Chromium keeps the width of
+    // the content for one aligned to `start`, `center` or a baseline, or
+    // kept off the stretch by an `auto` margin.
+    let align = tree.grid_item_align_self(idx);
     matches!(
         align.keyword,
         AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
@@ -208,17 +204,40 @@ fn contribution(
         .size
         .width;
     tree.context.grid_ratio_content.pop();
-    let content_height = tree
-        .compute_child_layout_with_block_ctx_inner(
+    let style = block_flow::style_input::physical(tree, idx);
+    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
+    // The border-box width the ratio gives for a border-box `height`, held
+    // to the bounds of the box.
+    let across = |height: f32| {
+        let sized = Metrics::resolve(
+            &style,
+            false,
+            content_box_ratio,
+            LayoutInput {
+                known_dimensions: Size {
+                    width: None,
+                    height: Some(height),
+                },
+                ..inputs
+            },
+        );
+        sized
+            .preferred
+            .width
+            .map(|width| width.maybe_clamp(sized.min.width, sized.max.width))
+    };
+    // The height the box takes laid out at `width`.
+    let height_at = |tree: &mut LayoutSession<'_>, width: f32| {
+        tree.compute_child_layout_with_block_ctx_inner(
             node_id,
             LayoutInput {
                 axis: RequestedAxis::Vertical,
                 known_dimensions: Size {
-                    width: Some(content_width),
+                    width: Some(width),
                     height: None,
                 },
                 available_space: Size {
-                    width: AvailableSpace::Definite(content_width),
+                    width: AvailableSpace::Definite(width),
                     ..inputs.available_space
                 },
                 ..probe
@@ -226,25 +245,37 @@ fn contribution(
             None,
         )
         .size
-        .height;
-    let style = block_flow::style_input::physical(tree, idx);
-    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let sized = Metrics::resolve(
-        &style,
-        false,
-        content_box_ratio,
-        LayoutInput {
-            known_dimensions: Size {
-                width: None,
-                height: Some(content_height),
-            },
-            ..inputs
-        },
-    );
-    let across = sized
-        .preferred
-        .width
-        .map(|width| width.maybe_clamp(sized.min.width, sized.max.width));
+        .height
+    };
+    let area_height = inputs.parent_size.height.map(|height| {
+        let margin = style.margin.resolve_or_zero(inputs.parent_size.width);
+        (height - margin.top - margin.bottom).max(0.0)
+    });
+    let rows_size_to_content = tree.taffy_parent_of(idx).is_none_or(|container| {
+        crate::layout::taffy_adapter::rows_size_to_content(&tree.physical_style(container))
+    });
+    // The area the item sits in gives the height the ratio carries over once
+    // its row is sized, as it would to an item stretched to it, though the
+    // content may still raise the height the item is laid out at: Chromium
+    // makes `aspect-ratio: 1` in a 50px row 50px wide around a 200px tall
+    // child, and 50x200 in all, and 300px wide beside a 300px tall item in
+    // the same `auto` row. A row that only this item sizes grows with the
+    // width settled here, so its height is no size to carry back over to
+    // that width: there the height of the content gives it.
+    let height = match area_height {
+        Some(area) if !rows_size_to_content => area,
+        Some(area) => {
+            let content = height_at(tree, content_width);
+            let width = across(content).map_or(content_width, |width| width.max(content_width));
+            if area > height_at(tree, width) + 0.5 {
+                area
+            } else {
+                content
+            }
+        }
+        None => height_at(tree, content_width),
+    };
+    let across = across(height);
     match across {
         Some(width) if width > content_width => (width, true),
         _ => (content_width, false),
