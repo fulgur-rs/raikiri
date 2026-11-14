@@ -50,13 +50,20 @@ impl Group {
         let (padded_start, padded_end) = (start.sliced, end.sliced);
         // The margins of the wrapper and of its first box adjoin, so its
         // border box starts where that box does, unless padding above the box
-        // keeps them apart: then it starts where the padding does.
+        // keeps them apart: then it starts where the padding does. The first
+        // box may be a wrapper inside whose own padding starts it.
         let first = if padded_start {
             start
         } else {
             (index + 1..close)
-                .filter(|&inner| flow.roles[inner] == Role::Box)
-                .find_map(|inner| self.placements.get(inner)?.as_ref())
+                .find_map(|inner| {
+                    let placement = self.placements.get(inner)?.as_ref()?;
+                    match flow.roles[inner] {
+                        Role::Box => Some(placement),
+                        Role::Open(_) if placement.sliced => Some(placement),
+                        _ => None,
+                    }
+                })
                 .unwrap_or(start)
         };
         // Its border box ends where the padding below its last box does, or
@@ -355,8 +362,9 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
 /// break leaves nothing of it to show. Its margins adjoin those of its first
 /// and last boxes, as it starts no formatting context, unless padding above or
 /// below them keeps them apart: that padding is room in the flow, which a
-/// column end cuts. Padding at its sides narrows its boxes, which are laid out
-/// in it.
+/// column end cuts, unless `box-decoration-break: clone` repeats it in every
+/// column, which the flow does not model. Padding at its sides narrows its
+/// boxes, which are laid out in it.
 pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     if node.kind() != NodeKind::Element
@@ -367,6 +375,7 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         || node.paints_background_color
         || node.column_span_all
         || node.break_inside != raikiri_style::property::BreakInside::Auto
+        || (node.clones_box_decorations && has_block_padding(tree, id))
         || !matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
         || !lineless::is_plain_box_apart_from_display(tree, id, false)
     {

@@ -292,3 +292,83 @@ fn a_sized_box_beside_the_paragraph_of_a_wrapper_joins_the_flow() {
         );
     }
 }
+
+#[test]
+fn a_wrapper_starts_where_the_padding_of_a_wrapper_inside_it_does() {
+    let rows = lines(
+        "l",
+        &[
+            (8.0, 13.0),
+            (8.0, 23.0),
+            (8.0, 33.0),
+            (108.0, 8.0),
+            (108.0, 18.0),
+            (108.0, 28.0),
+        ],
+    );
+    check_with_lines(
+        "unpadded outer",
+        &format!(
+            "<div id=c style=\"{TWO}\"><div id=w><div id=v style=\"padding:5px 0\">\
+             <div id=p>{}</div></div></div></div>",
+            spans("l", 6)
+        ),
+        &[
+            ("c", &[(8.0, 8.0, 200.0, 35.0)]),
+            ("w", &[(8.0, 8.0, 100.0, 35.0)]),
+            ("v", &[(8.0, 8.0, 100.0, 35.0)]),
+            ("p", &[(8.0, 13.0, 100.0, 30.0), (108.0, 8.0, 100.0, 30.0)]),
+        ],
+        &rows,
+    );
+    let shifted: Vec<_> = rows
+        .iter()
+        .map(|(id, rects)| {
+            let rects = rects
+                .iter()
+                .map(|&(x, y, w, h)| (x, if x < 100.0 { y + 4.0 } else { y }, w, h))
+                .collect();
+            (id.clone(), rects)
+        })
+        .collect();
+    check_with_lines(
+        "adjoining margins",
+        &format!(
+            "<div id=c style=\"{TWO}\"><div id=w style=\"margin-top:4px\">\
+             <div id=v style=\"padding:5px 0;margin-top:3px\"><div id=p>{}</div></div></div></div>",
+            spans("l", 6)
+        ),
+        &[
+            ("c", &[(8.0, 8.0, 200.0, 39.0)]),
+            ("w", &[(8.0, 12.0, 100.0, 35.0)]),
+            ("v", &[(8.0, 12.0, 100.0, 35.0)]),
+            ("p", &[(8.0, 17.0, 100.0, 30.0), (108.0, 8.0, 100.0, 30.0)]),
+        ],
+        &shifted,
+    );
+}
+
+/// Chromium repeats cloned padding in every column, putting the second column
+/// of lines 5px down. The flow cuts the padding of a wrapper once, so it must
+/// leave such a wrapper alone rather than start the second column at its top.
+#[test]
+fn cloned_padding_of_a_wrapper_is_not_cut_between_the_columns() {
+    for (label, extra) in [("auto", ""), ("definite", ";height:40px")] {
+        let pieces = pieces_of(&format!(
+            "<div id=c style=\"{TWO}{extra}\"><div id=w \
+             style=\"padding:5px 0;box-decoration-break:clone\"><div id=p>{}</div></div></div>",
+            spans("l", 6)
+        ));
+        let first = pieces
+            .iter()
+            .find(|(id, _)| id == "l0")
+            .expect("first line");
+        assert_eq!(first.1, (8.0, 13.0, 10.0, 10.0), "{label}: {pieces:?}");
+        assert!(
+            !pieces
+                .iter()
+                .any(|(id, piece)| id.starts_with('l') && piece.0 >= 108.0 && piece.1 < 13.0),
+            "{label}: a line sits in the cloned padding: {pieces:?}"
+        );
+    }
+}
