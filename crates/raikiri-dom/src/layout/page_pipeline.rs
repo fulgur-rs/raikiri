@@ -4399,13 +4399,20 @@ fn paginate_flow(
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
-    // Where the columns of each container were filled page by page, from the
-    // position the container has now.
+    // Where the columns of each container were filled page by page: the
+    // origin an earlier attempt accepted for it, else the position it has now.
     let refilled: Vec<_> = document
         .context
         .page_filled_columns
         .iter()
-        .map(|&owner| (owner, current_abs_y(document, owner)))
+        .map(|&owner| {
+            let planned = document.context.spanning_page_origins.get(&owner).copied();
+            (
+                owner,
+                planned.map_or_else(|| current_abs_y(document, owner), |y| y - root_flow_offset),
+                planned.is_some(),
+            )
+        })
         .collect();
     let roots = candidates::FlowRoots::new(document, body_id);
     let mut candidates = Vec::new();
@@ -4573,13 +4580,26 @@ fn paginate_flow(
         }
     }
 
-    // A container the walk moved has its columns filled for another place,
-    // and its caller lays the document out again without that.
-    if refilled
+    // A container the walk moved, as a forced break does, has its columns
+    // filled for another place. Its caller fills them again from where the
+    // walk put it, and lays the document out without filling them when a
+    // container moves away from such an origin too.
+    let moved: Vec<_> = refilled
         .iter()
-        .any(|&(owner, y)| (current_abs_y(document, owner) - y).abs() > 1e-3)
-    {
-        document.context.page_filled_columns_moved = true;
+        .filter(|&&(owner, y, _)| (current_abs_y(document, owner) - y).abs() > 1e-3)
+        .collect();
+    if !moved.is_empty() {
+        if moved.iter().any(|&&(_, _, replanned)| replanned) {
+            document.context.page_filled_columns_moved = true;
+        } else {
+            for &&(owner, _, _) in &moved {
+                let accepted_y = root_flow_offset + current_abs_y(document, owner);
+                document
+                    .context
+                    .spanning_page_origins
+                    .insert(owner, accepted_y);
+            }
+        }
         return Ok(Vec::new());
     }
     place_repeated_table_footers(document, &mut state.table_headers, &page_origins);
