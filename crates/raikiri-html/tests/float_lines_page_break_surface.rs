@@ -6,13 +6,13 @@
 //! 100px tall, with Ahem lines of 20px and a line height of 30px.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, FragmentKind, LayoutOptions, LayoutStatus,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// The page, glyph and glyph top of every line of text in `body`.
-fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
+/// Lays out `body` on the pages and with the font of the Chromium documents.
+fn lay_out(body: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -34,6 +34,12 @@ fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
     .unwrap() else {
         panic!("layout must complete")
     };
+    result
+}
+
+/// The page, glyph and glyph top of every line of text in `body`.
+fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
+    let result = lay_out(body);
     let mut tops = Vec::new();
     for index in 0..result.page_count() {
         let page = result.page(index).unwrap();
@@ -274,4 +280,31 @@ fn a_box_in_a_float_that_clears_a_float_grown_beside_it_stays_below_it() {
         "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:both'>Z</div></div>",
         &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
     )]);
+}
+
+/// The top and height of each 60px wide box on page `index` of `body`.
+fn wide_boxes(body: &str, index: u32) -> Vec<(f32, f32)> {
+    let document = lay_out(body);
+    let page = document.page(index).unwrap();
+    page.fragments()
+        .filter(|fragment| fragment.kind() == FragmentKind::Box)
+        .map(|fragment| fragment.rect())
+        .filter(|rect| rect.width == 60.0)
+        .map(|rect| (rect.y, rect.height))
+        .collect()
+}
+
+#[test]
+fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below_it() {
+    // The 60px float holds the 20px float, whose last line moves to the
+    // second page, and a 20px box below it that clears it, then a 10px box.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div> <div style='clear:left;height:20px'></div><div style='height:10px'></div></div>";
+    assert_eq!(
+        wide_boxes(body, 1),
+        [(0.0, 60.0), (30.0, 20.0), (50.0, 10.0)]
+    );
+    // A box that clears only the other side stays beside the float.
+    let body = "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:right;width:20px'>X X X</div><div style='clear:left;height:20px'></div></div>";
+    assert_eq!(wide_boxes(body, 0), [(20.0, 80.0), (20.0, 20.0)]);
+    assert_eq!(wide_boxes(body, 1), [(0.0, 30.0)]);
 }

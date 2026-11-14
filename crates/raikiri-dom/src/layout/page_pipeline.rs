@@ -12658,6 +12658,15 @@ fn grow_ancestors_below(
             float_delta = size_delta;
             flow_delta = 0.0;
             size_delta = 0.0;
+            // A box after the float that clears it starts below it, and
+            // takes the boxes after it along.
+            if let Some(clearance) =
+                clearance_below_grown_float(document, cascade, body_id, parent, child)
+            {
+                shifts.growth.push((child, clearance));
+                flow_delta = clearance;
+                size_delta = clearance;
+            }
         }
         if stop.is_none()
             && flow_delta > 0.001
@@ -12745,6 +12754,51 @@ fn grow_ancestors_below(
         }
     }
     (bounded, 0.0)
+}
+
+/// How far the box that follows `float` in `parent` and clears it has to
+/// move down to stay below the float's margin box, now that the float grew
+/// with the lines moved inside it, when `parent` is inside another float.
+/// Only whitespace may come between the two, so that the boxes after the
+/// float that move are those after the clearing box too. Pagination places
+/// no box inside a float by itself; outside floats, the clearing box keeps
+/// below the float through the edges [`FloatShifts`] records.
+fn clearance_below_grown_float(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    parent: usize,
+    float: usize,
+) -> Option<f32> {
+    let inside_float = std::iter::once(parent)
+        .chain(document.layout_ancestors(parent))
+        .take_while(|&id| id != body_id)
+        .any(|id| is_floating_box_for_pagination(document, cascade, id));
+    if !inside_float {
+        return None;
+    }
+    let side = cascade.computed[float].float;
+    let children = &document.nodes[parent].children;
+    let index = children.iter().position(|&id| id == float)?;
+    let clearing = children[index + 1..].iter().copied().find(|&id| {
+        document.nodes[id].kind() == NodeKind::Element
+            || document.nodes[id]
+                .text_content()
+                .is_some_and(|text| !text.trim().is_empty())
+    })?;
+    if document.nodes[clearing].kind() != NodeKind::Element
+        || !clears_float_side(cascade.computed[clearing].clear, side)
+        || is_floating_box_for_pagination(document, cascade, clearing)
+        || matches!(
+            document.nodes[clearing].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    {
+        return None;
+    }
+    let layout = &document.nodes[float].layout;
+    let float_bottom = current_abs_y(document, float) + layout.size.height + layout.margin.bottom;
+    Some(float_bottom - current_abs_y(document, clearing)).filter(|&shift| shift > 0.001)
 }
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a
@@ -13681,32 +13735,8 @@ impl FloatShifts {
         let node_id = candidate.node_id;
         let (context, edges) = self.edges_for(document, cascade, node_id, body_id)?;
         let floating = is_floating_box_for_pagination(document, cascade, node_id);
-        // A box inside a float moves with it, unless a float beside it in the
-        // same formatting context grew with the lines the paragraph line pass
-        // moved inside it.
-        let follows_grown_float = edges
-            .iter()
-            .any(|edge| self.line_moved.contains_key(&edge.node));
         let floor = if !floating && candidate.context.is_float_descendant() {
-            // Only the text of a float's descendants is placed here: it stays
-            // below such a float when a box it begins clears it.
-            follows_grown_float
-                .then(|| {
-                    let mut walk = AncestorCursor::new(Some(node_id), ParentRelation::Layout);
-                    let mut clearing = None;
-                    while let Some(id) = walk.current().filter(|&id| id != context) {
-                        if cascade.computed[id].clear != ClearValue::None {
-                            clearing = Some(id);
-                            break;
-                        }
-                        walk.advance(document);
-                    }
-                    clearing
-                })
-                .flatten()
-                .and_then(|clearing| {
-                    float_floor(document, cascade, clearing, context, edges, false)
-                })
+            None
         } else {
             float_floor(document, cascade, node_id, context, edges, floating)
         };
