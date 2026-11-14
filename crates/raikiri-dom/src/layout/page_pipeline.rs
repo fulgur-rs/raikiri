@@ -13681,8 +13681,32 @@ impl FloatShifts {
         let node_id = candidate.node_id;
         let (context, edges) = self.edges_for(document, cascade, node_id, body_id)?;
         let floating = is_floating_box_for_pagination(document, cascade, node_id);
+        // A box inside a float moves with it, unless a float beside it in the
+        // same formatting context grew with the lines the paragraph line pass
+        // moved inside it.
+        let follows_grown_float = edges
+            .iter()
+            .any(|edge| self.line_moved.contains_key(&edge.node));
         let floor = if !floating && candidate.context.is_float_descendant() {
-            None
+            // Only the text of a float's descendants is placed here: it stays
+            // below such a float when a box it begins clears it.
+            follows_grown_float
+                .then(|| {
+                    let mut walk = AncestorCursor::new(Some(node_id), ParentRelation::Layout);
+                    let mut clearing = None;
+                    while let Some(id) = walk.current().filter(|&id| id != context) {
+                        if cascade.computed[id].clear != ClearValue::None {
+                            clearing = Some(id);
+                            break;
+                        }
+                        walk.advance(document);
+                    }
+                    clearing
+                })
+                .flatten()
+                .and_then(|clearing| {
+                    float_floor(document, cascade, clearing, context, edges, false)
+                })
         } else {
             float_floor(document, cascade, node_id, context, edges, floating)
         };

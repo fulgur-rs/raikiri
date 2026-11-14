@@ -267,3 +267,11 @@ fn a_float_moves_apart_from_its_wrapper_and_its_later_paragraphs_follow_its_line
         ),
     ]);
 }
+
+#[test]
+fn a_box_in_a_float_that_clears_a_float_grown_beside_it_stays_below_it() {
+    assert_rows(&[(
+        "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:both'>Z</div></div>",
+        &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Z', 35)],
+    )]);
+}
