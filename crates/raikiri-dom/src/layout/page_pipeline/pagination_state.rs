@@ -2258,6 +2258,10 @@ impl PaginationState {
                     &mut self.float_gaps,
                 );
                 self.note_line_block_move(text, block_id, delta, consumed, target_page);
+                if delta > 0.0 && candidate.context.is_float_descendant() {
+                    self.float_shifts
+                        .record_grown_floats(document, cascade, body_id, block_id, delta);
+                }
             }
         }
         Ok(())
@@ -2611,6 +2615,11 @@ impl PaginationState {
                                 &mut self.float_gaps,
                             );
                             self.note_line_block_move(text, block_id, delta, consumed, page);
+                            if delta > 0.0 && candidate.context.is_float_descendant() {
+                                self.float_shifts.record_grown_floats(
+                                    document, cascade, body_id, block_id, delta,
+                                );
+                            }
                         }
                         moved_whole = true;
                         // A clip that stays where it was hides more of the
@@ -2682,10 +2691,15 @@ impl PaginationState {
         let node_id = candidate.node_id;
         // Text placed by positioned insets, or inside a float or an
         // out-of-flow box, is not in the flow that the moved lines push down.
-        let in_flow = !entry.uses_positioned_coordinates
-            && !candidate.context.is_float_descendant()
-            && !candidate.context.is_out_of_flow_descendant();
-        let Some(root) = blocks.paragraph_root.filter(|_| in_flow) else {
+        // A paragraph inside a float grows the float, as one in the flow
+        // grows its block.
+        let in_flow =
+            !entry.uses_positioned_coordinates && !candidate.context.is_out_of_flow_descendant();
+        let Some(root) = blocks.paragraph_root.filter(|&root| {
+            in_flow
+                && (!candidate.context.is_float_descendant()
+                    || super::is_float_flow_paragraph(document, cascade, root, body_id))
+        }) else {
             return Ok(());
         };
         if !self.deferred_shifts.line_splits.is_empty()
@@ -2818,6 +2832,10 @@ impl PaginationState {
                     &mut self.subtree_shifts,
                     entry.page_before_candidate,
                 );
+                if growth > 0.0 && candidate.context.is_float_descendant() {
+                    self.float_shifts
+                        .record_grown_floats(document, cascade, body_id, root, shift);
+                }
                 if line <= first_owned_line {
                     text.effective_y += shift;
                     text.first_line_shift += shift;
@@ -3056,6 +3074,10 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            if growth > 0.0 && candidate.context.is_float_descendant() {
+                self.float_shifts
+                    .record_grown_floats(document, cascade, body_id, block_id, shift);
+            }
             if line == 0 {
                 // The first line moves, and the text that starts on it with it.
                 text.effective_y += shift;
@@ -3331,8 +3353,8 @@ impl PaginationState {
 }
 
 /// Whether `node_id` is or holds a paragraph whose lines the paragraph line
-/// pass breaks between as it does in plain block flow (see
-/// [`super::is_block_flow_paragraph`]).
+/// pass breaks between as it does in plain block flow, inside a float or not
+/// (see [`super::is_float_flow_paragraph`]).
 fn holds_block_flow_paragraph(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -3342,7 +3364,7 @@ fn holds_block_flow_paragraph(
     let mut stack = vec![node_id];
     while let Some(node) = stack.pop() {
         if document.nodes[node].is_ifc_root()
-            && super::is_block_flow_paragraph(document, cascade, node, body_id)
+            && super::is_float_flow_paragraph(document, cascade, node, body_id)
         {
             return true;
         }
