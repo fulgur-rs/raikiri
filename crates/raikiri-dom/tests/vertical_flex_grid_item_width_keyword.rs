@@ -5,7 +5,9 @@
 //! item to stretch to its grid area or to the cross size of a column flex
 //! line (CSS Sizing 3 §3.1.1, CSS Flexbox 1 §9.4: only an `auto` cross size
 //! stretches). A wrapping vertical column flex container with such a width
-//! keeps its items on the line the keyword gives it.
+//! keeps its items on the line the keyword gives it. An item with an
+//! `aspect-ratio` takes the content size the keyword names from its ratio, in
+//! a column flex container as much as along a row (CSS Sizing 4 §5.1).
 //!
 //! The expected border boxes were recorded from Chromium for the same markup in
 //! an 800px by 600px viewport with no body margin and border-box divs. The
@@ -98,6 +100,11 @@ fn vertical_flex_and_grid_items_take_their_block_size_from_the_keyword() {
 #[test]
 fn vertical_paragraph_items_take_their_block_size_from_the_keyword() {
     PARA.iter().for_each(check_case);
+}
+
+#[test]
+fn vertical_ratio_items_with_keyword_widths_follow_their_ratio() {
+    RATIO.iter().for_each(check_case);
 }
 
 #[test]
@@ -1859,6 +1866,481 @@ const GUARD: &[Case] = &[
             ("c", (0.0, 0.0, 20.0, 60.0)),
             ("a", (10.0, 0.0, 10.0, 60.0)),
             ("b", (0.0, 0.0, 10.0, 60.0)),
+        ],
+    ),
+];
+
+const RATIO: &[Case] = &[
+    (
+        "r009",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r010",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r011",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r012",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r029",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r030",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r031",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r032",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r041",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r042",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r043",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r044",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r045",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r046",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r047",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r048",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r049",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r050",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r053",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r055",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r069",
+        r#"<div id=p style="display:grid;width:500px;justify-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r070",
+        r#"<div id=p style="display:grid;width:500px;justify-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r094",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 30.0)),
+            ("c", (0.0, 0.0, 30.0, 30.0)),
+        ],
+    ),
+    (
+        "r101",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r102",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r103",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r104",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r105",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r106",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r107",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r108",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r109",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r110",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r111",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r112",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r113",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r114",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 30.0)),
+            ("c", (0.0, 0.0, 30.0, 30.0)),
+        ],
+    ),
+    (
+        "r115",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r116",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 30.0)),
+            ("c", (0.0, 0.0, 30.0, 30.0)),
+        ],
+    ),
+    (
+        "r117",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r118",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r119",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r120",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px;align-items:start"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r001",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r002",
+        r#"<div id=p style="display:flex;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r021",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r022",
+        r#"<div id=p style="display:flex;width:500px;align-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r057",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r059",
+        r#"<div id=p style="display:grid;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r061",
+        r#"<div id=p style="display:grid;width:500px;justify-items:start"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r096",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 30.0)),
+            ("c", (0.0, 0.0, 30.0, 30.0)),
+        ],
+    ),
+    (
+        "r097",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r099",
+        r#"<div id=p style="display:flex;flex-direction:column;width:500px"><div id=c style="display:flex;aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
+        ],
+    ),
+    (
+        "r121",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r122",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content">XXXXXXXXXXXXXXXXXXXX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 200.0)),
+            ("c", (0.0, 0.0, 200.0, 200.0)),
+        ],
+    ),
+    (
+        "r125",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r129",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:min-content">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r133",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:fit-content;max-height:30px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 20.0)),
+            ("c", (0.0, 0.0, 20.0, 20.0)),
+        ],
+    ),
+    (
+        "r137",
+        r#"<div id=p style="display:block;width:500px"><div id=c style="aspect-ratio:1;writing-mode:vertical-rl;width:max-content;max-width:15px">XX</div></div>"#,
+        &[
+            ("p", (0.0, 0.0, 500.0, 15.0)),
+            ("c", (0.0, 0.0, 15.0, 15.0)),
         ],
     ),
 ];
