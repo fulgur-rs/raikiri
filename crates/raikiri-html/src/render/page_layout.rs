@@ -247,7 +247,16 @@ impl PageLayout<'_, '_> {
                 &mut slices,
                 &mut page_geometries,
             )?,
-            None => Vec::new(),
+            None => {
+                debug_assert!(
+                    page_geometries.windows(2).all(|pair| {
+                        let (one, other) = (pair[0].content_box, pair[1].content_box);
+                        (one.width, one.height) == (other.width, other.height)
+                    }),
+                    "a page area differs though no page context of the run has another"
+                );
+                Vec::new()
+            }
         };
         let page_styles = if let Some(first) = continuations.first() {
             // The first layout keeps only the pages before the first continuation.
