@@ -104,7 +104,7 @@ url        = "2.5"
 # trigger ("no WASM support and no alternative") because this dependency is `optional
 # = true` behind raikiri-net's non-default `http-ureq` feature and is never
 # part of a wasm32-unknown-unknown build of this crate's default features.
-ureq = "=3.4.2"
+ureq = "=3.5.0"
 
 # ── Image decode (Pure Rust) ────────────────────────────────────────────
 # raikiri-net's ImageResolver decodes fetched or data: <img> bytes to raw
