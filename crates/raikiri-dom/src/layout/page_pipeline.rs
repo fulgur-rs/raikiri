@@ -12834,6 +12834,37 @@ fn grow_ancestors_below(
     stop: Option<usize>,
     floats_hold_growth: bool,
 ) -> (bool, f32) {
+    grow_ancestors_and_followers(
+        document,
+        cascade,
+        node_id,
+        delta,
+        body_id,
+        shifts,
+        flow_page,
+        ifc_boxes,
+        stop,
+        floats_hold_growth,
+        None,
+    )
+}
+
+/// [`grow_ancestors_below`], with `scanned` the float whose later siblings
+/// were already searched for the boxes below it.
+#[allow(clippy::too_many_arguments)]
+fn grow_ancestors_and_followers(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    body_id: usize,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+    ifc_boxes: &IfcBoxShifts,
+    stop: Option<usize>,
+    floats_hold_growth: bool,
+    scanned: Option<usize>,
+) -> (bool, f32) {
     let mut followers = Vec::new();
     let (mut bounded, passed) = grow_ancestors_walk(
         document,
@@ -12844,7 +12875,7 @@ fn grow_ancestors_below(
         shifts,
         flow_page,
         ifc_boxes,
-        stop,
+        (stop, scanned),
         floats_hold_growth,
         &mut followers,
     );
@@ -12857,7 +12888,9 @@ fn grow_ancestors_below(
         shifts.from_box.push((parent, index, shift));
         shifts.from_box.push((parent, index + 1, -shift));
         let before = shifts.bounded.len();
-        bounded |= grow_ancestors_below(
+        // The boxes after the moved float were searched with the float
+        // that grew.
+        bounded |= grow_ancestors_and_followers(
             document,
             cascade,
             follower,
@@ -12868,6 +12901,7 @@ fn grow_ancestors_below(
             &IfcBoxShifts::default(),
             stop,
             true,
+            Some(follower),
         )
         .0;
         // The flow past the moved float gives the move back from the box
@@ -12881,9 +12915,10 @@ fn grow_ancestors_below(
     (bounded, passed)
 }
 
-/// The walk of [`grow_ancestors_below`]. `followers` collects the floats
-/// below a float that grew inside another float, with their parent and how
-/// far each has to move.
+/// The walk of [`grow_ancestors_below`]. `limits` holds `stop` and the
+/// float whose later siblings were already searched. `followers` collects
+/// the floats below a float that grew inside another float, with their
+/// parent and how far each has to move.
 #[allow(clippy::too_many_arguments)]
 fn grow_ancestors_walk(
     document: &mut super::context::LayoutSession<'_>,
@@ -12894,7 +12929,7 @@ fn grow_ancestors_walk(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
     ifc_boxes: &IfcBoxShifts,
-    stop: Option<usize>,
+    (stop, scanned): (Option<usize>, Option<usize>),
     floats_hold_growth: bool,
     followers: &mut Vec<(usize, usize, f32)>,
 ) -> (bool, f32) {
@@ -12941,25 +12976,30 @@ fn grow_ancestors_walk(
             float_delta = size_delta;
             flow_delta = 0.0;
             size_delta = 0.0;
-            match below_grown_float(document, cascade, body_id, parent, child, grown) {
-                // A box after the float that clears it starts below it, and
-                // takes the boxes after it along.
-                Some(BelowGrownFloat::Clearing(before, clearing, clearance)) => {
-                    shifts.from_box.push((
-                        parent,
-                        child_index(document, parent, clearing),
-                        clearance,
-                    ));
-                    shifted_after = Some(before);
-                    flow_delta = clearance;
-                    size_delta = clearance;
-                }
-                // A float placed below it moves down once the walk is done,
-                // so that the content ends here are measured before it moves.
-                Some(BelowGrownFloat::Float(follower, shift)) => {
-                    followers.push((parent, follower, shift));
-                }
-                None => {}
+            let below = if scanned == Some(child) {
+                BelowGrownFloat::default()
+            } else {
+                below_grown_float(document, cascade, body_id, parent, child, grown)
+                    .unwrap_or_default()
+            };
+            // The floats placed below it move down once the walk is done,
+            // so that the content ends here are measured before they move.
+            for (follower, shift) in below.floats {
+                let box_parent = document.parent_of(follower).unwrap_or(parent);
+                followers.push((box_parent, follower, shift));
+            }
+            // A box after the float that clears it starts below it, and
+            // takes the boxes after it along.
+            if let Some((before, clearing, clearance)) = below.clearing {
+                let box_parent = document.parent_of(clearing).unwrap_or(parent);
+                shifts.from_box.push((
+                    box_parent,
+                    child_index(document, box_parent, clearing),
+                    clearance,
+                ));
+                shifted_after = Some(before);
+                flow_delta = clearance;
+                size_delta = clearance;
             }
         }
         if stop.is_none()
@@ -13082,23 +13122,26 @@ fn child_index(document: &Document, parent: usize, child: usize) -> usize {
         .unwrap_or_default()
 }
 
-/// A box that has to stay below a float that grew with the lines moved
-/// inside it (see [`below_grown_float`]).
-enum BelowGrownFloat {
-    /// An in-flow box that clears the float, with the box before it and how
-    /// far it moves down.
-    Clearing(usize, usize, f32),
-    /// A float placed below the float, with how far it moves down.
-    Float(usize, f32),
+/// The boxes after a float that grew with the lines moved inside it that
+/// have to move down to stay below it (see [`below_grown_float`]).
+#[derive(Default)]
+struct BelowGrownFloat {
+    /// The floats placed below a float that moves, each with how far it
+    /// moves down.
+    floats: Vec<(usize, f32)>,
+    /// The first in-flow box that clears a float that moves, with the box
+    /// before it and how far it moves down.
+    clearing: Option<(usize, usize, f32)>,
 }
 
-/// The first box after `float` in `parent` that has to move down to stay
-/// below the float's margin box, now that the float grew by `grown` with the
-/// lines moved inside it, when `parent` is inside another float: an in-flow
-/// box that clears the float, or a float that was placed below it. The boxes
-/// before it stay beside the float. Pagination places no box inside a float
-/// by itself; outside floats, the boxes below the float keep there through
-/// the edges [`FloatShifts`] records.
+/// The boxes after `float` in `parent` that have to move down to stay below
+/// the float's margin box, now that the float grew by `grown` with the lines
+/// moved inside it, when `parent` is inside another float: the floats that
+/// were placed below it or below one of those floats, and the first in-flow
+/// box that clears one of them. The boxes before that box stay beside the
+/// floats. Pagination places no box inside a float by itself; outside
+/// floats, the boxes below the float keep there through the edges
+/// [`FloatShifts`] records.
 fn below_grown_float(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -13114,21 +13157,40 @@ fn below_grown_float(
     if !inside_float {
         return None;
     }
-    let side = cascade.computed[float].float;
-    let children = &document.nodes[parent].children;
-    let index = children.iter().position(|&id| id == float)?;
+    // The children of `display: contents` elements are laid out as the
+    // children of `parent`.
+    let mut boxes = Vec::new();
+    let mut stack: Vec<usize> = document.nodes[parent]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        if document.nodes[id].kind() == NodeKind::Element
+            && document.nodes[id].display() == DisplayValue::Contents
+        {
+            stack.extend(document.nodes[id].children.iter().rev().copied());
+        } else {
+            boxes.push(id);
+        }
+    }
+    let index = boxes.iter().position(|&id| id == float)?;
+    let mut below = BelowGrownFloat::default();
     // Clearance is measured in normal-flow coordinates, without the
     // relative offsets of the boxes and their ancestors.
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let layout = &document.nodes[float].layout;
-    let float_bottom = flow_y(float) + layout.size.height + layout.margin.bottom;
-    for (before, next) in children[index..]
-        .iter()
-        .copied()
-        .zip(children[index + 1..].iter().copied())
-    {
+    let margin_bottom = |id: usize| {
+        let layout = &document.nodes[id].layout;
+        flow_y(id) + layout.size.height + layout.margin.bottom
+    };
+    // The floats that move, each with its side and where its margin box
+    // ended before and after the move.
+    let bottom = margin_bottom(float);
+    let mut moved = vec![(cascade.computed[float].float, bottom - grown, bottom)];
+    for (&before, &next) in boxes[index..].iter().zip(&boxes[index + 1..]) {
         // Text, an element that generates no box and a box out of the flow
         // neither clear nor move.
         if document.nodes[next].kind() != NodeKind::Element
@@ -13141,21 +13203,38 @@ fn below_grown_float(
             continue;
         }
         if is_floating_box_for_pagination(document, cascade, next) {
-            // A float that did not fit beside the float, or cleared it,
-            // starts at or below where the float ended before it grew.
+            // A float that did not fit beside a float that moves, or
+            // cleared it, starts at or below where that float ended before
+            // it moved.
             let top = flow_y(next) - document.nodes[next].layout.margin.top;
-            if top >= float_bottom - grown - 0.01 {
-                return Some(float_bottom - top)
-                    .filter(|&shift| shift > 0.001)
-                    .map(|shift| BelowGrownFloat::Float(next, shift));
+            let shift = moved
+                .iter()
+                .filter(|&&(_, old, _)| top >= old - 0.01)
+                .map(|&(_, _, new)| new - top)
+                .fold(0.0, f32::max);
+            if shift > 0.001 {
+                let bottom = margin_bottom(next);
+                moved.push((cascade.computed[next].float, bottom, bottom + shift));
+                below.floats.push((next, shift));
             }
-        } else if clears_float_side(cascade.computed[next].clear, side) {
-            return Some(float_bottom - flow_y(next))
-                .filter(|&shift| shift > 0.001)
-                .map(|shift| BelowGrownFloat::Clearing(before, next, shift));
+            continue;
+        }
+        let clear = cascade.computed[next].clear;
+        if moved
+            .iter()
+            .any(|&(side, _, _)| clears_float_side(clear, side))
+        {
+            let top = flow_y(next);
+            let shift = moved
+                .iter()
+                .filter(|&&(side, _, _)| clears_float_side(clear, side))
+                .map(|&(_, _, new)| new - top)
+                .fold(0.0, f32::max);
+            below.clearing = (shift > 0.001).then_some((before, next, shift));
+            break;
         }
     }
-    None
+    Some(below)
 }
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a
