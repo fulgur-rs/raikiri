@@ -30,7 +30,7 @@ use crate::layout::protocol::{
     SizingMode,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
-use raikiri_layout_style::values::{ExpandedDimension, Position, ResolveOrZero};
+use raikiri_layout_style::values::{AlignItemsKeyword, ExpandedDimension, Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
 use super::transposed_axes::{
@@ -575,7 +575,7 @@ impl LayoutSession<'_> {
             let share_context =
                 block_ctx.is_some() && same_vertical_block_mode(tree, block.container, idx);
             let mut inputs = transpose_inputs(inputs, share_context);
-            if block.block_space_from_content && has_percentage_width(tree, idx) {
+            if block.block_space_from_content && takes_open_width_fallback(tree, idx) {
                 // The block flow resolved the percentage against the width the
                 // content gave the container; the child resolves it again
                 // against the open width's fallback.
@@ -910,58 +910,148 @@ pub(super) fn compute_vertical_block(
 }
 
 /// Whether the physical width the parent of the vertical container `node_id`
-/// gives it, its block size, is the one its own content gives it: a flex
-/// item that keeps its content size, or an absolutely positioned box that
-/// shrinks to fit. That width is laid out as known, but browsers keep it
-/// open for the percentage widths of the container's horizontal children,
-/// which then resolve against the initial containing block as they do while
-/// it is laid out (CSS Writing Modes 4 §7.3). A width the parent stretches or
-/// flexes away from that size, or one the container states, is definite.
-///
-/// The content is measured only when a horizontal child has a percentage
-/// width, the one case where the answer matters. `inputs` are on transposed
-/// axes.
+/// gives it, its block size, is the one its own content gives it; see
+/// [`width_follows_content`]. `inputs` are on transposed axes, where that
+/// width is the known height.
 fn block_size_follows_content(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> bool {
-    let idx = usize::from(node_id);
     let Some(known) = inputs.known_dimensions.height else {
         return false;
     };
-    if !tree.physical_style(idx).size().width.is_auto()
-        || !has_horizontal_percentage_child(tree, node_id)
+    if !tree
+        .child_ids(node_id)
+        .map(usize::from)
+        .any(|child| takes_open_width_fallback(tree, child))
     {
         return false;
     }
-    let probe = LayoutInput {
-        run_mode: RunMode::ComputeSize,
-        axis: RequestedAxis::Vertical,
-        known_dimensions: Size {
-            height: None,
-            ..inputs.known_dimensions
-        },
-        ..inputs
-    };
-    let content = compute_block_flow(tree, node_id, probe, None).size.height;
-    (content - known).abs() < 0.01
+    width_follows_content(tree, usize::from(node_id), known, |tree| {
+        let probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            axis: RequestedAxis::Vertical,
+            known_dimensions: Size {
+                height: None,
+                ..inputs.known_dimensions
+            },
+            ..inputs
+        };
+        // The children fit their content in no room but the one an open
+        // width gives them, as when the parent measured the container.
+        let frame = tree
+            .context
+            .transposed_blocks
+            .last_mut()
+            .expect("the container's block is pushed");
+        let block_space = frame.block_space.take();
+        let content = compute_block_flow(tree, node_id, probe, None).size.height;
+        tree.context
+            .transposed_blocks
+            .last_mut()
+            .expect("the container's block is pushed")
+            .block_space = block_space;
+        content
+    })
 }
 
-/// Whether a child of the vertical container `node_id` flows horizontally and
-/// has a percentage width, minimum or maximum, which the container's physical
-/// width is the basis for.
-pub(super) fn has_horizontal_percentage_child(tree: &LayoutSession<'_>, node_id: NodeId) -> bool {
+/// Whether the vertical box `idx`, an orthogonal flow, has the physical width
+/// `known` that its parent gives it because its own content gives it that
+/// width. Browsers keep such a width, its block size, open for the percentage
+/// widths of its horizontal children, which then resolve against the initial
+/// containing block as they do while the box is measured (CSS Writing Modes 4
+/// §7.3). A width the box states, or one its ratio takes from a stated
+/// height, is definite. So is one its parent stretches it to, or flexes it
+/// away from its content size to:
+///
+/// - an absolutely positioned box takes its content width when it shrinks to
+///   fit;
+/// - a grid item when its `justify-self` does not stretch it;
+/// - an item across a column flex container when its alignment does not
+///   stretch it;
+/// - an item of a row flex container when its size is the content size,
+///   `measure`, and either its automatic minimum size or a content basis can
+///   have given it that size.
+fn width_follows_content(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    known: f32,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> f32,
+) -> bool {
+    let style = tree.physical_style(idx);
+    if !style.size().width.is_auto()
+        || (style.stated_aspect_ratio().is_some() && !style.size().height.is_auto())
+    {
+        return false;
+    }
+    if super::vertical_oof::has_content_decided_width(tree, idx) {
+        return true;
+    }
+    let Some(parent) = tree.taffy_parent_of(idx) else {
+        return false;
+    };
+    if tree.nodes[idx].layout_position() == Position::Absolute || is_vertical(tree, parent) {
+        return false;
+    }
+    let container = tree.physical_style(parent);
+    match tree.nodes[parent].formatting_context {
+        FormattingContext::Grid => {
+            let justify = style
+                .bridge_justify_self()
+                .unwrap_or_else(|| container.justify_items());
+            let margin = style.margin();
+            !matches!(
+                justify.keyword,
+                AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+            ) || margin.left.is_auto()
+                || margin.right.is_auto()
+        }
+        FormattingContext::Flex if !container.flex_direction_is_row() => {
+            !super::content_limits::alignment_stretches(&container, &style, false)
+        }
+        FormattingContext::Flex => {
+            let automatic_minimum = style.min_size().width.is_auto();
+            let content_basis = matches!(
+                style.flex_basis().expand(),
+                ExpandedDimension::Auto | ExpandedDimension::MaxContent
+            );
+            (automatic_minimum || content_basis) && (measure(tree) - known).abs() < 0.01
+        }
+        _ => false,
+    }
+}
+
+/// Whether the child `idx` of a vertical container resolves a percentage of
+/// its width against the fallback of an open width: an in-flow horizontal
+/// box with a percentage width, minimum or maximum.
+fn takes_open_width_fallback(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    !tree.nodes[idx].is_display_none()
+        && tree.nodes[idx].layout_position() != Position::Absolute
+        && flows_horizontally(tree, idx)
+        && has_percentage_width(tree, idx)
+}
+
+/// Whether the physical width the parent gives the vertical paragraph root
+/// `node_id` is the one its own lines give it; see [`width_follows_content`].
+/// `measure` lays the root out with its width open.
+pub(super) fn paragraph_width_follows_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    known: f32,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> f32,
+) -> bool {
+    let idx = usize::from(node_id);
     // The boxes of a paragraph are not its layout children; the element
     // children of the root stand for them.
-    tree.nodes[usize::from(node_id)]
-        .children
-        .iter()
-        .any(|&child| {
-            tree.nodes[child].kind() == raikiri_traits::NodeKind::Element
-                && flows_horizontally(tree, child)
-                && has_percentage_width(tree, child)
-        })
+    let children = tree.nodes[idx].children.clone();
+    if !children.into_iter().any(|child| {
+        tree.nodes[child].kind() == raikiri_traits::NodeKind::Element
+            && takes_open_width_fallback(tree, child)
+    }) {
+        return false;
+    }
+    width_follows_content(tree, idx, known, measure)
 }
 
 /// Whether the vertical container `idx` takes the fit-content inline size

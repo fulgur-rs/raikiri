@@ -429,3 +429,58 @@ fn a_vertical_paragraph_flex_item_follows_the_same_rule() {
         ],
     );
 }
+
+#[test]
+fn a_width_that_only_matches_the_content_size_is_classified_by_how_it_was_given() {
+    // A stretched grid item is definite even when the area is as wide as
+    // the content.
+    check(
+        &nested("display:grid;grid-template-columns:400px;height:300px", ""),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (200.0, 0.0, 200.0, 20.0)),
+        ],
+    );
+    // A flex basis that the automatic minimum meets stays open.
+    check(
+        &nested("display:flex;width:600px;height:300px", "flex:0 0 400px"),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (0.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+    // Without an automatic minimum, a flexed size is definite even when it
+    // comes to the content size.
+    check(
+        &nested(
+            "display:flex;width:400px;height:300px",
+            "flex:1 1 0;min-width:0",
+        ),
+        &[
+            ("p", (0.0, 0.0, 400.0, 300.0)),
+            ("c", (200.0, 0.0, 200.0, 20.0)),
+        ],
+    );
+    // An item that a column container centres keeps its content width.
+    check(
+        &nested(
+            "display:flex;flex-direction:column;width:500px;height:300px;align-items:center",
+            "",
+        ),
+        &[
+            ("p", (50.0, 0.0, 400.0, 20.0)),
+            ("c", (50.0, 0.0, 400.0, 20.0)),
+        ],
+    );
+    // A ratio takes a definite width from a stated height.
+    check(
+        &nested(
+            "display:flex;height:300px;align-items:start",
+            "height:300px;aspect-ratio:1",
+        ),
+        &[
+            ("p", (0.0, 0.0, 300.0, 300.0)),
+            ("c", (150.0, 0.0, 150.0, 20.0)),
+        ],
+    );
+}
