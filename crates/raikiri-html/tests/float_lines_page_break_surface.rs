@@ -331,6 +331,17 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div></div>",
             &[(0, 'X', 25), (0, 'X', 55), (1, 'X', 5), (1, 'Y', 35)],
         ),
+        // The flow after the outer float does not follow the moved float.
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div></div><div>W</div>",
+            &[
+                (0, 'W', 25),
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
         // Beside the grown float, it stays.
         (
             "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:20px'>Y</div></div>",
