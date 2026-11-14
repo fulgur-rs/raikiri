@@ -61,9 +61,13 @@ fn boxes(body: &str) -> HashMap<String, [f32; 4]> {
     found
 }
 
+/// One case: the style of the parent, the style of the container `c`, and the
+/// expected border box of each element by its `id`.
+type Case<'a> = (&'a str, &'a str, &'a [(&'a str, [f32; 4])]);
+
 /// Lay out each `(parent, container, expected)` case, a container `c` holding
 /// [`ITEMS`] in a parent with the given style, and compare the boxes.
-fn assert_cases(cases: &[(&str, &str, &[(&str, [f32; 4])])]) {
+fn assert_cases(cases: &[Case<'_>]) {
     let mut failures = Vec::new();
     for (parent, container, expected) in cases {
         let found = boxes(&format!(
