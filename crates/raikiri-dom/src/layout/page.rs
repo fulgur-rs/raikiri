@@ -1576,6 +1576,37 @@ pub(crate) fn propagated_start_page_name_with_transposed_axes<'name>(
     )
 }
 
+/// The start page value of the first in-flow item of the flex container
+/// `node_id` that has one, in the order the items are paginated. The items of
+/// a row flex line sit side by side, so the first item that names a page
+/// names the page of the whole line, whichever item it is.
+pub(crate) fn first_named_item_start_page<'name>(
+    document: &Document,
+    cascade: &'name CascadeResult,
+    node_id: usize,
+    pagination_on_transposed_axes: bool,
+) -> Option<&'name str> {
+    let boxes = BoxTree::for_layout(document);
+    pagination_child_order_borrowed(document, cascade, node_id)
+        .iter()
+        .filter(|&&child_id| {
+            !matches!(
+                boxes.identity(child_id).position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            ) && !floating_box_with_boxes(cascade, child_id, boxes)
+        })
+        .find_map(|&child_id| {
+            propagated_start_page_name_with_transposed_axes(
+                document,
+                cascade,
+                child_id,
+                None,
+                pagination_on_transposed_axes,
+            )
+            .1
+        })
+}
+
 fn propagated_start_page_name_with_order<'name>(
     document: &Document,
     cascade: &'name CascadeResult,
