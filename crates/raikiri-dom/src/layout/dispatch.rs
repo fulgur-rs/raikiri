@@ -334,6 +334,42 @@ fn ifc_parent_inline_size(
     })
 }
 
+/// Whether the physical width that the parent gives the vertical paragraph
+/// root `node_id` is the one its own lines give it, which stays open for the
+/// percentage widths of its horizontal children (see
+/// [`vertical_block::paragraph_width_follows_content`]). A root that shares
+/// the block context of its parent is not an orthogonal flow.
+fn paragraph_width_follows_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    shares_block_context: bool,
+) -> bool {
+    let Some(known) = inputs
+        .known_dimensions
+        .width
+        .filter(|_| !shares_block_context)
+    else {
+        return false;
+    };
+    vertical_block::paragraph_width_follows_content(tree, node_id, known, |tree| {
+        let probe = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            axis: RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: None,
+                ..inputs.known_dimensions
+            },
+            known_dimensions_are_definite: Size {
+                width: false,
+                ..inputs.known_dimensions_are_definite
+            },
+            ..inputs
+        };
+        compute_ifc_root(tree, node_id, probe, None).size.width
+    })
+}
+
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
 pub(crate) fn flex_item_percent_basis(
@@ -1923,7 +1959,9 @@ fn compute_ifc_root(
     // width its content took, which fixes nothing for the children.
     let definite_width = (inputs.known_dimensions.width.is_some()
         && inputs.known_dimensions_are_definite.width
-        && !(vertical_paragraph && vertical_oof::has_content_decided_width(tree, idx)))
+        && !(vertical_paragraph
+            && (vertical_oof::has_content_decided_width(tree, idx)
+                || paragraph_width_follows_content(tree, node_id, inputs, block_ctx.is_some()))))
         || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
     let writing_mode = tree.nodes[idx]

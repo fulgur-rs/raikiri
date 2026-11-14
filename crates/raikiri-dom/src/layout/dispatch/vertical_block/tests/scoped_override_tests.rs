@@ -26,6 +26,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
         container,
         right_to_left: true,
         block_space: None,
+        block_space_from_content: false,
         children: vec![child],
         container_view: None,
         child_views: HashMap::default(),
