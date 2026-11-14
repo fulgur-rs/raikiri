@@ -3562,22 +3562,17 @@ fn a_zero_min_height_does_not_keep_a_nested_paragraph_from_moving() {
 }
 
 #[test]
-fn a_paragraph_in_a_floated_section_is_not_moved_for_its_orphans() {
-    // A float is placed by the float rules rather than by the block flow, so
-    // its paragraph keeps the existing whole-box path.
+fn a_paragraph_in_a_floated_section_is_moved_for_its_orphans() {
+    // The lines inside a float break as they do in block flow: a paragraph
+    // that cannot keep its orphans on the page moves to the next one whole,
+    // as in Chromium.
     let laid_out = paragraph_after_a_spacer(
         Some("float:left;width:100px"),
         15.0,
         "orphans:3;widows:2",
         40.0,
     );
-    assert_eq!(
-        laid_out.fragments,
-        vec![
-            (0, Some(PageFragmentLineRange::new(0, 2))),
-            (1, Some(PageFragmentLineRange::new(2, 3))),
-        ]
-    );
+    assert_eq!(laid_out.fragments, whole_on_page_1());
 }
 
 #[test]

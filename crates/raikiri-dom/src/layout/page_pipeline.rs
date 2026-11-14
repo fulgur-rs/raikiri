@@ -6149,7 +6149,10 @@ fn first_box_ancestor_at_start(
         .layout_ancestors(block)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, parent, child) {
+        // A float moves apart from the boxes around it.
+        if renders_before_child(document, parent, child)
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
             break;
         }
         // Flow candidates follow their layout parents; carry the current top
@@ -10371,8 +10374,9 @@ impl CheckedParagraphs {
 /// block flow is such a block too (see [`is_flow_table_caption`]): the rows
 /// and captions after it follow its moved lines. There is no such block for
 /// text placed by positioned insets, for a block whose checks have all run,
-/// or for a nested block outside plain block flow or inside a float or an
-/// out-of-flow box.
+/// or for a nested block outside plain block flow or inside an out-of-flow
+/// box. A block inside a float is one when only floats break the plain block
+/// flow up to the body (see [`is_float_flow_paragraph`]).
 fn line_block_parent(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -10391,10 +10395,13 @@ fn line_block_parent(
             if document.layout_parent_of(parent_id)? == roots.contents_box {
                 Some((parent_id, false))
             } else {
-                (!candidate.context.is_float_descendant()
-                    && !candidate.context.is_out_of_flow_descendant()
-                    && (is_block_flow_paragraph(document, cascade, parent_id, roots.element)
-                        || is_flow_table_caption(document, cascade, parent_id, roots.element)))
+                let float_paragraph = candidate.context.is_float_descendant()
+                    && is_float_flow_paragraph(document, cascade, parent_id, roots.element);
+                (float_paragraph
+                    || !candidate.context.is_float_descendant()
+                        && !candidate.context.is_out_of_flow_descendant()
+                        && (is_block_flow_paragraph(document, cascade, parent_id, roots.element)
+                            || is_flow_table_caption(document, cascade, parent_id, roots.element)))
                 .then_some((parent_id, true))
             }
         })
@@ -11317,6 +11324,11 @@ struct SubtreeShifts {
     /// Formatting-context roots that grew around a moved float, with the
     /// growth the flow after them keeps.
     growth: Vec<(usize, f32)>,
+    /// Shifts that the flow takes from a child of a box on: each with the
+    /// box, the index of the child among its children and the shift. The
+    /// children before it keep their places, and the child and all that
+    /// follows it move.
+    from_box: Vec<(usize, usize, f32)>,
     /// Floats that the lines of their paragraph took down before the float
     /// became a candidate: the float starts where the lines put it.
     line_moved_floats: HashSet<usize>,
@@ -11329,6 +11341,9 @@ struct SubtreeShifts {
     /// Whether the last [`SubtreeShifts::leave`] took the flow out of an
     /// item that a growth moved into one that it left in place.
     left_later_item: bool,
+    /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
+    /// down below a float grown inside another float.
+    reached_moved_box: bool,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -11442,6 +11457,15 @@ impl SubtreeShifts {
             *flow_shift += growth;
             false
         });
+        let mut reached_moved_box = false;
+        self.from_box.retain(|&(parent, from, shift)| {
+            if reaches_child(document, node_id, parent, from) {
+                reached_moved_box |= shift > 0.0;
+                *flow_shift += shift;
+                return false;
+            }
+            true
+        });
         self.bounded.retain(|&(ancestor_id, delta, flow_page)| {
             if is_descendant_or_self(document, node_id, ancestor_id) {
                 return true;
@@ -11490,6 +11514,7 @@ impl SubtreeShifts {
         // column of a column flex container, is on the page it was on, which
         // the caller finds from where the flow now is.
         self.left_later_item = left_later;
+        self.reached_moved_box = reached_moved_box;
         // The flow after a grown item is on the page the item ends on, past
         // the earlier page that a subtree it leaves goes back to.
         if beside_page.is_some() {
@@ -11504,6 +11529,12 @@ impl SubtreeShifts {
     /// that a growth left in place, clearing the answer.
     fn take_left_later_item(&mut self) -> bool {
         std::mem::take(&mut self.left_later_item)
+    }
+
+    /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
+    /// down below a grown float, clearing the answer.
+    fn take_reached_moved_box(&mut self) -> bool {
+        std::mem::take(&mut self.reached_moved_box)
     }
 
     /// Stretches the rows of the containers the flow has not left when it
@@ -12487,6 +12518,7 @@ fn move_paragraph_lines(
             flow_page,
             &IfcBoxShifts::default(),
             Some(container),
+            true,
         );
         if passed > 0.001 {
             shifts.bounded.push((item, passed, flow_page));
@@ -12503,7 +12535,7 @@ fn move_paragraph_lines(
             (flow_page, moved.page),
         );
     } else if growth > 0.0 {
-        grow_ancestors_for_shift(
+        grow_ancestors_for_line_move(
             document,
             cascade,
             moved.block_id,
@@ -12581,7 +12613,7 @@ fn move_line_block(
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
-        grow_ancestors_for_shift(
+        grow_ancestors_for_line_move(
             document,
             cascade,
             moved,
@@ -12772,7 +12804,27 @@ fn grow_ancestors_for_shift(
     ifc_boxes: &IfcBoxShifts,
 ) -> bool {
     grow_ancestors_below(
-        document, cascade, node_id, delta, body_id, shifts, flow_page, ifc_boxes, None,
+        document, cascade, node_id, delta, body_id, shifts, flow_page, ifc_boxes, None, false,
+    )
+    .0
+}
+
+/// [`grow_ancestors_for_shift`] for lines that the paragraph line pass moved,
+/// or the block it moved with them: a float around them grows to hold them
+/// and leaves the flow after it where it is.
+#[allow(clippy::too_many_arguments)]
+fn grow_ancestors_for_line_move(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    body_id: usize,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+    ifc_boxes: &IfcBoxShifts,
+) -> bool {
+    grow_ancestors_below(
+        document, cascade, node_id, delta, body_id, shifts, flow_page, ifc_boxes, None, true,
     )
     .0
 }
@@ -12792,8 +12844,130 @@ fn grow_ancestors_below(
     flow_page: u32,
     ifc_boxes: &IfcBoxShifts,
     stop: Option<usize>,
+    floats_hold_growth: bool,
+) -> (bool, f32) {
+    grow_ancestors_and_followers(
+        document,
+        cascade,
+        node_id,
+        delta,
+        body_id,
+        shifts,
+        flow_page,
+        ifc_boxes,
+        stop,
+        floats_hold_growth,
+        None,
+    )
+}
+
+/// [`grow_ancestors_below`], with `scanned` the float whose later siblings
+/// were already searched for the boxes below it.
+#[allow(clippy::too_many_arguments)]
+fn grow_ancestors_and_followers(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    body_id: usize,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+    ifc_boxes: &IfcBoxShifts,
+    stop: Option<usize>,
+    floats_hold_growth: bool,
+    scanned: Option<usize>,
+) -> (bool, f32) {
+    let mut followers = Vec::new();
+    let (mut bounded, passed) = grow_ancestors_walk(
+        document,
+        cascade,
+        node_id,
+        delta,
+        body_id,
+        shifts,
+        flow_page,
+        ifc_boxes,
+        (stop, scanned),
+        floats_hold_growth,
+        &mut followers,
+    );
+    // A float below a float that grew moves down with it, and its own
+    // ancestors grow to hold it. The flow takes the move from the moved
+    // float on, and gives it back past it.
+    for (parent, follower, shift, is_float) in followers {
+        document.translate_pagination_y(follower, shift);
+        let index = child_index(document, parent, follower);
+        shifts.from_box.push((parent, index, shift));
+        if !is_float {
+            // A box that clears the float from after a block around it
+            // moves in the block's parent, and the boxes after it follow.
+            bounded |= grow_ancestors_below(
+                document,
+                cascade,
+                follower,
+                shift,
+                body_id,
+                shifts,
+                flow_page,
+                &IfcBoxShifts::default(),
+                stop,
+                true,
+            )
+            .0;
+            continue;
+        }
+        shifts.from_box.push((parent, index + 1, -shift));
+        let before = shifts.bounded.len();
+        // The boxes after the moved float were searched with the float
+        // that grew.
+        bounded |= grow_ancestors_and_followers(
+            document,
+            cascade,
+            follower,
+            shift,
+            body_id,
+            shifts,
+            flow_page,
+            &IfcBoxShifts::default(),
+            stop,
+            true,
+            Some(follower),
+        )
+        .0;
+        // The flow past the moved float gives the move back from the box
+        // after it on, not from where the walk is now.
+        let mut index = 0;
+        shifts.bounded.retain(|&(id, _, _)| {
+            index += 1;
+            index <= before || id != follower
+        });
+    }
+    (bounded, passed)
+}
+
+/// The walk of [`grow_ancestors_below`]. `limits` holds `stop` and the
+/// float whose later siblings were already searched. `followers` collects
+/// the boxes below a float that grew inside another float that move once
+/// the walk is done: each with its parent, how far it moves and whether it
+/// is a float (or a box after the float's block that clears it).
+#[allow(clippy::too_many_arguments)]
+fn grow_ancestors_walk(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    body_id: usize,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+    ifc_boxes: &IfcBoxShifts,
+    (stop, scanned): (Option<usize>, Option<usize>),
+    floats_hold_growth: bool,
+    followers: &mut Vec<(usize, usize, f32, bool)>,
 ) -> (bool, f32) {
     let mut bounded = false;
+    // The box of the parent after which its boxes move, when it is not the
+    // child the walk came from.
+    let mut shifted_after = None;
     let mut child = node_id;
     // How far the flow after `child` moved, and how much `child` moved or
     // grew: a float hanging below its content can take up part of the move.
@@ -12813,6 +12987,87 @@ fn grow_ancestors_below(
         // the moved box out.
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
+        }
+        // A float that grew with the lines inside it does not move the flow
+        // after it: only the boxes that hold their floats grow around it (CSS
+        // 2.1 §10.6.7). The flow past the float gives back the shift that
+        // reached it.
+        if floats_hold_growth
+            && matches!(
+                cascade.computed[child].float,
+                FloatValue::Left | FloatValue::Right
+            )
+            && is_floating_box_for_pagination(document, cascade, child)
+        {
+            if flow_delta.abs() > 0.001 {
+                shifts.bounded.push((child, flow_delta, flow_page));
+                bounded = true;
+            }
+            let grown = size_delta;
+            float_delta = size_delta;
+            flow_delta = 0.0;
+            size_delta = 0.0;
+            let below = if scanned == Some(child) {
+                BelowGrownFloat::default()
+            } else {
+                below_grown_float(document, cascade, body_id, parent, child, grown)
+                    .unwrap_or_default()
+            };
+            // The floats placed below it move down once the walk is done,
+            // so that the content ends here are measured before they move.
+            for (follower, shift) in below.floats {
+                let box_parent = document.parent_of(follower).unwrap_or(parent);
+                followers.push((box_parent, follower, shift, true));
+            }
+            // A box after the float that clears it starts below it, and
+            // takes the boxes after it along.
+            if let Some(clearing) = below.clearing {
+                let ClearingBox {
+                    before,
+                    node,
+                    outer,
+                    shift,
+                } = clearing;
+                let box_parent = document.parent_of(node).unwrap_or(parent);
+                match outer {
+                    // A box after the block that holds the float moves once
+                    // the walk is done, as a float below it does.
+                    None => followers.push((box_parent, node, shift, false)),
+                    Some(outer) => {
+                        shifts.from_box.push((
+                            box_parent,
+                            child_index(document, box_parent, node),
+                            shift,
+                        ));
+                        shifted_after = Some(before);
+                        flow_delta = shift;
+                        size_delta = shift;
+                        if outer != node {
+                            // A box that clears the float from inside a block of the
+                            // same formatting context moves in that block, which
+                            // grows with it: the boxes after the block follow by as
+                            // much as the block grew.
+                            document.translate_pagination_y(node, shift);
+                            let (inner_bounded, passed) = grow_ancestors_below(
+                                document,
+                                cascade,
+                                node,
+                                shift,
+                                body_id,
+                                shifts,
+                                flow_page,
+                                &IfcBoxShifts::default(),
+                                Some(parent),
+                                true,
+                            );
+                            bounded |= inner_bounded;
+                            shifted_after = Some(outer);
+                            flow_delta = passed;
+                            size_delta = passed;
+                        }
+                    }
+                }
+            }
         }
         if stop.is_none()
             && flow_delta > 0.001
@@ -12838,7 +13093,12 @@ fn grow_ancestors_below(
             );
             return (bounded, 0.0);
         }
-        shift_later_block_siblings(document, parent, child, flow_delta);
+        shift_later_block_siblings(
+            document,
+            parent,
+            shifted_after.take().unwrap_or(child),
+            flow_delta,
+        );
         let height = document.nodes[parent].layout.size.height;
         normal_block_shifts::refresh(document, cascade, body_id, parent);
         let grown = grown_auto_height(
@@ -12900,6 +13160,244 @@ fn grow_ancestors_below(
         }
     }
     (bounded, 0.0)
+}
+
+/// Whether the walk at `node_id` has reached the child of `parent` at index
+/// `from`: `node_id` is in that child or in one after it, or comes after
+/// `parent` in tree order. A node before `parent`, such as a box before the
+/// `display: contents` element `parent` is or an element that holds
+/// `parent`, has not reached it.
+fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize) -> bool {
+    let index = |up: usize, child: usize| {
+        document.nodes[up]
+            .children
+            .iter()
+            .position(|&id| id == child)
+    };
+    // The ancestors of `parent`, each with its child toward `parent`.
+    let mut toward = Vec::new();
+    let mut child = parent;
+    while let Some(up) = document.parent_of(child) {
+        toward.push((up, child));
+        child = up;
+    }
+    // Each ancestor of `node_id` with its child toward `node_id`.
+    let ancestors = std::iter::successors(Some(node_id), |&id| document.parent_of(id)).zip(
+        std::iter::successors(document.parent_of(node_id), |&id| document.parent_of(id)),
+    );
+    ancestors
+        .map(|(child, up)| {
+            if up == parent {
+                return Some(index(parent, child).is_none_or(|index| index >= from));
+            }
+            toward
+                .iter()
+                .find(|&&(ancestor, _)| ancestor == up)
+                .map(|&(_, branch)| index(up, child) > index(up, branch))
+        })
+        .find_map(|reached| reached)
+        .unwrap_or(true)
+}
+
+/// The index of `child` among the children of `parent`.
+fn child_index(document: &Document, parent: usize, child: usize) -> usize {
+    document.nodes[parent]
+        .children
+        .iter()
+        .position(|&id| id == child)
+        .unwrap_or_default()
+}
+
+/// The boxes after a float that grew with the lines moved inside it that
+/// have to move down to stay below it (see [`below_grown_float`]).
+#[derive(Default)]
+struct BelowGrownFloat {
+    /// The floats placed below a float that moves, each with how far it
+    /// moves down.
+    floats: Vec<(usize, f32)>,
+    /// The first in-flow box that clears a float that moves.
+    clearing: Option<ClearingBox>,
+}
+
+/// An in-flow box that clears a float that moves (see [`BelowGrownFloat`]).
+struct ClearingBox {
+    /// The box of the float's parent before the one that holds `node`.
+    before: usize,
+    /// The box that clears the float.
+    node: usize,
+    /// The box of the float's parent that is `node` or holds it, when
+    /// `node` is inside the float's parent.
+    outer: Option<usize>,
+    /// How far `node` moves down.
+    shift: f32,
+}
+
+/// Whether `node_id` is a block in the formatting context around it, whose
+/// boxes take part in it.
+fn shares_formatting_context(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    matches!(
+        document.nodes[node_id].display(),
+        DisplayValue::Block | DisplayValue::ListItem
+    ) && !holds_floats(document, cascade, node_id)
+}
+
+/// The children of `node_id` that are laid out as its boxes: the children
+/// of `display: contents` elements take their places.
+fn laid_out_children(document: &Document, node_id: usize) -> Vec<usize> {
+    let mut boxes = Vec::new();
+    let mut stack: Vec<usize> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        if document.nodes[id].kind() == NodeKind::Element
+            && document.nodes[id].display() == DisplayValue::Contents
+        {
+            stack.extend(document.nodes[id].children.iter().rev().copied());
+        } else {
+            boxes.push(id);
+        }
+    }
+    boxes
+}
+
+/// The boxes after `float` in `parent` that have to move down to stay below
+/// the float's margin box, now that the float grew by `grown` with the lines
+/// moved inside it, when `parent` is inside another float: the floats that
+/// were placed below it or below one of those floats, and the first in-flow
+/// box that clears one of them. The boxes before that box stay beside the
+/// floats. Pagination places no box inside a float by itself; outside
+/// floats, the boxes below the float keep there through the edges
+/// [`FloatShifts`] records.
+fn below_grown_float(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    parent: usize,
+    float: usize,
+    grown: f32,
+) -> Option<BelowGrownFloat> {
+    let inside_float = std::iter::once(parent)
+        .chain(document.layout_ancestors(parent))
+        .take_while(|&id| id != body_id)
+        .any(|id| is_floating_box_for_pagination(document, cascade, id));
+    if !inside_float {
+        return None;
+    }
+    let boxes = laid_out_children(document, parent);
+    let index = boxes.iter().position(|&id| id == float)?;
+    let mut below = BelowGrownFloat::default();
+    // Clearance is measured in normal-flow coordinates, without the
+    // relative offsets of the boxes and their ancestors.
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let margin_bottom = |id: usize| {
+        let layout = &document.nodes[id].layout;
+        flow_y(id) + layout.size.height + layout.margin.bottom
+    };
+    // The floats that move, each with its side and where its margin box
+    // ended before and after the move.
+    let bottom = margin_bottom(float);
+    let mut moved = vec![(cascade.computed[float].float, bottom - grown, bottom)];
+    // The boxes after the float in tree order, each with the box of
+    // `parent` that is it or holds it. The blocks of the same formatting
+    // context are searched inside too, and the boxes after `parent` when
+    // it is one of them.
+    let mut stack: Vec<(usize, Option<usize>)> = boxes[index + 1..]
+        .iter()
+        .rev()
+        .map(|&id| (id, Some(id)))
+        .collect();
+    let mut before = float;
+    let mut scope = parent;
+    'search: loop {
+        while let Some((next, outer)) = stack.pop() {
+            let previous = std::mem::replace(&mut before, outer.unwrap_or(next));
+            // Text, an element that generates no box and a box out of the flow
+            // neither clear nor move.
+            if document.nodes[next].kind() != NodeKind::Element
+                || document.nodes[next].display() == DisplayValue::None
+                || matches!(
+                    document.nodes[next].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+            {
+                continue;
+            }
+            if is_floating_box_for_pagination(document, cascade, next) {
+                // A float that did not fit beside a float that moves, or
+                // cleared it, starts at or below where that float ended before
+                // it moved.
+                let top = flow_y(next) - document.nodes[next].layout.margin.top;
+                let shift = moved
+                    .iter()
+                    .filter(|&&(_, old, _)| top >= old - 0.01)
+                    .map(|&(_, _, new)| new - top)
+                    .fold(0.0, f32::max);
+                if shift > 0.001 {
+                    let bottom = margin_bottom(next);
+                    moved.push((cascade.computed[next].float, bottom, bottom + shift));
+                    below.floats.push((next, shift));
+                }
+                continue;
+            }
+            // `clear` applies to block-level boxes only.
+            let clear = cascade.computed[next].clear;
+            if is_block_level_flow_box(document.nodes[next].display())
+                && moved
+                    .iter()
+                    .any(|&(side, _, _)| clears_float_side(clear, side))
+            {
+                let top = flow_y(next);
+                let shift = moved
+                    .iter()
+                    .filter(|&&(side, _, _)| clears_float_side(clear, side))
+                    .map(|&(_, _, new)| new - top)
+                    .fold(0.0, f32::max);
+                // A box that is already below the floats it clears leaves
+                // the boxes after it to clear the others.
+                if shift > 0.001 {
+                    below.clearing = Some(ClearingBox {
+                        before: previous,
+                        node: next,
+                        outer,
+                        shift,
+                    });
+                    break 'search;
+                }
+            }
+            if shares_formatting_context(document, cascade, next) {
+                stack.extend(
+                    laid_out_children(document, next)
+                        .into_iter()
+                        .rev()
+                        .map(|id| (id, outer)),
+                );
+            }
+        }
+        let Some(up) = shares_formatting_context(document, cascade, scope)
+            .then(|| document.layout_parent_of(scope))
+            .flatten()
+        else {
+            break;
+        };
+        stack = laid_out_children(document, up)
+            .into_iter()
+            .skip_while(|&id| id != scope)
+            .skip(1)
+            .map(|id| (id, None))
+            .collect();
+        stack.reverse();
+        scope = up;
+    }
+    Some(below)
 }
 
 /// Move `node_id` by `delta` after its block-start margin was truncated at a
@@ -13089,14 +13587,43 @@ fn is_block_flow_paragraph(
     block: usize,
     body_id: usize,
 ) -> bool {
-    if !matches!(
+    is_paragraph_in_flow(document, cascade, block, body_id, false)
+}
+
+/// [`is_block_flow_paragraph`] that also takes a paragraph inside a float:
+/// the boxes from it to the body may include floats, which grow with the
+/// moved lines.
+fn is_float_flow_paragraph(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+) -> bool {
+    is_paragraph_in_flow(document, cascade, block, body_id, true)
+}
+
+/// Whether `block` is a block-level paragraph laid out in plain block flow
+/// up to the body, through floats too when `through_floats` is set.
+fn is_paragraph_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+    through_floats: bool,
+) -> bool {
+    matches!(
         document.nodes[block].display(),
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-    ) {
-        return false;
-    }
-    !document.nodes[block].size_containment.height
-        && placed_in_flow_to_body(document, cascade, block, body_id, true, true)
+    ) && !document.nodes[block].size_containment.height
+        && placed_in_flow_or_floats_to_body(
+            document,
+            cascade,
+            block,
+            body_id,
+            true,
+            true,
+            through_floats,
+        )
 }
 
 /// Whether every box from `block` up to the body stacks its children in
@@ -13131,10 +13658,34 @@ fn placed_in_flow_to_body(
     through_sole_items: bool,
     through_clips: bool,
 ) -> bool {
+    placed_in_flow_or_floats_to_body(
+        document,
+        cascade,
+        block,
+        body_id,
+        through_sole_items,
+        through_clips,
+        false,
+    )
+}
+
+/// [`placed_in_flow_to_body`], which with `through_floats` also passes a
+/// float: it grows with the lines inside it, and the boxes around it follow
+/// that growth as they follow a float's (see [`grow_ancestors_below`]).
+fn placed_in_flow_or_floats_to_body(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+    through_sole_items: bool,
+    through_clips: bool,
+    through_floats: bool,
+) -> bool {
     let mut child = block;
     let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
     loop {
-        let placed_apart = is_floating_box_for_pagination(document, cascade, child)
+        let placed_apart = (!through_floats
+            && is_floating_box_for_pagination(document, cascade, child))
             || matches!(
                 document.nodes[child].position(),
                 PositionValue::Absolute | PositionValue::Fixed
@@ -13161,6 +13712,21 @@ fn placed_in_flow_to_body(
                     && (document.nodes[parent].display() == DisplayValue::Contents
                         || moves_later_siblings(document, parent)
                             && holds_moved_lines(document, cascade, parent, through_clips)) =>
+            {
+                child = parent;
+            }
+            // A float in a paragraph grows beside its lines, which stay where
+            // they are.
+            Some(parent)
+                if through_floats
+                    && is_floating_box_for_pagination(document, cascade, child)
+                    && document.nodes[parent].is_ifc_root()
+                    && document.nodes[parent].multicol.is_none()
+                    && matches!(
+                        document.nodes[parent].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    )
+                    && holds_moved_lines(document, cascade, parent, through_clips) =>
             {
                 child = parent;
             }
@@ -13691,6 +14257,10 @@ struct FloatShifts {
     /// clears that side or does not fit beside it. Floats in other contexts
     /// do not interact.
     edges: HashMap<usize, Vec<FloatEdge>>,
+    /// How far the paragraph line pass moved or grew each float it changed,
+    /// in all: the clearing boxes after the float may have to follow it that
+    /// far.
+    line_moved: HashMap<usize, f32>,
 }
 
 /// A float that a page break moved down.
@@ -13953,6 +14523,60 @@ impl FloatShifts {
                     .map(|edges| (context, edges.as_slice()))
             })
             .flatten()
+    }
+
+    /// Records the floats around the paragraph `block_id`, which holds the
+    /// text `candidate` and whose lines the paragraph line pass moved down,
+    /// growing or moving it by `amount`, for the boxes that clear the floats
+    /// and the floats after them in their formatting contexts.
+    fn record_grown_floats(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidate: &PageCandidate,
+        block_id: usize,
+        amount: f32,
+    ) {
+        if amount <= 0.0 || !candidate.context.is_float_descendant() {
+            return;
+        }
+        let mut node = Some(block_id);
+        while let Some(id) = node.filter(|&id| id != body_id) {
+            if let Some(side) = float_side_index(cascade.computed[id].float)
+                && is_floating_box_for_pagination(document, cascade, id)
+            {
+                let layout = &document.nodes[id].layout;
+                // Floors are kept in normal-flow coordinates, without the
+                // relative offsets of the float and its ancestors.
+                let top = current_abs_y(document, id)
+                    - accumulated_relative_offset_y(document, cascade, body_id, id);
+                let mut edge = float_margin_edge(
+                    document,
+                    id,
+                    side,
+                    top,
+                    layout.size.height,
+                    layout.margin.top,
+                );
+                let context = float_context_root(document, cascade, id, body_id);
+                // A float recorded before keeps the top it had then: a page
+                // break may have truncated its block-start margin.
+                if let Some(earlier) = self
+                    .edges
+                    .get(&context)
+                    .and_then(|edges| edges.iter().find(|earlier| earlier.node == id))
+                {
+                    edge.top = earlier.top;
+                }
+                self.record_edge(context, edge);
+                let moved = self.line_moved.entry(id).or_default();
+                *moved += amount;
+                let moved = *moved;
+                self.extend_later(moved);
+            }
+            node = document.layout_parent_of(id);
+        }
     }
 
     /// Raise the shift later floats may still need to at least `shift`.
