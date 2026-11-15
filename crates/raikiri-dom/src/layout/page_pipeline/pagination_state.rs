@@ -1459,8 +1459,17 @@ impl PaginationState {
         } else if self.subtree_shifts.line_moved_floats.remove(&node_id) {
             // The lines of its paragraph that came before it in the source
             // took the float along to a later page (see
-            // `floats_on_moved_lines`): it stays with them.
-            current_abs_y(document, node_id)
+            // `floats_on_moved_lines`): it stays with them, and so does what
+            // is inside it, up to its end.
+            let moved_y = current_abs_y(document, node_id);
+            let ahead = moved_y - (raw_y + self.flow_shift);
+            if ahead > 0.001 {
+                self.flow_shift += ahead;
+                self.subtree_shifts
+                    .bounded
+                    .push((node_id, ahead, self.current_page));
+            }
+            moved_y
         } else {
             raw_y + self.flow_shift
         };
@@ -2594,7 +2603,11 @@ impl PaginationState {
                         // rather than the block carrying that space along.
                         // The line is measured where the flow puts it, so the
                         // shift leaves its relative offset as it is.
+                        // A block that moves to keep its orphans, with a line
+                        // that fits beside or below the floats, takes them
+                        // along.
                         let below_floats = (lines_can_move
+                            && line_fit.lines_before_break == 0
                             && floats_put_first_line_down(
                                 document,
                                 block_id,
@@ -3032,6 +3045,7 @@ impl PaginationState {
                             shift,
                             page,
                         },
+                        None,
                     );
                     if growth.abs() > 0.001 {
                         followers
