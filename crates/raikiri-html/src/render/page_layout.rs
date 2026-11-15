@@ -25,6 +25,14 @@ pub(super) struct LaidOut {
     pub(super) continuations: Vec<Continuation>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whether the last fresh layout on this thread kept its paragraphs for
+    /// a later pass.
+    pub(super) static KEPT_PARAGRAPHS: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// What the layout of the pages reads about the first page.
 pub(super) struct PageLayout<'r, 'a> {
     pub(super) run: &'r Run<'r, 'a>,
@@ -59,12 +67,26 @@ impl PageLayout<'_, '_> {
     }
 
     /// Whether two pages of the run can have page areas of different sizes.
+    fn page_areas_can_differ(&self) -> bool {
+        differ(
+            self.page_geometries_of_the_run()
+                .map(|geometry| (geometry.content_box.width, geometry.content_box.height)),
+        )
+    }
+
+    /// Whether two pages of the run can differ in their page box, margins or
+    /// page area, which is what makes the pages be laid out again.
+    fn page_geometries_can_differ(&self) -> bool {
+        differ(self.page_geometries_of_the_run())
+    }
+
+    /// The geometry of every page context the run can ask for.
     ///
     /// The page context of a page follows from its name, whether it is the
     /// first page, and its side (see [`page_query_for_slice`]), and a page
     /// takes its name from the `page` value of an element. Every page
     /// context the run can ask for is therefore known before layout.
-    fn page_areas_can_differ(&self) -> bool {
+    fn page_geometries_of_the_run(&self) -> impl Iterator<Item = ResolvedPageGeometry> + '_ {
         let mut names: Vec<Option<&str>> = vec![None];
         let mut seen = HashSet::new();
         for value in &self.first_cascade.page_values {
@@ -74,7 +96,7 @@ impl PageLayout<'_, '_> {
                 names.push(Some(name.0.as_str()));
             }
         }
-        let mut areas = names.iter().flat_map(|name| {
+        names.into_iter().flat_map(move |name| {
             // The first page is a right page; later pages take either side.
             (0..3).map(move |page_index| {
                 let slice = PageSlice {
@@ -83,13 +105,9 @@ impl PageLayout<'_, '_> {
                     page_name: name.map(str::to_owned),
                 };
                 let page = self.page_cascader.page(&page_query_for_slice(&slice));
-                let page_box = page_box_for_page(&page, self.run.defaults);
-                let area = resolve_page_geometry(&page, page_box).content_box;
-                (area.width, area.height)
+                resolve_page_geometry(&page, page_box_for_page(&page, self.run.defaults))
             })
-        });
-        let first = areas.next();
-        areas.any(|area| Some(area) != first)
+        })
     }
 
     /// A relayout of later pages runs the run's element cascade, on the same
@@ -196,8 +214,14 @@ impl PageLayout<'_, '_> {
         let page_geometries_for = |slices: &[PageSlice]| self.page_geometries(slices);
         // The passes below lay the same content out with the same element
         // cascade at other page sizes: they break the lines of the first
-        // pass's paragraphs again instead of shaping them anew.
-        document.set_ifc_retain_paragraphs(true);
+        // pass's paragraphs again instead of shaping them anew. Pages that
+        // all have one geometry are laid out again only when there are more
+        // of them than the run allows, which ends the run: keeping a copy of
+        // every paragraph for that pass is not worth its memory.
+        let keep_paragraphs = self.page_geometries_can_differ();
+        #[cfg(test)]
+        KEPT_PARAGRAPHS.with(|kept| kept.set(Some(keep_paragraphs)));
+        document.set_ifc_retain_paragraphs(keep_paragraphs);
         let mut slices = layout_pages_with_options(
             &mut document,
             self.first_cascade,
@@ -408,4 +432,10 @@ pub(super) fn require_within_page_limit(
         }),
         _ => Ok(()),
     }
+}
+
+/// Whether `items` holds two values that are not equal.
+fn differ<T: PartialEq>(mut items: impl Iterator<Item = T>) -> bool {
+    let first = items.next();
+    items.any(|item| Some(item) != first)
 }
