@@ -88,8 +88,9 @@ pub(crate) struct LayoutContext {
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     /// The table items of column flex containers being laid out whose flex
     /// base size has the height of their captions added to the height they
-    /// state (see `dispatch::caption_table_bases`): the height the container
-    /// gives such an item is that of its whole wrapper box.
+    /// state (see [`mod@crate::layout::dispatch`], its `caption_table_bases`):
+    /// the height the container gives such an item is that of its whole
+    /// wrapper box.
     pub(crate) caption_inclusive_bases: Vec<usize>,
     /// The flex containers being laid out at a main size that is definite
     /// for breaking their lines only: the size follows from their content,
