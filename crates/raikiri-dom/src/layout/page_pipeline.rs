@@ -5825,6 +5825,7 @@ impl AvoidedBreaks {
         &self,
         document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
+        body_id: usize,
         candidate: &PageCandidate,
         fit: &BoxFit,
         table_headers: &HeaderRepeats,
@@ -5861,42 +5862,37 @@ impl AvoidedBreaks {
         });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();
-        // A replaced element is unbreakable whole, and so is a line of
-        // atomic inlines alone, which keeps the block that holds it whole.
-        let unbreakable_end = if candidate.context.is_unbreakable() {
-            Some(page_box_end - height + candidate.context.unbreakable_extent(height))
-        } else {
-            unplaced_line
-                .filter(|line| line.atomic)
-                .map(|line| flow_y + line.end_within(height))
-        };
-        let unbreakable = unbreakable_end.is_some_and(|end| {
-            // The box moves with the blocks it begins, which start above it:
-            // the page is theirs to start.
-            unbreakable_box_moves(
+        // A replaced element is unbreakable whole.
+        let unbreakable = candidate.context.is_unbreakable()
+            && unbreakable_box_moves(
                 flow_y - holder_lead,
                 holder_margin_top,
                 flow_y,
-                end,
+                page_box_end - height + candidate.context.unbreakable_extent(height),
                 page_start,
                 page_end,
-            )
-        });
+            );
         // A paragraph of one line that no text places, of generated text or
-        // atomic inlines alone, also keeps the edges that follow that line
-        // (see `unplaced_line_extent`), and moves with the blocks it begins
-        // when they cross the page end. Their margin box tells whether they
-        // start the page, as for a box that avoids a break inside it: a
-        // margin kept at the start of the first page leaves them there.
+        // atomic inlines alone, keeps the edges that follow that line (see
+        // `unplaced_line_extent`), and moves with the blocks it begins when
+        // they cross the page end. It moves only past a box before it on the
+        // page, or when the edges above its line cross the page end too:
+        // below nothing but margins and those edges, the page breaks between
+        // the edges and the line instead (see
+        // `PaginationState::break_before_unplaced_line`), as Chromium does.
         let unbreakable = unbreakable
             || unplaced_line.is_some_and(|line| {
-                avoided_box_moves(
-                    flow_y - holder_lead,
-                    holder_margin_top,
-                    flow_y + unplaced_line_extent(document, node_id, line, height),
-                    page_start,
-                    page_end,
-                )
+                let top = flow_y - holder_lead;
+                top > page_start + 0.001
+                    && starts_on_page_and_runs_past_it(
+                        top,
+                        flow_y + unplaced_line_extent(document, node_id, line, height),
+                        page_start,
+                        page_end,
+                    )
+                    && (line.start <= 0.5
+                        || flow_y + line.start > page_end + 0.001
+                        || follows_box_on_page(document, cascade, body_id, node_id, page_start))
             });
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
@@ -8433,6 +8429,8 @@ fn box_is_unbreakable(
 /// that holds it sees it.
 #[derive(Clone, Copy)]
 struct UnplacedBlockLine {
+    /// How far below the border-box top of the block the line starts.
+    start: f32,
     /// How far below the border-box top of the block the line ends.
     end: f32,
     /// Whether the line holds atomic inlines and no text: no page break goes
@@ -8507,6 +8505,7 @@ fn unplaced_line(
     let unplaced = single_unplaced_line(document, node_id)?;
     let layout = document.ifc_layout_node(node_id)?.layout;
     Some(UnplacedBlockLine {
+        start: layout.border.top + layout.padding.top + unplaced.line.top,
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
     })
@@ -10780,6 +10779,47 @@ fn flex_line_paragraph(
 /// give or take 0.001, so that moving it whole to a page can hold it.
 fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
+}
+
+/// Whether an in-flow box comes before the box `node_id` on the page that
+/// starts at `page_start`: a sibling of the box, or of an ancestor of it that
+/// is not the body, which generates an in-flow box (see
+/// [`push_in_flow_boxes_rev`]) and ends below the page start or starts on the
+/// page, empty or not. Only such a box gives the flow a break before
+/// `node_id` on the page: below nothing but margins, or the top padding and
+/// border of the boxes it begins, a box starts the page's content, as
+/// Chromium has no break before it there (CSS Fragmentation 3 §4.4).
+pub(super) fn follows_box_on_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+) -> bool {
+    let mut node = node_id;
+    let mut boxes = Vec::new();
+    while node != body_id {
+        let Some(parent) = document.parent_of(node) else {
+            return false;
+        };
+        for &child in document.nodes[parent]
+            .children
+            .iter()
+            .take_while(|&&child| child != node)
+        {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        if boxes.iter().any(|&id| {
+            let top = current_abs_y(document, id);
+            top >= page_start - 0.001
+                || top + document.nodes[id].layout.size.height > page_start + 0.001
+        }) {
+            return true;
+        }
+        boxes.clear();
+        node = parent;
+    }
+    false
 }
 
 /// Whether in-flow content comes before the box `node_id` in the flow below

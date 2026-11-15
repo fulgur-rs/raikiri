@@ -17,8 +17,8 @@ use super::{
     collapses_through, collapses_with_previous_block, content_overflow, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
-    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
-    grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
+    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
+    forced_target_page, grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
     lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
@@ -1749,6 +1749,7 @@ impl PaginationState {
         let mut overflow = avoided_breaks.measure(
             document,
             cascade,
+            body_id,
             candidate,
             &fit,
             &self.table_headers,
@@ -2755,6 +2756,8 @@ impl PaginationState {
                     || keep_first_fragment
                     || breaks_after_block)
                     && blocks.block.is_some()
+                    && (follows_box_on_page(document, cascade, body_id, block_id, page_start)
+                        || first_line_top > page_start + page_step + 0.001)
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
