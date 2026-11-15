@@ -573,8 +573,11 @@ pub(super) fn opposed_baseline_alignment(
 /// ([`ComputedValues::height_keyword`]).
 ///
 /// The ratio is dropped from the item's style, which also removes it from
-/// track sizing, so this applies only when every row track has a fixed size
-/// and the item's height contribution cannot size a row.
+/// track sizing, so this applies only when every row track and every
+/// explicit column has a fixed size: the item's height contribution cannot
+/// size a row, nor can the width its ratio gives for a fixed row size an
+/// `auto` column. Elsewhere the item measures itself and fills its area once
+/// the tracks are sized.
 pub(super) fn stretches_on_both_grid_axes(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -621,7 +624,34 @@ pub(super) fn stretches_on_both_grid_axes(
         || (cv.height_keyword.is_none()
             && stretch(settled[idx].align_self, container.align_items)
             && !any_auto([&cv.margin.top, &cv.margin.bottom]));
-    horizontal && vertical && has_only_fixed_rows(doc, cascade, parent, container)
+    horizontal
+        && vertical
+        && has_only_fixed_rows(doc, cascade, parent, container)
+        && has_only_fixed_columns(container)
+}
+
+/// Whether every column of `grid` is an explicit one of a fixed length, so
+/// that no item contributes to a column's size. The implicit columns are
+/// left out: an item whose ratio carries the height of a fixed row over to
+/// its width sizes an `auto` one.
+fn has_only_fixed_columns(values: &ComputedValues) -> bool {
+    use ComputedGridTrackBreadth::Px;
+    let fixed = |size: &ComputedGridTrackSize| {
+        matches!(
+            size,
+            ComputedGridTrackSize::Breadth(Px(_)) | ComputedGridTrackSize::MinMax(Px(_), Px(_))
+        )
+    };
+    match &values.grid_template_columns {
+        ComputedGridTemplateTracks::None => false,
+        ComputedGridTemplateTracks::List(list) => {
+            !list.components.is_empty()
+                && list.components.iter().all(|column| match column {
+                    ComputedGridTrackListComponent::Size(size) => fixed(size),
+                    ComputedGridTrackListComponent::Repeat(_) => false,
+                })
+        }
+    }
 }
 
 /// Whether in-flow grid item `idx` has a preferred aspect ratio and `auto`

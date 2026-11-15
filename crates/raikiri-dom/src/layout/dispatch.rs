@@ -1274,9 +1274,11 @@ impl LayoutSession<'_> {
             // An empty box that is not replaced content, yet has a preferred
             // aspect ratio, is a block container like any other: its sizes
             // follow block flow, including the automatic minimum size and the
-            // way a minimum or maximum carries across the ratio.
-            let ratio_block = !empty
-                && formatting_context == FormattingContext::Block
+            // way a minimum or maximum carries across the ratio. That holds
+            // while size containment measures it without its content too:
+            // a ratio that relates its content box keeps its padding and
+            // border out, which the leaf algorithm would not.
+            let ratio_block = formatting_context == FormattingContext::Block
                 && !item_is_replaced
                 && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
                 && !tree.nodes[idx].is_inline_svg_root()
@@ -5505,8 +5507,21 @@ fn with_grid_ratio_width(
     // transferred; an authored maximum width has already capped the floor.
     let ceiling = metrics.max.width.map(|maximum| maximum.max(floor));
     let normal_width = justify.keyword == raikiri_layout_style::values::AlignItemsKeyword::Normal;
+    let follows_height = tree.nodes[idx].ratio_width_follows_stretched_height;
     let mut width = inputs.known_dimensions.width.or_else(|| {
-        normal_width
+        // An item whose width follows its stretched height takes the width
+        // the ratio gives for the height of its area, and contributes the
+        // height the ratio gives for the width of its column before that.
+        if follows_height && let Some(height) = inputs.known_dimensions.height {
+            return Some(
+                replaced_size::width_for_height(
+                    (height - edges.height).max(0.0),
+                    style.aspect_ratio.expect("checked ratio"),
+                    insets,
+                ) + edges.width,
+            );
+        }
+        (normal_width || follows_height)
             .then(|| inputs.available_space.width.into_option())
             .flatten()
     });

@@ -591,7 +591,15 @@ fn apply_computed_to_style_in_session_inner(
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
             );
         }
-        if settled::is_sized_through_block_stretch(doc, cascade, idx, cv, &settled_styles) {
+        let block_stretch =
+            settled::is_sized_through_block_stretch(doc, cascade, idx, cv, &settled_styles);
+        // An `auto` margin in the row axis keeps the item at the width of
+        // its content before its area is known, as `start` alignment does.
+        doc.nodes[idx].ratio_width_follows_stretched_height = block_stretch
+            && ![&cv.margin.left, &cv.margin.right]
+                .iter()
+                .any(|margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto));
+        if block_stretch {
             settled_styles[idx].justify_self = Some(AlignItems::START);
             doc.record_pass_override(
                 idx,
