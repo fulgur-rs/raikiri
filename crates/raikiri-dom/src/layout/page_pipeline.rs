@@ -11254,8 +11254,9 @@ impl ParagraphLineFit {
     /// to `page_end`, with the computed `orphans` and `widows`. `edges` is the
     /// padding and border below the last line, which `line_metrics` does not
     /// count and which stay with that line. A paragraph of one line has
-    /// nothing to break between, so the edges are not tracked for it; the box
-    /// moves whole at the break before it.
+    /// nothing to break between, so `tail_edges` stays 0 for it; whether the
+    /// edges cross the page end is still recorded in `edges_overflow`, and
+    /// the caller moves the box whole at the break before it.
     fn measure(
         line_metrics: &[(f32, f32)],
         effective_y: f32,

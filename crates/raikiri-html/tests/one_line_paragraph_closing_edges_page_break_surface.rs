@@ -134,3 +134,31 @@ fn a_paragraph_of_more_lines_breaks_between_them() {
         ),
     ]);
 }
+
+#[test]
+fn a_paragraph_that_avoids_a_break_keeps_its_edges_with_its_last_line_below_a_float() {
+    assert_rows(&[
+        (
+            "<div style='padding-bottom:0px'><div style='height:10px'></div><p style='margin:0;width:20px;padding-bottom:40px;break-inside:avoid'><span style='float:left;width:10px;height:10px'></span>A B</p></div><div>Z</div>",
+            &[(1, 'A', 15), (2, 'B', 5), (2, 'Z', 75)],
+        ),
+        (
+            "<div style='padding-bottom:20px'><div style='height:10px'></div><p style='margin:0;width:20px;padding-bottom:40px;break-inside:avoid'><span style='float:left;width:10px;height:10px'></span>A B</p></div><div>Z</div>",
+            &[(1, 'A', 15), (2, 'B', 5), (3, 'Z', 5)],
+        ),
+    ]);
+}
+
+#[test]
+fn the_lines_after_a_block_before_pseudo_element_keep_the_edges_with_the_last_line() {
+    assert_rows(&[
+        (
+            "<style>.b::before{content:'';display:block;height:10px}</style><div style='padding-bottom:0px'><p class='b' style='margin:0;width:20px;padding-bottom:40px;orphans:1;widows:1;'>A B</p></div><div>Z</div>",
+            &[(0, 'A', 15), (1, 'B', 5), (1, 'Z', 75)],
+        ),
+        (
+            "<style>.b::before{content:'';display:block;height:10px}</style><div style='padding-bottom:0px'><p class='b' style='margin:0;width:20px;padding-bottom:60px;orphans:1;widows:1;'>A B</p></div><div>Z</div>",
+            &[(0, 'A', 15), (1, 'B', 5), (2, 'Z', 5)],
+        ),
+    ]);
+}
