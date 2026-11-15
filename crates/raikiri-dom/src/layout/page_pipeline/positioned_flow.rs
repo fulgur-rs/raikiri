@@ -419,11 +419,27 @@ pub(super) fn keep(
                     .and_then(|node| node.ifc.as_ref());
                 if let Some(lines) = ifc.and_then(|ifc| ifc.lines.as_ref()) {
                     // Revisit a suffix only after the block before it settles.
+                    // The floats of the paragraph break between their own
+                    // lines once the lines they sit on are in place, and
+                    // before the blocks after them, which can clear them.
+                    let mut floats = ifc
+                        .into_iter()
+                        .flat_map(|ifc| &ifc.boxes)
+                        .filter(|item| item.kind == IfcBoxKind::Float)
+                        .map(|item| item.node)
+                        .collect::<Vec<_>>();
+                    floats.sort_by_key(|&float| followers.source_order[float]);
+                    let mut floats = floats.into_iter().peekable();
                     let mut events = Vec::new();
                     let mut start = 0;
                     for &(block, after) in &lines.block_line_starts {
                         if after > start {
                             events.push(Event::Lines(node, start..after));
+                        }
+                        while let Some(float) = floats.next_if(|&float| {
+                            followers.source_order[float] < followers.source_order[block]
+                        }) {
+                            events.push(Event::Box(float));
                         }
                         events.push(Event::Box(block));
                         start = after;
@@ -431,14 +447,7 @@ pub(super) fn keep(
                     if start < lines.lines.len() {
                         events.push(Event::Lines(node, start..lines.lines.len()));
                     }
-                    // The floats of the paragraph break between their own
-                    // lines once the lines they sit on are in place.
-                    events.extend(
-                        ifc.into_iter()
-                            .flat_map(|ifc| &ifc.boxes)
-                            .filter(|item| item.kind == IfcBoxKind::Float)
-                            .map(|item| Event::Box(item.node)),
-                    );
+                    events.extend(floats.map(Event::Box));
                     pending.extend(events.into_iter().rev());
                 } else {
                     pending.extend(
