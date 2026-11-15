@@ -507,6 +507,10 @@ pub struct Node {
     pub(crate) flags: NodeFlags,
     /// Node kind and kind-specific fields (tagged union).
     pub(crate) data: NodeData,
+    /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
+    /// keywords, which Taffy's style cannot hold; layout resolves them to
+    /// lengths when it lays the box out.
+    pub(crate) content_limits: crate::layout::dispatch::content_limits::ContentLimits,
     /// What layout records about the box of this node, allocated by the first
     /// write: a node that layout never writes to carries none.
     state: Option<Box<BoxState>>,
@@ -711,10 +715,6 @@ pub struct BoxState {
     /// this box, which stand in for the size of its content in the axes of
     /// `size_containment` (CSS Box Sizing 4 §5). `None` is the keyword `none`.
     pub(crate) contain_intrinsic: Size<Option<f32>>,
-    /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
-    /// keywords, which Taffy's style cannot hold; layout resolves them to
-    /// lengths when it lays the box out.
-    pub(crate) content_limits: crate::layout::dispatch::content_limits::ContentLimits,
     /// The `text-group-align` of this box (CSS Text 4), which makes it the
     /// root of a group of the lines in its block formatting context.
     pub(crate) text_group_align: shodo::style::TextGroupAlign,
@@ -836,7 +836,6 @@ impl BoxState {
                 width: None,
                 height: None,
             },
-            content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,
             order: 0,
             order_modified_children: Box::new([]),
@@ -856,11 +855,9 @@ impl BoxState {
     }
 }
 
-thread_local! {
-    /// One initial state per thread, shared by every node that has none of
-    /// its own. A box state is not shareable across threads.
-    static INITIAL_BOX_STATE: &'static BoxState = Box::leak(Box::new(BoxState::initial()));
-}
+/// The initial state, shared by every node that has none of its own.
+static INITIAL_BOX_STATE: std::sync::LazyLock<BoxState> =
+    std::sync::LazyLock::new(BoxState::initial);
 
 impl std::ops::Deref for Node {
     type Target = BoxState;
@@ -868,7 +865,7 @@ impl std::ops::Deref for Node {
     fn deref(&self) -> &BoxState {
         match &self.state {
             Some(state) => state,
-            None => INITIAL_BOX_STATE.with(|initial| *initial),
+            None => &INITIAL_BOX_STATE,
         }
     }
 }
@@ -962,6 +959,7 @@ impl Node {
             parent: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
+            content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
             state: None,
         }
     }

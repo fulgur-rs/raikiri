@@ -589,12 +589,9 @@ fn a_copy_of_a_node_keeps_its_own_box_state() {
 
 #[test]
 fn a_node_without_box_state_stays_small() {
-    // The tree fields and the node's kind; the layout-side fields are behind
-    // one pointer.
-    assert!(
-        std::mem::size_of::<Node>() <= 160,
-        "{}",
-        std::mem::size_of::<Node>()
-    );
+    // The tree fields, the node's kind and the content limits, whose lengths
+    // cannot be shared between threads as the initial state is; the other
+    // layout-side fields are behind one pointer.
+    assert_eq!(std::mem::size_of::<Node>(), 168);
     assert!(std::mem::size_of::<BoxState>() > 1000);
 }
