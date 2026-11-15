@@ -4984,18 +4984,16 @@ fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
     let block = "display:block;position:relative;height:50px";
     assert!(supported(block, absolute, true));
     assert!(!supported(block, absolute, false));
-    // A static block is not their containing block: they leave the columns,
-    // and the block is one with nothing in flow inside it.
-    assert!(supported("display:block;height:50px", absolute, true));
+    // A static block is not their containing block.
+    assert!(!supported("display:block;height:50px", absolute, true));
     // A transformed block contains fixed boxes too.
     assert!(!supported(
         "display:block;position:relative;height:50px;transform:scale(2)",
         absolute,
         true,
     ));
-    // A fixed box has the viewport as its containing block, so it leaves the
-    // columns too.
-    assert!(supported(
+    // A fixed box has the viewport as its containing block.
+    assert!(!supported(
         block,
         "position:fixed;top:0;width:10px;height:20px",
         true

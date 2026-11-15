@@ -297,8 +297,19 @@ pub(crate) fn compute_multicol_layout(
     let deferred_before = tree.context.columns_deferred_layouts;
     tree.context.fragmentation_stack.push(context);
     tree.context.columns_relayout_pending = deferred || relays_out_children;
-    let (mut output, oof_deferred) =
+    let (mut output, mut oof_deferred) =
         crate::layout::dispatch::block_layout_deferring_local_oof(tree, node_id, inputs, block_ctx);
+    // Only boxes that leave the columns wait for them. The others are placed
+    // now, as the strategies cut those inside the boxes in flow with them.
+    if oof_deferred
+        && !tree
+            .children_through_contents(index)
+            .into_iter()
+            .any(|child| leaves_the_columns(tree, child))
+    {
+        crate::layout::dispatch::finish_block_local_oof(tree, node_id, &inputs, &mut output);
+        oof_deferred = false;
+    }
     // Where the pass across the whole width put the boxes in flow, which the
     // columns below may move, with the static positions of the out-of-flow
     // boxes after them.
@@ -676,10 +687,10 @@ impl FlowPass {
     }
 
     /// How the columns moved the static position of `node`, at `static_y` in
-    /// the pass. One inside a box in flow moves as far as that box. One that
-    /// the container lays out itself follows the content before it: it is
+    /// the pass. It follows the content before it in the container: it is
     /// as far past the end of the box before it as in the pass, which puts it
-    /// in a later column once it is past the end of that box's column, and
+    /// in a later column once it is past the end of that box's column (or
+    /// the end of its last piece when the columns broke it), and
     /// the column takes the place of the line across the container that it
     /// was on. After a spanner it stays below the spanner, across the whole
     /// width, and with nothing before it, it starts the first column.
@@ -694,29 +705,11 @@ impl FlowPass {
         node: usize,
         static_y: f32,
     ) -> Option<StaticMove> {
-        let shift_of = |id: usize| {
-            let &(before, _) = self.locations.get(&id)?;
-            let after = tree.nodes[id].layout.location;
-            Some(Point {
-                x: after.x - before.x,
-                y: after.y - before.y,
-            })
-        };
-        let mut current = node;
-        loop {
-            let parent = tree.taffy_parent_of(current)?;
-            if parent == container {
-                break;
-            }
-            if let Some(shift) = shift_of(parent) {
-                return Some(StaticMove {
-                    shift,
-                    column: None,
-                });
-            }
-            current = parent;
+        // Only the container's own boxes leave the columns.
+        if tree.taffy_parent_of(node)? != container {
+            return None;
         }
-        let position = children.iter().position(|&child| child == current)?;
+        let position = children.iter().position(|&child| child == node)?;
         let previous = children[..position]
             .iter()
             .rev()
@@ -744,14 +737,19 @@ impl FlowPass {
                             + past_end
                             - columns.origin.y,
                     ),
-                    None => (
-                        if after_spanner {
-                            0
-                        } else {
-                            columns.index_at(start)
-                        },
-                        layout.location.y + layout.size.height + past_end - columns.origin.y,
-                    ),
+                    None => match column_pieces(tree, container, columns, previous)[..] {
+                        // A box that the columns broke ends with its last
+                        // piece, which may be shorter than the columns.
+                        [_, .., (column, bottom)] => (column, bottom + past_end - columns.origin.y),
+                        _ => (
+                            if after_spanner {
+                                0
+                            } else {
+                                columns.index_at(start)
+                            },
+                            layout.location.y + layout.size.height + past_end - columns.origin.y,
+                        ),
+                    },
                 }
             }
             None => (0, static_y - columns.origin.y),
@@ -760,24 +758,56 @@ impl FlowPass {
             y -= column_height;
             column += 1;
         }
-        let line = Line {
-            start: columns.origin.x,
-            end: columns.origin.x + columns.context.available_width,
-        };
-        let column_start = columns.origin.x + columns.context.column_offset_x(column);
-        Some(StaticMove {
-            shift: Point {
-                x: 0.0,
-                y: columns.origin.y + y - static_y,
-            },
-            column: Some((
-                line,
-                Line {
-                    start: column_start,
-                    end: column_start + columns.context.column_width,
-                },
-            )),
+        Some(static_move_to(columns, column, y, static_y))
+    }
+}
+
+/// The pieces the columns made of the box `id`, in order, each as its column
+/// and the bottom of its border box in the container: the fragment records
+/// that the latest layout of `container` placed under its own record.
+fn column_pieces(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    columns: ColumnBox,
+    id: usize,
+) -> Vec<(usize, f32)> {
+    let records = &tree.fragment_tree;
+    let live = |index: usize| (!records.is_retired(index)).then(|| &records.fragments[index]);
+    let mut pieces: Vec<(usize, f32)> = records
+        .records_of(id)
+        .iter()
+        .filter_map(|&index| {
+            let record = live(index)?;
+            live(record.parent?).filter(|parent| parent.node_id == container)?;
+            let column = record
+                .fragmentainer
+                .checked_sub(columns.context.column_index)?;
+            Some((column, record.rect.y + record.rect.height))
         })
+        .collect();
+    pieces.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    pieces
+}
+
+/// The move that puts a static position at `y` below the top of `column`.
+fn static_move_to(columns: ColumnBox, column: usize, y: f32, static_y: f32) -> StaticMove {
+    let line = Line {
+        start: columns.origin.x,
+        end: columns.origin.x + columns.context.available_width,
+    };
+    let column_start = columns.origin.x + columns.context.column_offset_x(column);
+    StaticMove {
+        shift: Point {
+            x: 0.0,
+            y: columns.origin.y + y - static_y,
+        },
+        column: Some((
+            line,
+            Line {
+                start: column_start,
+                end: column_start + columns.context.column_width,
+            },
+        )),
     }
 }
 
@@ -1211,44 +1241,22 @@ fn multicol_ends_with_its_only_float(tree: &LayoutSession<'_>, node_id: usize) -
 }
 
 /// Whether `node_id` holds an absolutely positioned (or fixed) box that the
-/// column strategies cannot leave out: one whose containing block is a box
-/// inside the container, which breaks across the columns with that box, or
-/// one that sits on the lines of a paragraph, the container's own included,
-/// whose static position is on a line the columns may move. The same holds
-/// for any such box in a container that holds a flex or grid container (see
-/// [`keeps_positioned_boxes`]). Any other such box leaves the columns (see
-/// [`leaves_the_columns`]), so it leaves every column strategy open.
+/// column strategies cannot leave out: any such box that is not one of its
+/// own that leave the columns (see [`leaves_the_columns`]). A box inside one
+/// in flow breaks across the columns with it, or sits on the lines of a
+/// paragraph that the columns may move, so the container keeps it in its
+/// flow and the full-width path.
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
-    let mut pending: Vec<(usize, bool, bool)> = tree.nodes[node_id]
-        .children
-        .iter()
-        .map(|&child| (child, false, false))
-        .collect();
-    let mut positioned = false;
-    while let Some((child, absolute_held, fixed_held)) = pending.pop() {
+    let mut pending = tree.nodes[node_id].children.clone();
+    while let Some(child) = pending.pop() {
         let node = &tree.nodes[child];
-        positioned |= node.layout_position() == Position::Absolute;
-        let held = if node.fixed_position {
-            fixed_held
-        } else {
-            absolute_held
-        };
-        let on_lines = tree.taffy_parent_of(child).is_some_and(|parent| {
-            tree.nodes[parent].formatting_context == FormattingContext::Inline
-                || tree.nodes[parent].display().is_inline_level()
-        });
-        if node.layout_position() == Position::Absolute && (held || on_lines) {
+        let own = tree.taffy_parent_of(child) == Some(node_id) && leaves_the_columns(tree, child);
+        if node.layout_position() == Position::Absolute && !own {
             return true;
         }
-        let absolute_held = absolute_held || node.claims_absolute_oof;
-        let fixed_held = fixed_held || node.claims_fixed_oof;
-        pending.extend(
-            node.children
-                .iter()
-                .map(|&grandchild| (grandchild, absolute_held, fixed_held)),
-        );
+        pending.extend_from_slice(&node.children);
     }
-    positioned && keeps_positioned_boxes(tree, node_id)
+    false
 }
 
 /// Whether the multicol container `multicol` holds a flex or grid container.
@@ -1268,31 +1276,24 @@ fn keeps_positioned_boxes(tree: &Document, multicol: usize) -> bool {
     false
 }
 
-/// Whether `id` is an absolutely positioned (or fixed) element whose
-/// containing block is the nearest multicol container around it or a box
-/// outside that container. Such a box is laid out against its containing
-/// block, outside the fragmentation context of the columns, so the columns
-/// neither hold nor break it (CSS Multi-column 1, 8.1: "the multi-column
-/// container is the containing block"; CSS Fragmentation 3, 4.1). It is left
-/// out of the flow the column strategies lay out, with its own position.
+/// Whether `id` is an absolutely positioned (or fixed) element that a
+/// multicol container lays out itself: a child of the container, outside its
+/// lines, whose containing block is therefore the container or a box outside
+/// it. Such a box is laid out against its containing block, outside the
+/// fragmentation context of the columns, so the columns neither hold nor
+/// break it (CSS Multi-column 1, 8.1: "the multi-column container is the
+/// containing block"; CSS Fragmentation 3, 4.1). It is left out of the flow
+/// the column strategies lay out, with its own position. A container that
+/// holds a flex or grid container keeps it (see [`keeps_positioned_boxes`]).
 pub(super) fn leaves_the_columns(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
-    if node.kind() != NodeKind::Element || node.layout_position() != Position::Absolute {
-        return false;
-    }
-    let claims = |ancestor: &crate::Node| {
-        if node.fixed_position {
-            ancestor.claims_fixed_oof
-        } else {
-            ancestor.claims_absolute_oof
-        }
-    };
-    // The nearest ancestor that is a multicol container or the containing
-    // block decides: the box leaves the columns only for the former.
-    std::iter::successors(node.parent, |&ancestor| tree.nodes[ancestor].parent)
-        .find(|&ancestor| tree.nodes[ancestor].multicol.is_some() || claims(&tree.nodes[ancestor]))
-        .is_some_and(|ancestor| {
-            tree.nodes[ancestor].multicol.is_some() && !keeps_positioned_boxes(tree, ancestor)
+    node.kind() == NodeKind::Element
+        && node.layout_position() == Position::Absolute
+        && tree.taffy_parent_of(id).is_some_and(|parent| {
+            let container = &tree.nodes[parent];
+            container.multicol.is_some()
+                && container.formatting_context != FormattingContext::Inline
+                && !keeps_positioned_boxes(tree, parent)
         })
 }
 

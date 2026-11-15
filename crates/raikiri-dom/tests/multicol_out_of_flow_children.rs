@@ -172,19 +172,6 @@ fn static_position_between_blocks() {
 }
 
 #[test]
-fn out_of_flow_box_inside_a_column_child() {
-    check(
-        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\"><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"><div id=z style=\"position:absolute;top:5px;left:5px;height:10px;width:10px\"></div></div></div>",
-        &[
-            ("m", (8.0, 8.0, 200.0, 40.0)),
-            ("a", (8.0, 8.0, 100.0, 40.0)),
-            ("b", (108.0, 8.0, 100.0, 40.0)),
-            ("z", (13.0, 13.0, 10.0, 10.0)),
-        ],
-    );
-}
-
-#[test]
 fn paragraphs_in_definite_height() {
     check(
         "<div id=m style=\"columns:2;column-gap:0;width:200px;height:60px;position:relative\"><div id=p style=\"width:100%\">x x x x x x x x x x x x </div><div id=q>x x x x x x x x x x x x </div><div id=z style=\"position:absolute;top:0;left:0;height:10px;width:10px\"></div></div>",
@@ -615,5 +602,34 @@ fn box_in_a_flex_container_stays_whole() {
          <div id=f style=\"display:flex;height:200px;width:50px\">\
          <div id=a style=\"position:absolute;width:100px;height:100px\"></div></div></div>",
         &[("a", (8.0, 8.0, 100.0, 100.0))],
+    );
+}
+
+/// A definite-height container balances its content into columns shorter
+/// than itself. A static position after a box that the columns broke goes to
+/// the end of the box's last piece, 75px down the second column, not to the
+/// container's height.
+#[test]
+fn static_position_after_a_broken_box_in_balanced_columns() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;height:100px;position:relative\">\
+         <div id=a style=\"height:150px\"></div>\
+         <div id=z style=\"position:absolute;width:10px;height:10px\"></div></div>",
+        &[("z", (108.0, 83.0, 10.0, 10.0))],
+    );
+}
+
+/// A box inside a box in flow stays with it: it is placed where the content
+/// before it ended, in the column the columns moved that content to.
+#[test]
+fn box_inside_a_broken_box_follows_its_content() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\"><div id=w>\
+         <div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"></div>\
+         <div id=z style=\"position:absolute;width:10px;height:10px\"></div></div></div>",
+        &[
+            ("b", (108.0, 8.0, 100.0, 40.0)),
+            ("z", (108.0, 48.0, 10.0, 10.0)),
+        ],
     );
 }
