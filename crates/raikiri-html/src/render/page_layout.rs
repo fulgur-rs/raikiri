@@ -221,7 +221,11 @@ impl PageLayout<'_, '_> {
         let keep_paragraphs = self.page_geometries_can_differ();
         #[cfg(test)]
         KEPT_PARAGRAPHS.with(|kept| kept.set(Some(keep_paragraphs)));
-        document.set_ifc_retain_paragraphs(keep_paragraphs);
+        // Turning the keeping off would drop the paragraphs a placement probe
+        // gave the document, which serve the first pass either way.
+        if keep_paragraphs {
+            document.set_ifc_retain_paragraphs(true);
+        }
         let mut slices = layout_pages_with_options(
             &mut document,
             self.first_cascade,
