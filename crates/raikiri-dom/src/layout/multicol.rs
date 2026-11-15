@@ -331,7 +331,10 @@ pub(crate) fn compute_multicol_layout(
         && !tree
             .children_through_contents(index)
             .into_iter()
-            .any(|child| leaves_the_columns(tree, child))
+            .any(|child| {
+                leaves_the_columns(tree, child)
+                    || !paragraphs_with_out_of_flow_lines(tree, child).is_empty()
+            })
     {
         crate::layout::dispatch::finish_block_local_oof(tree, node_id, &inputs, &mut output);
         oof_deferred = false;
@@ -662,6 +665,7 @@ impl FlowPass {
             .filter(|&columns| self.deferred && placed(columns))
         {
             let children = tree.children_through_contents(index);
+            let on_lines = static_positions_on_column_lines(tree, &children);
             let moves: Vec<Option<StaticMove>> = output
                 .oof_candidates
                 .iter()
@@ -693,6 +697,13 @@ impl FlowPass {
                 )
             };
             output.oof_candidates.for_each_mut(|candidate| {
+                // A box on the lines of a paragraph goes where the columns
+                // put its line.
+                if let Some(&position) = on_lines.get(&candidate.node) {
+                    moves.next();
+                    candidate.static_position = position;
+                    return;
+                }
                 // A candidate with no move keeps its place.
                 let same = Line {
                     start: 0.0,
@@ -809,6 +820,180 @@ impl FlowPass {
     }
 }
 
+/// Whether `child` is a paragraph with an out-of-flow box on its lines.
+fn holds_out_of_flow_lines(tree: &Document, child: usize) -> bool {
+    tree.nodes[child].ifc.as_ref().is_some_and(|root| {
+        root.boxes
+            .iter()
+            .any(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+    })
+}
+
+/// The static positions of the out-of-flow boxes on the lines of the
+/// paragraphs among `children` that the columns broke, in the container: each
+/// goes with the line it sits on to the column of that line.
+fn static_positions_on_column_lines(
+    tree: &mut LayoutSession<'_>,
+    children: &[usize],
+) -> HashMap<NodeId, Point<crate::layout::protocol::AxisStaticPosition>> {
+    let mut positions = HashMap::new();
+    for &child in children {
+        let paragraphs: Vec<_> = paragraphs_with_out_of_flow_lines(tree, child)
+            .into_iter()
+            .filter(|&(paragraph, _)| {
+                tree.nodes[paragraph]
+                    .ifc
+                    .as_ref()
+                    .is_some_and(|root| root.multicol_fragments.is_some())
+            })
+            .collect();
+        for (paragraph, offset) in paragraphs {
+            let size = tree.nodes[paragraph].layout.size;
+            let mut output = LayoutOutput::HIDDEN;
+            crate::layout::ifc::boxes::place_out_of_flow(tree, paragraph, size, &mut output);
+            output.oof_candidates.translate(offset);
+            for candidate in output.oof_candidates.iter() {
+                positions.insert(candidate.node, candidate.static_position);
+            }
+        }
+    }
+    positions
+}
+
+/// The paragraphs with an out-of-flow box on their lines that `child` is or
+/// holds inside plain blocks (see [`passes_lines_through`]), each with the
+/// offset of its box from the box that holds `child`.
+fn paragraphs_with_out_of_flow_lines(tree: &Document, child: usize) -> Vec<(usize, Point<f32>)> {
+    let mut found = Vec::new();
+    let mut pending = vec![(child, Point::ZERO)];
+    while let Some((id, offset)) = pending.pop() {
+        let location = tree.nodes[id].layout.location;
+        let offset = Point {
+            x: offset.x + location.x,
+            y: offset.y + location.y,
+        };
+        if holds_out_of_flow_lines(tree, id) {
+            found.push((id, offset));
+        } else if passes_lines_through(tree, id) {
+            pending.extend(
+                tree.children_through_contents(id)
+                    .into_iter()
+                    .map(|inner| (inner, offset)),
+            );
+        }
+    }
+    found
+}
+
+/// Whether `id` is a plain block of the flow of the columns, which the
+/// column strategies break along with the paragraphs inside it: a block box
+/// with no lines and no columns of its own, which is not the containing block
+/// of the positioned boxes inside it.
+fn passes_lines_through(tree: &Document, id: usize) -> bool {
+    let node = &tree.nodes[id];
+    node.kind() == NodeKind::Element
+        && node.ifc.is_none()
+        && node.multicol.is_none()
+        && node.formatting_context == FormattingContext::Block
+        && node.position() == &PositionValue::Static
+        && !node.claims_absolute_oof
+        && !node.claims_fixed_oof
+}
+
+/// Give each out-of-flow box on the lines of a paragraph that the columns broke
+/// a record of its own, under the piece of the paragraph in the column it
+/// ends up in, once the layout has placed it. Without one, the box would be
+/// drawn under every piece of the paragraph, at its place from the first.
+pub(crate) fn record_out_of_flow_boxes_on_column_lines(tree: &mut Document) {
+    let records = &tree.fragment_tree;
+    let live = |index: &&usize| !records.is_retired(**index);
+    let mut placed = Vec::new();
+    for paragraph in 0..tree.nodes.len() {
+        let Some(root) = tree.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .filter(|root| root.multicol_fragments.is_some())
+        else {
+            continue;
+        };
+        let pieces: Vec<(usize, Point<f32>)> = records
+            .records_of(paragraph)
+            .iter()
+            .filter(live)
+            .filter_map(|&piece| Some((piece, record_origin(tree, piece)?)))
+            .collect();
+        let positioned = root
+            .boxes
+            .iter()
+            .filter(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+            .filter(|box_| {
+                pieces.len() > 1
+                    && !records
+                        .records_of(box_.node)
+                        .iter()
+                        .any(|index| live(&index))
+            });
+        for box_ in positioned {
+            let origin = tree.layout_origin_of(box_.node).unwrap_or_default();
+            // The piece in the column of the line the box sits on, else the
+            // first.
+            let column = column_of_line_box(root, box_.node);
+            let (piece, piece_origin) = *pieces
+                .iter()
+                .find(|(piece, _)| Some(records.fragments[*piece].fragmentainer) == column)
+                .unwrap_or(&pieces[0]);
+            let size = tree.nodes[box_.node].layout.size;
+            placed.push(crate::fragment::LayoutFragment {
+                node_id: box_.node,
+                parent: Some(piece),
+                fragmentainer: records.fragments[piece].fragmentainer,
+                rect: crate::fragment::FragmentRect {
+                    x: origin.x - piece_origin.x,
+                    y: origin.y - piece_origin.y,
+                    width: size.width,
+                    height: size.height,
+                },
+                fragmentainer_clip: None,
+                fragment_index: 0,
+                fragment_count: 1,
+                line_start: None,
+                line_end: None,
+            });
+        }
+    }
+    for record in placed {
+        // A layout past the cap of records fails as a whole: the caller
+        // checks the cap after this.
+        let _ = tree.fragment_tree.try_push(record);
+    }
+}
+
+/// The column of the line that the box `node` of the paragraph `root` sits
+/// on, among the columns its lines were split between.
+fn column_of_line_box(root: &crate::layout::ifc::root::IfcRoot, node: usize) -> Option<usize> {
+    let (line, _) = crate::layout::ifc::boxes::find_oof_anchor(root.lines.as_ref()?, node)?;
+    root.multicol_fragments
+        .as_ref()?
+        .iter()
+        .find(|fragment| (fragment.line_start..fragment.line_end).contains(&line))
+        .map(|fragment| fragment.fragmentainer)
+}
+
+/// Where the record `index` places the origin of its box in the layout: a
+/// record without a parent is relative to the layout origin of its box, and
+/// one with a parent to the origin of its parent.
+fn record_origin(tree: &Document, index: usize) -> Option<Point<f32>> {
+    let record = &tree.fragment_tree.fragments[index];
+    let base = match record.parent {
+        Some(parent) => record_origin(tree, parent)?,
+        None => tree.layout_origin_of(record.node_id)?,
+    };
+    Some(Point {
+        x: base.x + record.rect.x,
+        y: base.y + record.rect.y,
+    })
+}
+
 /// The pieces the columns made of the box `id`, in order, each as its column
 /// and the bottom of its border box in the container: the fragment records
 /// that the latest layout of `container` placed under its own record.
@@ -867,7 +1052,7 @@ fn paragraph_end(tree: &LayoutSession<'_>, id: usize) -> Option<(usize, f32)> {
 }
 
 /// Whether `id` is an element that generates a box.
-fn is_rendered_element(tree: &LayoutSession<'_>, id: usize) -> bool {
+fn is_rendered_element(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
     node.is_in_document() && node.kind() == NodeKind::Element && !node.is_display_none()
 }
@@ -1290,12 +1475,53 @@ fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool 
     while let Some(child) = pending.pop() {
         let node = &tree.nodes[child];
         let own = tree.taffy_parent_of(child) == Some(node_id) && leaves_the_columns(tree, child);
-        if node.layout_position() == Position::Absolute && !own {
+        if node.layout_position() == Position::Absolute
+            && !own
+            && !sits_on_column_lines(tree, node_id, child)
+        {
             return true;
         }
         pending.extend_from_slice(&node.children);
     }
     false
+}
+
+/// Whether the out-of-flow box `node` sits on the lines of the container
+/// `container` or of one of its children in flow: a box of that paragraph,
+/// which the columns move with the line it is on.
+fn sits_on_column_lines(tree: &Document, container: usize, node: usize) -> bool {
+    // The paragraph of the box, when the columns split its lines with the
+    // boxes on them.
+    let Some(root) = tree
+        .ancestors(node)
+        .find(|&id| {
+            tree.nodes[id].ifc.as_ref().is_some_and(|root| {
+                root.boxes.iter().any(|box_| {
+                    box_.node == node
+                        && box_.kind == crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow
+                })
+            })
+        })
+        .filter(|&root| {
+            !tree.nodes[root].column_span_all
+                && tree.nodes[root].ifc.as_ref().is_some_and(|root| {
+                    root.holds_only_line_boxes()
+                        && root.writing_mode == shodo::geometry::WritingMode::HorizontalTb
+                })
+        })
+    else {
+        return false;
+    };
+    let mut current = root;
+    while current != container {
+        match tree.taffy_parent_of(current) {
+            Some(parent) if parent == container || passes_lines_through(tree, parent) => {
+                current = parent;
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Whether the multicol container `multicol` holds a flex or grid container.
@@ -1510,12 +1736,14 @@ fn can_balance_atomic_paragraph(tree: &LayoutSession<'_>, child: usize, edges: B
         && paragraph_boxes_are_atomic(tree, child)
 }
 
-/// Whether the paragraph `node_id` has no box but atomic inlines.
+/// Whether the paragraph `node_id` has no box but atomic inlines and
+/// out-of-flow boxes, which go with their lines too.
 fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
+    use crate::layout::ifc::boxes::IfcBoxKind;
     tree.nodes[node_id].ifc.as_ref().is_some_and(|root| {
         root.boxes
             .iter()
-            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
+            .all(|box_| matches!(box_.kind, IfcBoxKind::Atomic | IfcBoxKind::OutOfFlow))
     })
 }
 /// Whether `child` is a block that breaks between its lines at the column
@@ -5404,6 +5632,13 @@ fn refresh_paragraph_boxes(
     context: FragmentationContext,
     chain: FlexFloatChain,
 ) {
+    // The boxes positioned inside the inline elements of its lines go with
+    // those lines to their columns.
+    if holds_out_of_flow_lines(tree, node_id) {
+        let size = tree.nodes[node_id].layout.size;
+        let mut output = LayoutOutput::HIDDEN;
+        crate::layout::ifc::boxes::place_out_of_flow(tree, node_id, size, &mut output);
+    }
     let mut first_columns = HashMap::<usize, usize>::new();
     if let Some(lines) = tree.nodes[node_id]
         .ifc
