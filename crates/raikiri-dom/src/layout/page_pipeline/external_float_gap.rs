@@ -52,6 +52,7 @@ pub(super) fn discard(
             shift: -removed,
             page: 0,
         },
+        None,
     );
     for node in boxes {
         document.translate_pagination_y(node, -(removed));

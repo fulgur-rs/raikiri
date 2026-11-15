@@ -172,47 +172,87 @@ fn a_first_line_that_moves_to_a_page_past_the_limit_halts_the_layout() {
 
 #[test]
 fn a_whole_paragraph_move_discards_the_inherited_float_gap() {
-    // An inline box among the lines, or a float of the paragraph's own, keeps
-    // the lines from moving down inside the box: it moves whole.
-    for (name, css) in [
-        ("inline box", "display:inline-block;width:10px;height:10px"),
-        ("float", "display:block;float:left;width:10px;height:10px"),
-    ] {
-        let (doc, cascade, body, root, text) =
-            paragraph_after_a_float("aaaa", 85.0, 10.0, |doc, root| {
-                doc.append_element(Some(root), "span", Some(css));
-            });
-        let (kept, state, position, doc) = keep_after_a_float(
-            &PageLayoutControl::new(None),
-            doc,
-            &cascade,
-            body,
+    // An inline box among the lines keeps the lines from moving down inside
+    // the box: it moves whole.
+    let (doc, cascade, body, root, text) =
+        paragraph_after_a_float("aaaa", 85.0, 10.0, |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:inline-block;width:10px;height:10px"),
+            );
+        });
+    let (kept, state, position, doc) = keep_after_a_float(
+        &PageLayoutControl::new(None),
+        doc,
+        &cascade,
+        body,
+        root,
+        text,
+    );
+    kept.unwrap();
+    assert_eq!(
+        state.deferred_shifts.line_splits,
+        [LineSplit {
             root,
-            text,
-        );
-        kept.unwrap();
-        assert_eq!(
-            state.deferred_shifts.line_splits,
-            [LineSplit {
-                root,
-                first_moved: 0,
-                shift: -10.0,
-                growth: -10.0,
-                page: 1,
-            }],
-            "{name}"
-        );
-        assert_eq!(
-            (
-                state.flow_shift,
-                position.effective_y,
-                position.first_line_shift
-            ),
-            (15.0, 100.0, -10.0),
-            "{name}"
-        );
-        assert_eq!(doc.nodes[root].layout.location.y, 100.0, "{name}");
-    }
+            first_moved: 0,
+            shift: -10.0,
+            growth: -10.0,
+            page: 1,
+        }]
+    );
+    assert_eq!(
+        (
+            state.flow_shift,
+            position.effective_y,
+            position.first_line_shift
+        ),
+        (15.0, 100.0, -10.0)
+    );
+    assert_eq!(doc.nodes[root].layout.location.y, 100.0);
+}
+
+#[test]
+fn a_float_of_the_paragraph_leaves_its_first_line_to_move_alone() {
+    // A float of the paragraph's own lets its lines move down inside the box,
+    // as in a paragraph without one: the first line moves alone to the page
+    // start, and the box stays and grows by the move.
+    let (doc, cascade, body, root, text) =
+        paragraph_after_a_float("aaaa", 85.0, 10.0, |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("display:block;float:left;width:10px;height:10px"),
+            );
+        });
+    let (kept, state, position, doc) = keep_after_a_float(
+        &PageLayoutControl::new(None),
+        doc,
+        &cascade,
+        body,
+        root,
+        text,
+    );
+    kept.unwrap();
+    assert_eq!(
+        state.deferred_shifts.line_splits,
+        [LineSplit {
+            root,
+            first_moved: 0,
+            shift: 5.0,
+            growth: 5.0,
+            page: 1,
+        }]
+    );
+    assert_eq!(
+        (
+            state.flow_shift,
+            position.effective_y,
+            position.first_line_shift
+        ),
+        (0.0, 100.0, 5.0)
+    );
+    assert_eq!(doc.nodes[root].layout.location.y, 85.0);
 }
 
 #[test]

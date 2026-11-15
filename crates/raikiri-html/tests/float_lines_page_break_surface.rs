@@ -982,6 +982,216 @@ fn a_float_below_a_float_grown_inside_another_float_moves_down_with_it() {
     ]);
 }
 
+/// The lines of a paragraph that holds a float break across pages as those
+/// of a paragraph without one. A float that sits on a moved line moves with
+/// it, together with its own lines, and one placed above the first line goes
+/// along when the paragraph moves to keep its orphans. A first line that a
+/// float puts below the page end leaves the float on the page.
+#[test]
+fn the_lines_of_a_paragraph_that_holds_a_float_break_across_pages() {
+    assert_rows(&[
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:right;width:20px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:right;width:20px'>X X X</div>Z Z Z Z</div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'X', 5),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:20px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:20px;height:20px'></div>Z Z Z Z Z Z</div><div>W</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'W', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z<div style='float:right;width:20px;height:20px'></div> Z Z Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z Z<div style='float:right;width:20px;height:20px'></div> Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z Z Z<div style='float:right;width:20px;height:20px'></div> Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:right;width:20px;height:80px'></div>Z Z Z Z Z Z</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:right;width:20px;height:20px'></div><span style='position:absolute'>A</span>Z Z Z Z Z Z</div>",
+            &[
+                (0, 'A', 35),
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px;height:150px'><div style='float:right;width:20px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:20px;height:60px'></div>Z Z Z Z Z Z Z Z</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z Z Z<div style='float:right;width:20px'>Y</div> Z Z Z Z</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Y', 5),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z Z<div style='float:right;width:20px'>Y</div> Z Z Z Z</div>",
+            &[
+                (0, 'Y', 65),
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z<div style='float:right;width:20px'>Y Y</div> Z Z Z Z</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Y', 5),
+                (1, 'Y', 35),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:20px'>Y Y Y Y</div>Z Z Z Z Z Z</div>",
+            &[
+                (0, 'Y', 35),
+                (0, 'Y', 65),
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Y', 5),
+                (1, 'Y', 35),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:20px;height:20px'></div>Z Z Z Z Z Z<div style='float:left;width:60px'>Y</div>Z</div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'Y', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(1, 'Z', 25), (1, 'Z', 55), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:10px'></div><div style='width:60px'><div style='float:left;width:20px;height:20px'></div>Z Z Z Z Z Z Z Z</div>",
+            &[
+                (0, 'Z', 15),
+                (0, 'Z', 45),
+                (0, 'Z', 75),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px;orphans:1;widows:1'><div style='float:right;width:20px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px;line-height:40px'><div style='float:right;width:20px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(1, 'Z', 10), (1, 'Z', 50), (2, 'Z', 10), (2, 'Z', 50)],
+        ),
+        (
+            "<div style='height:60px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z</div>",
+            &[(1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:60px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(1, 'Z', 5), (1, 'Z', 35), (1, 'Z', 65)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px;orphans:1'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(0, 'Z', 55), (1, 'Z', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(1, 'Z', 25), (1, 'Z', 55), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:40px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z</div>",
+            &[(1, 'Z', 25), (1, 'Z', 55), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:left;width:60px;height:20px'></div>Z Z Z Z Z Z<div>B</div></div>",
+            &[(1, 'Z', 25), (1, 'Z', 55), (2, 'B', 35), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'><div style='float:right;width:20px;height:20px'></div>Z Z Z Z Z Z<div>B</div></div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'B', 65),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:30px'></div><div style='width:60px'>Z Z Z Z<div style='float:right;width:20px'>Y</div> Z Z<div>B</div></div>",
+            &[
+                (0, 'Z', 35),
+                (0, 'Z', 65),
+                (1, 'B', 65),
+                (1, 'Y', 5),
+                (1, 'Z', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+    ]);
+}
+
 #[test]
 fn a_clearing_box_in_a_contents_element_breaks_below_the_float_like_its_own_child() {
     // The box clears the float, does not fit below it on the first page, and
