@@ -425,7 +425,6 @@ pub(crate) fn compute_multicol_layout(
             + multicol_resolve_inset(tree, border.bottom, basis);
         pass.columns = Some(ColumnBox {
             origin: content_origin,
-            block_end_inset,
             context: resolved,
         });
         // The authored minimum border-box height of the container.
@@ -554,8 +553,6 @@ struct FlowPass {
 struct ColumnBox {
     /// The offset of the content box from the border box.
     origin: Point<f32>,
-    /// The padding and border below the content box.
-    block_end_inset: f32,
     /// The columns.
     context: FragmentationContext,
 }
@@ -631,10 +628,6 @@ impl FlowPass {
         if let Some(columns) = self.columns.filter(|_| placed && self.deferred) {
             let index = usize::from(node_id);
             let children = tree.children_through_contents(index);
-            let column_height = columns
-                .context
-                .available_height
-                .unwrap_or(output.size.height - columns.origin.y - columns.block_end_inset);
             let moves: Vec<Option<StaticMove>> = output
                 .oof_candidates
                 .iter()
@@ -644,7 +637,6 @@ impl FlowPass {
                         index,
                         &children,
                         columns,
-                        column_height,
                         usize::from(candidate.node),
                         candidate.static_position.y.area.start,
                     )
@@ -652,32 +644,30 @@ impl FlowPass {
                 .collect();
             let mut moves = moves.into_iter();
             output.oof_candidates.for_each_mut(|candidate| {
-                // A candidate with no move keeps its place: a zero shift.
+                // A candidate with no move keeps its place.
+                let same = Line {
+                    start: 0.0,
+                    end: 1.0,
+                };
                 let moved = moves.next().flatten().unwrap_or(StaticMove {
-                    shift: Point::ZERO,
-                    column: None,
+                    shift: 0.0,
+                    line: same,
+                    column: same,
                 });
                 let (x, y) = (
                     &mut candidate.static_position.x,
                     &mut candidate.static_position.y,
                 );
-                match moved.column {
-                    // The same place in the column as across the line.
-                    Some((line, column)) if line.end > line.start => {
-                        let scale = (column.end - column.start) / (line.end - line.start);
-                        let map = |at: f32| column.start + (at - line.start) * scale;
-                        x.area = Line {
-                            start: map(x.area.start),
-                            end: map(x.area.end),
-                        };
-                    }
-                    _ => {
-                        x.area.start += moved.shift.x;
-                        x.area.end += moved.shift.x;
-                    }
-                }
-                y.area.start += moved.shift.y;
-                y.area.end += moved.shift.y;
+                // The same place in the column as across the line.
+                let (line, column) = (moved.line, moved.column);
+                let scale = (column.end - column.start) / (line.end - line.start).max(f32::EPSILON);
+                let map = |at: f32| column.start + (at - line.start) * scale;
+                x.area = Line {
+                    start: map(x.area.start),
+                    end: map(x.area.end),
+                };
+                y.area.start += moved.shift;
+                y.area.end += moved.shift;
             });
         }
         if self.deferred {
@@ -701,14 +691,10 @@ impl FlowPass {
         container: usize,
         children: &[usize],
         columns: ColumnBox,
-        column_height: f32,
         node: usize,
         static_y: f32,
     ) -> Option<StaticMove> {
         // Only the container's own boxes leave the columns.
-        if tree.taffy_parent_of(node)? != container {
-            return None;
-        }
         let position = children.iter().position(|&child| child == node)?;
         let previous = children[..position]
             .iter()
@@ -717,7 +703,7 @@ impl FlowPass {
             .find(|child| self.locations.contains_key(child));
         // Content after a spanner starts a new row of columns below it.
         let after_spanner = previous.is_some_and(|id| spanning::is_spanner(tree, id));
-        let (mut column, mut y) = match previous {
+        let (column, y) = match previous {
             Some(previous) => {
                 // The box may be taller in a column than across the
                 // container, as its lines are shorter there.
@@ -754,10 +740,6 @@ impl FlowPass {
             }
             None => (0, static_y - columns.origin.y),
         };
-        while !after_spanner && column_height > 0.0 && y > column_height + 0.01 {
-            y -= column_height;
-            column += 1;
-        }
         Some(static_move_to(columns, column, y, static_y))
     }
 }
@@ -797,17 +779,12 @@ fn static_move_to(columns: ColumnBox, column: usize, y: f32, static_y: f32) -> S
     };
     let column_start = columns.origin.x + columns.context.column_offset_x(column);
     StaticMove {
-        shift: Point {
-            x: 0.0,
-            y: columns.origin.y + y - static_y,
+        shift: columns.origin.y + y - static_y,
+        line,
+        column: Line {
+            start: column_start,
+            end: column_start + columns.context.column_width,
         },
-        column: Some((
-            line,
-            Line {
-                start: column_start,
-                end: column_start + columns.context.column_width,
-            },
-        )),
     }
 }
 
@@ -832,12 +809,12 @@ fn is_rendered_element(tree: &LayoutSession<'_>, id: usize) -> bool {
 
 /// How the columns moved the static position of an out-of-flow box.
 struct StaticMove {
-    /// The offset to add to it, in the block axis and, without `column`, in
-    /// the inline axis.
-    shift: Point<f32>,
-    /// The inline extent of the line across the container that it was on,
-    /// and of the column it is in now.
-    column: Option<(Line<f32>, Line<f32>)>,
+    /// The offset to add to it in the block axis.
+    shift: f32,
+    /// The inline extent of the line across the container that it was on.
+    line: Line<f32>,
+    /// The inline extent of the column it is in now.
+    column: Line<f32>,
 }
 
 /// Space children with a logical minimum block size that avoid breaks
