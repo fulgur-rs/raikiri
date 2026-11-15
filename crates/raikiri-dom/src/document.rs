@@ -340,7 +340,7 @@ pub struct Document {
     /// when that is not the first page. Set by the most recent paged layout.
     pub(crate) fixed_static_page_origins: HashMap<usize, f32>,
     /// The offset of each sticky box that the most recent layout found to
-    /// move, which the painter applies (see `layout::sticky`).
+    /// move, which the painter applies (see [`crate::layout::sticky`]).
     pub(crate) sticky_offsets: HashMap<usize, (f32, f32)>,
     /// The content-box heights that the children of the root element and of
     /// the body resolve percentages against when the quirks mode fill quirks

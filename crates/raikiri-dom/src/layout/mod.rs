@@ -72,7 +72,7 @@ pub(crate) mod sanitize;
 mod spanner_wrappers;
 #[cfg(test)]
 mod static_position;
-mod sticky;
+pub(crate) mod sticky;
 #[cfg(test)]
 pub(crate) mod test_support;
 
