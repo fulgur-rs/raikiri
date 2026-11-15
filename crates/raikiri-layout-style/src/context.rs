@@ -329,6 +329,17 @@ pub struct HeldCrossSize {
     /// which would win over the smaller maximum size of the main axis the item
     /// states: that maximum.
     pub main_min: Option<f32>,
+    /// Whether the maximum size of the cross axis is reported as unbounded
+    /// where the item states none, so that the flex algorithm does not carry
+    /// the maximum of the main axis across the ratio into a limit that would
+    /// clamp the content-based minimum of an `auto` cross size.
+    pub unbounded_cross_max: bool,
+    /// Whether the maximum size of the main axis is reported as unbounded
+    /// where the item states none, so that the flex algorithm does not carry
+    /// the maximum of the cross axis across the ratio itself: it applies the
+    /// ratio to the border box, and the item carries it across the boxes the
+    /// ratio relates when it measures its own content.
+    pub unbounded_main_max: bool,
 }
 
 /// How a grid parent reads the preferred aspect ratio of an item.

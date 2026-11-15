@@ -20,6 +20,8 @@ fn the_parent_measures_collapsed_width_without_reapplying_bounds_or_ratio() {
             max: true,
             size: None,
             main_min: None,
+            unbounded_cross_max: false,
+            unbounded_main_max: false,
         }),
     ] {
         let own = LayoutStyleView::new(

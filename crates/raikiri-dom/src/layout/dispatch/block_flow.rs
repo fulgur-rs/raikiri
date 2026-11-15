@@ -21,8 +21,8 @@ use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float, Position,
-    ResolveOrZero,
+    AlignContentKeyword, BoxGenerationMode, BoxSizing, Clear, Direction, ExpandedDimension, Float,
+    Position, ResolveOrZero,
 };
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
@@ -559,7 +559,18 @@ pub(crate) fn compute_block_flow(
                 AvailableSpace::Definite(limit) => fit(limit),
             },
         };
-        metrics.clamp_width(width)
+        // A box whose ratio relates its border boxes is no shorter than its
+        // padding and border, so it is no narrower than the width its ratio
+        // gives that height: an empty `aspect-ratio: 2 / 1` box with 2px of
+        // border is 8px wide. A maximum width the box states caps that.
+        let edge_floor = style
+            .aspect_ratio
+            .filter(|_| !content_box_ratio && style.box_sizing != BoxSizing::ContentBox)
+            .map_or(0.0, |ratio| {
+                let floor = metrics.inset.vertical_axis_sum() * ratio;
+                metrics.own_max.width.map_or(floor, |max| floor.min(max))
+            });
+        metrics.clamp_width(width).max(edge_floor)
     };
     // A width the content settled, with no height to go by, gives the height
     // through the aspect ratio.
