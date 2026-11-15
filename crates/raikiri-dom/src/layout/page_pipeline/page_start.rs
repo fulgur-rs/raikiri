@@ -225,12 +225,18 @@ fn before_child(
     let skip_empty = past_empty_starts
         && (current_abs_y(document, siblings[index]) - page_start).abs() <= EDGE_TOLERANCE;
     // The siblings, last first, with `display: contents` elements replaced
-    // by their children. An explicit stack, as they can nest without limit.
-    let mut pending = siblings[..index].to_vec();
+    // by their children: a stack of reverse iterators, as they can nest
+    // without limit, which reads no further back than the nearest box that
+    // decides.
+    let mut levels = vec![siblings[..index].iter().rev()];
     // The top of the nearest phantom line: its anonymous block is a box of
     // no height, unless inline content before it shares the line.
     let mut phantom_top = None;
-    while let Some(sibling) = pending.pop() {
+    while let Some(level) = levels.last_mut() {
+        let Some(&sibling) = level.next() else {
+            levels.pop();
+            continue;
+        };
         let node = &document.nodes[sibling];
         // Only boxes have a position to read.
         let span = || {
@@ -267,7 +273,7 @@ fn before_child(
                 {
                     return Before::Other;
                 }
-                pending.extend_from_slice(&node.children);
+                levels.push(node.children.iter().rev());
             }
             FlowBox::Box => {
                 let block_box = node.kind() == NodeKind::Element
