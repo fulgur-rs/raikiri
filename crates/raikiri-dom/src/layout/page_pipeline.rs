@@ -9002,39 +9002,74 @@ fn tail_edges_move(edges: f32, float_reach: f32, candidate: &PageCandidate, fit:
 
 /// The block size of the bottom padding and border of the block `node_id`
 /// that close it below its last box, when they follow that box: the block
-/// stacks its boxes in block flow, or is a paragraph that ends with a block
-/// child after its lines, and has a height that is that of its content. The
-/// body is such a block as well.
+/// stacks its boxes in block flow (see [`block_flow_closing_edges`]), or is a
+/// paragraph that ends with a block child after its lines (see
+/// [`ends_with_block_child`]), and has a height that is that of its content.
 fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize) -> Option<f32> {
+    block_flow_closing_edges(document, node_id).or_else(|| {
+        let node = &document.nodes[node_id];
+        (!node.used_writing_mode.is_vertical()
+            && ends_with_block_child(document, node_id)
+            && height_follows_content(document, node_id))
+        .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+    })
+}
+
+/// [`closing_edges_of`] for a block that stacks its boxes in block flow and
+/// holds no lines. The body is such a block as well.
+fn block_flow_closing_edges(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> Option<f32> {
     let node = &document.nodes[node_id];
     (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
-        && (moves_later_siblings(document, node_id) || ends_with_block_child(document, node_id))
+        && moves_later_siblings(document, node_id)
         && height_follows_content(document, node_id))
     .then_some(node.layout.padding.bottom + node.layout.border.bottom)
 }
 
 /// Whether the paragraph `node_id` is a block container in one column whose
-/// content ends with a block child: the block comes after all of its lines,
-/// and no other box of the paragraph, such as a float, comes after it.
+/// content ends with a block child of its own: the block comes after all of
+/// its lines, and no other box that takes part in the flow, such as a float
+/// or a generated block, comes after it. An absolutely positioned box after
+/// it does not count.
 fn ends_with_block_child(document: &Document, node_id: usize) -> bool {
-    matches!(
-        document.nodes[node_id].display(),
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-    ) && document
-        .ifc_layout_node(node_id)
-        .and_then(|node| node.ifc.as_ref())
-        .filter(|ifc| ifc.multicol_fragments.is_none())
-        .is_some_and(|ifc| {
-            let (Some(lines), Some(last)) = (ifc.lines.as_ref(), ifc.boxes.last()) else {
-                return false;
-            };
-            last.kind == IfcBoxKind::Block
-                && lines
-                    .block_line_starts
+    let node = &document.nodes[node_id];
+    node.kind() == NodeKind::Element
+        && matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::TableCaption
+        )
+        && node.multicol.is_none()
+        && document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .filter(|ifc| ifc.multicol_fragments.is_none())
+            .is_some_and(|ifc| {
+                let Some(lines) = ifc.lines.as_ref() else {
+                    return false;
+                };
+                let last = ifc
+                    .boxes
                     .iter()
-                    .any(|&(block, after)| block == last.node && after >= lines.lines.len())
-        })
+                    .rev()
+                    .find(|b| b.kind != IfcBoxKind::OutOfFlow);
+                last.is_some_and(|last| {
+                    last.kind == IfcBoxKind::Block
+                        && document.parent_of(last.node) == Some(node_id)
+                        && lines.generated_block_starts.is_empty()
+                        && lines
+                            .block_line_starts
+                            .last()
+                            .is_some_and(|&(block, after)| {
+                                block == last.node && after >= lines.lines.len()
+                            })
+                })
+            })
 }
 
 /// The block size of the bottom padding and border of the block `node_id`
@@ -9207,7 +9242,7 @@ fn lone_box_with_floats(
         match boxes[..] {
             [] if current != node_id => break,
             [only]
-                if closing_edges_of(document, current).is_some()
+                if block_flow_closing_edges(document, current).is_some()
                     && is_plain_block_box(document, only) =>
             {
                 // The box sits at its normal-flow position, less the
@@ -9220,7 +9255,7 @@ fn lone_box_with_floats(
             // know whether the document has any: a column flex container
             // then moves whole only if its item holds nothing to break at.
             [only]
-                if closing_edges_of(document, current).is_some()
+                if block_flow_closing_edges(document, current).is_some()
                     && container_moves_whole(document, cascade, only, true) =>
             {
                 content_end += normal_flow_y(document, cascade, body_id, only);
