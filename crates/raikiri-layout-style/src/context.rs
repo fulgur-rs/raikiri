@@ -405,6 +405,11 @@ pub struct ViewContext {
     /// into that axis: the item applies the limits its ratio carries over
     /// itself.
     pub unbounded_max: [bool; 2],
+    /// The least width, in the box `box-sizing` names, that the preferred
+    /// aspect ratio of a box gives the height of its padding and border. It
+    /// stands for an `auto` minimum width and raises a minimum width stated
+    /// as a smaller length.
+    pub ratio_edge_min_width: Option<f32>,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -424,6 +429,7 @@ impl Default for ViewContext {
             oof_height_follows_width: false,
             carried_min_height: None,
             unbounded_max: [false; 2],
+            ratio_edge_min_width: None,
         }
     }
 }
