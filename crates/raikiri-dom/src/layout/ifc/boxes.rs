@@ -4809,7 +4809,19 @@ fn holds_content(fragment: &shodo::Fragment<'_>) -> bool {
 pub(super) struct AnchorPlaces<'a> {
     doc: &'a Document,
     lines: &'a [shodo::Line],
-    ends: HashMap<usize, Option<f32>>,
+    ends: HashMap<usize, Option<LineEnd>>,
+}
+
+/// The end of the content of a line that reads left to right.
+#[derive(Clone, Copy)]
+struct LineEnd {
+    /// Where the spaces that hang at the end of the line start.
+    spaces: f32,
+    /// The advance of those spaces.
+    hang: f32,
+    /// Where the content ends: the end of its text without those spaces, or
+    /// of the box of an inline element or atomic inline that ends later.
+    content: f32,
 }
 
 impl<'a> AnchorPlaces<'a> {
@@ -4851,17 +4863,22 @@ impl<'a> AnchorPlaces<'a> {
                 && line.break_reason() == shodo::BreakReason::Regular
                 && line.remaining_inline_size() + SLACK >= hanging_spaces(line)
         });
-        if let Some(end) = before.and_then(|before| Some((before, self.end(before)?))) {
+        if let Some(end) = before.and_then(|before| Some((before, self.end(before)?.content))) {
             return end;
         }
+        // Only the spaces before the anchor are taken out: an end margin
+        // after them stays, and has no fragment that would tell its end.
         match trailing.then(|| self.end(index)).flatten() {
-            Some(end) => (index, position.min(end)),
+            Some(end) => (
+                index,
+                position - (position - end.spaces).clamp(0.0, end.hang),
+            ),
             None => (index, position),
         }
     }
 
-    /// Where the content of line `index` ends, when it reads left to right.
-    fn end(&mut self, index: usize) -> Option<f32> {
+    /// The end of the content of line `index`, when it reads left to right.
+    fn end(&mut self, index: usize) -> Option<LineEnd> {
         let lines = self.lines;
         *self
             .ends
@@ -4877,11 +4894,11 @@ fn hanging_spaces(line: &shodo::Line) -> f32 {
 }
 
 /// Where the content of `line` ends, before the spaces that hang at its end,
-/// when the line and all of its text read left to right. The runs of text
-/// hold those spaces; the boxes of inline elements leave them out. A tab has
-/// no glyph to tell where it ends, so a line whose trailing white space holds
-/// one is left as it is.
-fn content_end(line: &shodo::Line) -> Option<f32> {
+/// and where those spaces start, when the line and all of its text read left
+/// to right. The runs of text hold those spaces; the boxes of inline elements
+/// leave them out. A tab has no glyph to tell where it ends, so a line whose
+/// trailing white space holds one is left as it is.
+fn content_end(line: &shodo::Line) -> Option<LineEnd> {
     let trailing_tab = line
         .text()
         .get(line.text_range())
@@ -4910,12 +4927,31 @@ fn content_end(line: &shodo::Line) -> Option<f32> {
             _ => {}
         }
     }
-    let text = text.map(|end| end - hanging_spaces(line));
-    let end = match (text, boxes) {
-        (Some(text), Some(boxes)) => Some(text.max(boxes)),
-        (end, None) | (None, end) => end,
-    };
-    end.filter(|_| line.used_direction() == Direction::Ltr && !trailing_tab)
+    let hang = hanging_spaces(line);
+    let text = text.map(|end| end - hang);
+    // The fragments leave out end margins, but the line's content takes
+    // them: it ends its width after where it starts, unless an inline box
+    // with a margin of its own starts it.
+    let start = line
+        .fragments()
+        .find(|fragment| !matches!(fragment, shodo::Fragment::OutOfFlowAnchor(_)))
+        .and_then(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => Some(run.inline_start()),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.margin_rect.inline_start),
+            shodo::Fragment::InlineBox(piece) if !piece.has_start_edge => {
+                Some(piece.rect.inline_start)
+            }
+            _ => None,
+        });
+    let flow = start.map(|start| start + line.inline_size() + line.hang_end() - hang);
+    let content = [text, boxes, flow].into_iter().flatten().reduce(f32::max);
+    content
+        .map(|content| LineEnd {
+            spaces: text.unwrap_or(f32::INFINITY),
+            hang,
+            content,
+        })
+        .filter(|_| line.used_direction() == Direction::Ltr && !trailing_tab)
 }
 
 /// How far the columns moved the line `line`: the range of `fragments` that

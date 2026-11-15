@@ -196,6 +196,31 @@ fn a_box_after_the_spaces_at_the_end_of_a_paragraph_or_before_a_break_ends_the_c
     );
 }
 
+/// An end margin is not a space: a box after it keeps it.
+#[test]
+fn a_box_at_the_end_of_a_line_keeps_an_end_margin_before_it() {
+    check(
+        "",
+        &format!(
+            r#"x x x x x x x x x x x x x x x x x <span style="margin-right:15px">x </span>{}xxxxxxxx"#,
+            positioned("s")
+        ),
+        &[("s", (73.0, 38.0, 10.0, 10.0))],
+    );
+}
+
+#[test]
+fn a_box_at_the_end_of_a_paragraph_keeps_an_end_margin_before_it() {
+    let s = positioned("s");
+    for content in [
+        format!(r#"<span style="margin-right:20px">x</span>{s}"#),
+        format!(r#"<span style="margin-right:20px">x </span>{s}"#),
+        format!(r#"<span style="margin-right:20px">x</span> {s}"#),
+    ] {
+        check("", &content, &[("s", (38.0, 8.0, 10.0, 10.0))]);
+    }
+}
+
 /// The box stays on the next line inside an inline box that starts there,
 /// after spaces that do not fit, and when it was block-level, as it sits
 /// below the line either way. A box in the middle of a line keeps its place.
