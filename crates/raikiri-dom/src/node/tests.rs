@@ -588,10 +588,44 @@ fn a_copy_of_a_node_keeps_its_own_box_state() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn a_node_without_box_state_stays_small() {
-    // The tree fields, the node's kind and the content limits, whose lengths
-    // cannot be shared between threads as the initial state is; the other
-    // layout-side fields are behind one pointer.
-    assert_eq!(std::mem::size_of::<Node>(), 168);
+    // The tree fields, the node's kind, the laid-out box, which pagination
+    // moves for text as well, and the content limits, whose lengths cannot be
+    // shared between threads as the initial state is; the other layout-side
+    // fields are behind one pointer.
+    assert_eq!(std::mem::size_of::<Node>(), 264);
     assert!(std::mem::size_of::<BoxState>() > 1000);
+}
+
+#[test]
+fn laying_a_table_out_gives_its_text_no_box_state() {
+    use crate::layout::test_support::page_box_800x600;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;font:10px Ahem"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let mut texts = Vec::new();
+    for _ in 0..80 {
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        // Whitespace between rows, as markup has it.
+        texts.push(doc.append_text(table, "\n"));
+        for text in ["a", "bb cc"] {
+            let cell = doc.append_element(Some(row), "td", Some("display:table-cell"));
+            texts.push(doc.append_text(cell, text));
+        }
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    with_ahem(&mut doc);
+    let pages = crate::layout::layout_pages(&mut doc, &cascade, page_box_800x600()).unwrap();
+    // The rows fill more than one page, so pagination has moved text.
+    assert!(pages.len() > 1, "{}", pages.len());
+    assert!(doc.nodes[table].has_box_state());
+    let with_state = texts
+        .iter()
+        .filter(|&&text| doc.nodes[text].has_box_state())
+        .count();
+    assert_eq!(with_state, 0, "of {}", texts.len());
 }

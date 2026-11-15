@@ -387,7 +387,9 @@ pub(crate) fn assign_ifc_roots(
     for node in &mut doc.nodes {
         node.flags
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
-        node.ifc = None;
+        if let Some(state) = node.written_state() {
+            state.ifc = None;
+        }
     }
     crate::layout::table::anonymous::prepare(doc, cascade)?;
     // Take the engine state out so the walk can borrow the document.

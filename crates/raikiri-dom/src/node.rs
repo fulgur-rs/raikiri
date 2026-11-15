@@ -511,13 +511,23 @@ pub struct Node {
     /// keywords, which Taffy's style cannot hold; layout resolves them to
     /// lengths when it lays the box out.
     pub(crate) content_limits: crate::layout::dispatch::content_limits::ContentLimits,
+    /// The box this node was last laid out as. Other crates read it through
+    /// [`Node::layout`] and cannot write it.
+    ///
+    /// Written through [`crate::layout::context::LayoutSession::store_layout`],
+    /// which enforces the value range contract of [`BoxLayout`] (see
+    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for the reasoning
+    /// and measurements).
+    pub(crate) layout: BoxLayout,
     /// What layout records about the box of this node, allocated by the first
     /// write: a node that layout never writes to carries none.
     state: Option<Box<BoxState>>,
 }
 
-/// What the cascade's bridge and layout record on a [`Node`]: everything but
-/// the tree itself and the node's kind.
+/// What the cascade's bridge and layout record on a [`Node`], but for the few
+/// fields the node keeps itself: the laid-out box, which pagination moves for
+/// text as well, the content limits, and the display and formatting context,
+/// whose initial values depend on the node's kind.
 ///
 /// A node reaches these fields through `Deref`. It holds none of them until
 /// one is written: until then every read answers with the initial values, the
@@ -746,14 +756,6 @@ pub struct BoxState {
     pub(crate) cache: LayoutCache,
     /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
     pub(crate) ifc: Option<Box<crate::layout::ifc::root::IfcRoot>>,
-    /// The box this node was last laid out as. Other crates read it through
-    /// [`Node::layout`] and cannot write it.
-    ///
-    /// Written through [`crate::layout::context::LayoutSession::store_layout`],
-    /// which enforces the value range contract of [`BoxLayout`] (see
-    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for the reasoning
-    /// and measurements).
-    pub(crate) layout: BoxLayout,
     /// The content-box height that percentages inside this box resolved
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
@@ -847,13 +849,26 @@ impl BoxState {
             grid_items_without_baseline: Box::new([]),
             cache: LayoutCache::new(),
             ifc: None,
-            layout: BoxLayout::with_order(0),
             percent_basis_height: None,
             percent_basis_width: None,
             auto_block_size: None,
         }
     }
 }
+
+/// Store a value in a field of a node unless the node reads that value
+/// already. A plain assignment allocates the state of a node that holds none,
+/// even to store the initial value; a pass that sets a field on every node
+/// uses this so that a node layout has nothing to say about stays without.
+macro_rules! set_unless_same {
+    ($node:expr, $field:ident, $value:expr) => {{
+        let value = $value;
+        if $node.$field != value {
+            $node.$field = value;
+        }
+    }};
+}
+pub(crate) use set_unless_same;
 
 /// The initial state, shared by every node that has none of its own.
 static INITIAL_BOX_STATE: std::sync::LazyLock<BoxState> =
@@ -960,6 +975,7 @@ impl Node {
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
             content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
+            layout: BoxLayout::with_order(0),
             state: None,
         }
     }
