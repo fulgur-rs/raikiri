@@ -207,6 +207,20 @@ fn a_box_at_the_end_of_a_line_keeps_an_end_margin_before_it() {
         ),
         &[("s", (73.0, 38.0, 10.0, 10.0))],
     );
+    let atomic = r#"<span style="display:inline-block;width:10px;height:10px"></span>"#;
+    check(
+        "",
+        &format!("{atomic} {}", positioned("s")),
+        &[("s", (18.0, 8.0, 10.0, 10.0))],
+    );
+    check(
+        "",
+        &format!(
+            "x x x x x x x x x x x x x x x {atomic} x x x x {}x x",
+            positioned("s")
+        ),
+        &[("s", (98.0, 38.0, 10.0, 10.0))],
+    );
 }
 
 #[test]
