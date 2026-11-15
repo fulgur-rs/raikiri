@@ -1,11 +1,14 @@
 mod authored;
 mod break_flow;
+mod column_line_boxes;
 mod constrained_chain;
 mod lineless;
 mod paged_spanning;
 mod paragraph_group;
 pub(super) mod paragraph_spanners;
 pub(super) mod spanning;
+
+pub(crate) use column_line_boxes::record_out_of_flow_boxes_on_column_lines;
 
 use authored::AuthoredBox;
 use raikiri_layout_geometry::Edges;
@@ -898,104 +901,6 @@ fn passes_lines_through(tree: &Document, id: usize) -> bool {
         && node.position() == &PositionValue::Static
         && !node.claims_absolute_oof
         && !node.claims_fixed_oof
-}
-
-/// Give each out-of-flow box on the lines of a paragraph that the columns broke
-/// a record of its own, under the piece of the paragraph in the column it
-/// ends up in, once the layout has placed it. Without one, the box would be
-/// drawn under every piece of the paragraph, at its place from the first.
-pub(crate) fn record_out_of_flow_boxes_on_column_lines(tree: &mut Document) {
-    let records = &tree.fragment_tree;
-    let live = |index: &&usize| !records.is_retired(**index);
-    let mut placed = Vec::new();
-    for paragraph in 0..tree.nodes.len() {
-        let Some(root) = tree.nodes[paragraph]
-            .ifc
-            .as_ref()
-            .filter(|root| root.multicol_fragments.is_some())
-        else {
-            continue;
-        };
-        let pieces: Vec<(usize, Point<f32>)> = records
-            .records_of(paragraph)
-            .iter()
-            .filter(live)
-            .filter_map(|&piece| Some((piece, record_origin(tree, piece)?)))
-            .collect();
-        let positioned = root
-            .boxes
-            .iter()
-            .filter(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
-            .filter(|box_| {
-                pieces.len() > 1
-                    && !records
-                        .records_of(box_.node)
-                        .iter()
-                        .any(|index| live(&index))
-            });
-        for box_ in positioned {
-            let origin = tree.layout_origin_of(box_.node).unwrap_or_default();
-            // The piece in the column of the line the box sits on, else the
-            // first.
-            let column = column_of_line_box(tree, root, box_.node);
-            let (piece, piece_origin) = *pieces
-                .iter()
-                .find(|(piece, _)| Some(records.fragments[*piece].fragmentainer) == column)
-                .unwrap_or(&pieces[0]);
-            let size = tree.nodes[box_.node].layout.size;
-            placed.push(crate::fragment::LayoutFragment {
-                node_id: box_.node,
-                parent: Some(piece),
-                fragmentainer: records.fragments[piece].fragmentainer,
-                rect: crate::fragment::FragmentRect {
-                    x: origin.x - piece_origin.x,
-                    y: origin.y - piece_origin.y,
-                    width: size.width,
-                    height: size.height,
-                },
-                fragmentainer_clip: None,
-                fragment_index: 0,
-                fragment_count: 1,
-                line_start: None,
-                line_end: None,
-            });
-        }
-    }
-    for record in placed {
-        // A layout past the cap of records fails as a whole: the caller
-        // checks the cap after this.
-        let _ = tree.fragment_tree.try_push(record);
-    }
-}
-
-/// The column of the line that the box `node` of the paragraph `root` sits
-/// on, among the columns its lines were split between.
-fn column_of_line_box(
-    tree: &Document,
-    root: &crate::layout::ifc::root::IfcRoot,
-    node: usize,
-) -> Option<usize> {
-    let (line, _) = crate::layout::ifc::boxes::find_oof_anchor(tree, root.lines.as_ref()?, node)?;
-    root.multicol_fragments
-        .as_ref()?
-        .iter()
-        .find(|fragment| (fragment.line_start..fragment.line_end).contains(&line))
-        .map(|fragment| fragment.fragmentainer)
-}
-
-/// Where the record `index` places the origin of its box in the layout: a
-/// record without a parent is relative to the layout origin of its box, and
-/// one with a parent to the origin of its parent.
-fn record_origin(tree: &Document, index: usize) -> Option<Point<f32>> {
-    let record = &tree.fragment_tree.fragments[index];
-    let base = match record.parent {
-        Some(parent) => record_origin(tree, parent)?,
-        None => tree.layout_origin_of(record.node_id)?,
-    };
-    Some(Point {
-        x: base.x + record.rect.x,
-        y: base.y + record.rect.y,
-    })
 }
 
 /// The pieces the columns made of the box `id`, in order, each as its column
