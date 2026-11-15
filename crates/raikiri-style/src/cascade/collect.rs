@@ -27,6 +27,7 @@ use crate::error::CascadeLimitKind;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleQuirksMode};
 
+use super::hidden_elements::push_hidden_element_display;
 use super::html_quirks::{
     SubstantialBoundsCache, push_dimension_hints, push_margin_collapsing_quirk_declarations,
 };
@@ -600,6 +601,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
         // continues to check the outcome this comment claims.
         push_dimension_hints(elem, &mut sink)?;
+        push_hidden_element_display(elem, &mut sink)?;
         push_list_attribute_hints(elem, &mut sink)?;
         push_table_attribute_hints(
             dom,

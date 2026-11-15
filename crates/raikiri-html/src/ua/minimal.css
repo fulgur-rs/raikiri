@@ -233,9 +233,12 @@ details[open] > summary:first-of-type { list-style-type: disclosure-open; }
  * an author rule that gives them a size (`* { height: 100% }`) makes
  * `<head>` a box that pushes the body down. Only the names that exist in no
  * other namespace are carried: a type selector also matches the SVG
- * `script`, `style` and `title`, whose declarations the SVG pipeline lists
- * and whose content the paint gate already skips. `[hidden]` and `noscript`
- * (hidden only when scripting is enabled) are left out as well. */
+ * `script`, `style` and `title`, whose declarations the SVG pipeline lists.
+ * The cascade adds the same user agent `display: none` to the HTML
+ * `script`, `style`, `title` and `noscript` (scripting counts as enabled),
+ * and to no SVG element (see `push_hidden_element_display` in
+ * raikiri-style), so an author `display` still wins over it as it does over
+ * this rule. `[hidden]` is left out as well. */
 area, base, basefont, datalist, head, link, meta, noembed, noframes, param, rp,
 template { display: none; }
 
