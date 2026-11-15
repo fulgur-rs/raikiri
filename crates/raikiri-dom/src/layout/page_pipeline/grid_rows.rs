@@ -210,7 +210,7 @@ fn unbreakable_piece(
     }
     unplaced_line(document, cascade, item)
         .filter(|line| line.atomic)
-        .map(|line| line.end.min(node.layout.size.height))
+        .map(|line| line.end_within(node.layout.size.height))
 }
 
 fn plain_block_ancestors(

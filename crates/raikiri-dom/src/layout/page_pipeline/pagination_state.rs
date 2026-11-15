@@ -1600,7 +1600,12 @@ impl PaginationState {
                                     .or(candidate
                                         .context
                                         .unplaced_line()
-                                        .map(|line| line.end.min(height)))
+                                        .filter(|&line| {
+                                            super::unplaced_line_ends_content(
+                                                document, node_id, line, height,
+                                            )
+                                        })
+                                        .map(|line| line.end_within(height)))
                                     .unwrap_or(height)
                                 <= next_page_step + 0.001
                             || super::contained_cloned_leading_holder(
@@ -2572,9 +2577,6 @@ impl PaginationState {
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
-            // A block moved whole may break once more, between the edges it
-            // moved below and its first line (see below).
-            let mut moved_below_edges = false;
             loop {
                 let page_start = page_origins.origin(page);
                 let page_step = page_origins.step_at(page);
@@ -2672,15 +2674,7 @@ impl PaginationState {
                     && own_closing_edges > 0.0
                     && line_fit.edges_overflow
                     && follows_content();
-                // A block moved whole below the padding and border of the
-                // boxes it begins, whose first line still crosses the end of
-                // the page they start, breaks between those edges and the
-                // line, as it would on any page those boxes start.
-                let line_crosses_below_moved_edges = moved_whole
-                    && !moved_below_edges
-                    && line_fit.lines_before_break == 0
-                    && block_effective_y > page_start + 0.001;
-                let can_move_block = !((moved_whole && !line_crosses_below_moved_edges)
+                let can_move_block = !(moved_whole
                     || leading_page_lines
                     || keep_first_fragment
                     || breaks_after_block)
@@ -2689,6 +2683,29 @@ impl PaginationState {
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
                         || (line_fit.leaves_too_few_orphans() && follows_content()));
+                // A block moved whole below the padding and border of the
+                // boxes it begins, where they leave its first line no room
+                // before the page end, breaks between those edges and the
+                // line, as Chromium does: the line starts the page after.
+                if moved_whole
+                    && lines_can_move
+                    && line_fit.lines_before_break == 0
+                    && block_effective_y > page_start + 0.001
+                    && first_line_top < page_start + page_step - 0.001
+                {
+                    let next = page.saturating_add(1);
+                    reach_page(control, next)?;
+                    return self.move_lines(
+                        document,
+                        env,
+                        candidate,
+                        entry,
+                        blocks,
+                        text,
+                        block_id,
+                        [(0, page_origins.origin(next) - first_line_top, next)],
+                    );
+                }
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
@@ -2705,7 +2722,6 @@ impl PaginationState {
                         break;
                     }
                     LineBreakFix::MoveBlock => {
-                        moved_below_edges = moved_whole;
                         page = page.saturating_add(1);
                         // The floats that put the first line down end where
                         // it starts, so they stay on the page it leaves. The

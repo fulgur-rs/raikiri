@@ -86,9 +86,7 @@ fn a_block_after_content_starts_the_next_page_and_its_line_the_one_after() {
 
 #[test]
 fn a_block_that_starts_the_page_leaves_its_edges_there() {
-    // The generated paragraph is left out: the style element that generates
-    // its text comes before the block in the body.
-    for paragraph in [PARAGRAPHS[0], PARAGRAPHS[2]] {
+    for paragraph in PARAGRAPHS {
         for edge in ["padding-top:90px", "border-top:75px solid"] {
             let body = document("", edge, paragraph);
             assert_eq!(glyph_tops(&body), [(1, 'A', 5), (1, 'Z', 55)], "{body}");

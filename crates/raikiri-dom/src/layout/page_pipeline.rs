@@ -5866,7 +5866,7 @@ impl AvoidedBreaks {
         } else {
             unplaced_line
                 .filter(|line| line.atomic)
-                .map(|line| flow_y + line.end.min(height))
+                .map(|line| flow_y + line.end_within(height))
         };
         let unbreakable = unbreakable_end.is_some_and(|end| {
             // The box moves with the blocks it begins, which start above it:
@@ -5995,7 +5995,7 @@ impl AvoidedBreaks {
                     .is_some_and(|line| {
                         item_moves_past_page_end(
                             effective_y,
-                            line.end.min(height),
+                            line.end_within(height),
                             margin_top,
                             page_start,
                             page_end,
@@ -8438,6 +8438,27 @@ struct UnplacedBlockLine {
     atomic: bool,
 }
 
+impl UnplacedBlockLine {
+    /// Where the line ends below the border-box top of its block, of block
+    /// size `height`: a block shorter than its line ends where the block does.
+    fn end_within(self, height: f32) -> f32 {
+        self.end.min(height)
+    }
+}
+
+/// Whether the content box of the block `node_id`, of block size `height`,
+/// ends at its unplaced `line`, or above it: no height of the block's own goes
+/// on below the line.
+fn unplaced_line_ends_content(
+    document: &Document,
+    node_id: usize,
+    line: UnplacedBlockLine,
+    height: f32,
+) -> bool {
+    let layout = &document.nodes[node_id].layout;
+    height - layout.padding.bottom - layout.border.bottom - line.end <= 0.01
+}
+
 /// How far below the border-box top of the block `node_id`, of block size
 /// `height`, its unplaced `line` keeps the block whole. The padding and border
 /// below the line go with it when the content box ends at the line: no break
@@ -8450,12 +8471,10 @@ fn unplaced_line_extent(
     line: UnplacedBlockLine,
     height: f32,
 ) -> f32 {
-    let layout = &document.nodes[node_id].layout;
-    let content_end = height - layout.padding.bottom - layout.border.bottom;
-    if (content_end - line.end).abs() <= 0.01 {
+    if unplaced_line_ends_content(document, node_id, line, height) {
         height
     } else {
-        line.end.min(height)
+        line.end_within(height)
     }
 }
 
@@ -8661,9 +8680,11 @@ const HEIGHT_EPSILON: f32 = 0.001;
 /// A box that holds no box of its own is one piece with its edges when it has
 /// no height of its own, and is cut anywhere after the edges above it when it
 /// has; one with no edges at all only counts when it begins past the page end
-/// (see [`first_piece_end`]). Lines are left to the rules for lines, and a box
-/// with no edges above it to the rules for boxes that avoid a break. An
-/// eligible atomic inline keeps its entire box with that piece.
+/// (see [`first_piece_end`]). Lines of text are left to the rules for lines,
+/// but a paragraph of one line that no text places ends with that line (see
+/// [`unplaced_line`]), and a box with no edges above it is left to the rules
+/// for boxes that avoid a break. An eligible atomic inline keeps its entire
+/// box with that piece.
 fn lineless_leading_piece_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -8700,8 +8721,8 @@ fn has_block_leading_content(document: &Document, node_id: usize) -> bool {
         && !node.used_writing_mode.is_vertical()
 }
 
-/// The end of the first piece of the block-like root `node_id` that holds no line,
-/// from its border-box top, and whether padding or border sit above the
+/// The end of the first piece of the block-like root `node_id` that holds no line
+/// of text, from its border-box top, and whether padding or border sit above the
 /// content that decides it (see [`lineless_leading_piece_end`]). The root has
 /// no piece when it holds no box and has no edges at all, and a box deeper
 /// down that holds no box is cut anywhere unless it has edges or a height.
@@ -8716,7 +8737,8 @@ fn lineless_piece_end(
         .map(|piece| (piece.end, piece.has_edges))
 }
 
-/// The first piece of a block that holds no line (see [`lineless_piece_end`]).
+/// The first piece of a block that holds no line of text (see
+/// [`lineless_piece_end`]).
 #[derive(Clone, Copy)]
 struct LinelessPiece {
     /// Where the piece ends, from the border-box top of the block.
@@ -8756,16 +8778,16 @@ fn lineless_piece(
     // atomic inlines alone, is kept whole by that line (see
     // [`unplaced_line`]): no break falls between the edges above it and the
     // line, as none falls above a box that no break goes through.
-    if depth > 0
-        && let Some(line) = unplaced_line(document, cascade, node_id)
-    {
-        return Some(LinelessPiece {
-            end: line.end.min(node.layout.size.height),
-            has_edges: false,
-            monolithic: true,
-        });
-    }
-    if node.has_before_or_after_content {
+    // A box with a height of its own below the line is left to the rules for
+    // its own box.
+    let unplaced = if depth > 0 {
+        unplaced_line(document, cascade, node_id).filter(|&line| {
+            unplaced_line_ends_content(document, node_id, line, node.layout.size.height)
+        })
+    } else {
+        None
+    };
+    if node.has_before_or_after_content && unplaced.is_none() {
         return None;
     }
     // The box the walk starts at is judged by the rules of its own.
@@ -8786,6 +8808,13 @@ fn lineless_piece(
                     monolithic: false,
                 },
             );
+        }
+        if let Some(line) = unplaced {
+            return Some(LinelessPiece {
+                end: line.end_within(node.layout.size.height),
+                has_edges: false,
+                monolithic: true,
+            });
         }
     }
     if node.is_ifc_root() {
