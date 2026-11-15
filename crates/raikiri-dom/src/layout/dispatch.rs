@@ -1714,6 +1714,7 @@ mod tests;
 
 mod axis_adapter;
 pub(crate) mod block_flow;
+mod caption_table_bases;
 pub(crate) mod column_cross_measure;
 mod column_main_limits;
 pub(crate) mod content_limits;
@@ -4864,7 +4865,14 @@ fn flex_layout_at_height(
                     node_id,
                     main_size_is_definite,
                     inputs.run_mode,
-                    |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
+                    |tree| {
+                        caption_table_bases::with_caption_inclusive_bases(
+                            tree,
+                            node_id,
+                            inputs,
+                            |tree| flex_layout_items(tree, node_id, inputs, main_size_is_definite),
+                        )
+                    },
                 )
             },
         )

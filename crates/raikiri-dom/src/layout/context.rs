@@ -86,6 +86,12 @@ pub(crate) struct LayoutContext {
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
+    /// The table items of column flex containers being laid out whose flex
+    /// base size has the height of their captions added to the height they
+    /// state (see [`mod@crate::layout::dispatch`], its `caption_table_bases`):
+    /// the height the container gives such an item is that of its whole
+    /// wrapper box.
+    pub(crate) caption_inclusive_bases: Vec<usize>,
     /// The flex containers being laid out at a main size that is definite
     /// for breaking their lines only: the size follows from their content,
     /// so the flexed main size of an item whose flex basis is not definite is
