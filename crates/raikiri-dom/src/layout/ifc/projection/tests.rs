@@ -41,7 +41,7 @@ fn marker_eligibility_preserves_counter_snapshot_errors() {
         }))
         .unwrap();
     assert!(matches!(
-        has_in_flow_generated_text(&fixture.doc, &fixture.cascade, fixture.root, &counters),
+        has_line_making_generated_text(&fixture.doc, &fixture.cascade, fixture.root, &counters),
         Err(IfcError::CounterSnapshots(CounterSnapshotLimitExceeded {
             limit: 32,
             actual: 33

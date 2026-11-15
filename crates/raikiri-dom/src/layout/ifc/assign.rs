@@ -3,7 +3,7 @@
 use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
-    GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
+    GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_line_making_generated_text,
     project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_run_builder,
 };
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
@@ -163,7 +163,7 @@ fn needs_ifc_layout(
     fonts: &shodo::font::FontCollection,
     counters: &GeneratedCounters,
 ) -> Result<bool, IfcError> {
-    if has_in_flow_generated_text(doc, cascade, idx, counters)? {
+    if has_line_making_generated_text(doc, cascade, idx, counters)? {
         return Ok(true);
     }
     // A margin alone may keep a paragraph out of lines, but the paragraph is
@@ -266,7 +266,7 @@ fn inline_content(
                     // belongs to the lines of its cell, not to this container,
                     // which lays the table out like any other block child.
                     if vertical_block_children && doc.anonymous_table_of(id).is_none() {
-                        if has_in_flow_generated_text(doc, cascade, id, counters)? {
+                        if has_line_making_generated_text(doc, cascade, id, counters)? {
                             return Ok(InlineContent::Line);
                         }
                         stack.extend(node.children.iter().copied());
@@ -281,7 +281,9 @@ fn inline_content(
                     {
                         continue;
                     }
-                    if has_in_flow_generated_text(doc, cascade, id, counters)? {
+                    // A blank inline `::before` or `::after` alone makes a
+                    // phantom line, as an empty inline element does.
+                    if has_line_making_generated_text(doc, cascade, id, counters)? {
                         return Ok(InlineContent::Line);
                     }
                     if doc.nodes[id].display().is_inline_flow() {
