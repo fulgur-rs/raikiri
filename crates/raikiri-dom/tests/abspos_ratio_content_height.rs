@@ -1508,3 +1508,36 @@ fn neighbouring_boxes_follow_the_same_rules() {
         ),
     ]);
 }
+
+/// A box that `justify-self` places within the room its left and right
+/// insets give it takes the width of its content, held by its `max-width`,
+/// and the height its ratio gives that width.
+#[test]
+fn a_box_placed_within_its_insets_takes_the_ratio_of_its_content_width() {
+    assert_rows(&[
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:start'><div style='width:10px;height:2px'></div></div></div>",
+            [0.0, 0.0, 10.0, 5.0],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:start'>X</div></div>",
+            [0.0, 0.0, 10.0, 10.0],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:end'><div style='width:10px;height:2px'></div></div></div>",
+            [290.0, 0.0, 10.0, 5.0],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:end'>X</div></div>",
+            [290.0, 0.0, 10.0, 10.0],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:center'><div style='width:10px;height:2px'></div></div></div>",
+            [145.0, 0.0, 10.0, 5.0],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:20px;justify-self:center'>X</div></div>",
+            [145.0, 0.0, 10.0, 10.0],
+        ),
+    ]);
+}
