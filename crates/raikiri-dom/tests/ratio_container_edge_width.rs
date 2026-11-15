@@ -1323,3 +1323,19 @@ fn a_minimum_height_raises_the_floor() {
         ),
     ]);
 }
+
+/// A percentage in the padding or the `min-width` is left to the layout that
+/// resolves it, which keeps the floor its lengths give.
+#[test]
+fn percentages_are_resolved_by_the_layout() {
+    assert_rows(&[
+        (
+            "<div style='width:300px'><div id=t style='float:left;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;padding-top:1%'></div></div>",
+            &[("t", [0.0, 0.0, 14.0, 7.0])],
+        ),
+        (
+            "<div style='width:300px'><div id=t style='float:left;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:1%'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+    ]);
+}
