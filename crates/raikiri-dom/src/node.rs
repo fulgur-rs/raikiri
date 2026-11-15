@@ -484,6 +484,47 @@ pub struct Node {
     /// consumers read this classification instead of re-deriving it from
     /// [`Self::display`] and the paragraph root flag.
     pub(crate) formatting_context: FormattingContext,
+    /// Child arena indices (`usize` indices into `Document::nodes`).
+    pub children: Vec<usize>,
+    /// Arena index of the parent holding this node in its `children`, or
+    /// `None` for the Document root and detached nodes.
+    ///
+    /// This is the O(1) backing store for [`crate::Document::parent_of`].
+    /// Every tree mutation primitive in `document.rs` / `document/mutation.rs`
+    /// (`append_*` / `attach_child` / `insert_child_before` /
+    /// `detach_from_parent` / `reparent_children` / `retain_children` /
+    /// `set_element_text_content` / `replace_children_from` /
+    /// `from_logical_snapshot`) keeps it in sync with the parent's
+    /// `children` list. It tracks only `children` edges, not a `<template>`
+    /// element's `template_contents` slot (that host link is not a parent).
+    ///
+    /// Direct `children` pushes outside those primitives bypass this field.
+    /// In-crate test setups that do so must also set `parent` (or use the
+    /// primitives) to keep the invariant
+    /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
+    pub(crate) parent: Option<usize>,
+    /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
+    pub(crate) flags: NodeFlags,
+    /// Node kind and kind-specific fields (tagged union).
+    pub(crate) data: NodeData,
+    /// What layout records about the box of this node, allocated by the first
+    /// write: a node that layout never writes to carries none.
+    state: Option<Box<BoxState>>,
+}
+
+/// What the cascade's bridge and layout record on a [`Node`]: everything but
+/// the tree itself and the node's kind.
+///
+/// A node reaches these fields through `Deref`. It holds none of them until
+/// one is written: until then every read answers with the initial values, the
+/// same for all nodes, so a parsed document that is never laid out, and a
+/// node that layout has nothing to say about, cost only the tree fields.
+/// Writing through the node allocates its state, even when the value written
+/// is the initial one; code that visits every node to reset a field goes
+/// through [`Node::written_state`] instead.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct BoxState {
     /// Computed line alignment used for the hypothetical inline static
     /// position of out-of-flow children in block flow.
     pub(crate) static_position_text_align: TextAlign,
@@ -701,25 +742,6 @@ pub struct Node {
     /// rows they span: a percentage height in an intrinsic or flexible row.
     /// They do not take part in baseline alignment (CSS Grid 1 §6.4).
     pub(crate) grid_items_without_baseline: Box<[usize]>,
-    /// Child arena indices (`usize` indices into `Document::nodes`).
-    pub children: Vec<usize>,
-    /// Arena index of the parent holding this node in its `children`, or
-    /// `None` for the Document root and detached nodes.
-    ///
-    /// This is the O(1) backing store for [`crate::Document::parent_of`].
-    /// Every tree mutation primitive in `document.rs` / `document/mutation.rs`
-    /// (`append_*` / `attach_child` / `insert_child_before` /
-    /// `detach_from_parent` / `reparent_children` / `retain_children` /
-    /// `set_element_text_content` / `replace_children_from` /
-    /// `from_logical_snapshot`) keeps it in sync with the parent's
-    /// `children` list. It tracks only `children` edges, not a `<template>`
-    /// element's `template_contents` slot (that host link is not a parent).
-    ///
-    /// Direct `children` pushes outside those primitives bypass this field.
-    /// In-crate test setups that do so must also set `parent` (or use the
-    /// primitives) to keep the invariant
-    /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
-    pub(crate) parent: Option<usize>,
     /// Per-node Taffy layout cache.
     pub(crate) cache: LayoutCache,
     /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
@@ -745,78 +767,14 @@ pub struct Node {
     /// `auto` gives it, whatever height it was given. `None` for a box that
     /// block flow has not laid out.
     pub(crate) auto_block_size: Option<f32>,
-    /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
-    pub(crate) flags: NodeFlags,
-    /// Node kind and kind-specific fields (tagged union).
-    pub(crate) data: NodeData,
 }
 
-impl Node {
-    /// The CSS display retained before lowering the box for Taffy.
-    pub(crate) fn display(&self) -> DisplayValue {
-        self.box_properties.display()
-    }
-
-    /// Borrow the identity captured for this layout pass.
-    pub(crate) fn box_properties(&self) -> BoxPropertiesRef<'_> {
-        self.box_properties.borrowed()
-    }
-
-    /// The computed CSS position, including distinctions Taffy does not retain.
-    pub(crate) fn position(&self) -> &PositionValue {
-        self.box_properties.position()
-    }
-
-    /// The display layout sees for this box, derived from its CSS identity.
-    pub(crate) fn layout_display(&self) -> Display {
-        self.box_properties.layout_display(
-            self.multicol.is_some() || self.roots_block_context(),
-            self.kind(),
-            self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
-        )
-    }
-
-    /// The position scheme layout sees for this box, derived from its CSS identity.
-    pub(crate) fn layout_position(&self) -> Position {
-        self.box_properties.layout_position()
-    }
-
-    /// Capture CSS box identity and keep the public backend-style export current.
-    pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
-        self.flags.set(
-            NodeFlags::ROOTS_BLOCK_CONTEXT,
-            display == DisplayValue::Block && self.is_html_fieldset(),
-        );
-        self.box_properties = BoxProperties::new(display, position);
-        if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
-            self.box_properties.blockify_root();
-        }
-    }
-
-    /// Change the display of an engine-created box while retaining its position.
-    pub(crate) fn set_display(&mut self, display: DisplayValue) {
-        self.set_box_properties(display, self.position().clone());
-    }
-
-    /// Construct a node carrying `data`, with every other field at its
-    /// pre-cascade, pre-layout default. Each `new_*` constructor delegates
-    /// here so the defaults live in one place.
-    fn with_data(data: NodeData) -> Self {
-        let box_properties = if matches!(data, NodeData::Element(_)) {
-            BoxProperties::new(DisplayValue::Block, PositionValue::Static)
-        } else {
-            BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
-        };
+impl BoxState {
+    /// The values every node starts from, before any cascade or layout.
+    fn initial() -> Self {
         Self {
-            formatting_context: match data {
-                NodeData::Element(_) => FormattingContext::from_layout_display(
-                    box_properties.layout_display(false, NodeKind::Element, false),
-                ),
-                _ => FormattingContext::Text,
-            },
             static_position_text_align: TextAlign::Start,
             static_position_text_align_last: TextAlignLast::Auto,
-            box_properties,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
             hides_empty_table_cell: false,
@@ -888,16 +846,123 @@ impl Node {
             grid_item_column_starts: Box::new([]),
             grid_item_areas: Box::new([]),
             grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
             cache: LayoutCache::new(),
             ifc: None,
             layout: BoxLayout::with_order(0),
             percent_basis_height: None,
             percent_basis_width: None,
             auto_block_size: None,
+        }
+    }
+}
+
+thread_local! {
+    /// One initial state per thread, shared by every node that has none of
+    /// its own. A box state is not shareable across threads.
+    static INITIAL_BOX_STATE: &'static BoxState = Box::leak(Box::new(BoxState::initial()));
+}
+
+impl std::ops::Deref for Node {
+    type Target = BoxState;
+
+    fn deref(&self) -> &BoxState {
+        match &self.state {
+            Some(state) => state,
+            None => INITIAL_BOX_STATE.with(|initial| *initial),
+        }
+    }
+}
+
+impl std::ops::DerefMut for Node {
+    fn deref_mut(&mut self) -> &mut BoxState {
+        self.state
+            .get_or_insert_with(|| Box::new(BoxState::initial()))
+    }
+}
+
+impl Node {
+    /// The box state of this node if layout has written one: for a reset,
+    /// which has nothing to do on a node still at the initial values.
+    pub(crate) fn written_state(&mut self) -> Option<&mut BoxState> {
+        self.state.as_deref_mut()
+    }
+
+    /// Whether layout has written to this node.
+    #[cfg(test)]
+    pub(crate) fn has_box_state(&self) -> bool {
+        self.state.is_some()
+    }
+}
+
+impl Node {
+    /// The CSS display retained before lowering the box for Taffy.
+    pub(crate) fn display(&self) -> DisplayValue {
+        self.box_properties.display()
+    }
+
+    /// Borrow the identity captured for this layout pass.
+    pub(crate) fn box_properties(&self) -> BoxPropertiesRef<'_> {
+        self.box_properties.borrowed()
+    }
+
+    /// The computed CSS position, including distinctions Taffy does not retain.
+    pub(crate) fn position(&self) -> &PositionValue {
+        self.box_properties.position()
+    }
+
+    /// The display layout sees for this box, derived from its CSS identity.
+    pub(crate) fn layout_display(&self) -> Display {
+        self.box_properties.layout_display(
+            self.multicol.is_some() || self.roots_block_context(),
+            self.kind(),
+            self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
+        )
+    }
+
+    /// The position scheme layout sees for this box, derived from its CSS identity.
+    pub(crate) fn layout_position(&self) -> Position {
+        self.box_properties.layout_position()
+    }
+
+    /// Capture CSS box identity and keep the public backend-style export current.
+    pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        self.flags.set(
+            NodeFlags::ROOTS_BLOCK_CONTEXT,
+            display == DisplayValue::Block && self.is_html_fieldset(),
+        );
+        self.box_properties = BoxProperties::new(display, position);
+        if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
+            self.box_properties.blockify_root();
+        }
+    }
+
+    /// Change the display of an engine-created box while retaining its position.
+    pub(crate) fn set_display(&mut self, display: DisplayValue) {
+        self.set_box_properties(display, self.position().clone());
+    }
+
+    /// Construct a node carrying `data`, with every other field at its
+    /// pre-cascade, pre-layout default. Each `new_*` constructor delegates
+    /// here so the defaults live in one place.
+    fn with_data(data: NodeData) -> Self {
+        let box_properties = if matches!(data, NodeData::Element(_)) {
+            BoxProperties::new(DisplayValue::Block, PositionValue::Static)
+        } else {
+            BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
+        };
+        Self {
+            formatting_context: match data {
+                NodeData::Element(_) => FormattingContext::from_layout_display(
+                    box_properties.layout_display(false, NodeKind::Element, false),
+                ),
+                _ => FormattingContext::Text,
+            },
+            box_properties,
+            children: Vec::new(),
+            parent: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
+            state: None,
         }
     }
 

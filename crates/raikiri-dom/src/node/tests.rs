@@ -536,3 +536,65 @@ mod min_content_tests {
         assert_eq!(float.2, 40.0);
     }
 }
+
+#[test]
+fn a_new_node_reads_the_initial_box_state_without_holding_one() {
+    for node in [
+        Node::new_document(),
+        Node::new_element("div".into(), None),
+        Node::new_text("text".into()),
+        Node::new_comment("note".into()),
+    ] {
+        assert!(!node.has_box_state());
+        assert_eq!(node.paragraph_orphans, 2);
+        assert_eq!(node.paragraph_widows, 2);
+        assert!(node.multicol_auto_width);
+        assert_eq!(node.used_writing_mode, WritingMode::HorizontalTb);
+        assert_eq!(node.layout, BoxLayout::with_order(0));
+        assert!(node.ifc.is_none());
+        assert!(node.multicol_groups.is_empty());
+        // Reading allocates nothing.
+        assert!(!node.has_box_state());
+    }
+}
+
+#[test]
+fn the_first_write_gives_a_node_its_own_box_state() {
+    let mut node = Node::new_element("div".into(), None);
+    let mut other = Node::new_element("div".into(), None);
+    node.order = 3;
+    assert!(node.has_box_state());
+    assert_eq!(node.order, 3);
+    // The rest of the state starts from the initial values.
+    assert_eq!(node.paragraph_orphans, 2);
+    // Another node still reads the shared initial values.
+    assert_eq!(other.order, 0);
+    assert!(!other.has_box_state());
+    assert!(other.written_state().is_none());
+    assert!(!other.has_box_state());
+    node.written_state().expect("written").order = 5;
+    assert_eq!(node.order, 5);
+}
+
+#[test]
+fn a_copy_of_a_node_keeps_its_own_box_state() {
+    let mut node = Node::new_element("div".into(), None);
+    node.order = 3;
+    let mut copy = node.clone();
+    copy.order = 4;
+    assert_eq!(node.order, 3);
+    assert_eq!(copy.order, 4);
+    assert!(!Node::new_text("text".into()).clone().has_box_state());
+}
+
+#[test]
+fn a_node_without_box_state_stays_small() {
+    // The tree fields and the node's kind; the layout-side fields are behind
+    // one pointer.
+    assert!(
+        std::mem::size_of::<Node>() <= 160,
+        "{}",
+        std::mem::size_of::<Node>()
+    );
+    assert!(std::mem::size_of::<BoxState>() > 1000);
+}
