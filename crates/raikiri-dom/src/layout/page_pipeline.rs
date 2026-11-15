@@ -5821,6 +5821,7 @@ impl AvoidedBreaks {
     /// How the box of `candidate`, placed as `fit` says, moves to the next
     /// page. `trailing_flex_children` remembers the trailing item of each
     /// flex container it looks up.
+    #[allow(clippy::too_many_arguments)]
     fn measure(
         &self,
         document: &super::context::LayoutSession<'_>,
@@ -5875,10 +5876,12 @@ impl AvoidedBreaks {
         // A paragraph of one line that no text places, of generated text or
         // atomic inlines alone, keeps the edges that follow that line (see
         // `unplaced_line_extent`), and moves with the blocks it begins when
-        // they cross the page end. It moves only past a box before it on the
-        // page, or when the edges above its line cross the page end too:
-        // below nothing but margins and those edges, the page breaks between
-        // the edges and the line instead (see
+        // they cross the page end. It moves only past content before it on
+        // the page (see `follows_box_on_page`), when the edges above its line
+        // cross the page end too, or when the line, with no edges above it,
+        // crosses the page end itself: below nothing but margins and edges
+        // that end on the page, the page breaks between the edges and the
+        // line instead (see
         // `PaginationState::break_before_unplaced_line`), as Chromium does.
         let unbreakable = unbreakable
             || unplaced_line.is_some_and(|line| {
@@ -5890,7 +5893,7 @@ impl AvoidedBreaks {
                         page_start,
                         page_end,
                     )
-                    && (line.start <= 0.5
+                    && ((line.start <= 0.5 && flow_y + line.end_within(height) > page_end + 0.001)
                         || flow_y + line.start > page_end + 0.001
                         || follows_box_on_page(document, cascade, body_id, node_id, page_start))
             });
@@ -10781,20 +10784,17 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
 }
 
-/// Whether an in-flow box comes before the box `node_id` on the page that
-/// starts at `page_start`: a sibling of the box, or of an ancestor of it that
-/// is not the body, which generates an in-flow box (see
-/// [`push_in_flow_boxes_rev`]) and ends below the page start or starts on the
-/// page, empty or not. Only such a box gives the flow a break before
-/// `node_id` on the page: below nothing but margins, or the top padding and
-/// border of the boxes it begins, a box starts the page's content, as
-/// Chromium has no break before it there (CSS Fragmentation 3 §4.4).
-pub(super) fn follows_box_on_page(
+/// Walks the in-flow boxes before `node_id` in the flow below `body_id`, a
+/// level at a time: for the parent of the box, then of each ancestor of it
+/// that is not the body, `found` sees that parent and the boxes its children
+/// before the box or ancestor generate (see [`push_in_flow_boxes_rev`]),
+/// nearest first. True as soon as `found` is.
+fn any_level_before(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-    page_start: f32,
+    mut found: impl FnMut(usize, &[usize]) -> bool,
 ) -> bool {
     let mut node = node_id;
     let mut boxes = Vec::new();
@@ -10802,6 +10802,7 @@ pub(super) fn follows_box_on_page(
         let Some(parent) = document.parent_of(node) else {
             return false;
         };
+        boxes.clear();
         for &child in document.nodes[parent]
             .children
             .iter()
@@ -10809,22 +10810,85 @@ pub(super) fn follows_box_on_page(
         {
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
         }
-        if boxes.iter().any(|&id| {
-            let top = current_abs_y(document, id);
-            top >= page_start - 0.001
-                || top + document.nodes[id].layout.size.height > page_start + 0.001
-        }) {
+        if found(parent, &boxes) {
             return true;
         }
-        boxes.clear();
         node = parent;
     }
     false
 }
 
+/// Whether in-flow content comes before the box `node_id` on the page that
+/// starts at `page_start`: a box before it or before an ancestor of it that
+/// is not the body (see [`any_level_before`]), empty or not, or the lines of
+/// text there, or the generated `::before` box of such an ancestor, that ends
+/// below the page start or starts on the page. Only such content gives the
+/// flow a break before `node_id` on the page: below nothing but margins, or
+/// the top padding and border of the boxes it begins, a box starts the page's
+/// content, as Chromium has no break before it there (CSS Fragmentation 3
+/// §4.4). Positions are those of the flow, without relative offsets.
+pub(super) fn follows_box_on_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+) -> bool {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
+    any_level_before(document, cascade, body_id, node_id, |parent, boxes| {
+        boxes.iter().any(|&id| {
+            if document.nodes[id].kind() != NodeKind::Element {
+                // Text has no box of its own: its lines tell where it lies.
+                return document
+                    .ifc_text_lines(id)
+                    .and_then(|owned| {
+                        let bounds = positioned_owned_text_line_bounds(document, &owned)?;
+                        let root = document.ifc_layout_node(owned.root)?.layout;
+                        let origin = flow_y(owned.root) + root.border.top + root.padding.top;
+                        let (first, _) = *bounds.first()?;
+                        let (_, last) = *bounds.last()?;
+                        Some(on_page(origin + first, origin + last))
+                    })
+                    .unwrap_or(false);
+            }
+            let top = flow_y(id);
+            on_page(top, top + document.nodes[id].layout.size.height)
+        }) || (parent != body_id
+            && renders_before_pseudo(cascade, parent)
+            && flow_y(parent) >= page_start - 0.001)
+    })
+}
+
+/// Whether the element `parent` has a `::before` box of the flow: generated
+/// content that is not absolutely positioned. It is not a child in the arena,
+/// so walks over the children do not see it.
+fn renders_before_pseudo(cascade: &CascadeResult, parent: usize) -> bool {
+    cascade
+        .pseudo
+        .get(&(
+            raikiri_style::StyleNodeId::new(parent as u64),
+            raikiri_style::PseudoElem::Before,
+        ))
+        .is_some_and(|style| {
+            style.display != DisplayValue::None
+                && !matches!(
+                    style.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && !style.content.is_empty()
+                && !style
+                    .content
+                    .iter()
+                    .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
+        })
+}
+
 /// Whether in-flow content comes before the box `node_id` in the flow below
 /// `body_id`: a sibling of the box, or of an ancestor of it that is not the
-/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]), or
+/// body, which generates an in-flow box (see [`any_level_before`]), or
 /// the top border or padding of such a block-level ancestor in horizontal
 /// writing. The flow can break before
 /// such a box, between it and what comes first, as browsers break after those
@@ -10836,32 +10900,15 @@ fn follows_flow_content(
     body_id: usize,
     node_id: usize,
 ) -> bool {
-    let mut node = node_id;
-    let mut boxes = Vec::new();
-    while node != body_id {
-        let Some(parent) = document.parent_of(node) else {
-            return false;
-        };
-        for &child in document.nodes[parent]
-            .children
-            .iter()
-            .take_while(|&&child| child != node)
-        {
-            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
-        }
-        if !boxes.is_empty()
+    any_level_before(document, cascade, body_id, node_id, |parent, boxes| {
+        !boxes.is_empty()
             || (parent != body_id && {
                 let holder = &document.nodes[parent];
                 !holder.display().is_inline_level()
                     && !holder.used_writing_mode.is_vertical()
                     && holder.layout.border.top + holder.layout.padding.top > 0.0
             })
-        {
-            return true;
-        }
-        node = parent;
-    }
-    false
+    })
 }
 
 /// Whether the in-flow text of `height` with page type `page_name` opens a

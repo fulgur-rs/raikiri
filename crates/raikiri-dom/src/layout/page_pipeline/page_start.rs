@@ -44,21 +44,7 @@ impl ChildPositions {
                 let first = self.forced_first_children.entry(parent).or_insert_with(|| {
                     // Generated before content is not an arena child. Even a
                     // zero-height generated box precedes the forced boundary.
-                    let before = cascade.pseudo.get(&(
-                        raikiri_style::StyleNodeId::new(parent as u64),
-                        raikiri_style::PseudoElem::Before,
-                    ));
-                    if before.is_some_and(|style| {
-                        style.display != DisplayValue::None
-                            && !matches!(
-                                style.position,
-                                super::PositionValue::Absolute | super::PositionValue::Fixed
-                            )
-                            && !style.content.is_empty()
-                            && !style.content.iter().any(|part| {
-                                matches!(part, raikiri_style::property::ContentComponent::None)
-                            })
-                    }) {
+                    if super::renders_before_pseudo(cascade, parent) {
                         return None;
                     }
                     // An IFC keeps its block tokens outside the box child

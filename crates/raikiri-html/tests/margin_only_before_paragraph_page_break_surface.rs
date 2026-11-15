@@ -186,3 +186,69 @@ fn a_line_with_no_edges_above_it_moves_to_the_next_page() {
         }
     }
 }
+
+#[test]
+fn text_or_a_generated_box_before_the_paragraph_lets_it_move_whole() {
+    for (class, content) in LINES {
+        let body = document(
+            r#"<div style="width:20px;font-size:10px;line-height:10px">Y<div style="font:20px/30px Ahem">"#,
+            "</div></div>",
+            class,
+            "margin:10px 0 0;padding-top:60px",
+            content,
+        );
+        assert_eq!(
+            glyph_tops(&body),
+            [(0, 'Y', 0), (1, 'A', 65), (2, 'Z', 5)],
+            "{body}"
+        );
+        let body = document(
+            "Y Y Y",
+            "",
+            class,
+            "margin:10px 0 0;padding-top:40px",
+            content,
+        );
+        assert_eq!(
+            glyph_tops(&body),
+            [
+                (0, 'Y', 5),
+                (0, 'Y', 5),
+                (0, 'Y', 5),
+                (1, 'A', 45),
+                (1, 'Z', 75)
+            ],
+            "{body}"
+        );
+        let body = document(
+            r#"<style>.w::before{content:"x";display:block}</style><div class="w">"#,
+            "</div>",
+            class,
+            "margin:10px 0 0;padding-top:40px",
+            content,
+        );
+        assert_eq!(
+            glyph_tops(&body),
+            [(0, 'x', 5), (1, 'A', 45), (1, 'Z', 75)],
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_box_before_the_paragraph_counts_where_the_flow_puts_it() {
+    // The box before the paragraph is on its page in the flow, though its
+    // relative offset draws it on the page before.
+    let body = document(
+        r#"<div style="height:100px">Y</div><div style="height:10px;position:relative;top:-150px"></div>"#,
+        "",
+        "",
+        "margin:20px 0 0;padding-top:60px",
+        "A",
+    );
+    assert_eq!(
+        glyph_tops(&body),
+        [(0, 'Y', 5), (2, 'A', 65), (3, 'Z', 5)],
+        "{body}"
+    );
+}

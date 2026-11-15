@@ -389,6 +389,7 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
     let headers = doc.table_objects.headers.clone();
     assert_eq!(headers.repeated_height_before(last), 10.0);
     let cascade = crate::layout::test_support::cascaded(&doc);
+    let body = crate::layout::page::find_body(&doc).unwrap();
     let tree = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let candidate = |node_id, raw_y, edges| PageCandidate {
         node_id,
@@ -430,14 +431,30 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
             ..base_fit
         };
         assert!(item_tail_move(&tail, &short));
-        let overflow = breaks.measure(&tree, &cascade, &tail, &short, &headers, &mut trailing);
+        let overflow = breaks.measure(
+            &tree,
+            &cascade,
+            body,
+            &tail,
+            &short,
+            &headers,
+            &mut trailing,
+        );
         assert!(!overflow.table_row, "{group_height:?}");
         assert!(!overflow.moves_box(), "{group_height:?}");
         let exact = BoxFit {
             next_page_step: needed,
             ..base_fit
         };
-        let overflow = breaks.measure(&tree, &cascade, &tail, &exact, &headers, &mut trailing);
+        let overflow = breaks.measure(
+            &tree,
+            &cascade,
+            body,
+            &tail,
+            &exact,
+            &headers,
+            &mut trailing,
+        );
         assert!(overflow.table_row, "{group_height:?}");
         assert!(overflow.moves_box(), "{group_height:?}");
     }
@@ -458,7 +475,15 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
     assert!(item_tail_move(&group, &short));
     assert!(
         !breaks
-            .measure(&tree, &cascade, &group, &short, &headers, &mut trailing)
+            .measure(
+                &tree,
+                &cascade,
+                body,
+                &group,
+                &short,
+                &headers,
+                &mut trailing
+            )
             .moves_box()
     );
     let fallback = candidate(last, 190.0, 30.0);
@@ -470,7 +495,15 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
     };
     assert!(
         breaks
-            .measure(&tree, &cascade, &fallback, &fit, &headers, &mut trailing)
+            .measure(
+                &tree,
+                &cascade,
+                body,
+                &fallback,
+                &fit,
+                &headers,
+                &mut trailing
+            )
             .moves_box()
     );
 }

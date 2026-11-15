@@ -2751,17 +2751,23 @@ impl PaginationState {
                     && own_closing_edges > 0.0
                     && line_fit.edges_overflow
                     && follows_content();
+                // A paragraph with padding or border above its first line,
+                // and nothing but margins before it on the page, has no break
+                // before it, unless those edges cross the page end
+                // themselves: the page breaks between the edges and the line
+                // instead (see `follows_box_on_page`).
                 let can_move_block = !(moved_whole
                     || leading_page_lines
                     || keep_first_fragment
                     || breaks_after_block)
                     && blocks.block.is_some()
-                    && (follows_box_on_page(document, cascade, body_id, block_id, page_start)
-                        || first_line_top > page_start + page_step + 0.001)
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
-                        || (line_fit.leaves_too_few_orphans() && follows_content()));
+                        || (line_fit.leaves_too_few_orphans() && follows_content()))
+                    && (first_line_top - block_effective_y <= 0.5
+                        || first_line_top > page_start + page_step + 0.001
+                        || follows_box_on_page(document, cascade, body_id, block_id, page_start));
                 // A block that stays on its page, below the padding and
                 // border of its own box or of the boxes it begins, or below
                 // the floats that put its first line down, where they leave
