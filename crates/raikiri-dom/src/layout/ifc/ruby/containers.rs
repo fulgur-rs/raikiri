@@ -37,6 +37,31 @@ fn record(map: &mut HashMap<usize, Owner>, node: usize, owner: Option<usize>) {
 }
 
 impl RubyContainers {
+    /// The containers of a paragraph without ruby. Every such paragraph
+    /// shares the one empty set.
+    pub(crate) fn none() -> std::sync::Arc<Self> {
+        static NONE: std::sync::OnceLock<std::sync::Arc<RubyContainers>> =
+            std::sync::OnceLock::new();
+        NONE.get_or_init(std::sync::Arc::default).clone()
+    }
+
+    /// Share `self`, as the one empty set when it records nothing.
+    pub(crate) fn into_shared(self) -> std::sync::Arc<Self> {
+        if self.records_nothing() {
+            Self::none()
+        } else {
+            std::sync::Arc::new(self)
+        }
+    }
+
+    fn records_nothing(&self) -> bool {
+        self.sources.is_empty()
+            && self.roots.is_empty()
+            && self.explicit_roots.is_empty()
+            && self.parents.is_empty()
+            && self.wrappers.is_empty()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.parents.is_empty()
     }

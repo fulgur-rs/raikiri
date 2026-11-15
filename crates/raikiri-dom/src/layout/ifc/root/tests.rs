@@ -1,6 +1,6 @@
 use super::*;
 use crate::Document;
-use crate::layout::ifc::test_support::{ahem_fonts, block_fixture};
+use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, sheet_fixture};
 use crate::layout::test_support::with_ahem;
 
 #[test]
@@ -385,4 +385,62 @@ fn relative_offset_index_keeps_the_first_duplicate_and_skips_empty_allocation() 
     assert!(empty.offset_index.is_none());
     projected.meta.offsets = vec![(7, (1.0, 2.0)), (7, (8.0, 9.0))];
     assert_eq!(IfcRoot::new(projected).relative_offset(7), Some((1.0, 2.0)));
+}
+
+#[test]
+fn paragraphs_without_ruby_or_first_letter_share_their_empty_indexes() {
+    let mut paragraphs = [0; 2];
+    let fixture = block_fixture("width:100px", |doc, root| {
+        for paragraph in &mut paragraphs {
+            *paragraph = doc.append_element(Some(root), "p", Some("display:block"));
+            doc.append_text(*paragraph, "abc");
+        }
+    });
+    let (mut doc, cascade) = (fixture.doc, fixture.cascade);
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let [one, other] = paragraphs.map(|paragraph| doc.nodes[paragraph].ifc.as_ref().unwrap());
+    assert!(Arc::ptr_eq(&one.ruby_containers, &other.ruby_containers));
+    assert!(Arc::ptr_eq(
+        &one.letter_style_index,
+        &other.letter_style_index
+    ));
+}
+
+#[test]
+fn a_paragraph_with_a_first_letter_has_an_index_of_its_own() {
+    let mut paragraphs = [0; 2];
+    let fixture = sheet_fixture(
+        ".letter::first-letter{color:green}",
+        "width:100px",
+        |doc, root| {
+            for (index, paragraph) in paragraphs.iter_mut().enumerate() {
+                *paragraph = doc.append_element(Some(root), "p", Some("display:block"));
+                if index == 0 {
+                    let _ = doc.set_element_attribute(*paragraph, "class", "letter");
+                }
+                doc.append_text(*paragraph, "abc");
+            }
+        },
+    );
+    let (mut doc, cascade) = (fixture.doc, fixture.cascade);
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let [one, other] = paragraphs.map(|paragraph| doc.nodes[paragraph].ifc.as_ref().unwrap());
+    assert!(
+        !one.letter_styles.is_empty(),
+        "fixture needs a first letter"
+    );
+    assert!(!Arc::ptr_eq(
+        &one.letter_style_index,
+        &other.letter_style_index
+    ));
 }

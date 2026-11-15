@@ -913,7 +913,7 @@ pub(crate) fn project_ifc_text_run_builder(
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {
-            ruby_containers: Arc::default(),
+            ruby_containers: super::ruby::RubyContainers::none(),
             writing_mode,
             options,
             indent,
@@ -1579,7 +1579,7 @@ fn project_children_builder(
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {
-            ruby_containers: Arc::new(ruby_containers),
+            ruby_containers: ruby_containers.into_shared(),
             writing_mode,
             options,
             indent,
