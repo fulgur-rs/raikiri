@@ -346,6 +346,12 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
                 (0, "b", [0, 20, 100, 20]),
             ],
         ),
+        // A fixed element that generates no box leaves its children in the
+        // scroll container.
+        (
+            "<div id=s style='overflow:hidden;height:100px;margin-top:100px'><div style='display:contents;position:fixed'><div id=b style='position:sticky;top:10px;height:20px'></div></div></div>",
+            &[(0, "s", [0, 100, 800, 100]), (0, "b", [0, 110, 800, 20])],
+        ),
         // `overflow` does not apply to a non-atomic inline or a table row, so
         // neither is a scroll container.
         (
@@ -405,6 +411,11 @@ fn a_fixed_box_in_the_page_area_is_not_moved_by_the_sticky_boxes_around_it() {
                 (0, "f", [400, 100, 100, 200]),
                 (0, "i", [400, 100, 100, 20]),
             ],
+        ),
+        // So does what a fixed element that generates no box holds.
+        (
+            "<div style='height:500px'><div id=o style='position:sticky;top:100px;height:300px'><div style='display:contents;position:fixed'><div id=i style='position:sticky;top:50px;height:20px;width:50px'></div></div></div></div>",
+            &[(0, "o", [0, 100, 800, 300]), (0, "i", [0, 100, 50, 20])],
         ),
     ]);
 }

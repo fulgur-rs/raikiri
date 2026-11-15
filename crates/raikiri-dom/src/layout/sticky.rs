@@ -73,11 +73,20 @@ fn is_sticky_box(document: &Document, id: usize) -> bool {
     let node = &document.nodes[id];
     node.kind() == raikiri_traits::NodeKind::Element
         && *node.position() == PositionValue::Sticky
-        && !matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
+        && generates_box(document, id)
         && !super::relative::is_non_atomic_inline(document, BoxTree::for_layout(document), id)
         && !document
             .ancestors(id)
             .any(|ancestor| document.nodes[ancestor].is_multicol_container())
+}
+
+/// Whether element `id` generates a box; a fixed element that does not is
+/// no boundary for what it holds.
+fn generates_box(document: &Document, id: usize) -> bool {
+    !matches!(
+        document.nodes[id].display(),
+        DisplayValue::Contents | DisplayValue::None
+    )
 }
 
 /// How far the painter moves `id` from where layout put it: by the offsets
@@ -93,7 +102,10 @@ fn moved_by(
 ) -> (f32, f32) {
     document
         .inclusive_ancestors(id)
-        .take_while(|&ancestor| !super::fixed::is_page_fixed(document, cascade, ancestor))
+        .take_while(|&ancestor| {
+            !(generates_box(document, ancestor)
+                && super::fixed::is_page_fixed(document, cascade, ancestor))
+        })
         .filter_map(|ancestor| {
             offsets.get(&ancestor).copied().or_else(|| {
                 (*document.nodes[ancestor].position() == PositionValue::Relative
@@ -151,7 +163,9 @@ fn view_of(
             scroller = Some(ancestor);
             break;
         }
-        if *document.nodes[ancestor].position() == PositionValue::Fixed {
+        if *document.nodes[ancestor].position() == PositionValue::Fixed
+            && generates_box(document, ancestor)
+        {
             break;
         }
     }
