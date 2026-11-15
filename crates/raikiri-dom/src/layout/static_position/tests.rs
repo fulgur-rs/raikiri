@@ -418,7 +418,9 @@ fn shrink_wrapped_inline_static_line_stays_beside_the_float() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     with_ahem(&mut doc);
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(absolute_rect(&doc, abs).1, 50.0);
+    // The margin box starts at the float's edge.
+    let (x, y, _, _) = absolute_rect(&doc, abs);
+    assert_eq!((x, y), (60.0, 50.0));
 }
 
 #[test]
@@ -538,7 +540,7 @@ fn a_moved_box_leaves_its_placed_fixed_boxes_in_place() {
 }
 
 #[test]
-fn a_replaced_inline_is_aligned_as_its_box() {
+fn a_replaced_inline_starts_at_the_aligned_point() {
     let (inner, _) = inside_a_relaid_fixed_box(
         "img",
         "display:inline;position:absolute;width:40px;height:10px",
@@ -563,4 +565,26 @@ fn an_atomic_inline_starts_at_the_aligned_point_even_when_it_overflows() {
         ),
         (-40.0, 50.0, 40.0, 10.0)
     );
+}
+
+#[test]
+fn a_float_wider_than_the_line_leaves_the_point_at_the_line_start() {
+    for (container, expected_x) in [
+        // The point is the float's right edge.
+        ("text-align:center", 250.0),
+        // In a right-to-left container the point is the container's right
+        // edge, whatever the alignment.
+        ("direction:rtl;text-align:left", 160.0),
+        ("direction:rtl;text-align:center", 160.0),
+    ] {
+        assert_eq!(
+            abs_rect_after(
+                container,
+                &["float:left;width:250px;height:50px"],
+                "display:inline-block"
+            ),
+            (expected_x, 0.0, 40.0, 10.0),
+            "{container}"
+        );
+    }
 }

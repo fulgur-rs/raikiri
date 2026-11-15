@@ -340,13 +340,17 @@ struct StaticLine<'context, 'owner> {
 /// in the first layout opportunity at the current block offset.
 fn inline_static_position(line: StaticLine<'_, '_>) -> Point<AxisStaticPosition> {
     let slot = line.context.find_content_slot(line.from, Clear::None, None);
-    let anchor = slot.x
-        + slot.width.max(0.0)
-            * static_inline_share(line.text_align, line.text_align_last, line.direction);
-    let edge = if line.direction == Direction::Rtl {
-        AxisStaticEdge::End
+    let share = static_inline_share(line.text_align, line.text_align_last, line.direction);
+    // A float wider than the line leaves an opportunity with negative
+    // width; the point then stays at the line's start edge.
+    let room = slot.width.max(0.0);
+    let (anchor, edge) = if line.direction == Direction::Rtl {
+        (
+            slot.x + slot.width - room * (1.0 - share),
+            AxisStaticEdge::End,
+        )
     } else {
-        AxisStaticEdge::Start
+        (slot.x + room * share, AxisStaticEdge::Start)
     };
     Point {
         x: AxisStaticPosition::from_edge(anchor, edge),
