@@ -56,7 +56,7 @@ pub(in crate::layout) fn release_unspanned_groups(tree: &mut LayoutSession<'_>) 
         if tree.nodes[owner].multicol_groups.is_empty() {
             continue;
         }
-        let children = tree.children_through_contents(owner);
+        let children = flow_children(tree, owner);
         if !children.iter().any(|&id| spanning::is_spanner(tree, id)) {
             tree.nodes[owner].multicol_groups.clear();
         }
@@ -89,7 +89,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     {
         return Ok(0.0);
     }
-    let children = tree.children_through_contents(owner);
+    let children = flow_children(tree, owner);
     work.charge(children.len())?;
     let spanner_free = !children.iter().any(|&id| spanning::is_spanner(tree, id));
     // The columns of a container without a spanner are filled page by page

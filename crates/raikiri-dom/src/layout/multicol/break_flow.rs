@@ -21,8 +21,7 @@ pub(super) fn supports(
     {
         return false;
     }
-    let mut pending: Vec<_> = tree
-        .children_through_contents(root)
+    let mut pending: Vec<_> = flow_children(tree, root)
         .into_iter()
         .map(|id| (id, 0usize, true, false))
         .collect();
@@ -130,7 +129,7 @@ pub(super) fn supports(
         let descendants_projected = projected && !atomic(tree, id);
         let descendants_inside_context =
             inside_formatting_context || node.display().is_block_flex_or_grid_container();
-        pending.extend(tree.children_through_contents(id).into_iter().map(|child| {
+        pending.extend(flow_children(tree, id).into_iter().map(|child| {
             (
                 child,
                 depth + 1,
@@ -310,7 +309,7 @@ fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
-    tree.children_through_contents(id).into_iter().any(|child| {
+    flow_children(tree, id).into_iter().any(|child| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
             && matches!(tree.nodes[child].data, NodeData::Element(_))
@@ -341,7 +340,7 @@ fn descendant_edge(
     if depth >= 128 || tree.nodes[id].display().is_block_flex_or_grid_container() {
         return own;
     }
-    let children = tree.children_through_contents(id);
+    let children = flow_children(tree, id);
     let in_flow = |&&child: &&usize| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
@@ -476,7 +475,7 @@ fn collect(
                 // translated child continuations to replay in later columns.
                 && !has_rendered_element_child(tree, id)
                 && !tree.nodes[id].has_before_or_after_content
-                && !tree.children_through_contents(id).into_iter().any(|child| {
+                && !flow_children(tree, id).into_iter().any(|child| {
                     let child = layout_node(tree, child);
                     child.is_in_document()
                         && !child.is_display_none()
@@ -506,7 +505,7 @@ fn collect(
     };
     let start = out.len();
     ancestors.push(wrapper);
-    for child in tree.children_through_contents(id) {
+    for child in flow_children(tree, id) {
         collect(tree, child, context, inner, ancestors, out);
         if tree.fragment_tree.limit_exceeded {
             break;
@@ -673,7 +672,7 @@ pub(super) fn layout(
         return fallback.height;
     }
     let mut boxes = Vec::new();
-    for child in tree.children_through_contents(root) {
+    for child in flow_children(tree, root) {
         collect(
             tree,
             child,

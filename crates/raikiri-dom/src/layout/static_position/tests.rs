@@ -170,10 +170,12 @@ fn other_boxes_keep_the_block_static_position() {
             "{container} {abs}"
         );
     }
-    // The children of a multicol container are placed in its columns.
+    // The static position of a box after the blocks of a multicol container
+    // is on a line of the column the last block went to: the second, from
+    // 108px to 200px, centered at 154px.
     assert_eq!(
         abs_rect("text-align:center;column-count:2", "", "display:inline").0,
-        0.0
+        154.0
     );
     // A block-level box is placed as a block.
     assert_eq!(abs_rect("text-align:center", "", "display:block").0, 0.0);

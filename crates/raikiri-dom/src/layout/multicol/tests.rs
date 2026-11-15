@@ -2405,7 +2405,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;break-before:column",
         "display:block;break-after:column",
         "display:block;break-inside:avoid",
-        "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
         "display:grid",
@@ -2423,8 +2422,11 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         assert!(!supported(sized, &[held], true), "{held}");
     }
     // A background inside the box stays inside the clip, and so do block
-    // edges that are cut with the box, or that have nothing to repeat.
+    // edges that are cut with the box, or that have nothing to repeat. An
+    // absolutely positioned box whose containing block is outside leaves
+    // the columns.
     for held in [
+        "display:block;position:absolute",
         "display:block;width:10px;background-color:red",
         "display:block;width:10px;border-top:5px solid red;border-bottom:5px solid red",
         "display:block;width:10px;box-decoration-break:clone",
@@ -4210,15 +4212,16 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
     // makes the other block one without lines.
     let (found, ids) = lineless_children(&["display:none", "display:block;min-height:10px"], None);
     assert_eq!(found, Some(vec![ids[1]]));
-    // An absolutely positioned child is placed outside the column stream.
-    let (found, _) = lineless_children(
+    // An absolutely positioned child leaves the columns: the stream holds
+    // the other block alone.
+    let (found, ids) = lineless_children(
         &[
             "display:block;height:10px",
             "display:block;position:absolute;height:10px",
         ],
         None,
     );
-    assert_eq!(found, None);
+    assert_eq!(found, Some(vec![ids[0]]));
     // Text that renders keeps the other strategies.
     let (found, _) = lineless_children(&["display:block;height:10px"], Some("text"));
     assert_eq!(found, None);
@@ -4981,8 +4984,9 @@ fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
     let block = "display:block;position:relative;height:50px";
     assert!(supported(block, absolute, true));
     assert!(!supported(block, absolute, false));
-    // A static block is not their containing block.
-    assert!(!supported("display:block;height:50px", absolute, true));
+    // A static block is not their containing block: they leave the columns,
+    // and the block is one with nothing in flow inside it.
+    assert!(supported("display:block;height:50px", absolute, true));
     // A transformed block contains fixed boxes too.
     assert!(!supported(
         "display:block;position:relative;height:50px;transform:scale(2)",
