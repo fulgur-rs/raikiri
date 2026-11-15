@@ -136,6 +136,17 @@ struct LetterStyleIndex {
 }
 
 impl LetterStyleIndex {
+    /// The index of `styles`. Every paragraph without a first letter shares
+    /// the one empty index.
+    fn shared(styles: &[LetterStyle]) -> Arc<Self> {
+        static EMPTY: std::sync::OnceLock<Arc<LetterStyleIndex>> = std::sync::OnceLock::new();
+        if styles.is_empty() {
+            EMPTY.get_or_init(Arc::default).clone()
+        } else {
+            Arc::new(Self::new(styles))
+        }
+    }
+
     fn new(styles: &[LetterStyle]) -> Self {
         let mut index = Self::default();
         for (position, style) in styles.iter().enumerate() {
@@ -376,7 +387,7 @@ impl IfcRoot {
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         let Projected { paragraph, meta } = projected;
-        let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
+        let letter_style_index = LetterStyleIndex::shared(&meta.letter_styles);
         let offset_index = (!meta.offsets.is_empty()).then(|| {
             let mut index = HashMap::with_capacity(meta.offsets.len());
             for (entry, &(owner, _)) in meta.offsets.iter().enumerate() {

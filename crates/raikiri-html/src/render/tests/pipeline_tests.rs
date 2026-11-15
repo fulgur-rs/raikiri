@@ -2603,3 +2603,62 @@ fn more_pages_than_the_limit_is_an_error() {
         })
     ));
 }
+
+/// Whether the last layout of this thread kept its paragraphs for a later
+/// pass, and how the final pass of `html` got its paragraphs.
+fn paragraph_reuse(html: &str) -> (Option<bool>, Option<raikiri_dom::IfcBuildMode>) {
+    super::super::page_layout::KEPT_PARAGRAPHS.with(|kept| kept.set(None));
+    let out = run(&parse(html));
+    assert!(out.slices.len() >= 2, "fixture must paginate");
+    (
+        super::super::page_layout::KEPT_PARAGRAPHS.with(std::cell::Cell::get),
+        out.document.ifc_last_build(),
+    )
+}
+
+#[test]
+fn pages_of_one_geometry_keep_no_paragraphs_for_a_later_pass() {
+    let (kept, last_build) = paragraph_reuse(
+        "<style>@page { size: 200px 100px; margin: 10px } p { height: 150px }</style>\
+             <p>one</p><p>two</p>",
+    );
+    assert_eq!(kept, Some(false));
+    assert_ne!(last_build, Some(raikiri_dom::IfcBuildMode::Retained));
+}
+
+#[test]
+fn pages_that_differ_only_in_margins_reuse_the_paragraphs_of_the_first_pass() {
+    // Both page areas are 180px by 80px; only where they sit differs, which
+    // is enough for the pages to be laid out again.
+    let (kept, last_build) = paragraph_reuse(
+        "<style>@page { size: 200px 100px; margin: 10px }\
+             @page :first { margin: 20px 10px 0 }\
+             p { height: 150px }</style><p>one</p><p>two</p>",
+    );
+    assert_eq!(kept, Some(true));
+    assert_eq!(last_build, Some(raikiri_dom::IfcBuildMode::Retained));
+}
+
+#[test]
+fn pages_of_different_areas_reuse_the_paragraphs_of_the_first_pass() {
+    let (kept, last_build) = paragraph_reuse(
+        "<style>@page { size: 200px 100px; margin: 10px }\
+             @page :first { margin: 30px }\
+             p { height: 150px }</style><p>one</p><p>two</p>",
+    );
+    assert_eq!(kept, Some(true));
+    assert_eq!(last_build, Some(raikiri_dom::IfcBuildMode::Retained));
+}
+
+#[test]
+fn pages_of_one_geometry_still_use_the_paragraphs_of_the_placement_probe() {
+    // A named page in a grid makes the first-page probe run. It builds the
+    // paragraphs, and the layout of the pages only breaks their lines.
+    let (kept, last_build) = paragraph_reuse(
+        "<style>@page { size: 200px 100px; margin: 10px } @page x { }\
+             p { height: 150px }</style>\
+             <div style='display:grid'><p style='page:x'>one</p></div><p>two</p>",
+    );
+    assert_eq!(kept, Some(false));
+    assert_eq!(last_build, Some(raikiri_dom::IfcBuildMode::Retained));
+}
