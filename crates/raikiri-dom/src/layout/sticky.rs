@@ -140,11 +140,14 @@ fn view_of(
     // A fixed box takes what it holds out of the scroll containers around
     // it, to the page area, unless it is one itself. Chromium prints a box in
     // a fixed box that a transform contains against the page area too.
+    // `overflow` does not apply to a non-atomic inline, which never scrolls.
+    let boxes = BoxTree::for_layout(document);
     let mut scroller = None;
     for ancestor in document.ancestors(id) {
         if cascade.computed.get(ancestor).is_some_and(|computed| {
             super::page_pipeline::scrolls_overflow(document, computed, ancestor)
-        }) {
+        }) && !super::relative::is_non_atomic_inline(document, boxes, ancestor)
+        {
             scroller = Some(ancestor);
             break;
         }

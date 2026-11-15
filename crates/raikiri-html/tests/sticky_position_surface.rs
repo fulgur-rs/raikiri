@@ -346,6 +346,16 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
                 (0, "b", [0, 20, 100, 20]),
             ],
         ),
+        // `overflow` does not apply to a non-atomic inline or a table row, so
+        // neither is a scroll container.
+        (
+            "<div style='height:100px'></div><div id=p style='height:200px'><span style='overflow:hidden'><span id=b style='display:inline-block;position:sticky;top:50px;width:20px;height:20px'></span></span></div>",
+            &[(0, "p", [0, 100, 800, 200]), (0, "b", [0, 100, 20, 20])],
+        ),
+        (
+            "<div style='height:100px'></div><table style='border-spacing:0'><tr style='overflow:hidden'><td id=c style='padding:0;height:200px;vertical-align:top'><div id=b style='position:sticky;top:50px;width:20px;height:20px'></div></td></tr></table>",
+            &[(0, "c", [0, 100, 20, 200]), (0, "b", [0, 100, 20, 20])],
+        ),
         // A fixed box that clips its overflow is the scroll container of what
         // it holds; one that a transform contains still leaves the scroll
         // container around it, as Chromium prints it.
