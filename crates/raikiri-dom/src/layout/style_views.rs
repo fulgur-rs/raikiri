@@ -1068,7 +1068,7 @@ impl LayoutSession<'_> {
     ///
     /// The flex algorithm carries a maximum of one axis of an item with a
     /// preferred aspect ratio across the ratio into the other one, which does
-    /// not hold for an item of a row with `auto` sizes:
+    /// not hold for a horizontal item of a row with `auto` sizes:
     ///
     /// - Its `auto` height is at least the content-based minimum, which the
     ///   `max-width` carried across the ratio does not clamp (CSS Sizing 4
@@ -1092,6 +1092,7 @@ impl LayoutSession<'_> {
         let (size, min, max) = (item.size(), item.min_size(), item.max_size());
         if !row
             || self.container_is_vertical(idx)
+            || self.nodes[idx].used_writing_mode.is_vertical()
             || item.aspect_ratio().is_none()
             || !size.width.is_auto()
             || !size.height.is_auto()
