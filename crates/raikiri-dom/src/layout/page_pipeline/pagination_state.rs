@@ -1030,7 +1030,66 @@ impl PaginationState {
                 self.last_named = LastNamedBox::new(document, candidate, node_id, raw_y, height);
             }
         }
+        let moved = self.break_before_unplaced_line(document, env, candidate, entry)?;
+        let candidate = moved.as_ref().unwrap_or(candidate);
         self.finish_box(document, env, candidate, effective_y)
+    }
+
+    /// Breaks the page between the padding and border above the line of a
+    /// paragraph of one line that no text places (see `unplaced_line`) and
+    /// that line, where the line starts below the top of its page and runs
+    /// past its end. Chromium moves the line to the top of the next page and
+    /// leaves the edges above it, as for a line of text. A line taller than
+    /// the next page stays, as it fits no page. Returns the paragraph grown
+    /// by the move, when it moved.
+    fn break_before_unplaced_line(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+    ) -> Result<Option<PageCandidate>, Halt> {
+        let node_id = candidate.node_id;
+        if candidate.context.unplaced_line().is_none() {
+            return Ok(None);
+        }
+        let owner = super::leading_inline::LeadingInlineLine {
+            root: node_id,
+            line: 0,
+        };
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let flow_top =
+            top - accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+        let page_origins = env.page_origins;
+        let page = page_origins.page_index_for_y(flow_top + 0.001);
+        let next = page.saturating_add(1);
+        let shift = page_origins.origin(next) - flow_top;
+        if flow_top <= page_origins.origin(page) + 0.001
+            || flow_top + height <= page_origins.origin(next) + 0.001
+            || !block_fits_page_step(height, page_origins.step_at(next))
+        {
+            return Ok(None);
+        }
+        reach_page(env.control, next)?;
+        let growth = super::leading_inline::move_line(
+            document,
+            env.cascade,
+            env.body_id,
+            owner,
+            shift,
+            &mut self.subtree_shifts,
+            (entry.page_before_candidate, next),
+        );
+        self.deferred_shifts.line_splits.push(LineSplit {
+            root: node_id,
+            first_moved: 0,
+            shift,
+            growth,
+            page: next,
+        });
+        let mut grown = candidate.clone();
+        grown.height = document.nodes[node_id].layout.size.height;
+        Ok(Some(grown))
     }
 
     /// Finishes the placement of the box `candidate` at `effective_y` on the
@@ -2684,17 +2743,22 @@ impl PaginationState {
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
                         || (line_fit.leaves_too_few_orphans() && follows_content()));
-                // A block moved whole below the padding and border of the
-                // boxes it begins, where they leave its first line no room
-                // before the page end, breaks between those edges and the
-                // line, as Chromium does: the line starts the page after.
-                // The lines after it are judged again from there, as they
-                // may break on the pages after it in turn.
-                if moved_whole
+                // A block that stays on its page, below the padding and
+                // border of its own box or of the boxes it begins, where they
+                // leave its first line no room before the page end, breaks
+                // between those edges and the line, as Chromium does: the
+                // line starts the page after, if it fits there. The lines
+                // after it are judged again from there, as they may break on
+                // the pages after it in turn.
+                if !can_move_block
                     && lines_can_move
                     && line_fit.lines_before_break == 0
-                    && block_effective_y > page_start + 0.001
+                    && first_line_top > page_start + 0.001
                     && first_line_top < page_start + page_step - 0.001
+                    && block_fits_page_step(
+                        line_metrics[0].1 - line_metrics[0].0,
+                        page_origins.step_at(page.saturating_add(1)),
+                    )
                 {
                     page = page.saturating_add(1);
                     let shift = page_origins.origin(page) - first_line_top;
