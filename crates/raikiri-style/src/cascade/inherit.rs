@@ -468,25 +468,6 @@ fn contents_computes_to_none<E: StyleElement>(element: &E, parent_is_svg: bool) 
     }
 }
 
-/// Whether `element` is an HTML element that is never rendered: the
-/// metadata and fallback elements of HTML "Rendering" §15.3.1 that hold
-/// content (`head`, `title`, `meta`, `link`, `base`, `noscript`, `script`,
-/// `style`, `template`, `datalist`, `noembed`, `noframes` and `rp`). The
-/// painter never draws them whatever their `display`, so they compute to
-/// `display: none` and lay out no box either, the same list as
-/// `Node::is_non_rendered_html_element` in raikiri-dom. Scripting counts as
-/// enabled, as in browsers, so `noscript` is among them. SVG and MathML
-/// elements of the same names are not.
-fn never_rendered<E: StyleElement>(element: &E) -> bool {
-    const NEVER_RENDERED: [&str; 13] = [
-        "head", "title", "meta", "link", "base", "noscript", "script", "style", "template",
-        "datalist", "noembed", "noframes", "rp",
-    ];
-    NEVER_RENDERED
-        .iter()
-        .any(|tag| is_html_element(element, tag))
-}
-
 /// Whether `element` is the HTML element named `tag`. HTML names match ASCII
 /// case-insensitively, as in [`contents_computes_to_none`].
 fn is_html_element<E: StyleElement>(element: &E, tag: &str) -> bool {
@@ -685,16 +666,12 @@ pub(crate) fn walk_from<D: StyleDom>(
         let unboxes_to_none = node
             .as_element()
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
-        // Content a closed `details` hides, and an element that is never
-        // rendered, compute to `display: none` whatever their candidates say.
-        let forced_none = hidden_by_closed_details(
+        let hidden_by_details = hidden_by_closed_details(
             dom,
             id,
             parent.or_else(|| dom.parent_id(id)),
             &mut first_summaries,
-        ) || node
-            .as_element()
-            .is_some_and(|element| never_rendered(&element));
+        );
         let default_summary = default_summary_text(dom, id, &mut first_summaries);
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
@@ -767,22 +744,14 @@ pub(crate) fn walk_from<D: StyleDom>(
                                 contents_computes_to_none(&element, parent_is_svg)
                             }) == unboxes_to_none
                     }) && input.same_input(&source.input, shared)
-                        // A child a closed `details` hides, and an element
-                        // that is never rendered, computes to
+                        // A child a closed `details` hides computes to
                         // `display: none` whatever its candidates say.
-                        && (hidden_by_closed_details(
+                        && hidden_by_closed_details(
                             dom,
                             source.id,
                             dom.parent_id(source.id),
                             &mut first_summaries,
-                        ) || dom
-                            .node(source.id)
-                            .is_some_and(|source_node| {
-                                source_node
-                                    .as_element()
-                                    .is_some_and(|element| never_rendered(&element))
-                            }))
-                            == forced_none
+                        ) == hidden_by_details
                         // The legend of a `details` without a summary is a
                         // `::before` its candidates do not give.
                         && default_summary_text(dom, source.id, &mut first_summaries) == default_summary
@@ -1187,7 +1156,7 @@ pub(crate) fn walk_from<D: StyleDom>(
         // have `display: none` already, so it keeps sharing them.
         let mut computed = computed;
         if (unboxes_to_none && computed.display == crate::property::DisplayValue::Contents)
-            || (forced_none && computed.display != crate::property::DisplayValue::None)
+            || (hidden_by_details && computed.display != crate::property::DisplayValue::None)
         {
             PseudoValueArc::make_mut(&mut computed).display = crate::property::DisplayValue::None;
         }

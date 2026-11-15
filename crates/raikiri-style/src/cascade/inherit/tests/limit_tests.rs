@@ -334,7 +334,9 @@ fn stored_style_attributes_past_their_budget_change_nothing() {
 #[test]
 fn a_stored_style_attribute_counts_every_declaration() {
     // The second element with the same style attribute refers to the stored
-    // block instead of parsing it, and still counts each declaration.
+    // block instead of parsing it, and still counts each declaration. The
+    // first declaration counted is the user agent `display: none` of the
+    // `style` element.
     let (doc, tree) = small_doc("", |doc, body| {
         for _ in 0..2 {
             doc.push_element(body, "p", Some("color: red; color: blue"));
@@ -346,7 +348,7 @@ fn a_stored_style_attribute_counts_every_declaration() {
     };
     assert_eq!(
         exceeded(walk_within(&doc, &tree, limits, false)),
-        (CascadeLimitKind::DeclarationsVisited, 3, 4)
+        (CascadeLimitKind::DeclarationsVisited, 3, 5)
     );
 }
 

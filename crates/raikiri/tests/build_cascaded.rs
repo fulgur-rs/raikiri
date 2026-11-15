@@ -1009,9 +1009,9 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
 fn hidden_elements_are_display_none_via_ua_css() {
     // HTML LS 15.3.1 "Hidden elements": the elements that never generate a
     // box compute to `display: none`, so a rule that sizes every element
-    // cannot give them one. The cascade hides `style`, `script`, `title` and
-    // `noscript`, which the painter never draws, in the HTML namespace only,
-    // as the same names exist in SVG, and whatever an author rule says.
+    // cannot give them one. The cascade gives `style`, `script`, `title` and
+    // `noscript` the same user agent `display: none` in the HTML namespace
+    // only, as the same names exist in SVG.
     for (tag, html) in [
         ("head", "<html><head></head><body></body></html>"),
         ("link", "<html><body><link></body></html>"),
@@ -1037,10 +1037,7 @@ fn hidden_elements_are_display_none_via_ua_css() {
             "<html><body><template></template></body></html>",
         ),
         ("style", "<html><body><style></style></body></html>"),
-        (
-            "script",
-            "<html><body><script style='display:block'></script></body></html>",
-        ),
+        ("script", "<html><body><script></script></body></html>"),
         ("title", "<html><body><title></title></body></html>"),
         (
             "noscript",
@@ -1077,6 +1074,39 @@ fn hidden_elements_are_display_none_via_ua_css() {
     let result = build_cascaded(&doc).expect("the cascade succeeds");
     let head = find_by_tag(&doc.dom, "head").expect("<head> exists");
     assert_eq!(result.computed[head.0 as usize].display, DisplayValue::None);
+
+    // The `display: none` is a user agent declaration, so an author
+    // `display` wins over it, as in browsers, and `revert` returns to it.
+    for (tag, html, expected) in [
+        (
+            "script",
+            "<html><body><script style='display:block'></script></body></html>",
+            DisplayValue::Block,
+        ),
+        (
+            "style",
+            "<html><body><style id=e></style><style>#e{display:block}</style></body></html>",
+            DisplayValue::Block,
+        ),
+        (
+            "title",
+            "<html><head><style>*{display:inline}</style></head><body><title></title></body></html>",
+            DisplayValue::Inline,
+        ),
+        (
+            "noscript",
+            "<html><body><noscript style='display:revert'></noscript></body></html>",
+            DisplayValue::None,
+        ),
+    ] {
+        let doc = parse_html(html);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        assert_eq!(
+            result.computed[el_id.0 as usize].display, expected,
+            "{html}"
+        );
+    }
 }
 
 #[test]
