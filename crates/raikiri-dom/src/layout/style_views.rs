@@ -1093,6 +1093,9 @@ impl LayoutSession<'_> {
         if !row
             || self.container_is_vertical(idx)
             || self.nodes[idx].used_writing_mode.is_vertical()
+            || self.nodes[idx].size_containment.width
+            || self.nodes[idx].size_containment.height
+            || crate::paint_rules::is_replaced_element(self.document, idx)
             || item.aspect_ratio().is_none()
             || !size.width.is_auto()
             || !size.height.is_auto()
