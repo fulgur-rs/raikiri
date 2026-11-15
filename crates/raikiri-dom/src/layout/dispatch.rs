@@ -1276,8 +1276,8 @@ impl LayoutSession<'_> {
             // follow block flow, including the automatic minimum size and the
             // way a minimum or maximum carries across the ratio. That holds
             // while size containment measures it without its content too:
-            // a ratio that relates its content box keeps its padding and
-            // border out, which the leaf algorithm would not.
+            // the leaf algorithm would apply a ratio that relates the content
+            // box to the border box, and no stretched width to its height.
             let ratio_block = formatting_context == FormattingContext::Block
                 && !item_is_replaced
                 && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
@@ -5512,7 +5512,10 @@ fn with_grid_ratio_width(
         // An item whose width follows its stretched height takes the width
         // the ratio gives for the height of its area, and contributes the
         // height the ratio gives for the width of its column before that.
-        if follows_height && let Some(height) = inputs.known_dimensions.height {
+        if follows_height
+            && inputs.known_dimensions_are_definite.height
+            && let Some(height) = inputs.known_dimensions.height
+        {
             return Some(
                 replaced_size::width_for_height(
                     (height - edges.height).max(0.0),

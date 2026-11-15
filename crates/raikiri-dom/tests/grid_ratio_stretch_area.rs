@@ -720,7 +720,8 @@ fn an_item_stretched_in_the_block_axis_only_takes_its_width_from_the_row_height(
 /// An item stretched in both axes, or stretched in one and sized in the
 /// other, fills its grid area whatever its ratio gives, once an `auto` row
 /// is sized: its ratio still gives the height it contributes to that row,
-/// and the width it contributes to an `auto` column beside a fixed row.
+/// and the width it contributes to an `auto` column beside a fixed row,
+/// explicit or implicit.
 #[test]
 fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
     assert_cases(&[
@@ -1385,11 +1386,49 @@ fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
                 ("s", [100.0, 0.0, 50.0, 120.0]),
             ],
         ),
+        (
+            r#"<div id=c style='display:inline-grid;grid-template-columns:100px;grid-template-rows:60px'><div id=i style='grid-column:2;aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 220.0, 60.0]),
+                ("i", [100.0, 0.0, 120.0, 60.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:inline-grid;grid-template-columns:100px;grid-template-rows:60px;grid-auto-flow:column'><div id=s></div><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 220.0, 60.0]),
+                ("i", [100.0, 0.0, 120.0, 60.0]),
+                ("s", [0.0, 0.0, 100.0, 60.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:inline-grid;grid-template-columns:100px;grid-template-rows:60px;grid-auto-columns:30px'><div id=i style='grid-column:2;aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 130.0, 60.0]),
+                ("i", [100.0, 0.0, 30.0, 60.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:100px;grid-template-columns:repeat(2,50px);grid-template-rows:60px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 100.0, 60.0]),
+                ("i", [0.0, 0.0, 50.0, 60.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:100px;grid-template-columns:100px 50px'><div id=i style='width:50%;aspect-ratio:2/1;align-self:stretch'></div><div id=s style='height:120px'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 100.0, 120.0]),
+                ("i", [0.0, 0.0, 50.0, 120.0]),
+                ("s", [100.0, 0.0, 50.0, 120.0]),
+            ],
+        ),
     ]);
 }
 
 /// An empty size-contained item whose ratio relates its content box keeps
-/// its padding and border out of the ratio, as one with content does.
+/// its padding and border out of the ratio, as one with content does, and
+/// one whose ratio relates its border box keeps the ratio there.
 #[test]
 fn an_empty_size_contained_item_keeps_its_edges_out_of_a_content_box_ratio() {
     assert_cases(&[
@@ -1510,6 +1549,13 @@ fn an_empty_size_contained_item_keeps_its_edges_out_of_a_content_box_ratio() {
             &[
                 ("c", [0.0, 0.0, 100.0, 35.0]),
                 ("i", [0.0, 0.0, 60.0, 35.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:100px'><div id=i style='aspect-ratio:2/1;border:5px solid;contain:size'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 100.0, 50.0]),
+                ("i", [0.0, 0.0, 100.0, 50.0]),
             ],
         ),
     ]);

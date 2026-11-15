@@ -627,27 +627,67 @@ pub(super) fn stretches_on_both_grid_axes(
     horizontal
         && vertical
         && has_only_fixed_rows(doc, cascade, parent, container)
-        && has_only_fixed_columns(container)
+        && has_only_fixed_columns(doc, cascade, parent, container)
 }
 
-/// Whether every column of `grid` is an explicit one of a fixed length, so
-/// that no item contributes to a column's size. The implicit columns are
-/// left out: an item whose ratio carries the height of a fixed row over to
-/// its width sizes an `auto` one.
-fn has_only_fixed_columns(values: &ComputedValues) -> bool {
+/// Whether `grid` holds no `auto` column an item could contribute to: its
+/// explicit columns all have a fixed length, and so do its implicit ones
+/// unless no item can land in one. An item lands in an implicit column only
+/// where it is placed by line or spans more than one column, or where the
+/// grid flows its items into columns. An item whose ratio carries the
+/// height of a fixed row over to its width sizes an `auto` column.
+fn has_only_fixed_columns(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    grid: usize,
+    values: &ComputedValues,
+) -> bool {
+    if !all_fixed_tracks(&values.grid_template_columns) {
+        return false;
+    }
+    if !values.grid_auto_columns.is_empty() && values.grid_auto_columns.iter().all(fixed_track) {
+        return true;
+    }
+    use raikiri_style::property::GridAutoFlowValue::{Row, RowDense};
+    matches!(values.grid_auto_flow, Row | RowDense)
+        && doc
+            .child_ids(protocol::NodeId::from(grid))
+            .map(usize::from)
+            .filter(|&child| {
+                doc.nodes[child].layout_display() != Display::None
+                    && doc.nodes[child].layout_position() != Position::Absolute
+            })
+            .all(|item| {
+                let node = &doc.nodes[item];
+                if node.kind() != NodeKind::Element || node.display() == DisplayValue::Contents {
+                    return true;
+                }
+                let cv = &cascade.computed[item];
+                use GridLineValue::{Auto, Span};
+                matches!(
+                    (&cv.grid_column_start, &cv.grid_column_end),
+                    (Auto, Auto) | (Auto, Span(1)) | (Span(1), Auto)
+                )
+            })
+}
+
+/// Whether a track has a fixed length, which no item contributes to.
+fn fixed_track(size: &ComputedGridTrackSize) -> bool {
     use ComputedGridTrackBreadth::Px;
-    let fixed = |size: &ComputedGridTrackSize| {
-        matches!(
-            size,
-            ComputedGridTrackSize::Breadth(Px(_)) | ComputedGridTrackSize::MinMax(Px(_), Px(_))
-        )
-    };
-    match &values.grid_template_columns {
+    matches!(
+        size,
+        ComputedGridTrackSize::Breadth(Px(_)) | ComputedGridTrackSize::MinMax(Px(_), Px(_))
+    )
+}
+
+/// Whether a grid template lists at least one track and only fixed ones.
+fn all_fixed_tracks(tracks: &ComputedGridTemplateTracks) -> bool {
+    match tracks {
         ComputedGridTemplateTracks::None => false,
         ComputedGridTemplateTracks::List(list) => {
             !list.components.is_empty()
-                && list.components.iter().all(|column| match column {
-                    ComputedGridTrackListComponent::Size(size) => fixed(size),
+                && list.components.iter().all(|track| match track {
+                    ComputedGridTrackListComponent::Size(size) => fixed_track(size),
                     ComputedGridTrackListComponent::Repeat(_) => false,
                 })
         }
@@ -713,24 +753,9 @@ fn has_only_fixed_rows(
     grid: usize,
     values: &ComputedValues,
 ) -> bool {
-    let fixed = |size: &ComputedGridTrackSize| {
-        use ComputedGridTrackBreadth::Px;
-        matches!(
-            size,
-            ComputedGridTrackSize::Breadth(Px(_)) | ComputedGridTrackSize::MinMax(Px(_), Px(_))
-        )
-    };
-    let explicit = match &values.grid_template_rows {
-        ComputedGridTemplateTracks::None => false,
-        ComputedGridTemplateTracks::List(list) => {
-            !list.components.is_empty()
-                && list.components.iter().all(|row| match row {
-                    ComputedGridTrackListComponent::Size(size) => fixed(size),
-                    ComputedGridTrackListComponent::Repeat(_) => false,
-                })
-        }
-    };
-    let implicit = !values.grid_auto_rows.is_empty() && values.grid_auto_rows.iter().all(fixed);
+    let explicit = all_fixed_tracks(&values.grid_template_rows);
+    let implicit =
+        !values.grid_auto_rows.is_empty() && values.grid_auto_rows.iter().all(fixed_track);
     let mut items = doc
         .child_ids(protocol::NodeId::from(grid))
         .map(usize::from)

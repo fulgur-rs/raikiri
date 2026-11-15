@@ -863,17 +863,12 @@ impl LayoutSession<'_> {
     /// library would apply the ratio in the area as well. Chromium lays
     /// `aspect-ratio: 2/1; align-self: stretch; justify-self: stretch` out
     /// 100x120 in a 100px column whose `auto` row a 120px sibling sizes, and
-    /// 100x50 when the item is alone in the row.
+    /// 100x50 when the item is alone in the row. A percentage width, which
+    /// can be cyclic while an intrinsic column is sized, is left to the
+    /// caller.
     fn grid_item_stretches_on_both_axes(&self, idx: usize, item: &LayoutStyleView<'_>) -> bool {
-        use raikiri_layout_style::values::{AlignItemsKeyword, ExpandedDimension};
+        use raikiri_layout_style::values::AlignItemsKeyword;
         let (size, margin) = (item.size(), item.margin());
-        // A percentage width can be cyclic while an intrinsic column is
-        // sized, and the ratio then gives the contribution of the height.
-        if matches!(size.width.expand(), ExpandedDimension::Percent(_))
-            || matches!(size.width.expand(), ExpandedDimension::Calc(value) if value.has_percentage())
-        {
-            return false;
-        }
         let justify = self.grid_item_justify_self(idx).keyword == AlignItemsKeyword::Stretch
             && !margin.left.is_auto()
             && !margin.right.is_auto()
@@ -969,15 +964,14 @@ impl LayoutSession<'_> {
             || self.grid_item_content_outweighs_carried_minimum(idx, &item)
             || self.grid_item_content_raises_unstretched_height(idx, &item)
             || self.grid_item_ratio_excludes_edges(idx, &item)
-            || self.grid_item_stretches_on_both_axes(idx, &item)
-            || (self.nodes[idx].ratio_width_follows_stretched_height
-                && matches!(
-                    self.nodes[idx].formatting_context,
-                    FormattingContext::Block
-                        | FormattingContext::Inline
-                        | FormattingContext::Flex
-                        | FormattingContext::Grid
-                ));
+            || (matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block
+                    | FormattingContext::Inline
+                    | FormattingContext::Flex
+                    | FormattingContext::Grid
+            ) && (self.nodes[idx].ratio_width_follows_stretched_height
+                || (!percentage(size.width) && self.grid_item_stretches_on_both_axes(idx, &item))));
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
