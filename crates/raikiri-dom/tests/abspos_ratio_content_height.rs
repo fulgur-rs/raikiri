@@ -103,18 +103,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
             [0.0, 0.0, 10.0, 10.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'>X</div></div>",
-            [0.0, 0.0, 10.0, 10.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'>XXXXX</div></div>",
-            [0.0, 0.0, 10.0, 10.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:5px;top:5px;aspect-ratio:2/1;max-width:10px'>X</div></div>",
             [5.0, 5.0, 10.0, 10.0],
         ),
@@ -148,18 +136,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;box-sizing:border-box;aspect-ratio:2/1;max-width:10px'>XXXXX</div></div>",
-            [0.0, 0.0, 10.0, 10.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:10px'>X</div></div>",
-            [0.0, 0.0, 10.0, 10.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:10px'>XXXXX</div></div>",
             [0.0, 0.0, 10.0, 10.0],
         ),
         (
@@ -201,10 +177,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:20px'>X</div></div>",
             [0.0, 0.0, 20.0, 10.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:20px'>XX XX</div></div>",
-            [0.0, 0.0, 20.0, 20.0],
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:20px'>XXXXX</div></div>",
@@ -249,10 +221,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:20px'>X</div></div>",
             [0.0, 0.0, 20.0, 10.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:20px'>XX XX</div></div>",
-            [0.0, 0.0, 20.0, 20.0],
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:2/1;max-width:20px'>XXXXX</div></div>",
@@ -395,10 +363,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
             [0.0, 0.0, 16.0, 16.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:1/1;max-width:10px;border:3px solid'>XX XX</div></div>",
-            [0.0, 0.0, 16.0, 26.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:1/1;max-width:10px;border:3px solid'>XXXXX</div></div>",
             [0.0, 0.0, 16.0, 16.0],
         ),
@@ -436,18 +400,6 @@ fn a_carried_maximum_height_does_not_clamp_the_content() {
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;box-sizing:border-box;aspect-ratio:1/1;max-width:10px;border:3px solid'>XXXXX</div></div>",
-            [0.0, 0.0, 10.0, 16.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:1/1;max-width:10px;border:3px solid'>X</div></div>",
-            [0.0, 0.0, 10.0, 16.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:1/1;max-width:10px;border:3px solid'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 26.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;box-sizing:border-box;aspect-ratio:1/1;max-width:10px;border:3px solid'>XXXXX</div></div>",
             [0.0, 0.0, 10.0, 16.0],
         ),
         (
@@ -1047,30 +999,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
             [145.0, 0.0, 10.0, 12.0],
         ),
@@ -1095,54 +1023,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
             [0.0, 0.0, 4.0, 15.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:5%'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 15.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:5%'>XX XX</div></div>",
-            [0.0, 0.0, 15.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:5%'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 15.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:5%'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 15.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:5%'>XX XX</div></div>",
-            [0.0, 0.0, 15.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:5%'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 15.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:5%'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 15.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:5%'>XX XX</div></div>",
-            [0.0, 0.0, 15.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:5%'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 15.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;aspect-ratio:2/1;max-width:5%'><div style='width:6px;height:12px'></div></div></div>",
-            [142.5, 0.0, 15.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;aspect-ratio:2/1;max-width:5%'>XX XX</div></div>",
-            [142.5, 0.0, 15.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;aspect-ratio:2/1;max-width:5%'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [142.5, 0.0, 15.0, 15.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;aspect-ratio:2/1;max-width:10px;min-width:4px'><div style='width:6px;height:12px'></div></div></div>",
             [0.0, 0.0, 6.0, 12.0],
         ),
@@ -1164,30 +1044,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:10px;min-width:4px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;min-width:4px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;min-width:4px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;min-width:4px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;min-width:4px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;min-width:4px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;min-width:4px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
@@ -1227,20 +1083,12 @@ fn neighbouring_boxes_follow_the_same_rules() {
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;max-height:15px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;max-height:15px'>XX XX</div></div>",
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;max-height:15px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
             [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;max-height:15px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;max-height:15px'>XX XX</div></div>",
@@ -1419,30 +1267,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
             [0.0, 0.0, 10.0, 13.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;display:grid;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;display:grid;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;display:grid;aspect-ratio:2/1;max-width:10px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 13.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;display:grid;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;display:grid;aspect-ratio:2/1;max-width:10px'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;display:grid;aspect-ratio:2/1;max-width:10px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 13.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;display:grid;aspect-ratio:2/1;max-width:10px'><div style='width:6px;height:12px'></div></div></div>",
             [145.0, 0.0, 10.0, 12.0],
         ),
@@ -1479,30 +1303,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;position:fixed'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;position:fixed'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;position:fixed'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;position:fixed'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;position:fixed'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;position:fixed'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;margin:0 auto;aspect-ratio:2/1;max-width:10px;position:fixed'><div style='width:6px;height:12px'></div></div></div>",
             [395.0, 0.0, 10.0, 12.0],
         ),
@@ -1536,30 +1336,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:10px;direction:rtl'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;direction:rtl'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;direction:rtl'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;direction:rtl'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [0.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;direction:rtl'><div style='width:6px;height:12px'></div></div></div>",
-            [0.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;direction:rtl'>XX XX</div></div>",
-            [0.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;direction:rtl'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
             [0.0, 0.0, 10.0, 15.0],
         ),
         (
@@ -1716,30 +1492,6 @@ fn neighbouring_boxes_follow_the_same_rules() {
         ),
         (
             "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;left:0;right:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [3.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'><div style='width:6px;height:12px'></div></div></div>",
-            [3.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'>XX XX</div></div>",
-            [3.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;top:0;bottom:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
-            [3.0, 0.0, 10.0, 15.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'><div style='width:6px;height:12px'></div></div></div>",
-            [3.0, 0.0, 10.0, 12.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'>XX XX</div></div>",
-            [3.0, 0.0, 10.0, 20.0],
-        ),
-        (
-            "<div style='position:relative;width:300px;height:200px'><div id=t style='position:absolute;inset:0;aspect-ratio:2/1;max-width:10px;margin:0 3px'><span style='display:inline-block;width:4px;height:13px'></span></div></div>",
             [3.0, 0.0, 10.0, 15.0],
         ),
         (

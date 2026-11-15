@@ -695,25 +695,6 @@ fn min_content_width_without_limits(
     containing_width: f32,
     extra: Vec<OwnedPropertyOverride>,
 ) -> f32 {
-    content_width_without_limits(
-        tree,
-        node_id,
-        containing_width,
-        AvailableSpace::MinContent,
-        extra,
-    )
-}
-
-/// The border-box width of the out-of-flow box `node_id` under `space`, a
-/// min-content or max-content constraint, measured as
-/// [`min_content_width_without_limits`] measures it.
-fn content_width_without_limits(
-    tree: &mut LayoutSession<'_>,
-    node_id: NodeId,
-    containing_width: f32,
-    space: AvailableSpace,
-    extra: Vec<OwnedPropertyOverride>,
-) -> f32 {
     let idx = usize::from(node_id);
     let along = LayoutInput {
         run_mode: RunMode::ComputeSize,
@@ -729,7 +710,7 @@ fn content_width_without_limits(
             height: None,
         },
         available_space: Size {
-            width: space,
+            width: AvailableSpace::MinContent,
             height: AvailableSpace::MaxContent,
         },
         vertical_margins_are_collapsible: Line::FALSE,
@@ -1402,14 +1383,12 @@ pub(super) fn ratio_bound_overrides(
     candidates: &[NodeId],
     containing_size: Size<f32>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    use raikiri_layout_style::values::AlignItemsKeyword;
     /// A height that the content raises to, still to be measured.
     struct HeightFloor {
         key: BoxKey,
         node_id: NodeId,
         width: f32,
-        /// The width is the max-content width, held to these bounds, which
-        /// is measured below.
-        fit_content: Option<Bounds>,
         /// The ratio gives the height at `width`, which the floor raises and
         /// which also goes in as the maximum height: the library gives the
         /// box the height of the width before its bounds held it.
@@ -1485,62 +1464,65 @@ pub(super) fn ratio_bound_overrides(
             ),
             max: own_max.width.map(|size| size + adjustment.width),
         };
-        // A box sized by its content whose insets give it a size keeps the
-        // `max-height` the library carries over from its `max-width` (see
-        // `ratio_max_size_overrides`), which would clamp the height of its
-        // content. That height goes in as its `min-height`, measured at the
-        // width the box gets: the room the insets leave, or its fit-content
-        // width.
-        // Chromium leaves a flex container at the height its ratio gives.
+        // A box sized by its content whose left and right insets give it its
+        // width keeps the `max-height` the library carries over from its
+        // `max-width` (see `ratio_max_size_overrides`), and the library takes
+        // the height the ratio gives the width before that width is held to
+        // its bounds. The height of the content at the width the box gets
+        // goes in as its `min-height`, and the height the ratio gives that
+        // width, so raised, as its `max-height`. A box whose top and bottom
+        // insets give it its height is left to `ratio_width_floors`.
+        let inset = style.inset();
+        let justify = style
+            .bridge_justify_self()
+            .map_or(AlignItemsKeyword::Normal, |alignment| alignment.keyword);
         if stated.width.is_none()
             && stated.height.is_none()
             && min.height.is_auto()
             && !scrolls
-            && own_max.width.is_some()
+            // A percentage `max-width` is left to the library, which keeps the
+            // width it gives within that maximum only without this floor.
+            && matches!(
+                max.width.expand(),
+                raikiri_layout_style::values::ExpandedLengthPercentageAuto::Length(_)
+            )
             && !tree.nodes[idx].display().is_flex_container()
             && !tree.nodes[idx].size_containment.height
+            && (inset.top.is_auto() || inset.bottom.is_auto())
+            && matches!(
+                justify,
+                AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+            )
+            && let Some(ratio) = style.stated_aspect_ratio().filter(|ratio| *ratio > 0.0)
         {
-            let inset = style.inset();
             let margin = style.margin();
             let resolve = |value: raikiri_layout_style::values::LengthPercentageAuto| {
                 value.maybe_resolve(Some(containing_size.width))
             };
-            let room = match (
-                resolve(inset.left),
-                resolve(inset.right),
-                resolve(margin.left),
-                resolve(margin.right),
-            ) {
-                (Some(left), Some(right), margin_left, margin_right) => Some(
-                    containing_size.width
-                        - left
-                        - right
-                        - margin_left.unwrap_or(0.0)
-                        - margin_right.unwrap_or(0.0),
-                ),
-                _ => None,
-            };
-            let height_from_insets = !inset.top.is_auto() && !inset.bottom.is_auto();
-            if room.is_some() || height_from_insets {
-                // The height goes in as the minimum, so it must not carry
-                // across the ratio into a minimum width.
-                if min.width.is_auto() {
-                    entries.push((key, px_length(LengthProperty::MinWidth, 0.0)));
-                }
+            if let (Some(left), Some(right)) = (resolve(inset.left), resolve(inset.right)) {
+                let room = containing_size.width
+                    - left
+                    - right
+                    - resolve(margin.left).unwrap_or(0.0)
+                    - resolve(margin.right).unwrap_or(0.0);
+                let transferred = if min.width.is_auto() {
+                    0.0
+                } else {
+                    min_height_from_min_width(tree, idx, containing_size)
+                };
                 floors.push(HeightFloor {
                     key,
                     node_id: candidate,
-                    width: room.map_or(0.0, |room| width_bounds.apply(room.max(0.0))),
-                    fit_content: room.is_none().then_some(width_bounds),
-                    content_width_floor: None,
-                    adjustment: adjustment.height,
-                    transferred: 0.0,
-                    own_max: own_max_height_of(own_max.height, adjustment.height, edges.height),
+                    width: width_bounds.apply(room.max(0.0)),
                     ratio_height: Some(RatioHeight {
-                        ratio: style.stated_aspect_ratio().unwrap_or(1.0),
+                        ratio,
                         edges,
                         content_box: !border_box || tree.nodes[idx].ratio_in_content_box,
                     }),
+                    content_width_floor: None,
+                    adjustment: adjustment.height,
+                    transferred,
+                    own_max: own_max_height_of(own_max.height, adjustment.height, edges.height),
                 });
             }
             continue;
@@ -1565,9 +1547,7 @@ pub(super) fn ratio_bound_overrides(
         } else {
             min_height_from_min_width(tree, idx, containing_size)
         };
-        let own_max_height = own_max
-            .height
-            .map(|size| (size + adjustment.height).max(edges.height));
+        let own_max_height = own_max_height_of(own_max.height, adjustment.height, edges.height);
         if !min.height.is_auto() {
             // The ratio gives the height of the width the minimum raised, even
             // where the box states a `min-height` of its own, which the library
@@ -1601,7 +1581,6 @@ pub(super) fn ratio_bound_overrides(
             key,
             node_id: candidate,
             width,
-            fit_content: None,
             ratio_height: None,
             content_width_floor,
             adjustment: adjustment.height,
@@ -1614,17 +1593,7 @@ pub(super) fn ratio_bound_overrides(
     }
     scoped(tree, |tree| {
         for floor in floors {
-            let width = floor.fit_content.map_or(floor.width, |bounds| {
-                let unlimited = vec![OwnedPropertyOverride::aspect_ratio(None)];
-                bounds.apply(content_width_without_limits(
-                    tree,
-                    floor.node_id,
-                    containing_size.width,
-                    AvailableSpace::MaxContent,
-                    unlimited,
-                ))
-            });
-            let width = floor.content_width_floor.map_or(width, |raise| {
+            let width = floor.content_width_floor.map_or(floor.width, |raise| {
                 let minimum = ratio_content_min_width(tree, floor.node_id, containing_size.width);
                 floor
                     .width

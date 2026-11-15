@@ -1878,7 +1878,8 @@ fn compute_ifc_root(
     // The out-of-flow algorithm sizes a box by its content in both of its
     // passes, and its ratio still gives an `auto` height from the width the
     // content settles (CSS Sizing 4 §5.1), as it does for a box in flow.
-    let out_of_flow = tree.nodes[idx].layout_position() == Position::Absolute;
+    let out_of_flow =
+        tree.nodes[idx].layout_position() == Position::Absolute && !vertical_paragraph;
     let ratio = layout_style.aspect_ratio.filter(|_| {
         inputs.sizing_mode == SizingMode::InherentSize || flex_item_ratio || out_of_flow
     });
