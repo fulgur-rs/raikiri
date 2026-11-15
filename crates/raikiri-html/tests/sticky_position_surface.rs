@@ -365,6 +365,16 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
 }
 
 #[test]
+fn a_sticky_box_is_measured_where_the_painter_moves_a_relative_float_around_it() {
+    // Layout places a float without its relative offset, which the painter
+    // adds; the sticky box inside is measured from there, as in Chromium.
+    assert_rows(&[(
+        "<div style='height:300px'><div id=p style='float:left;position:relative;top:-30px;width:100px;height:200px'><div style='height:30px'></div><div id=b style='position:sticky;top:50px;height:20px'></div></div></div>",
+        &[(0, "p", [0, -30, 100, 200]), (0, "b", [0, 50, 100, 20])],
+    )]);
+}
+
+#[test]
 fn a_fixed_box_in_the_page_area_is_not_moved_by_the_sticky_boxes_around_it() {
     // The painter places such a fixed box apart from the offsets around it,
     // so a sticky box inside it is measured where the fixed box stands. A

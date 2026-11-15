@@ -80,9 +80,11 @@ fn is_sticky_box(document: &Document, id: usize) -> bool {
             .any(|ancestor| document.nodes[ancestor].is_multicol_container())
 }
 
-/// How far the sticky boxes among the inclusive ancestors of `id` moved it.
-/// The painter places a fixed box in the page area apart from the offsets
-/// around it, so those above such a box do not move what it holds.
+/// How far the painter moves `id` from where layout put it: by the offsets
+/// of the sticky boxes among its inclusive ancestors and the relative offsets
+/// that layout leaves to it (of the body, floats and table parts). The
+/// painter places a fixed box in the page area apart from the offsets around
+/// it, so those above such a box do not move what it holds.
 fn moved_by(
     document: &Document,
     cascade: &CascadeResult,
@@ -92,8 +94,18 @@ fn moved_by(
     document
         .inclusive_ancestors(id)
         .take_while(|&ancestor| !super::fixed::is_page_fixed(document, cascade, ancestor))
-        .filter_map(|ancestor| offsets.get(&ancestor))
-        .fold((0.0, 0.0), |(x, y), &(dx, dy)| (x + dx, y + dy))
+        .filter_map(|ancestor| {
+            offsets.get(&ancestor).copied().or_else(|| {
+                (*document.nodes[ancestor].position() == PositionValue::Relative
+                    && super::relative::placed_without_relative_offset_for_layout(
+                        document, cascade, None, ancestor,
+                    ))
+                .then(|| {
+                    super::relative::used_relative_offset_for_layout(document, cascade, ancestor)
+                })
+            })
+        })
+        .fold((0.0, 0.0), |(x, y), (dx, dy)| (x + dx, y + dy))
 }
 
 /// The border box of `id` where layout put it, and its content box.
