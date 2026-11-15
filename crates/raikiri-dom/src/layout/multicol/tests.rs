@@ -327,7 +327,7 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
 }
 
 #[test]
-fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
+fn only_a_float_child_the_columns_can_place_counts_as_a_direct_float() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -353,8 +353,14 @@ fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
     let trailing = container(&[block, float]);
     let nested = container(&[block]);
     let hidden = container(&[block, "display:none;float:left"]);
+    let margin = container(&["display:block;height:20px;margin-bottom:20px", float]);
+    let hidden_margin = container(&[block, float]);
+    let inline = container(&[float]);
     let wrapper = doc.nodes[nested].children[0];
     doc.append_element(Some(wrapper), "div", Some(float));
+    let wrapper = doc.nodes[hidden_margin].children[0];
+    doc.append_element(Some(wrapper), "div", Some("display:none;margin-top:20px"));
+    doc.append_text(inline, "A B");
     doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
 
     let rules = build_rule_tree(&doc);
@@ -363,6 +369,7 @@ fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
     page.width = 300.0;
     page.height = 400.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+    assert!(doc.nodes[inline].ifc.is_some());
 
     for (container, expected) in [
         (empty, false),
@@ -373,6 +380,12 @@ fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
         (nested, false),
         // A float that is not rendered is none.
         (hidden, false),
+        // Adjoining margins collapse on the block layout, and lines of the
+        // container's own are laid out beside the float there.
+        (margin, false),
+        (inline, false),
+        // A margin that is not rendered collapses with nothing.
+        (hidden_margin, true),
     ] {
         assert_eq!(
             with_bridged_session(&mut doc, |session| {
