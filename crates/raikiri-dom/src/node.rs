@@ -524,8 +524,10 @@ pub struct Node {
     state: Option<Box<BoxState>>,
 }
 
-/// What the cascade's bridge and layout record on a [`Node`]: everything but
-/// the tree itself and the node's kind.
+/// What the cascade's bridge and layout record on a [`Node`], but for the few
+/// fields the node keeps itself: the laid-out box, which pagination moves for
+/// text as well, the content limits, and the display and formatting context,
+/// whose initial values depend on the node's kind.
 ///
 /// A node reaches these fields through `Deref`. It holds none of them until
 /// one is written: until then every read answers with the initial values, the

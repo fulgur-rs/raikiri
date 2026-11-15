@@ -588,6 +588,7 @@ fn a_copy_of_a_node_keeps_its_own_box_state() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn a_node_without_box_state_stays_small() {
     // The tree fields, the node's kind, the laid-out box, which pagination
     // moves for text as well, and the content limits, whose lengths cannot be
