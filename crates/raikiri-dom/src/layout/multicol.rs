@@ -5634,10 +5634,20 @@ fn refresh_paragraph_boxes(
 ) {
     // The boxes positioned inside the inline elements of its lines go with
     // those lines to their columns.
+    // The paragraph places those whose containing block it is itself (CSS 2,
+    // 10.1), from the static positions the columns gave them.
     if holds_out_of_flow_lines(tree, node_id) {
         let size = tree.nodes[node_id].layout.size;
         let mut output = LayoutOutput::HIDDEN;
         crate::layout::ifc::boxes::place_out_of_flow(tree, node_id, size, &mut output);
+        if let Some(area) = output.oof_positioning_area {
+            crate::layout::dispatch::layout_container_candidates(
+                tree,
+                NodeId::from(node_id),
+                &output.oof_candidates,
+                area,
+            );
+        }
     }
     let mut first_columns = HashMap::<usize, usize>::new();
     if let Some(lines) = tree.nodes[node_id]
@@ -5668,7 +5678,18 @@ fn refresh_paragraph_boxes(
             )
         })
         .unwrap_or_default();
-    let boxes = tree.nodes[node_id].ifc_boxes();
+    // An out-of-flow box is laid out on its own, against its containing
+    // block, so the columns do not break its content.
+    let boxes: Vec<usize> = tree.nodes[node_id]
+        .ifc
+        .as_ref()
+        .map_or_else(Vec::new, |root| {
+            root.boxes
+                .iter()
+                .filter(|box_| box_.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+                .map(|box_| box_.node)
+                .collect()
+        });
     for child in boxes {
         // A box may sit inside inline elements of the paragraph; only
         // those elements lie between it and this root.

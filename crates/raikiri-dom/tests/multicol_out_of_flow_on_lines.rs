@@ -430,3 +430,46 @@ fn fixed_boxes_text_inside_and_atomic_neighbours_go_with_the_line() {
         ],
     );
 }
+
+#[test]
+fn a_positioned_paragraph_places_its_boxes_where_the_columns_put_their_lines() {
+    for container in ["", "height:60px;"] {
+        check(
+            &format!(
+                r#"<div id=m style="columns:2;column-gap:0;width:200px;{container}"><div id=p style="position:relative">x x x x x x x x x x x x x x x x x x x x<span id=s style="position:absolute;width:10px;height:10px"></span> x x x x</div></div>"#
+            ),
+            &[
+                ("p", (8.0, 8.0, 200.0, 30.0)),
+                ("s", (198.0, 8.0, 10.0, 10.0)),
+            ],
+        );
+        check(
+            &format!(
+                r#"<div id=m style="columns:2;column-gap:0;width:200px;{container}"><div id=p style="position:relative">x x x x x x x x x x x x x x x x x x x x<span id=s style="position:absolute;width:10px;height:10px;left:5px;top:2px"></span> x x x x</div></div>"#
+            ),
+            &[
+                ("p", (8.0, 8.0, 200.0, 30.0)),
+                ("s", (13.0, 10.0, 10.0, 10.0)),
+            ],
+        );
+    }
+}
+
+/// The content of a box positioned against an inline element stays in one
+/// piece at the element. Chromium breaks it between the columns, which these
+/// columns do not do yet: they keep it whole.
+#[test]
+fn the_content_of_a_box_inside_a_positioned_inline_element_stays_whole() {
+    for container in ["", "height:40px;column-fill:auto;"] {
+        check(
+            &format!(
+                r#"<div id=m style="columns:2;column-gap:0;width:60px;{container}"><div id=p>x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;left:0;top:0"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#
+            ),
+            &[
+                ("r", (8.0, 28.0, 10.0, 10.0)),
+                ("a", (8.0, 28.0, 30.0, 60.0)),
+                ("d", (8.0, 28.0, 30.0, 60.0)),
+            ],
+        );
+    }
+}
