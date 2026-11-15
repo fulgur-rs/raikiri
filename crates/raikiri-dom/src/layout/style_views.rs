@@ -736,6 +736,53 @@ impl LayoutSession<'_> {
             && item.size().height.is_auto()
     }
 
+    /// Whether the grid item `idx`, a block, paragraph, flex or grid
+    /// container with an `auto` height, relates its aspect ratio to its
+    /// content box and has padding or a border, so that it measures itself
+    /// whatever its alignment, its width and its size containment. A stated
+    /// height gives the width through the ratio as the library applies it.
+    ///
+    /// The ratio of a box with `box-sizing: content-box`, or of `auto &&
+    /// <ratio>`, relates the sizes of its content box (CSS Sizing 4 §5.1).
+    /// The library applies a ratio to the size it stretches the item to
+    /// before it takes the padding and border off, so the ratio would relate
+    /// the border box of an item whose alignment stretches it, or that
+    /// scrolls: Chromium lays an `aspect-ratio: 2/1` item with a 25px border
+    /// out 100x75 in a 100px column, not 100x50. Most items that are not
+    /// stretched measure themselves already, for the height of their content.
+    fn grid_item_ratio_excludes_edges(&self, idx: usize, item: &LayoutStyleView<'_>) -> bool {
+        use raikiri_layout_style::values::{BoxSizing, ExpandedLengthPercentage};
+        let node = &self.nodes[idx];
+        let (padding, border) = (item.padding(), item.border());
+        let is_zero = |edge: raikiri_layout_style::values::LengthPercentage| {
+            matches!(
+                edge.expand(),
+                ExpandedLengthPercentage::Length(length) | ExpandedLengthPercentage::Percent(length)
+                    if length == 0.0
+            )
+        };
+        matches!(
+            node.formatting_context,
+            FormattingContext::Block
+                | FormattingContext::Inline
+                | FormattingContext::Flex
+                | FormattingContext::Grid
+        ) && item.size().height.is_auto()
+            && (node.ratio_in_content_box || item.box_sizing() == BoxSizing::ContentBox)
+            && ![
+                padding.left,
+                padding.right,
+                padding.top,
+                padding.bottom,
+                border.left,
+                border.right,
+                border.top,
+                border.bottom,
+            ]
+            .into_iter()
+            .all(is_zero)
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -815,7 +862,8 @@ impl LayoutSession<'_> {
         let measured = measured
             || crate::layout::dispatch::contained_ratio_item(self, idx)
             || self.grid_item_content_outweighs_carried_minimum(idx, &item)
-            || self.grid_item_content_raises_unstretched_height(idx, &item);
+            || self.grid_item_content_raises_unstretched_height(idx, &item)
+            || self.grid_item_ratio_excludes_edges(idx, &item);
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
