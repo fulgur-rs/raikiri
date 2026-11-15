@@ -344,6 +344,31 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
 }
 
 #[test]
+fn a_fixed_box_in_the_page_area_is_not_moved_by_the_sticky_boxes_around_it() {
+    // The painter places such a fixed box apart from the offsets around it,
+    // so a sticky box inside it is measured where the fixed box stands. A
+    // fixed box that a transform contains moves with the sticky box.
+    assert_rows(&[
+        (
+            "<div style='height:500px'><div id=o style='position:sticky;top:100px;height:300px;width:300px'><div id=f style='position:fixed;top:0;left:400px;width:100px;height:200px'><div id=i style='position:sticky;top:50px;height:20px'></div></div></div></div>",
+            &[
+                (0, "o", [0, 100, 300, 300]),
+                (0, "f", [400, 0, 100, 200]),
+                (0, "i", [400, 50, 100, 20]),
+            ],
+        ),
+        (
+            "<div style='height:500px'><div id=o style='position:sticky;top:100px;height:300px;width:300px;transform:translateX(0)'><div id=f style='position:fixed;top:0;left:400px;width:100px;height:200px'><div id=i style='position:sticky;top:50px;height:20px'></div></div></div></div>",
+            &[
+                (0, "o", [0, 100, 300, 300]),
+                (0, "f", [400, 100, 100, 200]),
+                (0, "i", [400, 100, 100, 20]),
+            ],
+        ),
+    ]);
+}
+
+#[test]
 fn a_box_below_the_first_page_is_not_pulled_up_by_its_bottom_inset() {
     // Chromium pulls the box onto the first page, 570px down, over what the
     // pages cut there. The painter draws a box on the page the flow cuts it

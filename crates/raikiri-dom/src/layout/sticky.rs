@@ -81,9 +81,17 @@ fn is_sticky_box(document: &Document, id: usize) -> bool {
 }
 
 /// How far the sticky boxes among the inclusive ancestors of `id` moved it.
-fn moved_by(document: &Document, offsets: &HashMap<usize, (f32, f32)>, id: usize) -> (f32, f32) {
+/// The painter places a fixed box in the page area apart from the offsets
+/// around it, so those above such a box do not move what it holds.
+fn moved_by(
+    document: &Document,
+    cascade: &CascadeResult,
+    offsets: &HashMap<usize, (f32, f32)>,
+    id: usize,
+) -> (f32, f32) {
     document
         .inclusive_ancestors(id)
+        .take_while(|&ancestor| !super::fixed::is_page_fixed(document, cascade, ancestor))
         .filter_map(|ancestor| offsets.get(&ancestor))
         .fold((0.0, 0.0), |(x, y), &(dx, dy)| (x + dx, y + dy))
 }
@@ -137,7 +145,7 @@ fn view_of(
             ..content_box
         };
         return Some((
-            view.translated(moved_by(document, offsets, scroller)),
+            view.translated(moved_by(document, cascade, offsets, scroller)),
             false,
         ));
     }
@@ -160,16 +168,16 @@ fn offset_of(
     id: usize,
 ) -> Option<(f32, f32)> {
     let computed = cascade.computed.get(id)?;
-    let around = document
-        .parent_of(id)
-        .map_or((0.0, 0.0), |parent| moved_by(document, offsets, parent));
+    let around = document.parent_of(id).map_or((0.0, 0.0), |parent| {
+        moved_by(document, cascade, offsets, parent)
+    });
     let (border_box, _) = boxes_of(document, id)?;
     let sticky_box = border_box.translated(around);
     let block = super::relative::containing_block(document, BoxTree::for_layout(document), id)?;
     let (_, block_content) = boxes_of(document, block.key)?;
     // The box stays inside its containing block with its margins.
     let margin = document.ifc_layout_node(id)?.layout.margin;
-    let block_content = block_content.translated(moved_by(document, offsets, block.key));
+    let block_content = block_content.translated(moved_by(document, cascade, offsets, block.key));
     let limits = Area {
         left: block_content.left + margin.left,
         top: block_content.top + margin.top,
