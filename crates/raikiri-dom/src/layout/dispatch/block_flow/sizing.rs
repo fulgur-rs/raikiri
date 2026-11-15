@@ -332,6 +332,24 @@ impl Metrics {
         }
     }
 
+    /// The least width of a box with the style `style` and an `auto` width,
+    /// sized by its content, that its preferred aspect ratio gives it.
+    ///
+    /// A box whose ratio relates its border boxes is no shorter than its
+    /// padding and border, so it is no narrower than the width its ratio gives
+    /// that height: an empty `aspect-ratio: 2 / 1` box with 2px of border is
+    /// 8px wide. A maximum width the box states caps that. A box whose ratio
+    /// relates its content boxes has no such floor beyond its edges.
+    pub(crate) fn ratio_edge_width(self, style: &Style, content_box_ratio: bool) -> f32 {
+        match style.aspect_ratio {
+            Some(ratio) if !content_box_ratio && style.box_sizing != BoxSizing::ContentBox => {
+                let floor = (self.padding + self.border).vertical_axis_sum() * ratio;
+                self.own_max.width.map_or(floor, |max| floor.min(max))
+            }
+            _ => 0.0,
+        }
+    }
+
     pub(super) fn clamp_width(self, width: f32) -> f32 {
         width
             .maybe_clamp(self.min.width, self.max.width)

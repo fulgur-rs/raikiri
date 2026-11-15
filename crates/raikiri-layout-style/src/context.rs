@@ -329,17 +329,6 @@ pub struct HeldCrossSize {
     /// which would win over the smaller maximum size of the main axis the item
     /// states: that maximum.
     pub main_min: Option<f32>,
-    /// Whether the maximum size of the cross axis is reported as unbounded
-    /// where the item states none, so that the flex algorithm does not carry
-    /// the maximum of the main axis across the ratio into a limit that would
-    /// clamp the content-based minimum of an `auto` cross size.
-    pub unbounded_cross_max: bool,
-    /// Whether the maximum size of the main axis is reported as unbounded
-    /// where the item states none, so that the flex algorithm does not carry
-    /// the maximum of the cross axis across the ratio itself: it applies the
-    /// ratio to the border box, and the item carries it across the boxes the
-    /// ratio relates when it measures its own content.
-    pub unbounded_main_max: bool,
 }
 
 /// How a grid parent reads the preferred aspect ratio of an item.
@@ -410,6 +399,12 @@ pub struct ViewContext {
     /// where the minimum its ratio carries over from its `min-width` would
     /// exceed it.
     pub carried_min_height: Option<f32>,
+    /// Whether a `max-width` or `max-height` that is `none` is reported as the
+    /// largest length instead, `[width, height]`, so that the flex algorithm
+    /// carries no maximum of the other axis across the aspect ratio of an item
+    /// into that axis: the item applies the limits its ratio carries over
+    /// itself.
+    pub unbounded_max: [bool; 2],
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -428,6 +423,7 @@ impl Default for ViewContext {
             carried_min_width: None,
             oof_height_follows_width: false,
             carried_min_height: None,
+            unbounded_max: [false; 2],
         }
     }
 }

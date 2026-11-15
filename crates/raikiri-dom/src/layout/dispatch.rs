@@ -3651,18 +3651,11 @@ fn carry_ratio_bounds(style: &mut Style, content_box_ratio: bool, inputs: Layout
         Size::ZERO
     };
     let mut min = metrics.min;
-    // A box whose ratio relates its border boxes is no shorter than its
-    // padding and border, so an `auto` width is no narrower than the width
-    // its ratio gives that height, up to the maximum width the box states.
-    if !content_box_ratio
-        && style.box_sizing != BoxSizing::ContentBox
-        && style.size.width.is_auto()
-        && style.size.height.is_auto()
-        && let Some(ratio) = style.aspect_ratio
-    {
-        let floor = metrics.inset.vertical_axis_sum() * ratio;
-        let floor = metrics.own_max.width.map_or(floor, |max| floor.min(max));
-        if min.width.is_none_or(|width| width < floor) {
+    // An empty box sized by its content is no narrower than its ratio gives
+    // its padding and border.
+    if metrics.preferred.width.is_none() && metrics.preferred.height.is_none() {
+        let floor = metrics.ratio_edge_width(style, content_box_ratio);
+        if floor > 0.0 && min.width.is_none_or(|width| width < floor) {
             min.width = Some(floor);
         }
     }

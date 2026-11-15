@@ -214,17 +214,13 @@ impl LayoutStyleView<'_> {
             self.library_height(LengthProperty::MaxHeight).auto(false),
         );
         let mut max = self.with_held_cross_size(max, |held| held.max);
-        if let Some(held) = self.context.held_cross_size {
-            let (cross, main) = match held.axis {
-                Axis::X => (&mut max.width, &mut max.height),
-                Axis::Y => (&mut max.height, &mut max.width),
-            };
-            if held.unbounded_cross_max && cross.is_auto() {
-                *cross = LengthPercentageAuto::length(f32::INFINITY);
-            }
-            if held.unbounded_main_max && main.is_auto() {
-                *main = LengthPercentageAuto::length(f32::INFINITY);
-            }
+        let [width, height] = self.context.unbounded_max;
+        let unbounded = LengthPercentageAuto::length(crate::length::sanitize(f32::INFINITY));
+        if width && max.width.is_auto() {
+            max.width = unbounded;
+        }
+        if height && max.height.is_auto() {
+            max.height = unbounded;
         }
         max
     }

@@ -737,6 +737,22 @@ fn a_content_box_ratio_carries_a_maximum_height_between_content_boxes() {
             [0.0, 0.0, 19.0, 34.0],
             [19.0, 0.0, 0.0, 5.0],
         ),
+        (
+            "display:flex;width:300px;height:100px;align-items:start",
+            "aspect-ratio:1/2;padding:2px;max-height:30%",
+            "XXXX",
+            [0.0, 0.0, 300.0, 100.0],
+            [0.0, 0.0, 19.0, 34.0],
+            [19.0, 0.0, 20.0, 5.0],
+        ),
+        (
+            "display:flex;width:300px;height:100px;align-items:start",
+            "aspect-ratio:1/2;padding:2px;max-height:calc(10px + 20%)",
+            "XXXX",
+            [0.0, 0.0, 300.0, 100.0],
+            [0.0, 0.0, 19.0, 34.0],
+            [19.0, 0.0, 20.0, 5.0],
+        ),
     ]);
 }
 
@@ -1175,6 +1191,30 @@ fn a_border_box_ratio_gives_the_width_of_its_padding_and_border() {
             [0.0, 0.0, 8.0, 4.0],
             [0.0, 4.0, 20.0, 5.0],
         ),
+        (
+            "display:flex;width:300px",
+            "aspect-ratio:2/1;max-height:2px;box-sizing:border-box;padding:1%",
+            "",
+            [0.0, 0.0, 300.0, 6.0],
+            [0.0, 0.0, 12.0, 6.0],
+            [12.0, 0.0, 20.0, 5.0],
+        ),
+        (
+            "display:flex;width:300px;align-items:start",
+            "aspect-ratio:2/1;max-height:2px;box-sizing:border-box;padding:1%",
+            "",
+            [0.0, 0.0, 300.0, 6.0],
+            [0.0, 0.0, 12.0, 6.0],
+            [12.0, 0.0, 20.0, 5.0],
+        ),
+        (
+            "display:flex;width:300px;height:100px;align-items:start",
+            "aspect-ratio:2/1;max-height:2px;box-sizing:border-box;padding:1%",
+            "",
+            [0.0, 0.0, 300.0, 100.0],
+            [0.0, 0.0, 12.0, 6.0],
+            [12.0, 0.0, 20.0, 5.0],
+        ),
     ]);
 }
 
@@ -1240,50 +1280,180 @@ fn the_limits_leave_other_items_alone() {
             [0.0, 0.0, 14.0, 14.0],
             [14.0, 0.0, 0.0, 5.0],
         ),
+        (
+            "display:flex;width:300px",
+            "aspect-ratio:1/2;padding:2px;max-height:30%",
+            "XXXX",
+            [0.0, 0.0, 300.0, 84.0],
+            [0.0, 0.0, 44.0, 84.0],
+            [44.0, 0.0, 20.0, 5.0],
+        ),
+        (
+            "display:flex;width:300px",
+            "aspect-ratio:1/2;padding:2px;max-height:calc(10px + 20%)",
+            "XXXX",
+            [0.0, 0.0, 300.0, 84.0],
+            [0.0, 0.0, 44.0, 84.0],
+            [44.0, 0.0, 20.0, 5.0],
+        ),
     ]);
 }
 
-/// An empty box that relates its border boxes is as wide as its ratio gives
-/// its padding and border, wherever it is sized by its content.
+/// A box that relates its border boxes and is sized by its content is as wide
+/// as its ratio gives its padding and border, within the width it states, and
+/// a box that fills the room it is offered keeps that width.
 #[test]
-fn an_empty_border_box_ratio_is_as_wide_as_its_edges_give() {
-    let rows: &[(&str, [f32; 4])] = &[
+fn a_border_box_ratio_sized_by_its_content_is_as_wide_as_its_edges_give() {
+    let rows: &[(&str, &str, &str, [f32; 4])] = &[
         (
+            "300px",
             "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
             [0.0, 4.0, 8.0, 4.0],
         ),
         (
+            "300px",
             "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;padding:3px",
+            "",
             [0.0, 2.0, 12.0, 6.0],
         ),
         (
+            "300px",
             "float:left;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
             [0.0, 0.0, 8.0, 4.0],
         ),
         (
+            "300px",
             "float:left;aspect-ratio:2/1;box-sizing:border-box;padding:3px",
+            "",
             [0.0, 0.0, 12.0, 6.0],
         ),
         (
+            "300px",
             "position:absolute;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
             [0.0, 0.0, 8.0, 4.0],
         ),
         (
+            "300px",
             "position:absolute;aspect-ratio:2/1;box-sizing:border-box;padding:3px",
+            "",
             [0.0, 0.0, 12.0, 6.0],
         ),
         (
+            "300px",
             "display:table-cell;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
             [0.0, 0.0, 8.0, 4.0],
         ),
         (
+            "300px",
             "display:table-cell;aspect-ratio:2/1;box-sizing:border-box;padding:3px",
+            "",
             [0.0, 0.0, 12.0, 6.0],
+        ),
+        (
+            "4px",
+            "display:inline-block;width:stretch;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 4.0, 4.0, 4.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;height:50%;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 4.0, 8.0, 4.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;max-width:5px",
+            "",
+            [0.0, 4.0, 5.0, 4.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:20px",
+            "",
+            [0.0, 0.0, 20.0, 10.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;max-height:2px",
+            "",
+            [0.0, 4.0, 8.0, 4.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "X",
+            [0.0, 0.0, 14.0, 14.0],
+        ),
+        (
+            "300px",
+            "display:inline-block;aspect-ratio:2/1;box-sizing:border-box;padding:2px 30px",
+            "",
+            [0.0, 0.0, 60.0, 30.0],
+        ),
+        (
+            "4px",
+            "float:left;width:stretch;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 0.0, 4.0, 4.0],
+        ),
+        (
+            "300px",
+            "float:left;height:50%;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 0.0, 8.0, 4.0],
+        ),
+        (
+            "300px",
+            "float:left;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;max-width:5px",
+            "",
+            [0.0, 0.0, 5.0, 4.0],
+        ),
+        (
+            "300px",
+            "float:left;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:20px",
+            "",
+            [0.0, 0.0, 20.0, 10.0],
+        ),
+        (
+            "300px",
+            "float:left;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;max-height:2px",
+            "",
+            [0.0, 0.0, 8.0, 4.0],
+        ),
+        (
+            "300px",
+            "float:left;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "X",
+            [0.0, 0.0, 14.0, 14.0],
+        ),
+        (
+            "300px",
+            "float:left;aspect-ratio:2/1;box-sizing:border-box;padding:2px 30px",
+            "",
+            [0.0, 0.0, 60.0, 30.0],
+        ),
+        (
+            "300px",
+            "aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 0.0, 300.0, 150.0],
+        ),
+        (
+            "300px",
+            "width:stretch;aspect-ratio:2/1;box-sizing:border-box;border:2px solid",
+            "",
+            [0.0, 0.0, 300.0, 150.0],
         ),
     ];
     let mut failures = Vec::new();
-    for (style, want) in rows {
-        let body = format!("<div id=c style='width:300px'><div id=t style='{style}'></div></div>");
+    for (width, style, text, want) in rows {
+        let body =
+            format!("<div style='width:{width}'><div id=t style='{style}'>{text}</div></div>");
         let got = border_boxes(&body).get("t").copied();
         let matches = got.is_some_and(|got| {
             got.iter()

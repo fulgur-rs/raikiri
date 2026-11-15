@@ -531,6 +531,7 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
             context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            context.unbounded_max = self.flex_item_unbounded_max(idx, view.with_context(context));
             context.zero_min_main_axis = self
                 .zero_min_main_axis(idx)
                 .filter(|_| !self.container_is_vertical(idx));
@@ -1012,7 +1013,7 @@ impl LayoutSession<'_> {
             )
         };
         if !states_a_size(cross) {
-            return self.auto_cross_limits(idx, &item, is_row);
+            return None;
         }
         // Limits of its own on the cross axis clamp the cross size the item
         // states before the ratio gives it a main size, which is why the main
@@ -1057,76 +1058,52 @@ impl LayoutSession<'_> {
             max: held_max,
             size,
             main_min: main_floor,
-            unbounded_cross_max: false,
-            unbounded_main_max: false,
         };
         (held.min || held.max || held.size.is_some()).then_some(held)
     }
 
-    /// The limits the view reports for the flex item `idx` of a row, which has
-    /// a preferred aspect ratio and `auto` sizes, in place of the ones the flex
-    /// algorithm would carry across the ratio itself, where `item` is the view
-    /// of the item the flex algorithm reads and `is_row` says whether its
-    /// container is a row.
+    /// Whether the view reports the `max-width` and the `max-height` of the
+    /// flex item `idx` that are `none` as unbounded, `[width, height]`, where
+    /// `item` is the view of the item the flex algorithm reads.
     ///
-    /// - The `auto` height is at least the content-based minimum, which the
-    ///   `max-width` carried across the ratio does not clamp: a box of ratio
-    ///   2/1 with a `max-width` of 10px and a line of text 10px high is 10px
-    ///   high. The maximum height is reported as unbounded then, except for a
-    ///   scroll container, which has no such minimum.
-    /// - The flex algorithm applies the ratio to the border box, so where the
-    ///   ratio relates the content boxes it would carry the padding and border
-    ///   of the height across with a `max-height`, and where it relates the
-    ///   border boxes it would carry a `max-height` smaller than the padding
-    ///   and border, which the box is not. The maximum width is reported as
-    ///   unbounded then, and the item caps its own width with the `max-height`
-    ///   it carries across when it measures its content.
-    fn auto_cross_limits(
+    /// The flex algorithm carries a maximum of one axis of an item with a
+    /// preferred aspect ratio across the ratio into the other one, which does
+    /// not hold for an item of a row with `auto` sizes:
+    ///
+    /// - Its `auto` height is at least the content-based minimum, which the
+    ///   `max-width` carried across the ratio does not clamp (CSS Sizing 4
+    ///   §5.1): a box of ratio 2/1 with a `max-width` of 10px and a line of
+    ///   text 10px high is 10px high. A scroll container has no such minimum,
+    ///   and nor does a box that states its `min-height`.
+    /// - The flex algorithm applies the ratio to the border box, so it carries
+    ///   a `max-height` across with the padding and border of the height where
+    ///   the ratio relates the content boxes, and it carries one smaller than
+    ///   the padding and border, which the box is not, where the ratio relates
+    ///   the border boxes. The item caps its width with the `max-height` it
+    ///   carries across itself when it measures its content.
+    fn flex_item_unbounded_max(
         &self,
         idx: usize,
-        item: &raikiri_layout_style::LayoutStyleView<'_>,
-        is_row: bool,
-    ) -> Option<raikiri_layout_style::HeldCrossSize> {
-        use raikiri_layout_style::values::{
-            BoxSizing, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
-        };
-        use raikiri_layout_style::{Axis, HeldCrossSize};
+        item: raikiri_layout_style::LayoutStyleView<'_>,
+    ) -> [bool; 2] {
+        let row = self
+            .taffy_parent_of(idx)
+            .is_some_and(|container| self.physical_style(container).flex_direction_is_row());
         let (size, min, max) = (item.size(), item.min_size(), item.max_size());
-        if !is_row || !size.height.is_auto() || !size.width.is_auto() {
-            return None;
+        if !row
+            || self.container_is_vertical(idx)
+            || item.aspect_ratio().is_none()
+            || !size.width.is_auto()
+            || !size.height.is_auto()
+        {
+            return [false; 2];
         }
-        let unbounded_cross_max = !max.width.is_auto()
+        let height = !max.width.is_auto()
             && max.height.is_auto()
             && min.height.is_auto()
             && !item.overflow().y.is_scroll_container();
-        let relates_content =
-            item.box_sizing() == BoxSizing::ContentBox || self.nodes[idx].ratio_in_content_box;
-        let edges_y = || {
-            let (padding, border) = (item.padding(), item.border());
-            [padding.top, padding.bottom, border.top, border.bottom]
-                .into_iter()
-                .map(|edge| match edge.expand() {
-                    ExpandedLengthPercentage::Length(length) => Some(length),
-                    _ => None,
-                })
-                .sum::<Option<f32>>()
-        };
-        let unbounded_main_max = max.width.is_auto()
-            && match max.height.expand() {
-                ExpandedLengthPercentageAuto::Length(cross_max) => {
-                    relates_content || edges_y().is_some_and(|edges| cross_max < edges)
-                }
-                _ => false,
-            };
-        (unbounded_cross_max || unbounded_main_max).then_some(HeldCrossSize {
-            axis: Axis::Y,
-            min: false,
-            max: false,
-            size: None,
-            main_min: None,
-            unbounded_cross_max,
-            unbounded_main_max,
-        })
+        let width = max.width.is_auto() && !max.height.is_auto();
+        [width, height]
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.
