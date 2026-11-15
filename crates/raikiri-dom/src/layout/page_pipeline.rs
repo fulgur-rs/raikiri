@@ -5858,26 +5858,38 @@ impl AvoidedBreaks {
         });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();
-        // A replaced element is unbreakable whole.
-        let unbreakable = candidate.context.is_unbreakable()
-            && unbreakable_box_moves(
+        // A replaced element is unbreakable whole, and so is a line of
+        // atomic inlines alone, which keeps the block that holds it whole.
+        let unbreakable_end = if candidate.context.is_unbreakable() {
+            Some(page_box_end - height + candidate.context.unbreakable_extent(height))
+        } else {
+            unplaced_line
+                .filter(|line| line.atomic)
+                .map(|line| flow_y + line.end.min(height))
+        };
+        let unbreakable = unbreakable_end.is_some_and(|end| {
+            // The box moves with the blocks it begins, which start above it:
+            // the page is theirs to start.
+            unbreakable_box_moves(
                 flow_y - holder_lead,
                 holder_margin_top,
                 flow_y,
-                page_box_end - height + candidate.context.unbreakable_extent(height),
+                end,
                 page_start,
                 page_end,
-            );
-        // A paragraph of one line that no text places, of atomic inlines or
-        // generated content alone, is kept whole by that line and the edges
-        // that follow it (see `unplaced_line_extent`), as such a box is, and
-        // moves with the blocks it begins.
+            )
+        });
+        // A paragraph of one line that no text places, of generated text or
+        // atomic inlines alone, also keeps the edges that follow that line
+        // (see `unplaced_line_extent`), and moves with the blocks it begins
+        // when they cross the page end. Their margin box tells whether they
+        // start the page, as for a box that avoids a break inside it: a
+        // margin kept at the start of the first page leaves them there.
         let unbreakable = unbreakable
             || unplaced_line.is_some_and(|line| {
-                unbreakable_box_moves(
+                avoided_box_moves(
                     flow_y - holder_lead,
                     holder_margin_top,
-                    flow_y,
                     flow_y + unplaced_line_extent(document, node_id, line, height),
                     page_start,
                     page_end,
@@ -8439,7 +8451,7 @@ fn unplaced_line_extent(
 ) -> f32 {
     let layout = &document.nodes[node_id].layout;
     let content_end = height - layout.padding.bottom - layout.border.bottom;
-    if (content_end - line.end).abs() <= 0.5 {
+    if (content_end - line.end).abs() <= 0.01 {
         height
     } else {
         line.end.min(height)

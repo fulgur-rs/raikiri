@@ -108,3 +108,19 @@ fn a_paragraph_whose_edges_fit_stays() {
         }
     }
 }
+
+#[test]
+fn a_paragraph_below_the_first_margin_of_the_document_stays() {
+    // The margin above the first paragraph is kept at the start of the first
+    // page, and the paragraph starts that page with it, though it is taller
+    // than what the margin leaves of the page.
+    for paragraph in [GENERATED, INLINE_BLOCK] {
+        let body = format!(
+            "{}<div>Z</div>",
+            paragraph
+                .replace("margin:0", "margin:10px 0 0")
+                .replace("PB", "80")
+        );
+        assert_eq!(glyph_tops(&body), [(0, 'A', 15), (2, 'Z', 5)], "{body}");
+    }
+}
