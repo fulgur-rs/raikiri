@@ -957,19 +957,27 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document, cascade: &Casc
         // Reordering changes Taffy's child traversal. Clear every cache before
         // layout starts: a root/ancestor cache hit would otherwise skip the
         // normal lazy invalidation hook and preserve stale item positions.
-        for node in doc.nodes.layout_nodes_mut() {
-            node.cache.clear();
-            node.grid_item_row_starts = Box::new([]);
-            node.grid_item_rows = Box::new([]);
-            node.grid_column_count = 0;
+        for state in doc
+            .nodes
+            .layout_nodes_mut()
+            .filter_map(crate::node::Node::written_state)
+        {
+            state.cache.clear();
+            state.grid_item_row_starts = Box::new([]);
+            state.grid_item_rows = Box::new([]);
+            state.grid_column_count = 0;
         }
     } else if grid_details_stale {
         // A DOM mutation will invalidate layout caches in Taffy's normal path;
         // discard placement metadata until the next grid layout repopulates it.
-        for node in &mut doc.nodes {
-            node.grid_item_row_starts = Box::new([]);
-            node.grid_item_rows = Box::new([]);
-            node.grid_column_count = 0;
+        for state in doc
+            .nodes
+            .iter_mut()
+            .filter_map(crate::node::Node::written_state)
+        {
+            state.grid_item_row_starts = Box::new([]);
+            state.grid_item_rows = Box::new([]);
+            state.grid_column_count = 0;
         }
     }
 }

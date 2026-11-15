@@ -5842,7 +5842,9 @@ fn place_cells(
             .children
             .clone()
         {
-            if doc.nodes[child].layout_position() != Position::Absolute {
+            // No shift leaves the child where it is, and a child that layout
+            // never wrote to stays without a box of its own.
+            if shift != 0.0 && doc.nodes[child].layout_position() != Position::Absolute {
                 let mut child_layout = doc.nodes[child].layout;
                 child_layout.location.y += shift;
                 doc.store_layout(child, &child_layout);

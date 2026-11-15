@@ -2,6 +2,7 @@ use super::style_views::metadata::{size_containment, sizing_flags as view_sizing
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits::ContentLimits;
+use crate::node::set_unless_same;
 use crate::node::{FormattingContext, Node};
 use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
 use raikiri_layout_geometry::{Edges, Size};
@@ -729,7 +730,11 @@ fn classify_formatting_context(node: &Node) -> FormattingContext {
 /// root also covers detached subtrees and inert template fragments.
 fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
     for (id, node) in doc.nodes.iter_mut().enumerate() {
-        node.authored_writing_mode = cascade.authored_writing_modes.get(id).copied().flatten();
+        set_unless_same!(
+            node,
+            authored_writing_mode,
+            cascade.authored_writing_modes.get(id).copied().flatten()
+        );
     }
     let mut pending: Vec<usize> = doc
         .nodes
@@ -770,22 +775,34 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
             _ => parent_multicol_flow,
         };
         let node = &mut doc.nodes[id];
-        node.multicol_flow = multicol_flow;
-        node.used_writing_mode = node.authored_writing_mode.unwrap_or(inherited);
-        node.under_vertical_writing = under_vertical
-            || node
-                .authored_writing_mode
-                .is_some_and(WritingMode::is_vertical);
+        set_unless_same!(node, multicol_flow, multicol_flow);
+        set_unless_same!(
+            node,
+            used_writing_mode,
+            node.authored_writing_mode.unwrap_or(inherited)
+        );
+        set_unless_same!(
+            node,
+            under_vertical_writing,
+            under_vertical
+                || node
+                    .authored_writing_mode
+                    .is_some_and(WritingMode::is_vertical)
+        );
         // Text in a typographic vertical mode sits on the central baseline
         // unless it is set sideways; the sideways modes are horizontal
         // typographic modes.
-        node.central_baseline = matches!(
-            node.used_writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
-        ) && cascade
-            .computed
-            .get(id)
-            .is_some_and(|cv| cv.text_orientation != TextOrientation::Sideways);
+        set_unless_same!(
+            node,
+            central_baseline,
+            matches!(
+                node.used_writing_mode,
+                WritingMode::VerticalRl | WritingMode::VerticalLr
+            ) && cascade
+                .computed
+                .get(id)
+                .is_some_and(|cv| cv.text_orientation != TextOrientation::Sideways)
+        );
         pending.extend(node.children.iter().copied());
     }
 }
