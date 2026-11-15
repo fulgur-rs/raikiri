@@ -937,7 +937,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(tree: &mut Document) {
             let origin = tree.layout_origin_of(box_.node).unwrap_or_default();
             // The piece in the column of the line the box sits on, else the
             // first.
-            let column = column_of_line_box(root, box_.node);
+            let column = column_of_line_box(tree, root, box_.node);
             let (piece, piece_origin) = *pieces
                 .iter()
                 .find(|(piece, _)| Some(records.fragments[*piece].fragmentainer) == column)
@@ -970,8 +970,12 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(tree: &mut Document) {
 
 /// The column of the line that the box `node` of the paragraph `root` sits
 /// on, among the columns its lines were split between.
-fn column_of_line_box(root: &crate::layout::ifc::root::IfcRoot, node: usize) -> Option<usize> {
-    let (line, _) = crate::layout::ifc::boxes::find_oof_anchor(root.lines.as_ref()?, node)?;
+fn column_of_line_box(
+    tree: &Document,
+    root: &crate::layout::ifc::root::IfcRoot,
+    node: usize,
+) -> Option<usize> {
+    let (line, _) = crate::layout::ifc::boxes::find_oof_anchor(tree, root.lines.as_ref()?, node)?;
     root.multicol_fragments
         .as_ref()?
         .iter()

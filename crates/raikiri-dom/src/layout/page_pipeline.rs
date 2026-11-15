@@ -11162,7 +11162,7 @@ fn follows_line_of_paragraph(
                     .oof_coordinates
                     .get(&block)
                     .is_some_and(|coordinate| coordinate.follow_static_y)
-                    && find_oof_anchor(lines, block).is_some_and(|(anchor, _)| anchor >= line)
+                    && find_oof_anchor(document, lines, block).is_some_and(|(anchor, _)| anchor >= line)
         })
 }
 
@@ -12712,7 +12712,10 @@ fn out_of_flow_moves(
                         }
                         OutOfFlowFollow::OnLine => {
                             let anchors = anchors.get_or_init(|| {
-                                ifc.lines.as_ref().map(first_anchors).unwrap_or_default()
+                                ifc.lines
+                                    .as_ref()
+                                    .map(|lines| first_anchors(document, lines))
+                                    .unwrap_or_default()
                             });
                             let (line, _) = anchors.get(&b.node)?;
                             (*line >= moved.line).then_some(moved.shift)?

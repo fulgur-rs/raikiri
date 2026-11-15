@@ -3,20 +3,35 @@
 use super::super::inline_boxes::InlineBoxPiece;
 use super::*;
 
-/// Keep the first anchor in line and visual-fragment order for each node.
-pub(crate) fn first_anchors(lines: &IfcLines) -> HashMap<usize, (usize, f32)> {
+/// Keep the first anchor in line and visual-fragment order for each node, at
+/// the place it puts its box (see [`AnchorPlaces`]).
+pub(crate) fn first_anchors(doc: &Document, lines: &IfcLines) -> HashMap<usize, (usize, f32)> {
     #[cfg(test)]
     tests::OOF_ANCHOR_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
     let mut anchors = HashMap::new();
+    let mut places = AnchorPlaces::new(doc, &lines.lines);
     for (index, line) in lines.lines.iter().enumerate() {
-        for fragment in line.fragments() {
+        let mut leading = true;
+        // The last text or atomic inline of the line, found at its first
+        // anchor.
+        let mut last_content = None;
+        for (at, fragment) in line.fragments().enumerate() {
             #[cfg(test)]
             tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
-            if let shodo::Fragment::OutOfFlowAnchor(anchor) = fragment {
-                anchors
-                    .entry(anchor.node.0 as usize)
-                    .or_insert((index, anchor.inline_position));
-            }
+            let shodo::Fragment::OutOfFlowAnchor(anchor) = fragment else {
+                leading &= !starts_content(&fragment);
+                continue;
+            };
+            let last = *last_content.get_or_insert_with(|| {
+                line.fragments()
+                    .enumerate()
+                    .filter(|(_, fragment)| holds_content(fragment))
+                    .map(|(at, _)| at)
+                    .last()
+            });
+            anchors.entry(anchor.node.0 as usize).or_insert_with(|| {
+                places.place(index, leading, last.is_none_or(|last| last < at), anchor)
+            });
         }
     }
     anchors
