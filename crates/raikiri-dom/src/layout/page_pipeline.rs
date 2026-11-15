@@ -6131,8 +6131,10 @@ fn sibling_renders(document: &Document, sibling: usize) -> bool {
 /// is left with an empty start otherwise. One with a top border or padding is a
 /// plain block box that begins its page below `page_start`: the page breaks
 /// before it rather than between those edges and `block`, which would leave
-/// them alone at the foot of the page (CSS Break 3 §4.1). One that starts at
-/// `page_start` gains nothing by moving, and stops the walk.
+/// them alone at the foot of the page (CSS Break 3 §4.1), unless clearance
+/// puts the child below its margin after the edges. One that starts at
+/// `page_start` gains nothing by moving, and stops the walk. A
+/// `display: contents` ancestor has no box and is passed over.
 fn first_box_ancestor_at_start(
     document: &Document,
     cascade: &CascadeResult,
@@ -6145,6 +6147,10 @@ fn first_box_ancestor_at_start(
     let mut unusual_coordinates = has_unusual_coordinates(document, block);
     let mut moved = block;
     let mut child = block;
+    // The nearest box at or below `child`. A `display: contents` element has
+    // no box, so the coordinates of the box inside it are relative to the
+    // box around it, and the walk carries them past it unchanged.
+    let mut box_child = block;
     for parent in document
         .layout_ancestors(block)
         .take_while(|&id| id != body_id)
@@ -6154,6 +6160,10 @@ fn first_box_ancestor_at_start(
             || is_floating_box_for_pagination(document, cascade, child)
         {
             break;
+        }
+        child = parent;
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
         }
         // Flow candidates follow their layout parents; carry the current top
         // upward and fall back for out-of-flow or inline formatting coordinates.
@@ -6167,20 +6177,22 @@ fn first_box_ancestor_at_start(
             unusual_coordinates = true;
             current_abs_y(document, parent)
         } else {
-            child_top - document.pagination_local_y(child)
+            child_top - document.pagination_local_y(box_child)
         };
         let child_start = child_top;
-        child = parent;
+        let child_margin = document.nodes[box_child].layout.margin.top.max(0.0);
+        box_child = parent;
         child_top = parent_top;
-        if document.nodes[parent].display() == DisplayValue::Contents {
-            continue;
-        }
         let layout = &document.nodes[parent].layout;
         let has_edges = layout.border.top != 0.0 || layout.padding.top != 0.0;
         let moves_with_block = if has_edges {
             // The page breaks before a relative offset moves the box, so the
-            // ancestor starts the page at its place in the normal flow.
+            // ancestor starts the page at its place in the normal flow. A
+            // child that clearance put further down than its margin leaves a
+            // gap after the edges, and the page breaks in that gap (Chromium).
+            let content_top = parent_top + layout.border.top + layout.padding.top;
             is_plain_block_box(document, parent)
+                && child_start - content_top <= child_margin + 0.01
                 && parent_top - accumulated_relative_offset_y(document, cascade, body_id, parent)
                     > page_start + 0.001
         } else {
