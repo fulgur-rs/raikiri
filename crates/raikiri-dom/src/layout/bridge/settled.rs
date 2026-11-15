@@ -680,7 +680,8 @@ fn fixed_track(size: &ComputedGridTrackSize) -> bool {
     )
 }
 
-/// Whether a grid template lists at least one track and only fixed ones.
+/// Whether a grid template lists at least one track and only fixed ones,
+/// counting those a `repeat()` of fixed tracks lists.
 fn all_fixed_tracks(tracks: &ComputedGridTemplateTracks) -> bool {
     match tracks {
         ComputedGridTemplateTracks::None => false,
@@ -688,7 +689,9 @@ fn all_fixed_tracks(tracks: &ComputedGridTemplateTracks) -> bool {
             !list.components.is_empty()
                 && list.components.iter().all(|track| match track {
                     ComputedGridTrackListComponent::Size(size) => fixed_track(size),
-                    ComputedGridTrackListComponent::Repeat(_) => false,
+                    ComputedGridTrackListComponent::Repeat(repeat) => {
+                        !repeat.tracks.is_empty() && repeat.tracks.iter().all(fixed_track)
+                    }
                 })
         }
     }
