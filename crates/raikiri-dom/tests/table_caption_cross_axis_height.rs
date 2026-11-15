@@ -5,7 +5,7 @@
 //! hold the stated height and the captions, a line or track of a definite
 //! height aligns that box in it, and a stretched table keeps its grid box
 //! within its `max-height`. A flex column bounds the whole wrapper box by a
-//! `min-height`, as Chromium does.
+//! `min-height`, as Chromium does. An `aspect-ratio` sizes the grid box too.
 //!
 //! The expected border boxes `[x, y, width, height]` are the ones Chromium
 //! computes for the same markup in an 800px by 600px viewport with no body
@@ -3124,6 +3124,955 @@ fn tables_with_an_auto_height_are_left_as_they_were() {
                 ("d", [0.0, 20.0, 20.0, 10.0]),
                 ("r", [0.0, 0.0, 800.0, 10.0]),
                 ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+/// An `aspect-ratio` gives the grid box of a table item with a caption the
+/// height that the width it states or is given transfers, and the caption comes
+/// on top of it; a grid aligns such an item to the start of its area, and a
+/// flex row stretches it.
+#[test]
+fn a_ratio_gives_the_grid_box_of_a_table_item_the_height_its_width_transfers() {
+    assert_cases(&[
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 60.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 60.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 60.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 40.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [400.0, 20.0, 20.0, 110.0]),
+                ("r", [0.0, 30.0, 400.0, 100.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [400.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 400.0, 100.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 100.0, 90.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 100.0, 90.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 110.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 20.0, 100.0, 90.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [400.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 400.0, 90.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 120.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [0.0, 130.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 400.0, 100.0]),
+                ("z", [0.0, 140.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 30.0]),
+                ("cap", [0.0, 20.0, 10.0, 10.0]),
+                ("d", [0.0, 40.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 10.0, 10.0]),
+                ("z", [0.0, 50.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 120.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [0.0, 130.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 400.0, 100.0]),
+                ("z", [0.0, 140.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 800.0, 400.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 400.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 400.0, 100.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 70.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 120.0]),
+                ("cap", [0.0, 20.0, 200.0, 10.0]),
+                ("d", [0.0, 130.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 200.0, 100.0]),
+                ("z", [0.0, 140.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='width:100px;aspect-ratio:2;max-height:30px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='width:50%;aspect-ratio:4;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 45.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 55.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 25.0]),
+                ("z", [0.0, 65.0, 800.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+/// An `aspect-ratio` gives a table item with a caption the width that the
+/// height its grid box states transfers, within its `min-width`, and a grid
+/// keeps that width instead of stretching the item.
+#[test]
+fn a_ratio_gives_a_table_item_the_width_the_height_of_its_grid_box_transfers() {
+    assert_cases(&[
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 40.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 40.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 40.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 46.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [66.0, 20.0, 20.0, 46.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 66.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 40.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 46.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [66.0, 20.0, 20.0, 10.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 66.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [60.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [66.0, 20.0, 20.0, 100.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 56.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [0.0, 66.0, 20.0, 10.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 76.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 56.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [0.0, 66.0, 20.0, 10.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 76.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap>aa bb</caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px;caption-side:bottom'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 50.0, 60.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='height:30px;aspect-ratio:2;padding:3px;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 56.0]),
+                ("cap", [0.0, 20.0, 66.0, 10.0]),
+                ("d", [0.0, 66.0, 20.0, 10.0]),
+                ("r", [3.0, 33.0, 60.0, 30.0]),
+                ("z", [0.0, 76.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-columns:200px'><table id=t style='height:30px;aspect-ratio:2;min-width:100px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 60.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 30.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+    ]);
+}
+
+/// A table item with a ratio and no caption is sized by the layout library as
+/// before, and so is one in a flex row that states no size.
+#[test]
+fn tables_with_a_ratio_and_no_caption_or_no_size_are_left_as_they_were() {
+    assert_cases(&[
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [100.0, 20.0, 20.0, 50.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 30.0]),
+                ("d", [60.0, 20.0, 20.0, 30.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 50.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 20.0]),
+                ("cap", [0.0, 20.0, 10.0, 10.0]),
+                ("d", [10.0, 20.0, 20.0, 20.0]),
+                ("r", [0.0, 30.0, 10.0, 10.0]),
+                ("z", [0.0, 40.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [10.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 10.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 30.0]),
+                ("d", [60.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 50.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 20.0]),
+                ("cap", [0.0, 20.0, 10.0, 10.0]),
+                ("d", [10.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 10.0, 10.0]),
+                ("z", [0.0, 40.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [10.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 10.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("d", [100.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 20.0, 100.0, 100.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("d", [60.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='aspect-ratio:2;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("cap", [0.0, 20.0, 200.0, 10.0]),
+                ("d", [200.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 30.0, 200.0, 90.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;height:100px'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 100.0]),
+                ("d", [200.0, 20.0, 20.0, 100.0]),
+                ("r", [0.0, 20.0, 200.0, 100.0]),
+                ("z", [0.0, 120.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("d", [0.0, 70.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("d", [0.0, 50.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 410.0]),
+                ("d", [0.0, 420.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 800.0, 400.0]),
+                ("z", [0.0, 430.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("d", [0.0, 70.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 40.0]),
+                ("d", [0.0, 50.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;align-items:start;justify-items:start'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 20.0]),
+                ("d", [0.0, 30.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 10.0, 10.0]),
+                ("z", [0.0, 40.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='width:100px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 100.0, 50.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:30px;aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 60.0, 30.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='aspect-ratio:2;border-spacing:0'><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("r", [0.0, 20.0, 800.0, 400.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
             ],
         ),
     ]);
