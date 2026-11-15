@@ -647,12 +647,11 @@ fn static_position_after_a_broken_box_of_its_own_width() {
     );
 }
 
-/// An inline-level box with a width of its own is centered in its column as
-/// it is centered across a line of the same width outside columns: the
-/// 20px box starts 40px into the 100px column. (Chromium starts it at the
-/// center point instead, outside columns as well.)
+/// An inline-level box with a width of its own starts at the center point of
+/// its column, as it starts at the center point of a line of the same width
+/// outside columns: the 20px box starts 50px into the 100px second column.
 #[test]
-fn inline_block_is_centered_in_its_column_by_its_own_width() {
+fn inline_block_starts_at_the_center_point_of_its_column() {
     let column = |body: &str| {
         rects_of(body)
             .into_iter()
@@ -671,6 +670,7 @@ fn inline_block_is_centered_in_its_column_by_its_own_width() {
         "<div id=m style=\"width:100px;position:relative;text-align:center\">\
          <div style=\"height:40px\"></div>{z}</div>"
     ));
+    assert_eq!(across.0, 58.0);
     assert_eq!(in_columns, (across.0 + 100.0, 48.0, 20.0, 10.0));
 }
 

@@ -330,50 +330,31 @@ struct StaticLine<'context, 'owner> {
     text_align_last: TextAlignLast,
 }
 
-fn inline_static_position(
-    tree: &mut LayoutSession<'_>,
-    child: NodeId,
-    style: &Style,
-    parent_size: Size<Option<f32>>,
-    line: StaticLine<'_, '_>,
-) -> Point<AxisStaticPosition> {
-    let mut after = None;
-    loop {
-        let slot = line
-            .context
-            .find_content_slot(line.from, Clear::None, after);
-        // CSS 2.1 §10.3.7 permits estimating the hypothetical box's probable
-        // position. Non-atomic inline candidates use a zero-width point.
-        let child_margins = margins(style, parent_size.width.unwrap_or(slot.width));
-        let hypothetical_margin_width = child_margins.horizontal_axis_sum();
-        let hypothetical_width = if is_non_atomic_inline(tree, child) {
-            0.0
-        } else {
-            let mut input = child_inputs(parent_size, None, RunMode::ComputeSize);
-            input.available_space.width =
-                AvailableSpace::Definite((slot.width - hypothetical_margin_width).max(0.0));
-            let measured = tree.compute_child_layout_with_block_ctx(child, input, None);
-            measured.size.width + hypothetical_margin_width
-        };
-
-        let does_not_fit = slot.width <= 0.0 || hypothetical_width > slot.width + 0.001;
-        if does_not_fit && let Some(segment) = slot.segment_id {
-            after = Some(segment);
-            continue;
-        }
-
-        let start = slot.x
-            + (slot.width - hypothetical_width).max(0.0)
-                * static_inline_share(line.text_align, line.text_align_last, line.direction);
-        let (anchor, edge) = if line.direction == Direction::Rtl {
-            (start + hypothetical_width, AxisStaticEdge::End)
-        } else {
-            (start, AxisStaticEdge::Start)
-        };
-        return Point {
-            x: AxisStaticPosition::from_edge(anchor, edge),
-            y: AxisStaticPosition::from_edge(slot.y, AxisStaticEdge::Start),
-        };
+/// The static position of an inline-level absolutely positioned box that
+/// sits between block-level siblings.
+///
+/// CSS 2.1 §10.3.7 permits estimating the hypothetical box's probable
+/// position. Like Chromium, the hypothetical box is a zero-width point on an
+/// otherwise empty line: the box's own width neither shifts the aligned point
+/// nor pushes the line past floats, so the point is the line's aligned edge
+/// in the first layout opportunity at the current block offset.
+fn inline_static_position(line: StaticLine<'_, '_>) -> Point<AxisStaticPosition> {
+    let slot = line.context.find_content_slot(line.from, Clear::None, None);
+    let share = static_inline_share(line.text_align, line.text_align_last, line.direction);
+    // A float wider than the line leaves an opportunity with negative
+    // width; the point then stays at the line's start edge.
+    let room = slot.width.max(0.0);
+    let (anchor, edge) = if line.direction == Direction::Rtl {
+        (
+            slot.x + slot.width - room * (1.0 - share),
+            AxisStaticEdge::End,
+        )
+    } else {
+        (slot.x + room * share, AxisStaticEdge::Start)
+    };
+    Point {
+        x: AxisStaticPosition::from_edge(anchor, edge),
+        y: AxisStaticPosition::from_edge(slot.y, AxisStaticEdge::Start),
     }
 }
 
@@ -546,19 +527,13 @@ pub(super) fn layout(
                             parent_node.static_position_text_align_last,
                         )
                     };
-                    inline_static_position(
-                        tree,
-                        child,
-                        &style,
-                        parent,
-                        StaticLine {
-                            from: static_y,
-                            context: ctx,
-                            direction: container.direction,
-                            text_align,
-                            text_align_last,
-                        },
-                    )
+                    inline_static_position(StaticLine {
+                        from: static_y,
+                        context: ctx,
+                        direction: container.direction,
+                        text_align,
+                        text_align_last,
+                    })
                 } else {
                     let inline_area = Line {
                         start: metrics.inset.left,

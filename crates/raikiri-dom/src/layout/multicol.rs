@@ -652,7 +652,7 @@ impl FlowPass {
                 .collect();
             let mut moves = moves.into_iter();
             // Where an inline-level box goes on its line: the share of the
-            // room the box leaves that is before it.
+            // line before its aligned point.
             let share = {
                 let node = &tree.nodes[index];
                 let direction = if columns.context.rtl {
@@ -683,8 +683,8 @@ impl FlowPass {
                 );
                 let (line, column) = (moved.line, moved.column);
                 x.area = if x.area.start == x.area.end {
-                    // A point on the line, where the box keeps its own width:
-                    // the room it leaves changes with the width of the column.
+                    // The aligned point on the line: it keeps its share of the
+                    // line, which narrows to the width of the column.
                     let at = x.area.start
                         + (column.start - line.start)
                         + ((column.end - column.start) - (line.end - line.start)) * share;
