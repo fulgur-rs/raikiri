@@ -582,3 +582,65 @@ fn a_table_beside_a_float_keeps_its_place_and_size() {
     // One pass for the height the float search asks for, one to lay it out.
     assert_eq!(measures, 24);
 }
+
+/// Two rows of three text cells in a table in the body: the table's size
+/// and how many layouts measured an intrinsic width of a cell.
+fn text_table(table_css: &str, cell_css: &str) -> ([f32; 2], usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    doc.set_display(html, DisplayValue::Block);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:10px Ahem"),
+    );
+    doc.set_display(body, DisplayValue::Block);
+    let table = append_grid_part(&mut doc, body, "table", DisplayValue::Table, table_css);
+    for texts in [["a", "bb cc", "d"], ["eee", "f", "gg hh ii"]] {
+        let row = append_grid_part(
+            &mut doc,
+            table,
+            "tr",
+            DisplayValue::TableRow,
+            "display:table-row",
+        );
+        for text in texts {
+            let cell = append_grid_part(&mut doc, row, "td", DisplayValue::TableCell, cell_css);
+            doc.append_text(cell, text);
+        }
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::test_support::with_ahem(&mut doc);
+    super::CELL_WIDTH_MEASURES.with(|count| count.set(0));
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    let size = doc.nodes[table].layout.size;
+    (
+        [size.width, size.height],
+        super::CELL_WIDTH_MEASURES.with(|count| count.get()),
+    )
+}
+
+#[test]
+fn a_table_in_block_flow_measures_the_widths_of_a_text_cell_once() {
+    // One layout for each of the six cells: it has the paragraph's
+    // min-content and max-content widths both, and the block's measure of
+    // the table's width and the layout of the table share them.
+    assert_eq!(
+        text_table("display:table", "display:table-cell"),
+        ([160.0, 20.0], 6)
+    );
+}
+
+#[test]
+fn collapsed_borders_measure_a_text_cell_once_for_each_pass() {
+    // Resolving the collapsed borders moves the cache generation between the
+    // block's measure and the layout, so each pass measures the cells anew.
+    assert_eq!(
+        text_table(
+            "display:table;border-collapse:collapse",
+            "display:table-cell;border:1px solid;padding:2px"
+        ),
+        ([176.0, 31.0], 12)
+    );
+}
