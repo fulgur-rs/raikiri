@@ -1038,3 +1038,288 @@ fn a_size_contained_box_keeps_the_floor() {
         ),
     ]);
 }
+
+/// A `min-height` taller than the padding and border holds the box taller,
+/// and the width follows it through the ratio, past a smaller `min-width` and
+/// narrower room.
+#[test]
+fn a_minimum_height_raises_the_floor() {
+    assert_rows(&[
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:grid;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:0;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10px;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative;width:300px;height:100px'><div id=t style='position:absolute;display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:300px;height:100px'><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:2px;'></div></div>",
+            &[("t", [0.0, 4.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px;height:100px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;min-width:3px;min-height:10%;'></div></div>",
+            &[("t", [0.0, 0.0, 20.0, 10.0])],
+        ),
+    ]);
+}

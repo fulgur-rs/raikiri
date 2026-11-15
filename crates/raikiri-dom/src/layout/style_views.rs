@@ -622,7 +622,18 @@ impl LayoutSession<'_> {
             + length(padding.bottom)?
             + length(border.top)?
             + length(border.bottom)?;
-        let width = edges_y * ratio;
+        // A `min-height` holds the box taller still, and the width follows
+        // that height through the ratio past a smaller `min-width` too. A
+        // percentage, which the view cannot resolve, is left to the library,
+        // which carries it over into an `auto` minimum width; past a stated
+        // `min-width` only the padding and border hold.
+        let height = match style.min_size().height.expand() {
+            ExpandedLengthPercentageAuto::Auto => edges_y,
+            ExpandedLengthPercentageAuto::Length(min) => edges_y.max(min),
+            _ if style.min_size().width.is_auto() => return None,
+            _ => edges_y,
+        };
+        let width = height * ratio;
         let width = match style.max_size().width.expand() {
             ExpandedLengthPercentageAuto::Length(max) => width.min(max),
             ExpandedLengthPercentageAuto::Auto => width,
