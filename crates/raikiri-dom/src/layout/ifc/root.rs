@@ -101,6 +101,12 @@ pub(crate) struct IfcRoot {
     pub(crate) multicol_fragments: Option<Vec<crate::node::MulticolTextFragment>>,
     /// Raw root fragments already own the physical origin of each line range.
     pub(crate) multicol_fragment_origins_recorded: bool,
+    /// For each piece of the root's box broken between its lines at the
+    /// column ends, in order, how far it runs down its column and how far its
+    /// box begins above that: the pieces stitched together make the whole box
+    /// a sliced box paints (CSS Fragmentation 3, 5.4). An entry left `None`
+    /// was not placed with its lines.
+    pub(crate) multicol_piece_extents: Vec<Option<(f32, f32)>>,
     /// The lines end in an ellipsis where they overflow the root
     /// (`text-overflow: ellipsis`).
     pub(crate) ellipsis: bool,
@@ -408,6 +414,7 @@ impl IfcRoot {
             fixed: meta.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
+            multicol_piece_extents: Vec::new(),
             ellipsis: meta.ellipsis,
             nowrap: meta.nowrap,
             text_nowrap: meta.text_nowrap,
@@ -518,6 +525,7 @@ impl IfcRoot {
             fixed: self.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
+            multicol_piece_extents: Vec::new(),
             ellipsis: self.ellipsis,
             nowrap: self.nowrap,
             text_nowrap: self.text_nowrap.clone(),
