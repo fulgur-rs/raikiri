@@ -573,11 +573,12 @@ pub(super) fn opposed_baseline_alignment(
 /// ([`ComputedValues::height_keyword`]).
 ///
 /// The ratio is dropped from the item's style, which also removes it from
-/// track sizing, so this applies only when every row track and every
-/// explicit column has a fixed size: the item's height contribution cannot
-/// size a row, nor can the width its ratio gives for a fixed row size an
-/// `auto` column. Elsewhere the item measures itself and fills its area once
-/// the tracks are sized.
+/// track sizing, so this applies only when every row track has a fixed
+/// size and the item's height contribution cannot size a row. An item that
+/// measures itself when stretched also needs every column it can land in to
+/// be fixed, as the width its ratio gives for a fixed row sizes an `auto`
+/// column; elsewhere it keeps its ratio and fills its area once the tracks
+/// are sized.
 pub(super) fn stretches_on_both_grid_axes(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -627,7 +628,33 @@ pub(super) fn stretches_on_both_grid_axes(
     horizontal
         && vertical
         && has_only_fixed_rows(doc, cascade, parent, container)
-        && has_only_fixed_columns(doc, cascade, parent, container)
+        && (!measures_itself_when_stretched(doc, idx, cv)
+            || has_only_fixed_columns(doc, cascade, parent, container))
+}
+
+/// Whether grid item `idx` is a block, paragraph, flex or grid container,
+/// which keeps its ratio for the height it contributes and fills its area
+/// when the layout stretches it in both axes. Replaced content, a table
+/// and a multi-column container are sized through the library's ratio, so
+/// only dropping the ratio fills their area.
+fn measures_itself_when_stretched(
+    doc: &LayoutSession<'_>,
+    idx: usize,
+    values: &ComputedValues,
+) -> bool {
+    !crate::paint_rules::lays_out_as_replaced(doc.document, idx)
+        && !matches!(
+            values.display,
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+        && matches!(
+            values.column_count,
+            raikiri_style::property::ColumnCountValue::Auto
+        )
+        && matches!(
+            values.column_width,
+            raikiri_style::ComputedColumnWidth::Auto
+        )
 }
 
 /// Whether `grid` holds no `auto` column an item could contribute to: its

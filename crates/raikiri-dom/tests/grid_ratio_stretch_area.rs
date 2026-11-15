@@ -721,8 +721,8 @@ fn an_item_stretched_in_the_block_axis_only_takes_its_width_from_the_row_height(
 /// other, fills its grid area whatever its ratio gives, once an `auto` row
 /// is sized: its ratio still gives the height it contributes to that row,
 /// and the width it contributes to an `auto` column beside a fixed row,
-/// explicit or implicit, replaced or not, and in a `repeat()` of fixed
-/// tracks.
+/// explicit or implicit, and in a `repeat()` of fixed tracks, where a
+/// replaced item fills a fixed area as well.
 #[test]
 fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
     assert_cases(&[
@@ -1461,20 +1461,6 @@ fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
             ],
         ),
         (
-            r#"<div id=c style='display:grid;width:100px;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
-            &[
-                ("c", [0.0, 0.0, 100.0, 80.0]),
-                ("i", [0.0, 0.0, 160.0, 80.0]),
-            ],
-        ),
-        (
-            r#"<div id=c style='display:grid;width:100px;grid-template-columns:auto;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
-            &[
-                ("c", [0.0, 0.0, 100.0, 80.0]),
-                ("i", [0.0, 0.0, 160.0, 80.0]),
-            ],
-        ),
-        (
             r#"<div id=c style='display:grid;width:100px;grid-template-columns:repeat(1,100px);grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
             &[
                 ("c", [0.0, 0.0, 100.0, 80.0]),
@@ -1493,6 +1479,83 @@ fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
             &[
                 ("c", [0.0, 0.0, 100.0, 80.0]),
                 ("i", [0.0, 0.0, 50.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:100px 1fr;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 100.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:100px auto;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 100.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:minmax(100px,1fr) 50px;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 150.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:100px 50%;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 100.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:100px;grid-template-rows:80px'><img id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 100.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:100px 1fr;grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 100.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:1fr 100px;grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 160.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:auto 100px;grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 160.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:minmax(100px,1fr) 50px;grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 150.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:fit-content(100px);grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 160.0, 80.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:200px;grid-template-columns:min-content;grid-template-rows:80px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 200.0, 80.0]),
+                ("i", [0.0, 0.0, 160.0, 80.0]),
             ],
         ),
     ]);
