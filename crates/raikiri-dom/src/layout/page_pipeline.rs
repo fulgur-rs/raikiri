@@ -7978,7 +7978,7 @@ fn push_in_flow_boxes_rev(
     boxes: &mut Vec<usize>,
 ) {
     match sibling_adjacency::flow_box(document, cascade, node_id) {
-        sibling_adjacency::FlowBox::Skip => {}
+        sibling_adjacency::FlowBox::Skip | sibling_adjacency::FlowBox::Phantom => {}
         sibling_adjacency::FlowBox::Contents => {
             for &id in document.nodes[node_id].children.iter().rev() {
                 push_in_flow_boxes_rev(document, cascade, id, boxes);
