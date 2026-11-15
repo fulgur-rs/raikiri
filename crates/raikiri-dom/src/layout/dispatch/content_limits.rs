@@ -1243,6 +1243,21 @@ fn ratio_max_size_overrides(
         width: max.width.maybe_resolve(Some(containing_size.width)),
         height: max.height.maybe_resolve(Some(containing_size.height)),
     };
+    // An `auto` height is no shorter than the content, which a `max-width`
+    // carried across the ratio does not clamp (CSS Sizing 4 §5.1): the box
+    // applies the height its ratio gives itself, raised by its content.
+    // A box whose insets give it a size takes that size before the bound,
+    // and keeps the one carried across.
+    let inset = style.inset();
+    // A size-contained box takes its height from the size its containment
+    // names, and a grid item from its area.
+    let content_height_floor = is_oof_box(tree, idx)
+        && !tree.nodes[idx].size_containment.height
+        && stated.width.is_none()
+        && (inset.left.is_auto() || inset.right.is_auto())
+        && (inset.top.is_auto() || inset.bottom.is_auto())
+        && style.min_size().height.is_auto()
+        && !style.overflow().y.is_scroll_container();
     [
         (
             LengthProperty::MaxWidth,
@@ -1255,7 +1270,7 @@ fn ratio_max_size_overrides(
             LengthProperty::MaxHeight,
             own_max.height,
             edges.height,
-            stated.height.is_some(),
+            stated.height.is_some() || content_height_floor,
             max.width,
         ),
     ]
@@ -1368,16 +1383,42 @@ pub(super) fn ratio_bound_overrides(
     candidates: &[NodeId],
     containing_size: Size<f32>,
 ) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    use raikiri_layout_style::values::AlignItemsKeyword;
     /// A height that the content raises to, still to be measured.
     struct HeightFloor {
         key: BoxKey,
         node_id: NodeId,
         width: f32,
+        /// The ratio gives the height at `width`, which the floor raises and
+        /// which also goes in as the maximum height: the library gives the
+        /// box the height of the width before its bounds held it.
+        ratio_height: Option<RatioHeight>,
         /// The min-content width raises `width`, up to its maximum.
         content_width_floor: Option<ContentWidthFloor>,
         adjustment: f32,
         transferred: f32,
         own_max: Option<f32>,
+    }
+    /// The ratio of a box and the box it relates.
+    struct RatioHeight {
+        ratio: f32,
+        edges: Size<f32>,
+        content_box: bool,
+    }
+    impl RatioHeight {
+        /// The border-box height the ratio gives the border-box `width`.
+        fn at(&self, width: f32) -> f32 {
+            if self.content_box {
+                (width - self.edges.width).max(0.0) / self.ratio + self.edges.height
+            } else {
+                (width / self.ratio).max(self.edges.height)
+            }
+        }
+    }
+    /// The border-box `max-height` the box states, no less than its padding
+    /// and border.
+    fn own_max_height_of(max: Option<f32>, adjustment: f32, edges: f32) -> Option<f32> {
+        max.map(|size| (size + adjustment).max(edges))
     }
     /// The maximum border-box width up to which the min-content width raises
     /// the width of a box whose insets give it its height.
@@ -1406,6 +1447,86 @@ pub(super) fn ratio_bound_overrides(
             height: max.height.maybe_resolve(Some(containing_size.height)),
         };
         entries.extend(ratio_max_size_overrides(tree, idx, containing_size));
+        let adjustment = if border_box {
+            Size::ZERO
+        } else {
+            Size {
+                width: edges.width,
+                height: edges.height,
+            }
+        };
+        let width_bounds = Bounds {
+            min: Some(
+                min.width
+                    .maybe_resolve(Some(containing_size.width))
+                    .map_or(0.0, |size| size + adjustment.width)
+                    .max(edges.width),
+            ),
+            max: own_max.width.map(|size| size + adjustment.width),
+        };
+        // A box sized by its content whose left and right insets give it its
+        // width keeps the `max-height` the library carries over from its
+        // `max-width` (see `ratio_max_size_overrides`), and the library takes
+        // the height the ratio gives the width before that width is held to
+        // its bounds. The height of the content at the width the box gets
+        // goes in as its `min-height`, and the height the ratio gives that
+        // width, so raised, as its `max-height`. A box whose top and bottom
+        // insets give it its height is left to `ratio_width_floors`.
+        let inset = style.inset();
+        let justify = style
+            .bridge_justify_self()
+            .map_or(AlignItemsKeyword::Normal, |alignment| alignment.keyword);
+        if stated.width.is_none()
+            && stated.height.is_none()
+            && min.height.is_auto()
+            && !scrolls
+            // A percentage `max-width` is left to the library, which keeps the
+            // width it gives within that maximum only without this floor.
+            && matches!(
+                max.width.expand(),
+                raikiri_layout_style::values::ExpandedLengthPercentageAuto::Length(_)
+            )
+            && !tree.nodes[idx].display().is_flex_container()
+            && !tree.nodes[idx].size_containment.height
+            && (inset.top.is_auto() || inset.bottom.is_auto())
+            && matches!(
+                justify,
+                AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch
+            )
+            && let Some(ratio) = style.stated_aspect_ratio().filter(|ratio| *ratio > 0.0)
+        {
+            let margin = style.margin();
+            let resolve = |value: raikiri_layout_style::values::LengthPercentageAuto| {
+                value.maybe_resolve(Some(containing_size.width))
+            };
+            if let (Some(left), Some(right)) = (resolve(inset.left), resolve(inset.right)) {
+                let room = containing_size.width
+                    - left
+                    - right
+                    - resolve(margin.left).unwrap_or(0.0)
+                    - resolve(margin.right).unwrap_or(0.0);
+                let transferred = if min.width.is_auto() {
+                    0.0
+                } else {
+                    min_height_from_min_width(tree, idx, containing_size)
+                };
+                floors.push(HeightFloor {
+                    key,
+                    node_id: candidate,
+                    width: width_bounds.apply(room.max(0.0)),
+                    ratio_height: Some(RatioHeight {
+                        ratio,
+                        edges,
+                        content_box: !border_box || tree.nodes[idx].ratio_in_content_box,
+                    }),
+                    content_width_floor: None,
+                    adjustment: adjustment.height,
+                    transferred,
+                    own_max: own_max_height_of(own_max.height, adjustment.height, edges.height),
+                });
+            }
+            continue;
+        }
         let Some(stated_width) = stated.width.filter(|_| stated.height.is_none()) else {
             continue;
         };
@@ -1421,22 +1542,12 @@ pub(super) fn ratio_bound_overrides(
         if min.width.is_auto() && carries_minimum && !content_width_floor {
             entries.push((key, px_length(LengthProperty::MinWidth, 0.0)));
         }
-        let adjustment = if border_box {
-            Size::ZERO
-        } else {
-            Size {
-                width: edges.width,
-                height: edges.height,
-            }
-        };
         let transferred = if min.width.is_auto() {
             0.0
         } else {
             min_height_from_min_width(tree, idx, containing_size)
         };
-        let own_max_height = own_max
-            .height
-            .map(|size| (size + adjustment.height).max(edges.height));
+        let own_max_height = own_max_height_of(own_max.height, adjustment.height, edges.height);
         if !min.height.is_auto() {
             // The ratio gives the height of the width the minimum raised, even
             // where the box states a `min-height` of its own, which the library
@@ -1462,16 +1573,7 @@ pub(super) fn ratio_bound_overrides(
         if scrolls {
             continue;
         }
-        let own_min_width = min.width.maybe_resolve(Some(containing_size.width));
-        let width = Bounds {
-            min: Some(
-                own_min_width
-                    .map_or(0.0, |size| size + adjustment.width)
-                    .max(edges.width),
-            ),
-            max: own_max.width.map(|size| size + adjustment.width),
-        }
-        .apply(stated_width + adjustment.width);
+        let width = width_bounds.apply(stated_width + adjustment.width);
         let content_width_floor = content_width_floor.then(|| ContentWidthFloor {
             max: own_max.width.map(|size| size + adjustment.width),
         });
@@ -1479,6 +1581,7 @@ pub(super) fn ratio_bound_overrides(
             key,
             node_id: candidate,
             width,
+            ratio_height: None,
             content_width_floor,
             adjustment: adjustment.height,
             transferred,
@@ -1509,6 +1612,17 @@ pub(super) fn ratio_bound_overrides(
                     (height - floor.adjustment).max(0.0),
                 ),
             ));
+            if let Some(ratio) = floor.ratio_height {
+                let height = ratio.at(width).max(height);
+                let height = floor.own_max.map_or(height, |maximum| height.min(maximum));
+                entries.push((
+                    floor.key,
+                    px_length(
+                        LengthProperty::MaxHeight,
+                        (height - floor.adjustment).max(0.0),
+                    ),
+                ));
+            }
         }
     });
     entries

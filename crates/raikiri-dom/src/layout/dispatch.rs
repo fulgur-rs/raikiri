@@ -1875,9 +1875,14 @@ fn compute_ifc_root(
     let flex_item_ratio = layout_style.aspect_ratio.is_some()
         && (flex_item_follows_main_size(tree, idx, &inputs)
             || (!vertical_paragraph && flex_item_height_from_ratio(tree, idx, &inputs)));
-    let ratio = layout_style
-        .aspect_ratio
-        .filter(|_| inputs.sizing_mode == SizingMode::InherentSize || flex_item_ratio);
+    // The out-of-flow algorithm sizes a box by its content in both of its
+    // passes, and its ratio still gives an `auto` height from the width the
+    // content settles (CSS Sizing 4 §5.1), as it does for a box in flow.
+    let out_of_flow =
+        tree.nodes[idx].layout_position() == Position::Absolute && !vertical_paragraph;
+    let ratio = layout_style.aspect_ratio.filter(|_| {
+        inputs.sizing_mode == SizingMode::InherentSize || flex_item_ratio || out_of_flow
+    });
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
     let ratio_height_follows =
