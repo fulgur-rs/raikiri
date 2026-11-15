@@ -8,18 +8,18 @@ use super::{
     FlexDirectionValue, FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind,
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
-    avoids_page_break_inside, box_forces_break_after, box_is_unbreakable, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, first_named_item_start_page,
-    first_owned_text_line_top, has_block_leading_content, has_mandatory_break_inside,
-    height_follows_content, holds_floats, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_flow_table_caption,
+    avoids_page_break_inside, block_after_last_line, box_forces_break_after, box_is_unbreakable,
+    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
+    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
+    first_named_item_start_page, first_owned_text_line_top, has_block_leading_content,
+    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination, is_flow_table_caption,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
     lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
     normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
     page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, positioned_owned_text_line_bounds,
+    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
 };
@@ -1897,13 +1897,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // too: it moves whole with the edges when they fit a page
                 // together, and its lines split only when they cannot (see
                 // `keep_lines_together`). A line that no text places, or a
-                // box that no break goes through, never splits.
+                // box that no break goes through, never splits. A block laid
+                // out after the last line is what the edges follow instead.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
                     && (!unbreakable || frame.lone_in_edges || closing_edges_shape)
                     && unplaced_line.is_none()
                     && !unbreakable_box
                     && node.is_ifc_root()
+                    && !block_after_last_line(document, node_id)
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
                 {
                     frame.closing_edges + node.layout.padding.bottom + node.layout.border.bottom
@@ -2074,11 +2076,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after
                 // a box keeps it from being the last.
-                let own_closing_edges = closing_edges_of(document, node_id);
+                let own_closing_edges = closing_edges_of(document, cascade, body_id, node_id);
                 // The edges of the blocks this one ends are not below a box that
                 // only starts a run of boxes tied by avoided breaks: the rest
-                // of the run lies between.
-                let inherited_edges = if matches!(frame.tie, AvoidTie::RunStart { .. }) {
+                // of the run lies between. Nor are they below the last box of a
+                // block whose own height does not follow its content: they
+                // follow that block's border box.
+                let inherited_edges = if matches!(frame.tie, AvoidTie::RunStart { .. })
+                    || (frame.closing_edges > 0.0
+                        && !passes_closing_edges(document, cascade, body_id, node_id))
+                {
                     0.0
                 } else {
                     frame.closing_edges
@@ -2452,7 +2459,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // is that of its flow content begin where that content ends
                 // (at the top of the block when it holds none), and the page
                 // breaks before them when they do not fit below it on its
-                // page. A monolithic box, such as an image, keeps its edges.
+                // page. Those of a block whose set height leaves room below
+                // its content begin at the end of its content box instead. A monolithic box, such as an image, keeps its edges.
                 // Like the page fit of the boxes, the end is that of the normal
                 // flow: a relative offset only moves the paint. In an item of a
                 // flex container or of a grid of columns, the edges move that
@@ -2460,7 +2468,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // in columns, whose balance the move would change.
                 if in_container_flow
                     && !monolithic
-                    && let Some(edges) = content_bottom_edges(document, node_id)
+                    && let Some(edges) = content_bottom_edges(document, cascade, body_id, node_id)
                     && candidate_raw_y + node.layout.size.height <= frame.clip_end
                     && let Some(beside) = edges_break_container(document, node_id, body_id)
                 {

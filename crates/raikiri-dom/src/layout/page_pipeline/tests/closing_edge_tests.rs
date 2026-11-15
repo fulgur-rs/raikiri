@@ -47,12 +47,25 @@ fn the_last_box_stays_when_its_parents_closing_edges_fit_the_page() {
 }
 
 #[test]
-fn the_last_box_stays_when_its_parent_has_a_height_of_its_own() {
-    // The parent's height does not follow its content, so its edges do not
-    // follow the last box either.
+fn the_last_box_moves_when_its_parent_of_set_height_ends_with_it() {
+    // The parent's set height ends its content box where the last box ends,
+    // so the padding still follows that box, and the box moves with it as in
+    // Chromium. The parent keeps its height, and the block after it starts
+    // where the parent ends.
     assert_eq!(
         closed_parent("height:90px;padding-bottom:30px"),
-        (70.0, 120.0, 120.0)
+        (100.0, 120.0, 120.0)
+    );
+}
+
+#[test]
+fn the_last_box_stays_when_its_parent_of_set_height_leaves_room_below_it() {
+    // A taller parent leaves room between the last box and the padding: the
+    // page breaks there, and the padding starts the next page whole, the
+    // parent taking the rest of the page.
+    assert_eq!(
+        closed_parent("height:100px;padding-bottom:30px"),
+        (70.0, 130.0, 130.0)
     );
 }
 

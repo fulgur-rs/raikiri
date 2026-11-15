@@ -10,18 +10,19 @@ use super::{
     PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
     PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
-    TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_effective_y,
-    block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name, box_occupies_column,
-    box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
-    collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow, collapses_through,
-    collapses_with_previous_block, content_overflow, current_abs_y, first_box_ancestor_at_start,
-    first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
-    floats_put_first_line_down, flow_raw_y, follows_flow_content, forced_line_breaks,
-    forced_line_moves, forced_target_page, grow_ancestors_below, grow_ancestors_for_shift,
-    grow_container_beside_item, has_explicit_positioned_block_ancestor, has_fixed_height,
-    has_footnote_ancestor, is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in,
-    item_of, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
-    line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
+    TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_after_last_line,
+    block_effective_y, block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name,
+    box_occupies_column, box_sets_page_name, break_margins, closing_edges_line_move,
+    closing_edges_move, collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow,
+    collapses_through, collapses_with_previous_block, content_overflow, current_abs_y,
+    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
+    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
+    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
+    grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
+    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
+    line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
     materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
@@ -2489,14 +2490,15 @@ impl PaginationState {
             // They follow the line only when the lines are all of the content
             // of the box: a block laid out after the last line, such as a
             // block-level `::after`, or a height taller than the lines, is
-            // what they follow instead. Half a pixel absorbs the rounding of
-            // the line boxes.
+            // what they follow instead, also when a set height ends the box
+            // at its lines and the block overflows it. Half a pixel absorbs
+            // the rounding of the line boxes.
             let own_closing_edges = if blocks.paragraph_root == Some(block_id) {
                 let layout = &document.nodes[block_id].layout;
                 let edges = layout.padding.bottom + layout.border.bottom;
                 let content = block_height - edges - layout.padding.top - layout.border.top;
                 let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
-                if (content - lines).abs() <= 0.5 {
+                if (content - lines).abs() <= 0.5 && !block_after_last_line(document, block_id) {
                     edges
                 } else {
                     0.0
