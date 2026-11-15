@@ -322,9 +322,10 @@ impl Document {
 
     /// Where the box of `owner` recorded by layout fragment `fragment` lies
     /// in the whole box it is a slice of: its block offset from the whole
-    /// box's block start, and the whole box's block size. Only the boxes of
-    /// a nested container continued in later outer columns, one per row of
-    /// its columns, are slices; any other box gives `None`.
+    /// box's block start, and the whole box's block size. The boxes of a
+    /// nested container continued in later outer columns, one per row of its
+    /// columns, are slices, and so are the pieces of a paragraph broken
+    /// between its lines at the column ends; any other box gives `None`.
     #[doc(hidden)]
     pub fn fragment_block_slice(
         &self,
@@ -332,6 +333,9 @@ impl Document {
         fragment: Option<usize>,
     ) -> Option<(f32, f32)> {
         let rows = &self.nodes[owner].multicol_rows;
+        if rows.is_empty() {
+            return self.paragraph_block_slice(owner, fragment?);
+        }
         let total = rows.last()?.slice?.1;
         // A box painted without a record of its own is the first row's.
         let fragmentainer = fragment
@@ -341,6 +345,32 @@ impl Document {
                 fragment.fragmentainer
             });
         let (start, _) = self.row_in(owner, fragmentainer)?.slice?;
+        Some((start, total))
+    }
+
+    /// The slice of a paragraph that piece `fragment` paints, when layout
+    /// placed the lines of `owner` in the columns piece by piece: the pieces
+    /// before it, stitched together, come above it, less the edge its box
+    /// begins above its column with.
+    fn paragraph_block_slice(&self, owner: usize, fragment: usize) -> Option<(f32, f32)> {
+        let fragment = self.fragment_tree.fragments.get(fragment)?;
+        let root = self.nodes[owner].ifc.as_ref()?;
+        let pieces = &root.multicol_piece_extents;
+        if fragment.node_id != owner
+            || fragment.fragment_count < 2
+            || pieces.len() != fragment.fragment_count
+        {
+            return None;
+        }
+        let mut start = 0.0;
+        let mut total = 0.0;
+        for (index, piece) in pieces.iter().enumerate() {
+            let (extent, lead) = (*piece)?;
+            if index == fragment.fragment_index {
+                start = total - lead;
+            }
+            total += extent;
+        }
         Some((start, total))
     }
 

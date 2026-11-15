@@ -331,8 +331,11 @@ fn apply_computed_to_style_in_session_inner(
                                 .any(|part| matches!(part, ContentComponent::None))
                     })
             });
-        doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial)
-            || super::fixed::has_applied_transform(doc, idx, cv);
+        let group = paints_whole_box_group(cv, &initial);
+        let transformed = super::fixed::has_applied_transform(doc, idx, cv);
+        doc.nodes[idx].paints_whole_box_effects =
+            paints_whole_box_effects(cv, &initial) || group || transformed;
+        doc.nodes[idx].paints_whole_box_group = group || transformed;
         doc.nodes[idx].paints_background_color = cv.background_color.a > 0;
         doc.nodes[idx].clones_box_decorations =
             cv.box_decoration_break == BoxDecorationBreak::Clone;
@@ -788,17 +791,23 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
 }
 
 /// Whether painting `cv` draws effects sized from the whole border box
-/// (background and border images, rounded corners, shadows, outlines, masks,
-/// clips and filters) or composites the whole box as one group (opacity and
-/// blend modes), which a fragment cannot reproduce from its own slice. A
-/// transform counts too, where it applies; the caller checks that.
+/// (background and border images, rounded corners, shadows and outlines),
+/// which a fragment cannot reproduce from its own slice unless it paints the
+/// whole box cut at its breaks. The node flag also counts the effects of
+/// [`paints_whole_box_group`] and a transform, where it applies; the caller
+/// checks that.
 fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bool {
     cv.has_background_image()
         || cv.border_image != initial.border_image
         || cv.border_radius != initial.border_radius
         || !cv.box_shadow.is_empty()
         || cv.outline.style() != initial.outline.style()
-        || cv.mask_image != initial.mask_image
+}
+
+/// Whether `cv` gives the box an effect applied to the box and its content
+/// as one image: a mask, a clip path, a filter, opacity or a blend mode.
+fn paints_whole_box_group(cv: &ComputedValues, initial: &ComputedValues) -> bool {
+    cv.mask_image != initial.mask_image
         || cv.clip_path != initial.clip_path
         || !cv.filter.is_empty()
         || cv.opacity != initial.opacity

@@ -881,6 +881,18 @@ pub(super) fn layout(
                         ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
                         _ => AvailableSpace::Definite(stretch.max(0.0)),
                     };
+                    if style.item_is_table {
+                        // Only the width is read, and the table has it once
+                        // its columns are sized. The size it answers with
+                        // carries no height, so its cache is restored.
+                        let idx = usize::from(child);
+                        let saved = tree.clone_layout_cache(idx);
+                        let outer = tree.context.table_width_probe.replace((idx, measure));
+                        let output = tree.compute_child_layout_with_block_ctx(child, measure, None);
+                        tree.context.table_width_probe = outer;
+                        tree.restore_layout_cache(idx, saved);
+                        break 'width output.size.width;
+                    }
                     tree.compute_child_layout_with_block_ctx(child, measure, None)
                         .size
                         .width

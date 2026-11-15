@@ -1191,3 +1191,73 @@ fn the_lines_of_a_paragraph_that_holds_a_float_break_across_pages() {
         ),
     ]);
 }
+
+#[test]
+fn a_clearing_box_in_a_contents_element_breaks_below_the_float_like_its_own_child() {
+    // The box clears the float, does not fit below it on the first page, and
+    // starts the second page. A `display: contents` element around it has no
+    // box, so the block around that element stays on the first page.
+    assert_rows(&[
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div><div style='display:contents'><div style='clear:left'>Z</div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X</div><div><div style='display:contents'><div style='clear:left'>Z</div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div><div style='display:contents'><div style='display:contents'><div style='clear:left'>Z</div></div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div><div style='display:contents'><div style='clear:left'>Z Z</div></div></div><div>W</div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'W', 35), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:10px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div><div style='display:contents'><div style='clear:left;height:30px'></div><div>Z</div></div></div></div>",
+            &[(0, 'X', 15), (0, 'X', 45), (1, 'Z', 5)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_clearing_box_below_the_top_edges_of_its_parent_leaves_them_on_the_first_page() {
+    // Clearance puts the box well below its parent's top border or padding,
+    // so the page breaks between them; without clearance the parent moves
+    // with its first child, margin and all.
+    assert_rows(&[
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div style='padding-top:5px'><div style='clear:left'>Z</div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div style='padding-top:5px'><div style='display:contents'><div style='clear:left'>Z</div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div style='border-top:5px solid'><div style='clear:left'>Z</div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X X</div><div style='padding-top:5px'><div><div style='clear:left'>Z</div></div></div></div>",
+            &[(0, 'X', 25), (0, 'X', 55), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:60px'></div><div style='width:60px'><div style='padding-top:5px'><div style='margin-top:10px'>Z</div></div></div>",
+            &[(1, 'Z', 20)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='width:60px'><div style='float:left;width:20px'>X</div><div style='padding-top:5px'><div style='clear:left;margin-top:10px'>Z</div></div></div>",
+            &[(0, 'X', 25), (0, 'Z', 55)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_relatively_offset_first_child_takes_its_padded_parent_along() {
+    assert_rows(&[(
+        "<div style='height:70px'></div><div style='width:60px'><div style='padding-top:5px'><div style='position:relative;top:8px'>Z</div></div></div>",
+        &[(1, 'Z', 18)],
+    )]);
+}

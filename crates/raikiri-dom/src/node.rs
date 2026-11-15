@@ -614,6 +614,11 @@ pub struct Node {
     /// its own block-start and block-end padding and border (CSS Fragmentation
     /// 3, 5.4). Recomputed by the style bridge before every layout pass.
     pub(crate) clones_box_decorations: bool,
+    /// Whether the box has an effect that applies to the box as one image,
+    /// such as a transform, a filter, opacity, a blend mode, a mask or a clip
+    /// path, which pieces of the box painted one by one would each apply
+    /// apart. Recomputed by the style bridge before every layout pass.
+    pub(crate) paints_whole_box_group: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Whether this normal-flow block spans its owning column group.
@@ -849,6 +854,7 @@ impl Node {
             paints_whole_box_effects: false,
             paints_background_color: false,
             clones_box_decorations: false,
+            paints_whole_box_group: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),

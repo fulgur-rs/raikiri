@@ -1000,10 +1000,10 @@ fn multicol_has_only_paragraph_children(
         // also needs the planner: the path it would take otherwise lays it
         // out at the width of the container.
         decorated |= block_edges
-            || (lineless::has_inline_edge_decorations(&style) && slices_block_edges(node));
+            || (lineless::has_inline_edge_decorations(&style) && cuts_block_edges(node));
         paragraphs += 1;
-        // Block-edge decoration needs slice geometry for each piece, which the
-        // stream gives the lines it places; the planner collapses the adjoining
+        // Block-edge decoration needs slice or clone geometry for each piece,
+        // which the stream gives the lines it places; the planner collapses the adjoining
         // margins as numbers, which `auto` would leave to the layout of the box
         // (a percentage is a share of the column width, which
         // `column_child_layout` resolves before the planner reads it); and the
@@ -1013,7 +1013,7 @@ fn multicol_has_only_paragraph_children(
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical)
             && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
-            && (!block_edges || slices_block_edges(node))
+            && (!block_edges || cuts_block_edges(node))
             && !margin.top.is_auto()
             && !margin.bottom.is_auto()
             && node.layout_position() != Position::Absolute
@@ -1113,7 +1113,7 @@ fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
 /// edges and whose height follows its content. Block-edge padding and border
 /// need slice or clone geometry for each piece, which only a stream that
 /// places the pieces with their edges has: with `edges`, the padding and border
-/// are accepted when the pieces slice them and paint them as one box.
+/// are accepted when the pieces can carry them (see [`cuts_block_edges`]).
 fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: BlockEdges) -> bool {
     let node = layout_node(tree, child);
     let layout = node.layout;
@@ -1121,7 +1121,7 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0;
-    (undecorated || edges == BlockEdges::Sliced && slices_block_edges(node))
+    (undecorated || edges == BlockEdges::Sliced && cuts_block_edges(node))
         && (matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
             // A `flow-root` box of lines breaks between them as a paragraph
             // does; an empty one starts a formatting context, so margins do
@@ -1223,7 +1223,8 @@ fn holds_text_and_no_breaking_box(tree: &LayoutSession<'_>, id: usize) -> bool {
 enum BlockEdges {
     /// The paragraph has none.
     Refused,
-    /// The pieces of the paragraph slice them.
+    /// The pieces of the paragraph carry them: they slice them, or each
+    /// piece repeats them with `box-decoration-break: clone`.
     Sliced,
 }
 
@@ -1236,13 +1237,15 @@ fn block_edges(layout: &BoxLayout) -> (f32, f32) {
     )
 }
 
-/// Whether the pieces of the box `node` cut at a column end slice its block
-/// edges (CSS Fragmentation 3, 5.4): each paints the whole box, clipped to
-/// its column, so the padding and border of an edge show where the box begins
-/// or ends only. A box that repeats them at every break, or paints effects
-/// sized from its whole border box, is not sliced.
-fn slices_block_edges(node: &crate::node::Node) -> bool {
-    !node.clones_box_decorations && !node.paints_whole_box_effects
+/// Whether the pieces of the box `node` cut at a column end can carry its
+/// block edges (CSS Fragmentation 3, 5.4). With `box-decoration-break: slice`
+/// each piece paints the whole box, cut at its breaks, so the padding and
+/// border of an edge show where the box begins or ends only; with `clone`
+/// each piece is a box of its own around its lines. An effect applied to the
+/// box as one image, which pieces painted one by one would each apply apart,
+/// keeps the box whole.
+fn cuts_block_edges(node: &crate::node::Node) -> bool {
+    !node.paints_whole_box_group
 }
 
 /// Whether a right-to-left parent aligns `child` to its right edge, which
@@ -4152,23 +4155,65 @@ fn record_nested_ifc_box_fragments(
                     .ifc
                     .as_ref()
                     .is_some_and(|root| root.multicol_fragment_origins_recorded);
-                let (edge_start, edge_end) = if edges_sliced
+                // The planner placed the lines of the paragraph with the
+                // edges of its box, which each piece carries.
+                let planned = edges_sliced
                     && origins_recorded
                     && root_owns_fragments
                     && fragment_count > 1
-                    && slices_block_edges(layout_node(tree, node_id))
-                {
+                    && cuts_block_edges(layout_node(tree, node_id));
+                let (edge_start, edge_end) = if planned {
                     block_edges(&tree.nodes[node_id].layout)
                 } else {
                     (0.0, 0.0)
                 };
-                let sliced = edge_start > 0.0 || edge_end > 0.0;
+                let edged = edge_start > 0.0 || edge_end > 0.0;
+                // With `box-decoration-break: clone` each piece is a box of
+                // its own, which holds both edges around its lines, so none
+                // is cut; a piece that the paragraph goes on from runs to the
+                // end of its column (CSS Fragmentation 3, 5.4).
+                let cloned = edged && layout_node(tree, node_id).clones_box_decorations;
+                let sliced = edged && !cloned;
+                let last = fragment_index + 1 == fragment_count;
+                // A box with effects sized from the whole box, such as a
+                // shadow, shows them beyond its true start and end, which
+                // only the breaks cut.
+                let open_window = if layout_node(tree, node_id).paints_whole_box_effects {
+                    (fragment_index == 0, last)
+                } else {
+                    (false, false)
+                };
                 // How far the box of the piece begins above its first line.
-                let piece_lead = if fragment_index > 0 { edge_start } else { 0.0 };
+                let piece_lead = if fragment_index > 0 && sliced {
+                    edge_start
+                } else {
+                    0.0
+                };
                 if root_owns_fragments && let Some(range) = line_range {
                     let base = tree.fragment_tree.fragments[parent_fragment];
-                    let fragment_height = slice_height(range, origins_recorded, base)
-                        + if sliced { piece_lead + edge_end } else { 0.0 };
+                    let extent = slice_height(range, origins_recorded, base);
+                    let fragment_height = extent
+                        + if sliced {
+                            piece_lead + edge_end
+                        } else if cloned && last {
+                            edge_start + edge_end
+                        } else {
+                            0.0
+                        };
+                    // How far each piece runs down its column, which the
+                    // pieces of a sliced box, stitched together, paint the
+                    // whole box from; the last holds the edge below the box.
+                    if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
+                        let pieces = &mut root.multicol_piece_extents;
+                        if fragment_index == 0 || !planned {
+                            pieces.clear();
+                        }
+                        if planned {
+                            pieces.resize(fragment_count, None);
+                            let end = if last { edge_end } else { 0.0 };
+                            pieces[fragment_index] = Some((extent + end, piece_lead));
+                        }
+                    }
                     let fragment_id = if base.fragmentainer == column {
                         let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
                         fragment.rect.height = fragment_height;
@@ -4181,6 +4226,7 @@ fn record_nested_ifc_box_fragments(
                                 fragment.rect,
                                 context,
                                 height,
+                                open_window,
                             ));
                         }
                         parent_fragment
@@ -4198,8 +4244,14 @@ fn record_nested_ifc_box_fragments(
                                 parent: base.parent,
                                 fragmentainer: column,
                                 rect,
-                                fragmentainer_clip: sliced
-                                    .then(|| paragraph_group::column_window(rect, context, height)),
+                                fragmentainer_clip: sliced.then(|| {
+                                    paragraph_group::column_window(
+                                        rect,
+                                        context,
+                                        height,
+                                        open_window,
+                                    )
+                                }),
                                 fragment_index,
                                 fragment_count,
                                 line_start: Some(range.line_start),
@@ -4888,6 +4940,7 @@ fn refresh_nested_text_fragments_in(
     // its fragments go there, and only its boxes hold text of their own.
     if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
         root.multicol_fragment_origins_recorded = false;
+        root.multicol_piece_extents.clear();
         let committed_ranges = root
             .lines
             .as_ref()
