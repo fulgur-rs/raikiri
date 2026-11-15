@@ -352,6 +352,7 @@ fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
     let leading = container(&[float, block]);
     let trailing = container(&[block, float]);
     let nested = container(&[block]);
+    let hidden = container(&[block, "display:none;float:left"]);
     let wrapper = doc.nodes[nested].children[0];
     doc.append_element(Some(wrapper), "div", Some(float));
     doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
@@ -370,6 +371,8 @@ fn only_a_float_child_of_the_container_counts_as_a_direct_float() {
         (trailing, true),
         // A float inside a child is not one of the container's own.
         (nested, false),
+        // A float that is not rendered is none.
+        (hidden, false),
     ] {
         assert_eq!(
             with_bridged_session(&mut doc, |session| {

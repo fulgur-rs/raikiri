@@ -43,11 +43,16 @@ fn layout_node(tree: &Document, idx: usize) -> &crate::node::Node {
         .expect("a laid-out box has a node")
 }
 
-/// Whether a child of `node_id` in flow with its columns is a float.
+/// Whether a rendered element child of `node_id` in flow with its columns
+/// is a float.
 fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
-    flow_children(tree, node_id)
-        .into_iter()
-        .any(|child| is_floated(tree, child))
+    flow_children(tree, node_id).into_iter().any(|child| {
+        let node = &tree.nodes[child];
+        node.is_in_document()
+            && node.kind() == NodeKind::Element
+            && !node.is_display_none()
+            && is_floated(tree, child)
+    })
 }
 
 /// Whether `idx` is a float.

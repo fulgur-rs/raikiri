@@ -158,3 +158,19 @@ fn lines_beside_a_float_go_on_in_overflow_columns() {
         ],
     );
 }
+
+/// A left and a right float share the top of the first column, and the
+/// paragraph after them wraps below them and goes on in the second column.
+#[test]
+fn floats_on_both_sides_share_the_top_of_the_column() {
+    check(
+        "<div id=f style=\"float:left;width:10px;height:10px\"></div>\
+         <div id=g style=\"float:right;width:10px;height:10px\"></div>\
+         <p id=p style=\"margin:0\">A B</p>",
+        &[
+            ("f", (8.0, 8.0, 10.0, 10.0)),
+            ("g", (38.0, 8.0, 10.0, 10.0)),
+            ("p", (8.0, 8.0, 40.0, 40.0)),
+        ],
+    );
+}
