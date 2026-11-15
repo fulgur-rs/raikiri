@@ -867,3 +867,212 @@ fn a_paragraph_in_an_inline_block_or_a_flex_item_breaks_the_same_way() {
         ),
     ]);
 }
+
+#[test]
+fn the_lines_before_the_block_break_between_them() {
+    // The lines of the paragraph before its block break between them as a
+    // paragraph of their own: the line that crosses the page end starts the
+    // next page, and the block and the text after it follow.
+    assert_rows(&[
+        (
+            "<div style='height:90px'>A</div><div>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 90),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'J', 170),
+                (0, 'L', 150),
+                (1, 'Z', 0),
+            ],
+        ),
+        (
+            "<div style='height:90px'>A</div><div>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 90),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'L', 150),
+                (0, 'Z', 170),
+            ],
+        ),
+        (
+            "<div style='height:90px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 90),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'J', 20),
+                (1, 'L', 0),
+                (1, 'Z', 40),
+            ],
+        ),
+        (
+            "<div style='height:90px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 90),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'L', 0),
+                (1, 'Z', 20),
+            ],
+        ),
+        (
+            "<div style='height:110px'>A</div><div>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'L', 170),
+                (1, 'J', 0),
+                (1, 'Z', 20),
+            ],
+        ),
+        (
+            "<div style='height:110px'>A</div><div>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'L', 170),
+                (1, 'Z', 0),
+            ],
+        ),
+        (
+            "<div style='height:110px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'J', 60),
+                (1, 'L', 40),
+                (1, 'Z', 80),
+            ],
+        ),
+        (
+            "<div style='height:110px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 110),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'L', 40),
+                (1, 'Z', 60),
+            ],
+        ),
+        (
+            "<div style='height:130px'>A</div><div>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'J', 20),
+                (1, 'L', 0),
+                (1, 'Z', 40),
+            ],
+        ),
+        (
+            "<div style='height:130px'>A</div><div>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'L', 0),
+                (1, 'Z', 20),
+            ],
+        ),
+        (
+            "<div style='height:130px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'J', 60),
+                (1, 'L', 40),
+                (1, 'Z', 80),
+            ],
+        ),
+        (
+            "<div style='height:130px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 130),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'L', 40),
+                (1, 'Z', 60),
+            ],
+        ),
+        (
+            "<div style='height:150px'>A</div><div>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'J', 40),
+                (1, 'L', 20),
+                (1, 'Z', 60),
+            ],
+        ),
+        (
+            "<div style='height:150px'>A</div><div>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'L', 20),
+                (1, 'Z', 40),
+            ],
+        ),
+        (
+            "<div style='height:150px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div>J</div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'I', 40),
+                (1, 'J', 80),
+                (1, 'L', 60),
+                (1, 'Z', 100),
+            ],
+        ),
+        (
+            "<div style='height:150px'>A</div><div>I<br>I<br>I<br>I<br>I<div>L</div></div><div>Z</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'I', 150),
+                (0, 'I', 170),
+                (1, 'I', 0),
+                (1, 'I', 20),
+                (1, 'I', 40),
+                (1, 'L', 60),
+                (1, 'Z', 80),
+            ],
+        ),
+    ]);
+}

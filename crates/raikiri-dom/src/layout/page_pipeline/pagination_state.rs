@@ -2355,7 +2355,7 @@ impl PaginationState {
                 .paragraph_root
                 .filter(|&root| root == block_id)
                 .and_then(|root| line_run_among_blocks(document, text_lines, node_id, root));
-            let lines_before_block = run.as_ref().is_some_and(|(_, last)| !last);
+            let block_follows_run = run.as_ref().is_some_and(|(_, last)| !last);
             if let Some((lines, _)) = run {
                 all_line_metrics = all_line_metrics.get(lines).unwrap_or_default().to_vec();
             }
@@ -2375,10 +2375,16 @@ impl PaginationState {
             if line_metrics.is_empty() {
                 return Ok(());
             }
-            let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
+            // The lines of a run among block children move down inside the
+            // paragraph as a run after a block child does, the blocks after
+            // them following.
+            let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id)
+                || (block_follows_run
+                    && self.deferred_shifts.line_splits.is_empty()
+                    && lines_can_shift_between_blocks(document, cascade, block_id));
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
-            let closing_edges = if lines_before_block {
+            let closing_edges = if block_follows_run {
                 0.0
             } else {
                 candidate.context.lines_closing_edges()
