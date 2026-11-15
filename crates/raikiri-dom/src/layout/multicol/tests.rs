@@ -4993,8 +4993,9 @@ fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
         absolute,
         true,
     ));
-    // A fixed box has the viewport as its containing block.
-    assert!(!supported(
+    // A fixed box has the viewport as its containing block, so it leaves the
+    // columns too.
+    assert!(supported(
         block,
         "position:fixed;top:0;width:10px;height:20px",
         true

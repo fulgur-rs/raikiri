@@ -464,3 +464,117 @@ fn right_to_left_static_position() {
         ],
     );
 }
+
+#[test]
+fn static_position_with_white_space_between_boxes() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\">\n<div id=a style=\"height:40px\"></div>\n<div id=b style=\"height:40px\"></div>\n<div id=z style=\"position:absolute;height:10px;width:10px\"></div>\n</div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("a", (8.0, 8.0, 100.0, 40.0)),
+            ("b", (108.0, 8.0, 100.0, 40.0)),
+            ("z", (108.0, 48.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn static_position_after_a_box_broken_across_columns() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\"><div id=a style=\"height:120px\"></div><div id=z style=\"position:absolute;height:10px;width:10px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 60.0)),
+            ("a", (8.0, 8.0, 200.0, 60.0)),
+            ("z", (108.0, 68.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn static_position_after_a_broken_box_with_a_gap() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:20px;width:220px;position:relative\"><div id=a style=\"height:120px\"></div><div id=z style=\"position:absolute;height:10px;width:10px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 220.0, 60.0)),
+            ("a", (8.0, 8.0, 220.0, 60.0)),
+            ("z", (128.0, 68.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn right_to_left_static_position_after_a_narrow_box() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;direction:rtl\"><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px;width:50px\"></div><div id=z style=\"position:absolute;height:10px;width:10px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("a", (108.0, 8.0, 100.0, 40.0)),
+            ("b", (58.0, 8.0, 50.0, 40.0)),
+            ("z", (98.0, 48.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn static_position_after_a_broken_paragraph() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\"><div id=p>x x x x x x x x x x x x x x x x x x x x x x x x</div><div id=z style=\"position:absolute;height:10px;width:10px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 30.0)),
+            ("p", (8.0, 8.0, 200.0, 30.0)),
+            ("z", (108.0, 28.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn centered_inline_static_position_first() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;text-align:center\"><div id=z style=\"position:absolute;display:inline;height:10px;width:10px\"></div><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("z", (58.0, 8.0, 10.0, 10.0)),
+            ("a", (8.0, 8.0, 100.0, 40.0)),
+            ("b", (108.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn centered_inline_static_position_after_blocks() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;text-align:center\"><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"></div><div id=z style=\"position:absolute;display:inline;height:10px;width:10px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("a", (8.0, 8.0, 100.0, 40.0)),
+            ("b", (108.0, 8.0, 100.0, 40.0)),
+            ("z", (158.0, 48.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn right_to_left_inline_static_position() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;direction:rtl\"><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"></div><span id=z style=\"position:absolute;height:10px;width:10px\"></span></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("a", (108.0, 8.0, 100.0, 40.0)),
+            ("b", (8.0, 8.0, 100.0, 40.0)),
+            ("z", (98.0, 48.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn block_static_position_first() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\"><div id=z style=\"position:absolute;height:10px;width:10px\"></div><div id=a style=\"height:40px\"></div><div id=b style=\"height:40px\"></div></div>",
+        &[
+            ("m", (8.0, 8.0, 200.0, 40.0)),
+            ("z", (8.0, 8.0, 10.0, 10.0)),
+            ("a", (8.0, 8.0, 100.0, 40.0)),
+            ("b", (108.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
