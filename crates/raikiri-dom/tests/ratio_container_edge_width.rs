@@ -1015,3 +1015,26 @@ fn a_box_with_narrow_content_is_as_wide_as_its_ratio_gives_its_edges() {
         ),
     ]);
 }
+
+/// A size-contained box keeps the floor: its padding and border stay.
+#[test]
+fn a_size_contained_box_keeps_the_floor() {
+    assert_rows(&[
+        (
+            "<div><div id=t style='display:inline-block;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;contain:size'><span>X</span></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div><div id=t style='display:inline-flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;contain:size'><span>X</span></div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='width:5px'><div id=t style='display:flow-root;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;contain:size'>X</div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+        (
+            "<div style='position:relative'><div id=t style='position:absolute;display:flex;aspect-ratio:2/1;box-sizing:border-box;border:2px solid;contain:size'>X</div></div>",
+            &[("t", [0.0, 0.0, 8.0, 4.0])],
+        ),
+    ]);
+}

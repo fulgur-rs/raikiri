@@ -558,10 +558,15 @@ impl LayoutSession<'_> {
             context.carried_min_width = carried.width;
             context.carried_min_height = carried.height;
         }
-        if matches!(
-            role,
-            ReadRole::FlexContainer | ReadRole::GridContainer | ReadRole::BlockItem | ReadRole::Oof
-        ) {
+        if view.aspect_ratio().is_some()
+            && matches!(
+                role,
+                ReadRole::FlexContainer
+                    | ReadRole::GridContainer
+                    | ReadRole::BlockItem
+                    | ReadRole::Oof
+            )
+        {
             context.ratio_edge_min_width = self.ratio_edge_width(idx);
         }
         if matches!(role, ReadRole::BlockItem) {
@@ -601,8 +606,6 @@ impl LayoutSession<'_> {
         let ratio = style.stated_aspect_ratio()?;
         if self.nodes[idx].used_writing_mode.is_vertical()
             || self.nodes[idx].ratio_in_content_box
-            || self.nodes[idx].size_containment.width
-            || self.nodes[idx].size_containment.height
             || style.box_sizing() == BoxSizing::ContentBox
             || crate::paint_rules::is_replaced_element(self.document, idx)
             || !style.size().width.is_auto()
