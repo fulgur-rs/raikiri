@@ -250,6 +250,12 @@ fn flex_and_grid_items_floats_and_inline_blocks_stick_alike() {
             "<div id=p style='display:grid;height:100px;grid-template-rows:50px 50px'><div id=b style='position:sticky;top:10px;height:20px'></div></div>",
             &[(0, "p", [0, 0, 800, 100]), (0, "b", [0, 10, 800, 20])],
         ),
+        // As in Chromium, a grid item stays inside the grid container, not
+        // inside its grid area.
+        (
+            "<div id=p style='display:grid;height:200px;grid-template-rows:50px 150px'><div id=b style='position:sticky;top:100px;height:20px'></div></div>",
+            &[(0, "p", [0, 0, 800, 200]), (0, "b", [0, 100, 800, 20])],
+        ),
         (
             "<div id=p style='height:100px'><div id=b style='display:inline-block;position:sticky;top:10px;width:20px;height:20px'></div></div>",
             &[(0, "p", [0, 0, 800, 100]), (0, "b", [0, 10, 20, 20])],
