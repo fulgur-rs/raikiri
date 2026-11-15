@@ -1324,3 +1324,97 @@ fn a_block_that_aligns_its_content_sits_beside_a_float() {
         ),
     ]);
 }
+
+/// An image with an `auto` width that `justify-self: stretch`, or its
+/// container's `justify-items: stretch`, asks to stretch fills the room
+/// beside a float, as it does in a block without text; `justify-self: start`
+/// keeps its natural width. Inside an inline box only its own `justify-self`
+/// counts: `justify-items` does not apply there.
+#[test]
+fn an_image_that_justify_stretches_fills_the_room_beside_a_float() {
+    assert_rows(&[
+        (
+            "<div style='width:100px'>T<div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px;justify-self:stretch'>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 70.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'><div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px;justify-self:stretch'></div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 0.0, 70.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'>T<img id=b style='display:block;height:10px;justify-self:stretch'>T</div>",
+            &[("b", [0.0, 10.0, 100.0, 10.0])],
+        ),
+        (
+            "<div style='width:100px;justify-items:stretch'>T<div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px'>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 70.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px;justify-items:stretch'><div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px'></div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 0.0, 70.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px;justify-items:stretch'>T<img id=b style='display:block;height:10px'>T</div>",
+            &[("b", [0.0, 10.0, 100.0, 10.0])],
+        ),
+        (
+            "<div style='width:100px'>T<div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;width:40px;height:10px;justify-self:stretch'>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 40.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'><div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;width:40px;height:10px;justify-self:stretch'></div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 0.0, 40.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'>T<img id=b style='display:block;width:40px;height:10px;justify-self:stretch'>T</div>",
+            &[("b", [0.0, 10.0, 40.0, 10.0])],
+        ),
+        (
+            "<div style='width:100px'>T<div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px;justify-self:start'>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 0.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'><div id=f style='float:left;width:30px;height:30px'></div><img id=b style='display:block;height:10px;justify-self:start'></div>",
+            &[("f", [0.0, 0.0, 30.0, 30.0]), ("b", [30.0, 0.0, 0.0, 10.0])],
+        ),
+        (
+            "<div style='width:100px'>T<img id=b style='display:block;height:10px;justify-self:start'>T</div>",
+            &[("b", [0.0, 10.0, 0.0, 10.0])],
+        ),
+        (
+            "<div style='width:100px;justify-items:stretch'>T<div id=f style='float:left;width:30px;height:30px'></div><span><img id=b style='display:block;height:10px'></span>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 0.0, 10.0]),
+            ],
+        ),
+        (
+            "<div style='width:100px'>T<div id=f style='float:left;width:30px;height:30px'></div><span><img id=b style='display:block;height:10px;justify-self:stretch'></span>T</div>",
+            &[
+                ("f", [0.0, 0.0, 30.0, 30.0]),
+                ("b", [30.0, 10.0, 70.0, 10.0]),
+            ],
+        ),
+    ]);
+}

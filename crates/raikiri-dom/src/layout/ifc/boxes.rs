@@ -3580,7 +3580,7 @@ fn layout_vertical_block_child_with_edges(
 
 /// Whether the block child `node` takes part in the root's block formatting
 /// context, as the block algorithm decides for an in-flow item (see
-/// `block_flow::shares_context`): a block box that is not a scroll container
+/// `shares_context` in [`block_flow`]): a block box that is not a scroll container
 /// and does not align its content. Flow roots, flex and grid containers and
 /// scroll containers establish formatting contexts of their own, and a
 /// replaced element or form control keeps its border box clear of the
@@ -4104,14 +4104,15 @@ fn content_keyword_width(
     // The `auto` inline size of a button is its fit-content size, where it is
     // block-level too, as is that of a replaced element whose automatic size
     // may shrink, which does not stretch to the room it is given (CSS 2.1
-    // §10.3.4); the block algorithm sizes both the same way. So is the `auto`
-    // inline size of a block that `justify-self` places at a position (CSS Box
-    // Alignment 3 §6.1).
+    // §10.3.4) unless `justify-self: stretch` asks it to; the block algorithm
+    // sizes both the same way. So is the `auto` inline size of a block that
+    // `justify-self` places at a position (CSS Box Alignment 3 §6.1).
     let fits_auto = keyword.expand() == ExpandedDimension::Auto
         && (tree.nodes[node].is_html_button()
-            || tree
+            || (tree
                 .query_style(node, ReadRole::BlockContainer)
                 .is_compressible_replaced()
+                && !block_flow::justify_stretches_child(tree, node))
             || block_flow::justify_fits_content(tree, node));
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {

@@ -130,14 +130,11 @@ impl InlinePosition {
 /// container that lays it out, read from the style views, and whether its
 /// margins along its inline axis, its height when `vertical_inline_axis`,
 /// are auto (see [`position_of`]), with the direction of that container.
-fn justify_position_of(
-    tree: &LayoutSession<'_>,
-    child: usize,
-    vertical_inline_axis: bool,
-) -> Option<((InlinePosition, bool), bool, Direction)> {
-    use crate::layout::style_views::ReadRole;
-    // The parent box, past `display: contents`, and the block container that
-    // holds the box, past inline boxes too: its direction lays out the room.
+/// The block container whose room the in-flow block `child` is placed in,
+/// and whether the box's parent is an inline box. The parent box is found
+/// past `display: contents`, and the block container past inline boxes too:
+/// its direction lays out the room.
+fn justify_container(tree: &LayoutSession<'_>, child: usize) -> Option<(usize, bool)> {
     let mut boxes = std::iter::successors(tree.parent_of(child), |&parent| tree.parent_of(parent))
         .filter(|&parent| tree.nodes[parent].display() != DisplayValue::Contents);
     let parent = boxes.next()?;
@@ -147,6 +144,16 @@ fn justify_position_of(
     } else {
         parent
     };
+    Some((container, inline_parent))
+}
+
+fn justify_position_of(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    vertical_inline_axis: bool,
+) -> Option<((InlinePosition, bool), bool, Direction)> {
+    use crate::layout::style_views::ReadRole;
+    let (container, inline_parent) = justify_container(tree, child)?;
     let style = tree.query_style(child, ReadRole::BlockItem);
     let container = tree.query_style(container, ReadRole::BlockContainer);
     // `justify-items` does not apply to an inline box, so `auto` is `normal`
@@ -172,6 +179,26 @@ fn justify_position_of(
 /// margin then places the box.
 pub(crate) fn justify_fits_content(tree: &LayoutSession<'_>, child: usize) -> bool {
     justify_position_of(tree, child, false).is_some()
+}
+
+/// Whether `justify-self` (or its container's `justify-items` for `auto`)
+/// asks the in-flow block `child` to stretch explicitly, which fills the room
+/// for a replaced box that `normal` leaves at its natural width (see
+/// [`justify_stretches`]). `justify-items` does not apply to a block inside
+/// an inline box.
+pub(crate) fn justify_stretches_child(tree: &LayoutSession<'_>, child: usize) -> bool {
+    use crate::layout::style_views::ReadRole;
+    justify_container(tree, child).is_some_and(|(container, inline_parent)| {
+        tree.query_style(child, ReadRole::BlockItem)
+            .bridge_justify_self()
+            .or_else(|| {
+                (!inline_parent).then(|| {
+                    tree.query_style(container, ReadRole::BlockContainer)
+                        .justify_items()
+                })
+            })
+            .is_some_and(|alignment| alignment.keyword == AlignItemsKeyword::Stretch)
+    })
 }
 
 /// Where `justify-self` puts the in-flow block `child` in a room `free` wider
