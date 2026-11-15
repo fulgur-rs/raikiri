@@ -2034,3 +2034,652 @@ fn captions_of_any_size_and_side_count_once_whatever_the_table_states() {
         ),
     ]);
 }
+
+/// The captions are measured at the width the table takes: the room its
+/// margins leave within its `min-width` and `max-width` when the column
+/// stretches it, and no less than its columns need; in a column that wraps
+/// its items, the width it takes for itself before the lines stretch it.
+/// A percentage basis resolves against a definite column height only.
+#[test]
+fn the_captions_are_measured_at_the_width_the_table_takes() {
+    assert_cases(&[
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:100px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 45.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:200px'><table id=t style='flex:0 1 50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 55.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 15.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;flex-wrap:wrap;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 45.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 15.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;align-items:start;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 10.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 10.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><table id=t style='flex:0 1 50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 48.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><table id=t style='flex:0 1 50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 27.5]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:100px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 45.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:200px'><table id=t style='height:50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 55.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 15.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;flex-wrap:wrap;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 45.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 15.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;align-items:start;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 10.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 55.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 10.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><table id=t style='height:50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 48.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><table id=t style='height:50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 27.5]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:100px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:200px'><table id=t style='flex:0 1 50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 200.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;flex-wrap:wrap;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 80.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;align-items:start;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><table id=t style='flex:0 1 50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><table id=t style='flex:0 1 50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 100.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:100px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:200px'><table id=t style='height:50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 200.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;flex-wrap:wrap;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 80.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;align-items:start;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 200.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><table id=t style='height:50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><table id=t style='height:50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 100.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:200px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 200.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 200.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:100px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 35.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:200px'><table id=t style='flex:0 1 50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 45.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;align-items:start;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><table id=t style='flex:0 1 50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 48.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><table id=t style='flex:0 1 50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 22.5]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:100px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 35.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:200px'><table id=t style='height:50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 45.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;align-items:start;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 45.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 10.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><table id=t style='height:50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 48.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><table id=t style='height:50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 22.5]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:45px'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 45.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 45.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:100px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 60.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:200px'><table id=t style='flex:0 1 50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 90.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;flex-wrap:wrap;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 90.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 80.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 90.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;align-items:start;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 110.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 50.0]),
+                ("z", [0.0, 110.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:100px'><table id=t style='flex:0 1 50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 110.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 50.0]),
+                ("z", [0.0, 110.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><table id=t style='flex:0 1 50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 60.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><table id=t style='flex:0 1 50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 20.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 10.0]),
+                ("z", [0.0, 20.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='flex:0 1 50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 60.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:100px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'><div style='width:300px;height:5px'></div></td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 60.0]),
+                ("cap", [0.0, 0.0, 300.0, 10.0]),
+                ("r", [0.0, 10.0, 300.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:200px'><table id=t style='height:50px;max-width:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 200.0, 90.0]),
+                ("cap", [0.0, 0.0, 50.0, 40.0]),
+                ("r", [0.0, 40.0, 50.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;flex-wrap:wrap;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 90.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 80.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;flex-wrap:wrap;align-content:start;width:800px'><table id=t style='height:50px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd</caption><tr id=r><td style='padding:0'>xxxx</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 90.0]),
+                ("cap", [0.0, 0.0, 40.0, 40.0]),
+                ("r", [0.0, 40.0, 40.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;align-items:start;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 110.0]),
+                ("cap", [30.0, 0.0, 30.0, 60.0]),
+                ("r", [30.0, 60.0, 30.0, 50.0]),
+                ("z", [0.0, 110.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;;width:100px'><table id=t style='height:50px;margin:0 30px;border-spacing:0'><caption id=cap>aaa bbb ccc ddd eee fff</caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 100.0, 110.0]),
+                ("cap", [30.0, 0.0, 40.0, 60.0]),
+                ("r", [30.0, 60.0, 40.0, 50.0]),
+                ("z", [0.0, 110.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><table id=t style='height:50px;min-height:58px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 60.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><table id=t style='height:50%;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 20.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 10.0]),
+                ("z", [0.0, 20.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;'><div id=n style='display:flex;flex-direction:column;flex:0 1 auto'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 60.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("n", [0.0, 0.0, 800.0, 60.0]),
+                ("r", [0.0, 10.0, 800.0, 50.0]),
+                ("z", [0.0, 60.0, 800.0, 10.0]),
+            ],
+        ),
+    ]);
+}

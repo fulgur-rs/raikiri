@@ -335,17 +335,19 @@ fn grid_height_in_wrapper(doc: &Document, wrapper_height: f32, captions: &Captio
 }
 
 /// The block size the in-flow captions of the horizontal `table` take
-/// around its grid when the table is `width` wide (its border box), or `None`
-/// for a table with no caption in flow or in a vertical writing mode.
+/// around its grid when the table is `width` wide (its border box) in a
+/// containing block `parent_height` tall, or `None` for a table with no
+/// caption in flow or in a vertical writing mode.
 pub(crate) fn in_flow_caption_height(
     doc: &mut LayoutSession<'_>,
     table: usize,
     width: f32,
+    parent_height: Option<f32>,
 ) -> Option<f32> {
     if table_writing_mode(doc, table).is_vertical() || !caption_in_flow(doc, table) {
         return None;
     }
-    let captions = layout_table_captions(doc, table, width, None);
+    let captions = layout_table_captions(doc, table, width, parent_height);
     Some(
         captions
             .in_flow(doc)
@@ -1122,8 +1124,9 @@ fn compute_table_layout_checked(
         //
         // A flex base size with the captions' height added (see
         // `caption_inclusive_bases`) is the whole wrapper box's already, so
-        // the height the container gives such an item is the wrapper's too.
-        let basis_includes_captions = doc.context.caption_inclusive_bases.contains(&table_idx);
+        // a height the container gives such an item is the wrapper's too.
+        let basis_includes_captions = inputs.known_dimensions.height.is_some()
+            && doc.context.caption_inclusive_bases.contains(&table_idx);
         let item_is_flexed = basis_includes_captions
             || flex_column_parent
                 && caption_in_flow(doc, table_idx)
