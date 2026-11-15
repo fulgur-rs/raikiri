@@ -339,6 +339,18 @@ impl IfcLines {
 }
 
 impl IfcRoot {
+    /// Whether the paragraph holds no box but atomic inlines and out-of-flow
+    /// boxes, and no generated blocks: its boxes all sit on its lines, so the
+    /// lines can be split between columns with the boxes on them.
+    pub(crate) fn holds_only_line_boxes(&self) -> bool {
+        use super::boxes::IfcBoxKind;
+        self.generated_blocks.is_empty()
+            && self
+                .boxes
+                .iter()
+                .all(|box_| matches!(box_.kind, IfcBoxKind::Atomic | IfcBoxKind::OutOfFlow))
+    }
+
     /// Baseline of the last line of the last performed layout, from the
     /// content-box top.
     pub(crate) fn last_baseline(&self) -> Option<f32> {

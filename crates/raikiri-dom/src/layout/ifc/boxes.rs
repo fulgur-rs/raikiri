@@ -4765,6 +4765,37 @@ pub(crate) fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f
     })
 }
 
+/// How far the columns moved the line `line`: the range of `fragments` that
+/// holds it starts its first line at the top of its column, at the column's
+/// inline offset (see [`move_atomics_to_columns`]).
+fn column_shift(
+    lines: &IfcLines,
+    fragments: &[crate::node::MulticolTextFragment],
+    line: usize,
+) -> (f32, f32) {
+    fragments
+        .iter()
+        .find(|fragment| (fragment.line_start..fragment.line_end).contains(&line))
+        .and_then(|fragment| {
+            let first = lines.lines.get(fragment.line_start)?;
+            Some((fragment.x, fragment.y - first.block_offset()))
+        })
+        .unwrap_or((0.0, 0.0))
+}
+
+/// `position` moved by `dx` and `dy`.
+fn shifted_static_position(
+    mut position: Point<AxisStaticPosition>,
+    dx: f32,
+    dy: f32,
+) -> Point<AxisStaticPosition> {
+    position.x.area.start += dx;
+    position.x.area.end += dx;
+    position.y.area.start += dy;
+    position.y.area.end += dy;
+    position
+}
+
 /// Where the static position of the out-of-flow box `node` lies along the
 /// block axis of the paragraph, from the content box's block-start edge.
 ///
@@ -4984,6 +5015,12 @@ pub(crate) fn place_out_of_flow(
     let Some(lines) = root.lines.clone() else {
         return;
     };
+    // The columns that the lines of a horizontal root were split into after
+    // they were laid out in one tall column (see [`move_atomics_to_columns`]).
+    let column_fragments = root
+        .multicol_fragments
+        .clone()
+        .filter(|_| !vertical_root && lines.fragmentainer_line_ranges.is_none());
     let ruby_containers = root.ruby_containers.clone();
     let style = tree.physical_style(idx);
     let border = style.border().resolve_or_zero(Some(border_box.width));
@@ -5099,6 +5136,11 @@ pub(crate) fn place_out_of_flow(
                 inline_level,
             )
         };
+        // The columns move a box with the line it sits on.
+        let (dx, dy) = match (column_fragments.as_deref(), anchor) {
+            (Some(fragments), Some((line, _))) => column_shift(&lines, fragments, line),
+            _ => (0.0, 0.0),
+        };
         // A box that was inline-level extends from its anchor the way the
         // text there reads.
         let inline_anchor = anchor.filter(|_| inline_level).map(|(index, position)| {
@@ -5143,7 +5185,12 @@ pub(crate) fn place_out_of_flow(
                 y: AxisStaticPosition::from_edge(content_top + block_offset, AxisStaticEdge::Start),
             }
         };
-        let Some(cb) = inline_cb else {
+        let static_spot = shifted_static_position(static_spot, dx, dy);
+        let Some(cb) = inline_cb.map(|cb| PaddingBox {
+            x: cb.x + dx,
+            y: cb.y + dy,
+            ..cb
+        }) else {
             let position = if tree.nodes[node].position() == &PositionValue::Fixed {
                 OofPosition::Fixed
             } else {
@@ -5204,10 +5251,10 @@ pub(crate) fn place_out_of_flow(
                         values::Direction::Ltr
                     },
                     Line {
-                        start: content_left,
-                        end: content_left + lines.width,
+                        start: content_left + dx,
+                        end: content_left + dx + lines.width,
                     },
-                    content_top + block_offset,
+                    content_top + block_offset + dy,
                 )
             };
             candidates.push(OofCandidate {

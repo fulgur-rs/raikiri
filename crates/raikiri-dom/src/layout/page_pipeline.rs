@@ -1605,6 +1605,8 @@ fn layout_single_page_with_table_projection(
     // `enforce_layout_invariants` documentation. Events enter the session's
     // warning buffer along with Steps 1 and 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
+    super::multicol::record_out_of_flow_boxes_on_column_lines(document);
+    take_layout_failure(document)?;
     super::sticky::resolve_offsets(document, cascade);
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
