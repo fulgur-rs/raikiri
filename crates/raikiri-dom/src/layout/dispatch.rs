@@ -1096,6 +1096,7 @@ impl LayoutSession<'_> {
         let inputs = with_flexed_main_not_definite(self, usize::from(node_id), inputs);
         let inputs = with_grid_ratio_width(self, usize::from(node_id), inputs);
         let inputs = with_ratio_probe_stretch_floor(self, usize::from(node_id), inputs);
+        let inputs = with_flex_basis_stretch_not_carried(self, usize::from(node_id), inputs);
         if let Some(output) =
             vertical_ratio_width::layout(self, node_id, inputs, block_ctx.as_deref_mut())
         {
@@ -6888,6 +6889,62 @@ fn with_ratio_probe_stretch_floor(
         });
     inputs.known_dimensions.height = Some(minimum.unwrap_or(0.0).max(edges));
     inputs.known_dimensions_are_definite.height = true;
+    inputs
+}
+
+/// Drop the height Taffy states while it measures the content-based flex base
+/// size, or the intrinsic main size of its container, for a stretched item
+/// with an aspect ratio in a row whose height is indefinite.
+///
+/// Taffy states the height it would stretch the item to, the room it has
+/// within its maximum height or the one its maximum width carries across the
+/// ratio, as both the known height and the available height, so the ratio turns that limit into the flex base size. A
+/// stretched item's cross size is only definite when the container's is (CSS
+/// Flexbox 1 §9.8), so the base size comes from the content (§9.2, step 3E)
+/// and a limit across reaches the main axis only as the limit the ratio
+/// transfers (CSS Sizing 4 §5.1), as browsers lay it out. A height that
+/// resolves against the container's height is as open as `auto` here.
+fn with_flex_basis_stretch_not_carried(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.sizing_mode != SizingMode::ContentSize
+        || inputs.run_mode != RunMode::ComputeSize
+        || inputs.parent_size.width.is_some()
+        || inputs.parent_size.height.is_some()
+        || inputs.known_dimensions.width.is_some()
+        || tree.has_vertical_writing_mode(idx)
+    {
+        return inputs;
+    }
+    // Taffy offers the height it states as the room as well. A probe that
+    // states the height of a container's definite room offers unbounded room.
+    let offered_as_room = matches!(
+        (inputs.known_dimensions.height, inputs.available_space.height),
+        (Some(height), AvailableSpace::Definite(room)) if height == room
+    );
+    let stretched_ratio_item = || {
+        tree.taffy_parent_of(idx).is_some_and(|container| {
+            let container_style = tree.physical_style(container);
+            let item = tree.physical_style(idx);
+            tree.nodes[container].layout_display() == Display::Flex
+                && tree.nodes[idx].layout_position() != Position::Absolute
+                && container_style.flex_direction_is_row()
+                && item.aspect_ratio().is_some()
+                && block_flow::style_input::physical(tree, idx)
+                    .size
+                    .height
+                    .maybe_resolve(None)
+                    .is_none()
+                && content_limits::alignment_stretches(&container_style, &item, true)
+        })
+    };
+    if !offered_as_room || !stretched_ratio_item() {
+        return inputs;
+    }
+    inputs.known_dimensions.height = None;
+    inputs.known_dimensions_are_definite.height = false;
     inputs
 }
 
