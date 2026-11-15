@@ -5509,21 +5509,9 @@ fn with_grid_ratio_width(
     let normal_width = justify.keyword == raikiri_layout_style::values::AlignItemsKeyword::Normal;
     let follows_height = tree.nodes[idx].ratio_width_follows_stretched_height;
     let mut width = inputs.known_dimensions.width.or_else(|| {
-        // An item whose width follows its stretched height takes the width
-        // the ratio gives for the height of its area, and contributes the
-        // height the ratio gives for the width of its column before that.
-        if follows_height
-            && inputs.known_dimensions_are_definite.height
-            && let Some(height) = inputs.known_dimensions.height
-        {
-            return Some(
-                replaced_size::width_for_height(
-                    (height - edges.height).max(0.0),
-                    style.aspect_ratio.expect("checked ratio"),
-                    insets,
-                ) + edges.width,
-            );
-        }
+        // An item whose width follows its stretched height contributes the
+        // height its ratio gives for the width of its column; stretched,
+        // the height it is given gives its width through the ratio.
         (normal_width || follows_height)
             .then(|| inputs.available_space.width.into_option())
             .flatten()

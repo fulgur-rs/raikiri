@@ -878,9 +878,10 @@ impl LayoutSession<'_> {
             && !margin.bottom.is_auto()
             && size.height.is_auto()
             && self.retained_height_keyword(idx).is_none();
-        (justify || align)
-            && (justify || !size.width.is_auto())
-            && (align || !size.height.is_auto())
+        // Each axis is stretched or sized, and one of them is stretched.
+        let horizontal = justify || !size.width.is_auto();
+        let vertical = align || !size.height.is_auto();
+        (justify || align) && horizontal && vertical
     }
 
     /// The inline alignment of the grid item `idx`: its own `justify-self`,

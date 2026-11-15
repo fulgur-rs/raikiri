@@ -1423,6 +1423,21 @@ fn an_item_stretched_in_both_axes_fills_its_area_past_its_ratio() {
                 ("s", [100.0, 0.0, 50.0, 120.0]),
             ],
         ),
+        (
+            r#"<div id=c style='display:grid;width:100px;grid-template-columns:100px;grid-template-rows:60px;grid-auto-rows:60px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div>XX</div>"#,
+            &[
+                ("c", [0.0, 0.0, 100.0, 120.0]),
+                ("i", [0.0, 0.0, 100.0, 60.0]),
+            ],
+        ),
+        (
+            r#"<div id=c style='display:grid;width:100px;grid-template-columns:100px;grid-template-rows:60px;grid-auto-rows:60px'><div id=i style='aspect-ratio:2/1;align-self:stretch;justify-self:stretch'></div><div style='display:contents'><div id=s></div></div></div>"#,
+            &[
+                ("c", [0.0, 0.0, 100.0, 120.0]),
+                ("i", [0.0, 0.0, 100.0, 60.0]),
+                ("s", [0.0, 60.0, 100.0, 60.0]),
+            ],
+        ),
     ]);
 }
 
