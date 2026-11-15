@@ -2076,14 +2076,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after
                 // a box keeps it from being the last.
-                let own_closing_edges = closing_edges_of(document, cascade, node_id);
+                let own_closing_edges = closing_edges_of(document, cascade, body_id, node_id);
                 // The edges of the blocks this one ends are not below a box that
                 // only starts a run of boxes tied by avoided breaks: the rest
                 // of the run lies between. Nor are they below the last box of a
                 // block whose own height does not follow its content: they
                 // follow that block's border box.
                 let inherited_edges = if matches!(frame.tie, AvoidTie::RunStart { .. })
-                    || !passes_closing_edges(document, cascade, node_id)
+                    || (frame.closing_edges > 0.0
+                        && !passes_closing_edges(document, cascade, body_id, node_id))
                 {
                     0.0
                 } else {
@@ -2458,7 +2459,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // is that of its flow content begin where that content ends
                 // (at the top of the block when it holds none), and the page
                 // breaks before them when they do not fit below it on its
-                // page. A monolithic box, such as an image, keeps its edges.
+                // page. Those of a block whose set height leaves room below
+                // its content begin at the end of its content box instead. A monolithic box, such as an image, keeps its edges.
                 // Like the page fit of the boxes, the end is that of the normal
                 // flow: a relative offset only moves the paint. In an item of a
                 // flex container or of a grid of columns, the edges move that
@@ -2466,7 +2468,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // in columns, whose balance the move would change.
                 if in_container_flow
                     && !monolithic
-                    && let Some(edges) = content_bottom_edges(document, cascade, node_id)
+                    && let Some(edges) = content_bottom_edges(document, cascade, body_id, node_id)
                     && candidate_raw_y + node.layout.size.height <= frame.clip_end
                     && let Some(beside) = edges_break_container(document, node_id, body_id)
                 {

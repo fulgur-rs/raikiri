@@ -70,6 +70,8 @@ fn assert_rows(rows: &[Row]) {
 
 #[test]
 fn the_last_box_moves_with_the_edges_of_a_box_of_set_height() {
+    // A relative offset of the last box moves its paint only: the box is
+    // measured where the flow puts it.
     assert_rows(&[
         (
             "<div style='height:20px'></div><div style='width:20px;height:80px;padding-bottom:15px'>X X<div style='height:20px;line-height:20px'>B</div></div><div>Z</div>",
@@ -102,6 +104,14 @@ fn the_last_box_moves_with_the_edges_of_a_box_of_set_height() {
         (
             "<div style='height:20px'></div><div style='width:20px;box-sizing:border-box;max-height:90px;padding-bottom:30px'>X X<div style='height:20px;line-height:20px'>B</div></div><div>Z</div>",
             &[(0, 'X', 25), (0, 'X', 55), (1, 'B', 0), (1, 'Z', 15)],
+        ),
+        (
+            "<div style='height:20px'></div><div style='height:60px;padding-bottom:30px'><div style='height:40px'>A</div><div style='position:relative;top:10px;height:20px;line-height:20px'>B</div></div><div>Z</div>",
+            &[(0, 'A', 25), (1, 'B', 10), (1, 'Z', 15)],
+        ),
+        (
+            "<div style='height:40px'></div><div style='height:60px;padding-bottom:15px'><div style='height:40px'>A</div><div style='position:relative;top:-10px;height:20px;line-height:20px'>B</div></div><div>Z</div>",
+            &[(0, 'A', 45), (1, 'B', -10), (1, 'Z', 20)],
         ),
     ]);
 }
