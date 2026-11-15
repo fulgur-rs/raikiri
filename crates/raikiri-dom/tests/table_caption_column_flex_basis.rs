@@ -2683,3 +2683,40 @@ fn the_captions_are_measured_at_the_width_the_table_takes() {
         ),
     ]);
 }
+
+/// An absolutely positioned table is no flex item, and a `content` flex
+/// basis leaves the table to the size of its content: neither has a stated
+/// basis for the captions to be added to.
+#[test]
+fn tables_without_a_stated_basis_are_left_as_they_were() {
+    assert_cases(&[
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px;position:relative'><table id=t style='position:absolute;top:0;left:0;height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='flex:0 1 50px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 10.0, 10.0]),
+                ("d", [0.0, 0.0, 800.0, 50.0]),
+                ("r", [0.0, 10.0, 10.0, 50.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column;height:55px'><table id=t style='flex-basis:content;height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 55.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 10.0]),
+                ("z", [0.0, 55.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=c style='display:flex;flex-direction:column'><table id=t style='flex-basis:content;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 0.0, 800.0, 20.0]),
+                ("cap", [0.0, 0.0, 800.0, 10.0]),
+                ("r", [0.0, 10.0, 800.0, 10.0]),
+                ("z", [0.0, 20.0, 800.0, 10.0]),
+            ],
+        ),
+    ]);
+}
