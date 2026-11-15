@@ -5226,13 +5226,21 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     // The planner collapses the margins of lengths and drops them at a break.
     assert!(paragraphs("display:block;margin-top:20px"));
     assert!(paragraphs("display:block;margin-bottom:20px"));
-    // A box that repeats its edges at every break, or paints an effect sized
-    // from its whole border box, is not sliced.
-    assert!(!paragraphs(
+    // A box that repeats its edges at every break has them in each piece,
+    // and one that paints an effect sized from its whole border box paints
+    // the whole box cut at the breaks.
+    assert!(paragraphs(
         "display:block;margin:0;padding-top:2px;box-decoration-break:clone"
     ));
-    assert!(!paragraphs(
+    assert!(paragraphs(
         "display:block;margin:0;padding-bottom:2px;border-radius:4px"
+    ));
+    // An effect applied to the box as one image keeps the box whole.
+    assert!(!paragraphs(
+        "display:block;margin:0;padding-bottom:2px;opacity:0.5"
+    ));
+    assert!(!paragraphs(
+        "display:block;margin:0;padding-bottom:2px;transform:rotate(5deg)"
     ));
     // A box of lines with a height of its own goes whole to a column.
     assert!(paragraphs("display:block;margin:0;height:20px"));
@@ -6793,9 +6801,11 @@ fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
         ("border-right:2px solid", true),
         ("padding-top:4px", true),
         ("border-bottom:2px solid", true),
-        ("padding-top:4px;box-decoration-break:clone", false),
-        ("padding-bottom:4px;box-shadow:0 0 2px", false),
-        ("padding-left:4px;box-shadow:0 0 2px", false),
+        ("padding-top:4px;box-decoration-break:clone", true),
+        ("padding-bottom:4px;box-shadow:0 0 2px", true),
+        ("padding-left:4px;box-shadow:0 0 2px", true),
+        ("padding-bottom:4px;filter:blur(2px)", false),
+        ("padding-left:4px;opacity:0.5", false),
     ] {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
@@ -6811,14 +6821,15 @@ fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
 #[test]
 fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
     // The planner gives the columns that balance their height, which a lone
-    // paragraph needs as well; one with block edges it cannot slice stays
-    // out, and one without block edges goes in whatever it paints.
+    // paragraph needs as well; one with block edges its pieces cannot carry
+    // stays out, and one without block edges goes in whatever it paints.
     for (css, enters) in [
         ("background:green", true),
         ("padding-left:4px", true),
         ("padding-left:4px;box-shadow:0 0 2px", true),
-        ("padding-top:4px;box-decoration-break:clone", false),
-        ("padding-bottom:4px;box-shadow:0 0 2px", false),
+        ("padding-top:4px;box-decoration-break:clone", true),
+        ("padding-bottom:4px;box-shadow:0 0 2px", true),
+        ("padding-bottom:4px;mix-blend-mode:multiply", false),
     ] {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
@@ -8850,4 +8861,15 @@ fn a_block_after_a_float_in_a_column_starts_at_the_top_of_the_float() {
         float_then_blocks("height:10px", &["float:left;width:100px;height:20px"]),
         [(0.0, 0.0), (100.0, 10.0)]
     );
+}
+
+#[test]
+fn widows_that_cloned_edges_leave_no_room_for_yield() {
+    // Each piece holds 6px of padding above and below its lines, so a 50px
+    // column takes three 10px lines. A paragraph with edges keeps the lines
+    // that fit an empty column, so the widows yield.
+    let (doc, _, paragraph) =
+        padded_paragraph_columns("padding:6px 0;box-decoration-break:clone;widows:4", 9);
+    let (ranges, _) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 6, 1), (6, 9, 2)]);
 }
