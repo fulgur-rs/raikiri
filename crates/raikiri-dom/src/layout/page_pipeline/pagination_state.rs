@@ -845,22 +845,7 @@ impl PaginationState {
         };
         let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
         if shift > 0.0 {
-            let growth = super::leading_inline::move_line(
-                document,
-                env.cascade,
-                env.body_id,
-                owner,
-                shift,
-                &mut self.subtree_shifts,
-                (entry.page_before_candidate, target),
-            );
-            self.deferred_shifts.line_splits.push(LineSplit {
-                root: owner.root,
-                first_moved: owner.line,
-                shift,
-                growth,
-                page: target,
-            });
+            self.move_delegated_line(document, env, entry, owner, shift, target);
         }
         if pending {
             self.pending_break.clear();
@@ -948,9 +933,11 @@ impl PaginationState {
             starts_after_forced_break,
         );
 
+        let moved = self.break_before_unplaced_line(document, env, candidate, entry)?;
         // Sibling adjacency uses the original unpaginated bottom. Only page
-        // reach and trailing-edge placement need the grown grid's height.
-        let candidate = grown.as_ref().unwrap_or(candidate);
+        // reach and trailing-edge placement need the grown grid's or
+        // paragraph's height.
+        let candidate = grown.as_ref().or(moved.as_ref()).unwrap_or(candidate);
         let height = candidate.height;
 
         let header_delta = if page_break.overflow.tail_caption {
@@ -1031,6 +1018,94 @@ impl PaginationState {
             }
         }
         self.finish_box(document, env, candidate, effective_y)
+    }
+
+    /// Breaks the page between the padding and border above the line of a
+    /// paragraph of one line that no text places (see `unplaced_line`), or
+    /// the floats that put the line down, and that line, where it starts
+    /// below the top of its page and runs past its end. Chromium moves the
+    /// line to the top of the next page and leaves the edges above it, as for
+    /// a line of text, even when the line is taller than that page. The
+    /// paragraph must run past the page end itself: a box that ends on its
+    /// page has no break inside it, and a line that overflows it stays. A box
+    /// that no page break goes through keeps its line too. Returns the
+    /// paragraph grown by the move, when it moved.
+    fn break_before_unplaced_line(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+    ) -> Result<Option<PageCandidate>, Halt> {
+        let node_id = candidate.node_id;
+        if candidate.context.unplaced_line().is_none() || candidate.context.is_unbreakable() {
+            return Ok(None);
+        }
+        let owner = super::leading_inline::LeadingInlineLine {
+            root: node_id,
+            line: 0,
+        };
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+        let flow_top = top - relative;
+        let box_top = current_abs_y(document, node_id) - relative;
+        let page_origins = env.page_origins;
+        let page = page_origins.page_index_for_y(flow_top + 0.001);
+        let next = page.saturating_add(1);
+        if flow_top - box_top <= 0.5
+            || !runs_past_page_end(
+                document,
+                env.cascade,
+                env.body_id,
+                node_id,
+                page_origins.origin(next),
+            )
+            || flow_top <= page_origins.origin(page) + 0.001
+            || flow_top + height <= page_origins.origin(next) + 0.001
+        {
+            return Ok(None);
+        }
+        reach_page(env.control, next)?;
+        self.move_delegated_line(
+            document,
+            env,
+            entry,
+            owner,
+            page_origins.origin(next) - flow_top,
+            next,
+        );
+        let mut grown = candidate.clone();
+        grown.height = document.nodes[node_id].layout.size.height;
+        Ok(Some(grown))
+    }
+
+    /// Moves the line `owner` and the lines after it down by `shift` to
+    /// `page`, and keeps the split for the shifts that settle later.
+    fn move_delegated_line(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        entry: &CandidateEntry,
+        owner: super::leading_inline::LeadingInlineLine,
+        shift: f32,
+        page: u32,
+    ) {
+        let growth = super::leading_inline::move_line(
+            document,
+            env.cascade,
+            env.body_id,
+            owner,
+            shift,
+            &mut self.subtree_shifts,
+            (entry.page_before_candidate, page),
+        );
+        self.deferred_shifts.line_splits.push(LineSplit {
+            root: owner.root,
+            first_moved: owner.line,
+            shift,
+            growth,
+            page,
+        });
     }
 
     /// Finishes the placement of the box `candidate` at `effective_y` on the
@@ -2684,17 +2759,35 @@ impl PaginationState {
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
                         || (line_fit.leaves_too_few_orphans() && follows_content()));
-                // A block moved whole below the padding and border of the
-                // boxes it begins, where they leave its first line no room
-                // before the page end, breaks between those edges and the
-                // line, as Chromium does: the line starts the page after.
-                // The lines after it are judged again from there, as they
-                // may break on the pages after it in turn.
-                if moved_whole
+                // A block that stays on its page, below the padding and
+                // border of its own box or of the boxes it begins, or below
+                // the floats that put its first line down, where they leave
+                // the line no room before the page end, breaks between them
+                // and the line, as Chromium does: the line starts the page
+                // after. Below its own edges or the floats it does so even
+                // when it is taller than that page; below the edges of the
+                // boxes it begins only when it fits there. The lines after it
+                // are judged again from there, as a later fragment, as they
+                // may break on the pages after it in turn. A block that ends
+                // on its page has no break inside it: a line that overflows
+                // it stays.
+                if !can_move_block
                     && lines_can_move
                     && line_fit.lines_before_break == 0
-                    && block_effective_y > page_start + 0.001
+                    && first_line_top > page_start + 0.001
                     && first_line_top < page_start + page_step - 0.001
+                    && runs_past_page_end(
+                        document,
+                        cascade,
+                        body_id,
+                        block_id,
+                        page_start + page_step,
+                    )
+                    && (first_line_top - block_effective_y > 0.5
+                        || block_fits_page_step(
+                            line_metrics[0].1 - line_metrics[0].0,
+                            page_origins.step_at(page.saturating_add(1)),
+                        ))
                 {
                     page = page.saturating_add(1);
                     let shift = page_origins.origin(page) - first_line_top;
@@ -2714,6 +2807,7 @@ impl PaginationState {
                     if clip.is_some() {
                         (line_metrics, widows) = clipped(document, text.effective_y);
                     }
+                    moved_whole = true;
                     continue;
                 }
                 let fix = line_fit.fix(
@@ -3630,4 +3724,30 @@ fn clipped_line_metrics(
         }
     }
     (line_metrics, widows)
+}
+
+/// Whether the block `node_id` and every block around it inside the body run
+/// past `page_end`: a box that ends on the page has no break inside it, and
+/// the content that overflows it, such as a line below its end, stays on the
+/// page with it, as in Chromium.
+fn runs_past_page_end(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_end: f32,
+) -> bool {
+    std::iter::once(node_id)
+        .chain(
+            document
+                .layout_ancestors(node_id)
+                .take_while(|&id| id != body_id),
+        )
+        .filter(|&id| !document.nodes[id].display().is_inline_level())
+        .all(|id| {
+            current_abs_y(document, id)
+                - accumulated_relative_offset_y(document, cascade, body_id, id)
+                + document.nodes[id].layout.size.height
+                > page_end + 0.001
+        })
 }
