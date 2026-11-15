@@ -1254,6 +1254,9 @@ fn text_in_an_inline_element_before_a_wrapper_lets_the_page_break_before_it() {
             if !inline.is_empty() {
                 doc.append_text(span, inline);
             }
+            // Collapsed white space between the inline element and the
+            // wrapper puts nothing in the flow.
+            doc.append_text(mixed, " ");
             let wrapper = block(doc, mixed, "display:block");
             heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
             paragraph_id = paragraph(doc, wrapper, "", 6);
