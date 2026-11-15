@@ -13421,18 +13421,22 @@ fn below_grown_float(
                 // A float that did not fit beside a float that moves, or
                 // cleared it, starts at or below where that float ended before
                 // it moved.
-                let top = flow_y(next) + carried - document.nodes[next].layout.margin.top;
+                let top = flow_y(next) - document.nodes[next].layout.margin.top;
                 let shift = moved
                     .iter()
                     .filter(|&&(_, old, _)| top >= old - 0.01)
-                    .map(|&(_, _, new)| new - top)
+                    .map(|&(_, _, new)| new - (top + carried))
                     .fold(0.0, f32::max);
                 // A float that moves only with the boxes before it moves too:
                 // the boxes after a block that takes that move in its own room
-                // still clear it.
+                // still clear it, and the floats placed below it follow it.
                 if shift > 0.001 || carried > 0.001 {
-                    let bottom = margin_bottom(next) + carried;
-                    moved.push((cascade.computed[next].float, bottom, bottom + shift));
+                    let bottom = margin_bottom(next);
+                    moved.push((
+                        cascade.computed[next].float,
+                        bottom,
+                        bottom + carried + shift,
+                    ));
                 }
                 if shift > 0.001 {
                     below.later.push((next, shift, true));

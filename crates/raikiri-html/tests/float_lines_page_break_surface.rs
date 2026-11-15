@@ -390,6 +390,29 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
             }
         }
     }
+    // A float after the block that does not fit beside that right float
+    // follows it to the third page too.
+    for (wrapper, end) in [
+        ("<div style='height:100px'>", "</div>"),
+        ("<div style='min-height:100px'>", "</div>"),
+        ("<div>", "</div>"),
+    ] {
+        for right in [
+            "<div style='float:right;width:20px;height:60px'></div>",
+            "<div style='float:right;width:50px;height:60px'></div>",
+        ] {
+            for after in ["float:left", "float:right"] {
+                let body = format!(
+                    "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div>{wrapper}<div style='clear:left;height:10px'></div>{right}{end}<div style='{after};width:60px;height:10px'></div></div>"
+                );
+                assert_eq!(
+                    wide_boxes(&body, 2).last(),
+                    Some(&(0.0, 10.0)),
+                    "{wrapper} {right} {after}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
