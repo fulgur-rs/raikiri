@@ -3,7 +3,8 @@
 //! line, so the page breaks before the block when content comes before it;
 //! on the page the block then starts, the line still runs past the end, and
 //! the page breaks between the edges and the line, which starts the page
-//! after. A block that already starts its page breaks there at once. Lines of
+//! after, and the lines after it break again on the pages after that. A block
+//! that already starts its page breaks there at once. Lines of
 //! text, of generated text and of inline-blocks alike. Where each line falls
 //! is what Chromium prints for the same documents on pages 100px square, with
 //! Ahem glyphs of 20px on lines of 30px.
@@ -105,6 +106,60 @@ fn a_line_that_fits_below_the_edges_on_the_next_page_moves_with_them() {
         assert_eq!(
             glyph_tops(&body),
             [(0, 'Y', 5), (1, 'A', 75), (2, 'Z', 25)],
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn the_lines_after_the_first_break_again_on_the_pages_after_it() {
+    let body = document(
+        r#"<div style="height:10px">Y</div>"#,
+        "padding-top:80px",
+        r#"<p style="margin:0;width:20px">A B C D E F</p>"#,
+    );
+    assert_eq!(
+        glyph_tops(&body),
+        [
+            (0, 'Y', 5),
+            (2, 'A', 5),
+            (2, 'B', 35),
+            (2, 'C', 65),
+            (3, 'D', 5),
+            (3, 'E', 35),
+            (3, 'F', 65),
+            (4, 'Z', 5)
+        ],
+        "{body}"
+    );
+    let body = document(
+        r#"<div style="height:10px">Y</div>"#,
+        "border-top:80px solid",
+        r#"<p style="margin:0;width:20px;padding-bottom:20px">A B C D</p>"#,
+    );
+    assert_eq!(
+        glyph_tops(&body),
+        [
+            (0, 'Y', 5),
+            (2, 'A', 5),
+            (2, 'B', 35),
+            (3, 'C', 5),
+            (3, 'D', 35),
+            (4, 'Z', 5)
+        ],
+        "{body}"
+    );
+}
+
+#[test]
+fn a_clipped_block_takes_its_moved_lines_along() {
+    for (height, z) in [(90, (2, 'Z', 75)), (105, (3, 'Z', 5))] {
+        let body = format!(
+            r#"<div style="height:10px">Y</div><div style="padding-top:80px;height:{height}px;overflow:hidden"><p style="margin:0;width:20px">A B C</p></div><div>Z</div>"#
+        );
+        assert_eq!(
+            glyph_tops(&body),
+            [(0, 'Y', 5), (2, 'A', 5), (2, 'B', 35), (2, 'C', 65), z],
             "{body}"
         );
     }

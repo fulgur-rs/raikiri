@@ -8776,7 +8776,7 @@ fn lineless_piece(
     }
     // A paragraph of one line that no text places, of generated text or
     // atomic inlines alone, is kept whole by that line (see
-    // [`unplaced_line`]): no break falls between the edges above it and the
+    // `unplaced_line`): no break falls between the edges above it and the
     // line, as none falls above a box that no break goes through.
     // A box with a height of its own below the line is left to the rules for
     // its own box.
