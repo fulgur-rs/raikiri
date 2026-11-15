@@ -236,6 +236,26 @@ fn text_or_a_generated_box_before_the_paragraph_lets_it_move_whole() {
 }
 
 #[test]
+fn generated_content_of_the_body_before_the_paragraph_lets_it_move_whole() {
+    for (class, content) in LINES {
+        for display in [";display:block", ""] {
+            let body = document(
+                &format!(r#"<style>body::before{{content:"x"{display}}}</style>"#),
+                "",
+                class,
+                "margin:10px 0 0;padding-top:40px",
+                content,
+            );
+            assert_eq!(
+                glyph_tops(&body),
+                [(0, 'x', 5), (1, 'A', 45), (1, 'Z', 75)],
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_box_before_the_paragraph_counts_where_the_flow_puts_it() {
     // The box before the paragraph is on its page in the flow, though its
     // relative offset draws it on the page before.

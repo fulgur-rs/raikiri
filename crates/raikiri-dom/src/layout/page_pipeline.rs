@@ -10821,12 +10821,12 @@ fn any_level_before(
 /// Whether in-flow content comes before the box `node_id` on the page that
 /// starts at `page_start`: a box before it or before an ancestor of it that
 /// is not the body (see [`any_level_before`]), empty or not, or the lines of
-/// text there, or the generated `::before` box of such an ancestor, that ends
-/// below the page start or starts on the page. Only such content gives the
-/// flow a break before `node_id` on the page: below nothing but margins, or
-/// the top padding and border of the boxes it begins, a box starts the page's
-/// content, as Chromium has no break before it there (CSS Fragmentation 3
-/// §4.4). Positions are those of the flow, without relative offsets.
+/// text there, or the generated `::before` box of an ancestor of it, the body
+/// too, that ends below the page start or starts on the page. Only such
+/// content gives the flow a break before `node_id` on the page: below nothing
+/// but margins, or the top padding and border of the boxes it begins, a box
+/// starts the page's content, as Chromium has no break before it there (CSS
+/// Fragmentation 3 §4.4). Positions are those of the flow, without relative offsets.
 pub(super) fn follows_box_on_page(
     document: &Document,
     cascade: &CascadeResult,
@@ -10856,9 +10856,7 @@ pub(super) fn follows_box_on_page(
             }
             let top = flow_y(id);
             on_page(top, top + document.nodes[id].layout.size.height)
-        }) || (parent != body_id
-            && renders_before_pseudo(cascade, parent)
-            && flow_y(parent) >= page_start - 0.001)
+        }) || (renders_before_pseudo(cascade, parent) && flow_y(parent) >= page_start - 0.001)
     })
 }
 
