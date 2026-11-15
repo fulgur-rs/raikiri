@@ -177,14 +177,12 @@ pub(super) fn rendered_elements<'a>(
     tree: &'a LayoutSession<'_>,
     parent: usize,
 ) -> impl Iterator<Item = usize> + 'a {
-    tree.children_through_contents(parent)
-        .into_iter()
-        .filter(|&child| {
-            let node = layout_node(tree, child);
-            node.is_in_document()
-                && !node.is_display_none()
-                && matches!(node.data, NodeData::Element(_))
-        })
+    flow_children(tree, parent).into_iter().filter(|&child| {
+        let node = layout_node(tree, child);
+        node.is_in_document()
+            && !node.is_display_none()
+            && matches!(node.data, NodeData::Element(_))
+    })
 }
 
 /// Whether `id` starts at the top of the first column of the multicol
@@ -420,7 +418,7 @@ fn sliceable_flex_container(
         // Text that renders gives a box lines, and a flex container makes an
         // anonymous item of text that is more than white space that collapses,
         // a no-break space included.
-        for held in tree.children_through_contents(id) {
+        for held in flow_children(tree, id) {
             let held_node = layout_node(tree, held);
             if !held_node.is_in_document() || held_node.is_display_none() {
                 continue;
@@ -778,7 +776,7 @@ fn wrapper_layout(
 /// Whether `id` has content of its own, other than the absolutely
 /// positioned children that `skip_absolute` leaves out.
 fn has_rendered_content(tree: &LayoutSession<'_>, id: usize, skip_absolute: bool) -> bool {
-    tree.children_through_contents(id).into_iter().any(|child| {
+    flow_children(tree, id).into_iter().any(|child| {
         let node = layout_node(tree, child);
         node.is_in_document()
             && !node.is_display_none()
@@ -800,7 +798,7 @@ fn is_absolute_box(node: &crate::Node) -> bool {
 
 /// The absolutely positioned children of `child` that are rendered.
 fn absolute_children(tree: &LayoutSession<'_>, child: usize) -> Vec<usize> {
-    tree.children_through_contents(child)
+    flow_children(tree, child)
         .into_iter()
         .filter(|&id| {
             let node = layout_node(tree, id);

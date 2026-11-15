@@ -516,6 +516,11 @@ impl FragmentTree {
 
     /// Attach a nested container root emitted during its recursive layout to
     /// the element fragment that the parent flow placed afterward.
+    /// The indices of every record of `node`, retired ones included.
+    pub(crate) fn records_of(&self, node: usize) -> &[usize] {
+        self.by_node.get(&node).map_or(&[][..], Vec::as_slice)
+    }
+
     /// Whether the record at `index` was retired by a later layout.
     pub(crate) fn is_retired(&self, index: usize) -> bool {
         self.retired.contains(&index)

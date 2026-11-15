@@ -4233,8 +4233,27 @@ pub(crate) fn block_layout(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
-    mut block_ctx: Option<&mut BlockContext<'_>>,
+    block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
+    let (mut output, deferred) = block_layout_deferring_local_oof(tree, node_id, inputs, block_ctx);
+    if deferred {
+        finish_block_local_oof(tree, node_id, &inputs, &mut output);
+    }
+    output
+}
+
+/// [`block_layout`] that leaves the out-of-flow boxes of a horizontal block
+/// unplaced, for a caller that moves the in-flow boxes or changes the size of
+/// the box afterwards (a multicol container lays its children out again in
+/// columns). Returns whether it left them, in which case the caller finishes
+/// with [`finish_block_local_oof`] once the size and the static positions in
+/// the output are final.
+pub(crate) fn block_layout_deferring_local_oof(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    mut block_ctx: Option<&mut BlockContext<'_>>,
+) -> (LayoutOutput, bool) {
     let idx = usize::from(node_id);
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
         let block_ctx =
@@ -4245,9 +4264,12 @@ pub(crate) fn block_layout(
             .flags
             .contains(NodeFlags::FINAL_VERTICAL_TABLE_CELL)
         {
-            return output;
+            return (output, false);
         }
-        return finish_vertical_block_oof(tree, node_id, &inputs, output);
+        return (
+            finish_vertical_block_oof(tree, node_id, &inputs, output),
+            false,
+        );
     }
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
     let basis = width.map(|width| width - inline_inset);
@@ -4260,11 +4282,21 @@ pub(crate) fn block_layout(
         output = compute_block_flow(tree, node_id, inputs, None);
         tree.context.block_item_percent_bases.pop();
     }
+    (output, true)
+}
+
+/// Place the out-of-flow boxes that [`block_layout_deferring_local_oof`] left
+/// in `output`, against the box as `output` gives it.
+pub(crate) fn finish_block_local_oof(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+    output: &mut LayoutOutput,
+) {
     if inputs.run_mode == RunMode::PerformLayout {
-        oof::layout_local_oof(tree, node_id, &mut output);
+        oof::layout_local_oof(tree, node_id, output);
     }
-    center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
-    output
+    center_absolute_children_in_block_axis(tree, usize::from(node_id), inputs, output.size, None);
 }
 
 /// `inputs` with the axes in which `node_id` has size containment sized as

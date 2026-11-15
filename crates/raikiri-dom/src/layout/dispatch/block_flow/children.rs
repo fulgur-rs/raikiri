@@ -259,9 +259,8 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
     let index = usize::from(parent);
     let node = &tree.nodes[index];
     node.ifc.is_none()
-        && node.multicol.is_none()
         && !crate::layout::dispatch::used_writing_mode(tree, index).is_vertical()
-        && node.formatting_context == FormattingContext::Block
+        && (node.multicol.is_some() || node.formatting_context == FormattingContext::Block)
         && matches!(
             node.display(),
             DisplayValue::Block
@@ -284,7 +283,7 @@ pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> b
         && !REPLACED_BOX_TAGS.contains(&tag)
 }
 
-fn static_inline_share(
+pub(crate) fn static_inline_share(
     text_align: TextAlign,
     text_align_last: TextAlignLast,
     direction: Direction,

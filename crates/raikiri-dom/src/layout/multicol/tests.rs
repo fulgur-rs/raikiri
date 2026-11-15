@@ -2405,6 +2405,8 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;break-before:column",
         "display:block;break-after:column",
         "display:block;break-inside:avoid",
+        // A container that holds a flex container keeps its absolutely
+        // positioned boxes in its flow.
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
@@ -4210,15 +4212,16 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
     // makes the other block one without lines.
     let (found, ids) = lineless_children(&["display:none", "display:block;min-height:10px"], None);
     assert_eq!(found, Some(vec![ids[1]]));
-    // An absolutely positioned child is placed outside the column stream.
-    let (found, _) = lineless_children(
+    // An absolutely positioned child leaves the columns: the stream holds
+    // the other block alone.
+    let (found, ids) = lineless_children(
         &[
             "display:block;height:10px",
             "display:block;position:absolute;height:10px",
         ],
         None,
     );
-    assert_eq!(found, None);
+    assert_eq!(found, Some(vec![ids[0]]));
     // Text that renders keeps the other strategies.
     let (found, _) = lineless_children(&["display:block;height:10px"], Some("text"));
     assert_eq!(found, None);

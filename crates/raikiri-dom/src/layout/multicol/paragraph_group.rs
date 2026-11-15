@@ -253,7 +253,7 @@ impl Flow {
         self.parents.push(parent);
         self.insets.push(inset);
         let content_inset = inset + layout.margin.left + layout.border.left + layout.padding.left;
-        for child in tree.children_through_contents(id) {
+        for child in flow_children(tree, id) {
             let node = &tree.nodes[child];
             if !node.is_in_document() || node.is_display_none() {
                 continue;
@@ -302,7 +302,7 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
         if has_block_padding(tree, wrapper) {
             room += 1;
         }
-        for child in tree.children_through_contents(wrapper) {
+        for child in flow_children(tree, wrapper) {
             let node = &tree.nodes[child];
             if !node.is_in_document() || node.is_display_none() {
                 continue;
@@ -769,13 +769,10 @@ fn collect(
                     .as_ref()
                     .is_none_or(|lines| lines.lines.is_empty())
             })
-            && tree
-                .children_through_contents(child)
-                .into_iter()
-                .all(|child| {
-                    tree.nodes[child].kind() == NodeKind::Text
-                        && tree.nodes[child].layout.size.height == 0.0
-                })
+            && flow_children(tree, child).into_iter().all(|child| {
+                tree.nodes[child].kind() == NodeKind::Text
+                    && tree.nodes[child].layout.size.height == 0.0
+            })
             && node
                 .authored_writing_mode
                 .is_none_or(|mode| !mode.is_vertical())
@@ -1817,11 +1814,7 @@ fn holds_one_row_of_lines(tree: &LayoutSession<'_>, id: usize) -> bool {
         // in those cells.
         let anonymous_cells: Vec<usize> =
             tree.anonymous_table_cells(id).map(|(key, _)| key).collect();
-        for child in tree
-            .children_through_contents(id)
-            .into_iter()
-            .chain(anonymous_cells)
-        {
+        for child in flow_children(tree, id).into_iter().chain(anonymous_cells) {
             // Text that a flex or grid box wraps in an anonymous item holds
             // the lines of that item.
             let child_node = layout_node(tree, child);
