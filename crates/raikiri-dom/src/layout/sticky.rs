@@ -126,15 +126,20 @@ fn view_of(
     id: usize,
 ) -> Option<(Area, bool)> {
     // A fixed box takes what it holds out of the scroll containers around
-    // it, to the page area.
-    let scroller = document
-        .ancestors(id)
-        .take_while(|&ancestor| *document.nodes[ancestor].position() != PositionValue::Fixed)
-        .find(|&ancestor| {
-            cascade.computed.get(ancestor).is_some_and(|computed| {
-                super::page_pipeline::scrolls_overflow(document, computed, ancestor)
-            })
-        });
+    // it, to the page area, unless it is one itself. Chromium prints a box in
+    // a fixed box that a transform contains against the page area too.
+    let mut scroller = None;
+    for ancestor in document.ancestors(id) {
+        if cascade.computed.get(ancestor).is_some_and(|computed| {
+            super::page_pipeline::scrolls_overflow(document, computed, ancestor)
+        }) {
+            scroller = Some(ancestor);
+            break;
+        }
+        if *document.nodes[ancestor].position() == PositionValue::Fixed {
+            break;
+        }
+    }
     if let Some(scroller) = scroller {
         let (_, content_box) = boxes_of(document, scroller)?;
         // Its scrollbars cover the far edges of the view.

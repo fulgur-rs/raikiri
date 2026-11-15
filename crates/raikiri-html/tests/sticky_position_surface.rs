@@ -340,6 +340,21 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
                 (0, "b", [0, 20, 100, 20]),
             ],
         ),
+        // A fixed box that clips its overflow is the scroll container of what
+        // it holds; one that a transform contains still leaves the scroll
+        // container around it, as Chromium prints it.
+        (
+            "<div id=f style='position:fixed;top:100px;left:0;width:100px;height:100px;overflow:hidden'><div id=b style='position:sticky;top:10px;height:20px'></div></div>",
+            &[(0, "f", [0, 100, 100, 100]), (0, "b", [0, 110, 100, 20])],
+        ),
+        (
+            "<div id=s style='overflow:hidden;height:200px;margin-top:300px;transform:translateX(0)'><div id=f style='position:fixed;top:0;left:0;width:100px;height:100px'><div id=b style='position:sticky;top:10px;height:20px'></div></div></div>",
+            &[
+                (0, "s", [0, 300, 800, 200]),
+                (0, "f", [0, 300, 100, 100]),
+                (0, "b", [0, 300, 100, 20]),
+            ],
+        ),
     ]);
 }
 
