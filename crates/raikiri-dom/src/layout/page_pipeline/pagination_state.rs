@@ -2322,8 +2322,9 @@ impl PaginationState {
     /// orphans. A block taller than a
     /// page is moved as a unit only when its break would leave too few
     /// orphans and content comes before it on a page it does not start, even
-    /// when its first line is taller than a page; otherwise it keeps its
-    /// natural break. A
+    /// when its first line is taller than a page, or when it has one line and
+    /// its own padding and border below that line cross the page end;
+    /// otherwise it keeps its natural break. A
     /// paragraph that is a flex item alone on its row, or that ends an
     /// eligible column flex box, cannot move as a unit here, but its later
     /// lines can move down inside it. The padding and border
@@ -2403,6 +2404,26 @@ impl PaginationState {
             } else {
                 candidate.context.lines_closing_edges()
             };
+            // The room that floats leave at the top of the paragraph, above
+            // its first line: the content box holds it, but no line does.
+            let float_lead = {
+                let layout = &document.nodes[block_id].layout;
+                let content_top = block_effective_y(
+                    document,
+                    block_id,
+                    candidate.raw_y,
+                    text.effective_y - text.first_line_shift,
+                    root_flow_offset,
+                    self.flow_shift,
+                ) + layout.border.top
+                    + layout.padding.top;
+                let gap = text.effective_y + line_metrics[0].0 - content_top;
+                if floats_put_first_line_down(document, block_id, text_lines.get(node_id), gap) {
+                    gap
+                } else {
+                    0.0
+                }
+            };
             // A paragraph that avoids a break inside it moves whole with the
             // edges when they fit a page together, along with the blocks it
             // begins (a padding above it goes with it, when those blocks start
@@ -2435,7 +2456,7 @@ impl PaginationState {
                         .map(|(_, lead)| lead)
                         .filter(|lead| block_top - lead >= page_start - 0.001)
                         .unwrap_or(0.0);
-                    (content - lines).abs() > 0.5
+                    (content - float_lead - lines).abs() > 0.5
                         || lead + layout.border.top + layout.padding.top + lines + closing_edges
                             <= page_origins.step_at(self.current_page) + 0.001
                 };
@@ -2487,8 +2508,9 @@ impl PaginationState {
             }
             let block_height = document.nodes[block_id].layout.size.height;
             // The padding and border of the paragraph below its last line.
-            // They follow the line only when the lines are all of the content
-            // of the box: a block laid out after the last line, such as a
+            // They follow the line only when the lines, below any room that
+            // floats leave above the first of them, are all of the content of
+            // the box: a block laid out after the last line, such as a
             // block-level `::after`, or a height taller than the lines, is
             // what they follow instead, also when a set height ends the box
             // at its lines and the block overflows it. Half a pixel absorbs
@@ -2498,7 +2520,9 @@ impl PaginationState {
                 let edges = layout.padding.bottom + layout.border.bottom;
                 let content = block_height - edges - layout.padding.top - layout.border.top;
                 let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
-                if (content - lines).abs() <= 0.5 && !block_after_last_line(document, block_id) {
+                if (content - float_lead - lines).abs() <= 0.5
+                    && !block_after_last_line(document, block_id)
+                {
                     edges
                 } else {
                     0.0
@@ -2590,6 +2614,9 @@ impl PaginationState {
                 // lines that end this page move it whatever its height: the
                 // page breaks before the block, not between its edges and its
                 // lines, even when they run over a page.
+                // A paragraph of one line moves whole, whatever its height,
+                // when its own edges cross the page end (see
+                // `lone_line_moves_with_edges` below).
                 // The page already begins with the holder's leading edges,
                 // after nothing but empty boxes. Keep a fitting first line
                 // instead of breaking before the first child again to satisfy
@@ -2610,6 +2637,19 @@ impl PaginationState {
                 // a line that fits instead of breaking before that margin again.
                 let keep_first_fragment =
                     retained_margin_opens_page && lines_can_move && line_fit.lines_before_break > 0;
+                // A paragraph of one line has no break between its line and
+                // the padding and border below it. When they cross the page
+                // end, Chromium breaks before the paragraph, as before a box
+                // that cannot break inside, even when the paragraph is taller
+                // than a page: its edges then go on to the pages after it.
+                let follows_content = || {
+                    block_effective_y > page_start + 0.001
+                        && follows_flow_content(document, cascade, body_id, block_id)
+                };
+                line_fit.lone_line_moves_with_edges = line_fit.total_lines == 1
+                    && own_closing_edges > 0.0
+                    && line_fit.edges_overflow
+                    && follows_content();
                 let can_move_block = !(moved_whole
                     || leading_page_lines
                     || keep_first_fragment
@@ -2617,9 +2657,8 @@ impl PaginationState {
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
-                        || (block_effective_y > page_start + 0.001
-                            && follows_flow_content(document, cascade, body_id, block_id)
-                            && line_fit.leaves_too_few_orphans()));
+                        || line_fit.lone_line_moves_with_edges
+                        || (line_fit.leaves_too_few_orphans() && follows_content()));
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,

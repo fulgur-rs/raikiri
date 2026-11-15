@@ -11167,6 +11167,11 @@ struct ParagraphLineFit {
     /// which starts below the top of this one: the padding and border above the
     /// line end the page. Set by the caller, which knows the boxes.
     top_edges_end_page: bool,
+    /// Whether the paragraph's one line fits the page but its own padding and
+    /// border below it do not, and the page can break before the paragraph:
+    /// with no break between lines, the line goes with the edges, so the
+    /// whole paragraph moves. Set by the caller, which knows the boxes.
+    lone_line_moves_with_edges: bool,
     /// Whether the lines need a break that leaves fewer than `orphans`
     /// lines before it or fewer than `widows` lines after it.
     violates_line_constraints: bool,
@@ -11212,6 +11217,8 @@ impl ParagraphLineFit {
     /// The block also moves when no line starts on the page because the
     /// padding and border above the lines end it (`top_edges_end_page`): the
     /// break before the block is the one that leaves them with the lines.
+    /// So does a paragraph of one line whose own padding and border below it
+    /// cross the page end (`lone_line_moves_with_edges`).
     fn fix(
         &self,
         line_metrics: &[(f32, f32)],
@@ -11223,7 +11230,7 @@ impl ParagraphLineFit {
     ) -> LineBreakFix {
         let move_block = can_move_block
             && (self.starts_on_page || self.top_edges_end_page)
-            && self.violates_line_constraints;
+            && (self.violates_line_constraints || self.lone_line_moves_with_edges);
         let moves = if !(move_block && self.leaves_too_few_orphans())
             && self.starts_on_page
             && (self.lines_before_break < self.total_lines || self.tail_overflows)
@@ -11247,8 +11254,9 @@ impl ParagraphLineFit {
     /// to `page_end`, with the computed `orphans` and `widows`. `edges` is the
     /// padding and border below the last line, which `line_metrics` does not
     /// count and which stay with that line. A paragraph of one line has
-    /// nothing to break between, so the edges are not tracked for it; the box
-    /// moves whole at the break before it.
+    /// nothing to break between, so `tail_edges` stays 0 for it; whether the
+    /// edges cross the page end is still recorded in `edges_overflow`, and
+    /// the caller moves the box whole at the break before it.
     fn measure(
         line_metrics: &[(f32, f32)],
         effective_y: f32,
@@ -11292,6 +11300,7 @@ impl ParagraphLineFit {
             orphans,
             widows,
             top_edges_end_page: false,
+            lone_line_moves_with_edges: false,
             violates_line_constraints,
             tail_edges,
             tail_overflows,
