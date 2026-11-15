@@ -9004,14 +9004,18 @@ fn tail_edges_move(edges: f32, float_reach: f32, candidate: &PageCandidate, fit:
 /// that close it below its last box, when they follow that box: the block
 /// stacks its boxes in block flow (see [`block_flow_closing_edges`]), or is a
 /// paragraph that ends with a block child after its lines (see
-/// [`ends_with_block_child`]), and has a height that is that of its content.
-fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize) -> Option<f32> {
-    block_flow_closing_edges(document, node_id).or_else(|| {
-        let node = &document.nodes[node_id];
-        (!node.used_writing_mode.is_vertical()
-            && ends_with_block_child(document, node_id)
-            && height_follows_content(document, node_id))
-        .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+/// [`ends_with_block_child`]), and its content ends at that box (see
+/// [`edges_below_last_box`]).
+fn closing_edges_of(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<f32> {
+    block_flow_closing_edges(document, cascade, node_id).or_else(|| {
+        (!document.nodes[node_id].used_writing_mode.is_vertical()
+            && ends_with_block_child(document, node_id))
+        .then(|| edges_below_last_box(document, cascade, node_id))
+        .flatten()
     })
 }
 
@@ -9019,14 +9023,107 @@ fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize
 /// holds no lines. The body is such a block as well.
 fn block_flow_closing_edges(
     document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     node_id: usize,
 ) -> Option<f32> {
     let node = &document.nodes[node_id];
     (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
-        && moves_later_siblings(document, node_id)
-        && height_follows_content(document, node_id))
-    .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+        && moves_later_siblings(document, node_id))
+    .then(|| edges_below_last_box(document, cascade, node_id))
+    .flatten()
+}
+
+/// How far the bottom padding and border of the block `node_id` reach below
+/// its last box in the flow, when they come right after it, so that a break
+/// between the two would leave the edges alone at the top of the next page.
+///
+/// That is so when its height is that of its content, and also when a set
+/// `height`, `min-height` or `max-height` ends its content box where the
+/// margin box of the last box ends or above it: Chromium then moves the box
+/// to the next page with the edges, as it does for a block of auto height,
+/// and the block keeps the height its constraints give it. The box reaches
+/// past the content box by its overflow, which the edges then cover in part,
+/// so only the rest of them counts. A taller box leaves room between its last
+/// box and the edges, where the page breaks instead. Size containment ignores
+/// the content.
+fn edges_below_last_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    let edges = node.layout.padding.bottom + node.layout.border.bottom;
+    if height_follows_content(document, node_id) {
+        return Some(edges);
+    }
+    let overflow = last_box_overflow(document, cascade, node_id)?;
+    (overflow >= -0.01).then_some((edges - overflow.max(0.0)).max(0.0))
+}
+
+/// Whether the block `node_id` passes the closing edges of the blocks it ends
+/// on to its own last box: its height is that of its content, or its
+/// `min-height` and `max-height` leave it the height of its content all the
+/// same, short of both. A set `height` ends the box where it ends whatever
+/// its content does, and so does a size constraint that its content reaches,
+/// so the edges below it follow its own border box instead, as in Chromium.
+fn passes_closing_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    if height_follows_content(document, node_id) {
+        return true;
+    }
+    let height = document.nodes[node_id].layout.size.height;
+    let (min, max) = border_box_height_bounds(document, node_id);
+    document.block_axis(node_id).height().is_auto()
+        && height > min + 0.01
+        && height < max - 0.01
+        && last_box_overflow(document, cascade, node_id)
+            .is_some_and(|overflow| overflow.abs() <= 0.01)
+}
+
+/// How far the margin box of the last box in the flow of the block `node_id`
+/// ends below its content box, or above it when negative. `None` when no box
+/// ends its flow or size containment ignores its content.
+fn last_box_overflow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    if node.size_containment.height {
+        return None;
+    }
+    let child = &document.nodes[last_flow_child(document, cascade, node_id)?].layout;
+    let content_end =
+        node.layout.size.height - node.layout.padding.bottom - node.layout.border.bottom;
+    Some(child.location.y + child.size.height + child.margin.bottom - content_end)
+}
+
+/// The last child of the block `node_id` that takes part in its flow: an
+/// element that is neither floated nor absolutely positioned. A
+/// `display: contents` child stands for no box of its own, so none is
+/// reported past it.
+fn last_flow_child(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .find(|&child| {
+            let node = &document.nodes[child];
+            node.is_in_document()
+                && !node.is_display_none()
+                && node.kind() == NodeKind::Element
+                && matches!(
+                    node.position(),
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                )
+                && !super::page::is_floating_box_for_pagination(document, cascade, child)
+        })
+        .filter(|&child| document.nodes[child].display() != DisplayValue::Contents)
 }
 
 /// Whether the paragraph `node_id` is a block container in one column whose
@@ -9072,11 +9169,31 @@ fn ends_with_block_child(document: &Document, node_id: usize) -> bool {
             })
 }
 
+/// Whether the paragraph `block_id` lays out a block after its last line: a
+/// block child or a block-level `::before` or `::after` that no line follows.
+fn block_after_last_line(document: &Document, block_id: usize) -> bool {
+    document
+        .ifc_layout_node(block_id)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            let count = lines.lines.len();
+            lines
+                .block_line_starts
+                .iter()
+                .chain(&lines.generated_block_starts)
+                .any(|&(_, after)| after >= count)
+        })
+}
+
 /// The block size of the bottom padding and border of the block `node_id`
 /// when they follow its flow content: it is a block container or a paragraph
-/// whose height is that of its content.
+/// whose height is that of its content, or whose set `height`, `min-height`
+/// or `max-height` leaves room below its content (see
+/// [`content_ends_above_edges`]).
 fn content_bottom_edges(
     document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     node_id: usize,
 ) -> Option<f32> {
     let node = &document.nodes[node_id];
@@ -9085,9 +9202,47 @@ fn content_bottom_edges(
         && node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
         && node.multicol.is_none()
-        && height_follows_content(document, node_id)
-        && (node.is_ifc_root() || moves_later_siblings(document, node_id)))
+        && (node.is_ifc_root() || moves_later_siblings(document, node_id))
+        && (height_follows_content(document, node_id)
+            || content_ends_above_edges(document, cascade, node_id)))
     .then_some(edges)
+}
+
+/// Whether the block `node_id`, which a set `height`, `min-height` or
+/// `max-height` sizes, ends its content box below the end of its flow
+/// content: its last line or box. The bottom padding and border then close
+/// the box on their own and, as in Chromium, start the next page whole when
+/// they do not fit below the content box on its page, its fragment taking the
+/// rest of the page. A box whose content reaches its end has the edges right
+/// below its last box instead, and moves that box along (see
+/// [`edges_below_last_box`]). Size containment ignores the content.
+fn content_ends_above_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    if node.size_containment.height {
+        return false;
+    }
+    let layout = &node.layout;
+    let content_top = layout.border.top + layout.padding.top;
+    let content_end = layout.size.height - layout.padding.bottom - layout.border.bottom;
+    let flow_end = if node.is_ifc_root() {
+        document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .map(|lines| content_top + lines.shifted_height())
+    } else {
+        Some(
+            last_flow_child(document, cascade, node_id).map_or(content_top, |child| {
+                let child = &document.nodes[child].layout;
+                child.location.y + child.size.height + child.margin.bottom
+            }),
+        )
+    };
+    flow_end.is_some_and(|end| end < content_end - 0.01)
 }
 
 /// Where the block `node_id` sits in its parent along the block axis at its
@@ -9242,7 +9397,7 @@ fn lone_box_with_floats(
         match boxes[..] {
             [] if current != node_id => break,
             [only]
-                if block_flow_closing_edges(document, current).is_some()
+                if block_flow_closing_edges(document, cascade, current).is_some()
                     && is_plain_block_box(document, only) =>
             {
                 // The box sits at its normal-flow position, less the
@@ -9255,7 +9410,7 @@ fn lone_box_with_floats(
             // know whether the document has any: a column flex container
             // then moves whole only if its item holds nothing to break at.
             [only]
-                if block_flow_closing_edges(document, current).is_some()
+                if block_flow_closing_edges(document, cascade, current).is_some()
                     && container_moves_whole(document, cascade, only, true) =>
             {
                 content_end += normal_flow_y(document, cascade, body_id, only);
