@@ -5880,19 +5880,27 @@ impl AvoidedBreaks {
                 page_end,
             )
         });
-        // A paragraph of one generated or glyphless line is kept whole by its
-        // line alone: the margin and padding after the line break across
-        // the edge like those of a paragraph of text. A box shorter than the
-        // line ends where the box does.
+        // A paragraph of one line that no text places, of generated text or
+        // atomic inlines alone, also keeps the edges that follow that line
+        // (see `unplaced_line_extent`), and moves with the blocks it begins
+        // when they cross the page end. Their margin box tells whether they
+        // start the page, as for a box that avoids a break inside it: a
+        // margin kept at the start of the first page leaves them there.
+        let unbreakable = unbreakable
+            || unplaced_line.is_some_and(|line| {
+                avoided_box_moves(
+                    flow_y - holder_lead,
+                    holder_margin_top,
+                    flow_y + unplaced_line_extent(document, node_id, line, height),
+                    page_start,
+                    page_end,
+                )
+            });
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
-        let avoided_end = if avoids_break_inside {
-            Some(flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin)
-        } else {
-            unplaced_line
-                .filter(|line| !line.atomic)
-                .map(|line| flow_y + line.end.min(height))
-        };
+        let avoided_end = avoids_break_inside.then(|| {
+            flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin
+        });
         // The blocks that a box which avoids a break inside it begins, with
         // the padding and border they keep above it, are what starts a page.
         let moves_for_avoided_end = avoided_end.is_some_and(|end| {
@@ -8428,6 +8436,27 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
+}
+
+/// How far below the border-box top of the block `node_id`, of block size
+/// `height`, its unplaced `line` keeps the block whole. The padding and border
+/// below the line go with it when the content box ends at the line: no break
+/// falls between a line and the edges after it, so Chromium moves the block
+/// whole when they cross the page end. A box taller than its line ends where
+/// the box does, and its edges follow that end, not the line.
+fn unplaced_line_extent(
+    document: &Document,
+    node_id: usize,
+    line: UnplacedBlockLine,
+    height: f32,
+) -> f32 {
+    let layout = &document.nodes[node_id].layout;
+    let content_end = height - layout.padding.bottom - layout.border.bottom;
+    if (content_end - line.end).abs() <= 0.01 {
+        height
+    } else {
+        line.end.min(height)
+    }
 }
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
