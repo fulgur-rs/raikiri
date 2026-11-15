@@ -107,15 +107,8 @@ impl FloatContext {
         clear: Clear,
         after: Option<usize>,
     ) -> BfcSlot {
-        // Without a float at or below `min_y` the library answers the room
-        // beside no float at `min_y`, whatever `clear` names; keep that answer.
-        let min_y = if self.inner.has_active_floats(min_y) {
-            self.clearance_floor(min_y, clear)
-        } else {
-            min_y
-        };
         BfcSlot::from_taffy(self.inner.find_bfc_slot(
-            min_y,
+            self.clearance_floor(min_y, clear),
             containing_block_insets,
             margins,
             direction.to_taffy(),
@@ -136,7 +129,7 @@ impl FloatContext {
     /// least `y` and no clearance to the library leaves only the bottoms to
     /// decide.
     #[inline]
-    fn clearance_floor(&self, min_y: f32, clear: Clear) -> f32 {
+    pub(super) fn clearance_floor(&self, min_y: f32, clear: Clear) -> f32 {
         self.inner
             .cleared_threshold(clear.to_taffy())
             .map_or(min_y, |bottom| min_y.max(bottom))

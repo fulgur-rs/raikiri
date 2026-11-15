@@ -192,18 +192,9 @@ fn placements() -> Vec<Placement> {
     ]
 }
 
-/// The least `y` and the clearance the wrapper hands the library: the bottoms
-/// of the cleared floats as the least `y`, and no clearance (the wrapper
-/// clears by the bottoms only, see `FloatContext::place_floated_box`).
-fn cleared_in_taffy(theirs: &taffy::FloatContext, min_y: f32, clear: Clear) -> (f32, taffy::Clear) {
-    let min_y = theirs
-        .cleared_threshold(clear.to_taffy())
-        .map_or(min_y, |bottom| min_y.max(bottom));
-    (min_y, taffy::Clear::None)
-}
-
 /// Every answer `ours` gives matches what `theirs` gives, bit for bit, once
-/// the clearance is passed to `theirs` as the least `y`.
+/// the clearance is passed to `theirs` as the least `y` and no clearance, as
+/// the wrapper does (see `FloatContext::place_floated_box`).
 fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
     assert_eq!(ours.has_floats(), theirs.has_floats());
     for min_y in [-5.0, 0.0, 12.5, 40.0, 1e4] {
@@ -220,17 +211,12 @@ fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
                         for _ in 0..8 {
                             let slot =
                                 ours.find_bfc_slot(min_y, insets, margins, direction, clear, after);
-                            let (their_min_y, their_clear) = if theirs.has_active_floats(min_y) {
-                                cleared_in_taffy(theirs, min_y, clear)
-                            } else {
-                                (min_y, clear.to_taffy())
-                            };
                             let expected = theirs.find_bfc_slot(
-                                their_min_y,
+                                ours.clearance_floor(min_y, clear),
                                 insets,
                                 margins,
                                 direction.to_taffy(),
-                                their_clear,
+                                taffy::Clear::None,
                                 after,
                             );
                             assert_eq!(bits_of(&slot), bits_of(&BfcSlot::from_taffy(expected)));
@@ -268,15 +254,15 @@ fn a_float_context_places_and_answers_like_the_library() {
         clear,
     } in placements()
     {
-        let placed = ours.place_floated_box(floated_box, min_y, insets, direction, clear);
-        let (their_min_y, their_clear) = cleared_in_taffy(&theirs, min_y, clear);
+        let their_min_y = ours.clearance_floor(min_y, clear);
         let expected = theirs.place_floated_box(
             floated_box.into_taffy(),
             their_min_y,
             insets,
             float_direction_in_taffy(direction),
-            their_clear,
+            taffy::Clear::None,
         );
+        let placed = ours.place_floated_box(floated_box, min_y, insets, direction, clear);
         assert_eq!(
             bits_of(&placed),
             bits_of(&Point::<f32>::from_taffy(expected))
@@ -349,6 +335,54 @@ fn a_box_that_clears_below_every_float_finds_room_beside_none() {
         (slot.segment_id, slot.y, slot.border_width),
         (None, 70.0, 60.0)
     );
+}
+
+#[test]
+fn a_box_clears_a_zero_height_float_below_every_segment() {
+    let mut floats = FloatContext::new();
+    floats.set_width(60.0);
+    floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 30.0,
+        },
+        0.0,
+        [0.0, 0.0],
+        FloatDirection::Left,
+        Clear::None,
+    );
+    let empty = floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 0.0,
+        },
+        80.0,
+        [0.0, 0.0],
+        FloatDirection::Left,
+        Clear::None,
+    );
+    assert_eq!(empty.y, 80.0);
+    // The empty float occupies no segment, so no segment reaches below 40,
+    // but the box still clears it as a float clearing the left side does.
+    let slot = floats.find_bfc_slot(
+        40.0,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        Direction::Ltr,
+        Clear::Left,
+        None,
+    );
+    let placed = floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 10.0,
+        },
+        40.0,
+        [0.0, 0.0],
+        FloatDirection::Right,
+        Clear::Left,
+    );
+    assert_eq!((slot.y, placed.y), (80.0, 80.0));
 }
 
 #[test]
