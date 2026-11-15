@@ -819,44 +819,91 @@ impl FlowRoots {
 
 /// The box from whose coordinates a candidate is positioned. Inline
 /// ancestors of paragraph boxes and contents elements add no layout frame.
-/// Whether the page may break before the block `node_id` after the lines or
-/// boxes that come before it in a paragraph: its parent mixes text and blocks
-/// into one inline formatting context, so the walk keeps no box before it, but
-/// something before it in that flow renders, and the break before it is not
-/// avoided.
+pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usize> {
+    document
+        .layout_ancestors(child)
+        .find(|&parent| document.nodes[parent].display() != DisplayValue::Contents)
+}
+
+/// Whether the page may break before the block `node_id` after what comes
+/// before it in a paragraph: the box around it mixes text and blocks into one
+/// inline formatting context, so the walk keeps no box before it, but
+/// something before it renders in that flow and does not tie the two.
 fn breaks_after_paragraph_content(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    paragraph_content_before(document, node_id).is_some_and(|before| {
-        if document.nodes[before].kind() == NodeKind::Element {
-            !boxes_are_tied(document, cascade, before, node_id)
-        } else {
-            let (forced, avoided) = page_edge_constraint(document, cascade, node_id, true);
-            forced || !avoided
-        }
-    })
+    paragraph_content_before(document, cascade, node_id)
+        .is_some_and(|before| !boxes_are_tied(document, cascade, before, node_id))
 }
 
-/// The last child that renders in the flow before `node_id` in its parent,
-/// when that parent lays its children out as the lines of a paragraph.
-fn paragraph_content_before(document: &Document, node_id: usize) -> Option<usize> {
-    let parent = candidate_parent(document, node_id)
+/// What renders last before `node_id` among the lines of the paragraph that
+/// holds it: a sibling, or a sibling of the inline or `display: contents`
+/// elements around it inside the paragraph.
+fn paragraph_content_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let paragraph = candidate_parent(document, node_id)
         .filter(|&parent| document.nodes[parent].is_ifc_root())?;
-    let children = &document.nodes[parent].children;
-    let position = children.iter().position(|&child| child == node_id)?;
-    children[..position]
-        .iter()
-        .rev()
-        .copied()
-        .find(|&child| super::renders_in_flow(document, child))
+    let mut child = node_id;
+    while child != paragraph {
+        let parent = document.nodes[child].parent?;
+        let children = &document.nodes[parent].children;
+        let position = children.iter().position(|&sibling| sibling == child)?;
+        if let Some(before) = children[..position]
+            .iter()
+            .rev()
+            .copied()
+            .find(|&sibling| renders_paragraph_content(document, cascade, sibling))
+        {
+            return Some(before);
+        }
+        child = parent;
+    }
+    None
 }
 
-pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usize> {
-    document
-        .layout_ancestors(child)
-        .find(|&parent| document.nodes[parent].display() != DisplayValue::Contents)
+/// Whether `node_id` puts something in the flow of a paragraph: text that
+/// is not collapsed away, or an element with a box of its own. An inline or
+/// `display: contents` element counts only through what it holds, and a
+/// float or an out-of-flow box not at all.
+fn renders_paragraph_content(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    match super::sibling_adjacency::flow_box(document, cascade, node_id) {
+        super::sibling_adjacency::FlowBox::Skip => false,
+        super::sibling_adjacency::FlowBox::Box
+            if node.kind() != NodeKind::Element || node.display() != DisplayValue::Inline =>
+        {
+            true
+        }
+        _ => node
+            .children
+            .iter()
+            .any(|&child| renders_paragraph_content(document, cascade, child)),
+    }
+}
+
+/// For each of `children`, its last box in the flow and whether it floats.
+fn child_flow_flags(
+    document: &Document,
+    cascade: &CascadeResult,
+    children: &[usize],
+) -> Vec<(Option<usize>, bool)> {
+    let mut boxes = Vec::new();
+    children
+        .iter()
+        .map(|&child_id| {
+            boxes.clear();
+            push_in_flow_boxes_rev(document, cascade, child_id, &mut boxes);
+            (
+                boxes.first().copied(),
+                is_floating_box_for_pagination(document, cascade, child_id),
+            )
+        })
+        .collect()
 }
 
 /// The place in the flow where the bottom padding and border of a block begin,
@@ -1649,13 +1696,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run when that crosses a page edge. A box with no box before
                 // it has no break to take before it: the block around it holds
                 // the run and moves for it.
-                let free_to_break_before = frame.previous_box.map_or_else(
-                    || {
-                        direct_body_child
-                            || breaks_after_paragraph_content(document, cascade, node_id)
-                    },
-                    |previous| !boxes_are_tied(document, cascade, previous, node_id),
-                );
+                let free_to_break_before =
+                    frame.previous_box.map_or(direct_body_child, |previous| {
+                        !boxes_are_tied(document, cascade, previous, node_id)
+                    });
                 let column_break_before = (node.display() == DisplayValue::Contents
                     || !matches!(
                         computed.break_before,
@@ -1664,7 +1708,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && (free_to_break_before
                         || frame.previous_box.is_none() && frame.column_break_before);
                 let leading_unit =
-                    (self.finds_nested_runs && in_flow_block && !is_body && free_to_break_before)
+                    // A block among the lines of a paragraph may also break
+                    // after the text or boxes before it there.
+                    (self.finds_nested_runs
+                        && in_flow_block
+                        && !is_body
+                        && (free_to_break_before
+                            || frame.previous_box.is_none()
+                                && breaks_after_paragraph_content(document, cascade, node_id)))
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
                         .filter(|held| held.tied)
                         .and_then(|held| held.end);
@@ -2098,18 +2149,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             || (self.forces_break_after
                                 && lays_out_children_in_block_flow(document, node_id))))
                 {
-                    let mut boxes = Vec::new();
-                    child_order
-                        .iter()
-                        .map(|&child_id| {
-                            boxes.clear();
-                            push_in_flow_boxes_rev(document, cascade, child_id, &mut boxes);
-                            (
-                                boxes.first().copied(),
-                                is_floating_box_for_pagination(document, cascade, child_id),
-                            )
-                        })
-                        .collect()
+                    child_flow_flags(document, cascade, &child_order)
                 } else {
                     Vec::new()
                 };
@@ -2238,24 +2278,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     Vec::new()
                 } else if !flow_flags.is_empty() {
                     nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
-                } else if node.is_ifc_root() && child_order.len() > 1 {
+                } else if node.is_ifc_root()
+                    && child_order
+                        .iter()
+                        .any(|&child| is_plain_block_box(document, child))
+                {
                     // A paragraph that mixes text and blocks lays them out as
                     // its lines, and its blocks follow a moved block through
                     // its line shifts. A run of blocks tied by avoided breaks
                     // among them still moves together; text between them is
                     // a box of the flow that ends the run.
-                    let mut boxes = Vec::new();
-                    let paragraph_flags: Vec<(Option<usize>, bool)> = child_order
-                        .iter()
-                        .map(|&child_id| {
-                            boxes.clear();
-                            push_in_flow_boxes_rev(document, cascade, child_id, &mut boxes);
-                            (
-                                boxes.first().copied(),
-                                is_floating_box_for_pagination(document, cascade, child_id),
-                            )
-                        })
-                        .collect();
+                    let paragraph_flags = child_flow_flags(document, cascade, &child_order);
                     nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
                 } else {
                     Vec::new()

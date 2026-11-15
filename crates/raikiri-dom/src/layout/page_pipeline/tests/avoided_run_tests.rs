@@ -1233,3 +1233,36 @@ fn a_box_after_text_and_before_a_wrapper_lets_the_page_break_before_the_wrapper(
     assert_eq!(after_a_box(50), [60.0, 70.0, 80.0]);
     assert_eq!(after_a_box(60), [70.0, 100.0, 110.0]);
 }
+
+#[test]
+fn text_in_an_inline_element_before_a_wrapper_lets_the_page_break_before_it() {
+    // The paragraph holds `text`, then an inline element holding `inline`,
+    // then the wrapper.
+    let before_wrapper = |text: &str, inline: &str| {
+        let (mut heading, mut paragraph_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:70px");
+            let mixed = block(
+                doc,
+                body,
+                "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+            );
+            if !text.is_empty() {
+                doc.append_text(mixed, text);
+            }
+            let span = doc.append_element(Some(mixed), "span", Some("display:inline"));
+            if !inline.is_empty() {
+                doc.append_text(span, inline);
+            }
+            let wrapper = block(doc, mixed, "display:block");
+            heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            paragraph_id = paragraph(doc, wrapper, "", 6);
+        });
+        (page_flow_y(&doc, heading), page_flow_y(&doc, paragraph_id))
+    };
+    // The text in the inline element is a line before the wrapper: the page
+    // breaks after it.
+    assert_eq!(before_wrapper("", "aaa"), (100.0, 110.0));
+    // An empty inline element puts nothing there; the text before it does.
+    assert_eq!(before_wrapper("aaa", ""), (100.0, 110.0));
+}
