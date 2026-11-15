@@ -5576,3 +5576,7 @@ css/css-flexbox/align-baseline.html
 # --- A tab before a combining mark inside a left-to-right override in a right-to-left line (WPT pin 97ea26e2, EXACT, Linux, 2026-11-14) ---
 # `bdo` is `unicode-bidi: isolate-override` (HTML rendering 15.3.4), and the text engine now places a combining-mark cluster after a tab inside a left-to-right override where a right-to-left override puts it, so the pair matches again. It was an expected failure since `bdo` began to override.
 css/css-text/white-space/tab-bidi-001.html
+
+# --- The minimum and maximum sizes a flex item carries across its aspect ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-11-15) ---
+# A `min-height` reaches the `auto` width of a ratio item through the ratio and raises its flex base size, and a `max-height` caps the width its content gives. Both green boxes are 100px by 50px as in Chromium; the first was 0px wide before the ratio reached the flex base size. `audit-vacuous-passes` returned KEEP in two runs.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-039.html
