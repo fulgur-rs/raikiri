@@ -43,16 +43,30 @@ fn layout_node(tree: &Document, idx: usize) -> &crate::node::Node {
         .expect("a laid-out box has a node")
 }
 
-/// Whether a rendered element child of `node_id` in flow with its columns
-/// is a float.
+/// Whether a rendered element child of `node_id` in flow with its columns is
+/// a float that the column strategies can lay out: the container holds no
+/// inline content of its own, which wraps beside the float on the block
+/// layout, and its other children hold no float and no block-direction
+/// margin, which adjoins and collapses with the margin of a sibling on the
+/// block layout but not on the column strategies.
 fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
-    flow_children(tree, node_id).into_iter().any(|child| {
-        let node = &tree.nodes[child];
-        node.is_in_document()
-            && node.kind() == NodeKind::Element
-            && !node.is_display_none()
-            && is_floated(tree, child)
-    })
+    if tree.nodes[node_id].ifc.is_some() {
+        return false;
+    }
+    let rendered: Vec<usize> = flow_children(tree, node_id)
+        .into_iter()
+        .filter(|&child| {
+            let node = &tree.nodes[child];
+            node.is_in_document() && node.kind() == NodeKind::Element && !node.is_display_none()
+        })
+        .collect();
+    let (floats, others): (Vec<usize>, Vec<usize>) = rendered
+        .into_iter()
+        .partition(|&child| is_floated(tree, child));
+    !floats.is_empty()
+        && !others
+            .iter()
+            .any(|&child| multicol_subtree_has_float_or_block_margin(tree, child))
 }
 
 /// Whether `idx` is a float.
@@ -1239,6 +1253,30 @@ fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
                 .iter()
                 .any(|&grandchild| tree.nodes[grandchild].tag_name() == Some("br"))
     })
+}
+
+/// Whether `subtree_root` or a rendered descendant is a float or has a
+/// block-direction margin, which adjoins and collapses with the margin of a
+/// sibling on the block layout but not on the column strategies.
+fn multicol_subtree_has_float_or_block_margin(
+    tree: &LayoutSession<'_>,
+    subtree_root: usize,
+) -> bool {
+    let zero = LengthPercentageAuto::length(0.0);
+    let mut pending = vec![subtree_root];
+    while let Some(node_id) = pending.pop() {
+        let node = layout_node(tree, node_id);
+        if !node.is_in_document() || node.is_display_none() {
+            continue;
+        }
+        let style = style_of(tree, node_id);
+        let margin = style.margin();
+        if style.float().is_floated() || margin.top != zero || margin.bottom != zero {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
 }
 
 /// Whether `node_id` holds an absolutely positioned (or fixed) box that the
