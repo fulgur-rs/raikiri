@@ -603,3 +603,17 @@ fn static_position_after_a_spanner() {
     assert_eq!(z.0, 58.0, "{rects:?}");
     assert_eq!(z.1, spanner.1 + spanner.3, "{rects:?}");
 }
+
+/// A container that holds a flex container keeps its absolutely positioned
+/// boxes in its flow. One inside the flex item, whose containing block is
+/// outside the container, stays whole at its static position over both
+/// columns instead of breaking with the flex container.
+#[test]
+fn box_in_a_flex_container_stays_whole() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:100px;height:100px\">\
+         <div id=f style=\"display:flex;height:200px;width:50px\">\
+         <div id=a style=\"position:absolute;width:100px;height:100px\"></div></div></div>",
+        &[("a", (8.0, 8.0, 100.0, 100.0))],
+    );
+}

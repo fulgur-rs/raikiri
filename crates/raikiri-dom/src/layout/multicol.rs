@@ -1214,16 +1214,20 @@ fn multicol_ends_with_its_only_float(tree: &LayoutSession<'_>, node_id: usize) -
 /// column strategies cannot leave out: one whose containing block is a box
 /// inside the container, which breaks across the columns with that box, or
 /// one that sits on the lines of a paragraph, the container's own included,
-/// whose static position is on a line the columns may move. Any other such box leaves the columns
-/// (see [`leaves_the_columns`]), so it leaves every column strategy open.
+/// whose static position is on a line the columns may move. The same holds
+/// for any such box in a container that holds a flex or grid container (see
+/// [`keeps_positioned_boxes`]). Any other such box leaves the columns (see
+/// [`leaves_the_columns`]), so it leaves every column strategy open.
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
     let mut pending: Vec<(usize, bool, bool)> = tree.nodes[node_id]
         .children
         .iter()
         .map(|&child| (child, false, false))
         .collect();
+    let mut positioned = false;
     while let Some((child, absolute_held, fixed_held)) = pending.pop() {
         let node = &tree.nodes[child];
+        positioned |= node.layout_position() == Position::Absolute;
         let held = if node.fixed_position {
             fixed_held
         } else {
@@ -1243,6 +1247,23 @@ fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool 
                 .iter()
                 .map(|&grandchild| (grandchild, absolute_held, fixed_held)),
         );
+    }
+    positioned && keeps_positioned_boxes(tree, node_id)
+}
+
+/// Whether the multicol container `multicol` holds a flex or grid container.
+/// The column strategies slice those containers whole, with every box inside
+/// them, and do not suppress the gaps between their lines at a break, which
+/// the full-width path does; so a container that holds one keeps all of its
+/// absolutely positioned boxes in its flow and that path.
+fn keeps_positioned_boxes(tree: &Document, multicol: usize) -> bool {
+    let mut pending = tree.nodes[multicol].children.clone();
+    while let Some(child) = pending.pop() {
+        let node = &tree.nodes[child];
+        if node.formatting_context.is_flex_or_grid() {
+            return true;
+        }
+        pending.extend_from_slice(&node.children);
     }
     false
 }
@@ -1269,9 +1290,10 @@ pub(super) fn leaves_the_columns(tree: &Document, id: usize) -> bool {
     // The nearest ancestor that is a multicol container or the containing
     // block decides: the box leaves the columns only for the former.
     std::iter::successors(node.parent, |&ancestor| tree.nodes[ancestor].parent)
-        .map(|ancestor| &tree.nodes[ancestor])
-        .find(|ancestor| ancestor.multicol.is_some() || claims(ancestor))
-        .is_some_and(|ancestor| ancestor.multicol.is_some())
+        .find(|&ancestor| tree.nodes[ancestor].multicol.is_some() || claims(&tree.nodes[ancestor]))
+        .is_some_and(|ancestor| {
+            tree.nodes[ancestor].multicol.is_some() && !keeps_positioned_boxes(tree, ancestor)
+        })
 }
 
 /// The children of `parent` that take part in the flow of the columns: those
