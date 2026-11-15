@@ -189,11 +189,24 @@ fn text_inline_boxes_and_contents_elements_before_the_wrapper_come_before_the_bo
     let (doc, cascade, body, child) = child_after(
         |doc, body| {
             break_after_block(doc, body);
-            doc.append_element(Some(body), "span", Some("display:inline"));
+            let span = doc.append_element(Some(body), "span", Some("display:inline"));
+            doc.append_text(span, "x");
         },
         "display:block;padding-top:5px",
     );
     assert!(!begins_page_below_leading_edges(
+        &doc, &cascade, body, child, 100.0
+    ));
+    // An empty inline box lays out a phantom line, which is not content
+    // (CSS 2.1 9.4.2).
+    let (doc, cascade, body, child) = child_after(
+        |doc, body| {
+            break_after_block(doc, body);
+            doc.append_element(Some(body), "span", Some("display:inline"));
+        },
+        "display:block;padding-top:5px",
+    );
+    assert!(begins_page_below_leading_edges(
         &doc, &cascade, body, child, 100.0
     ));
     let (doc, cascade, body, child) = child_after(

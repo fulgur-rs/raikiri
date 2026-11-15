@@ -113,7 +113,84 @@ pub(super) fn flow_box(document: &Document, cascade: &CascadeResult, node_id: us
         FlowBox::Skip
     } else if node.kind() != NodeKind::Text && node.display() == DisplayValue::Contents {
         FlowBox::Contents
+    } else if is_phantom_inline(document, cascade, node_id) {
+        FlowBox::Skip
     } else {
         FlowBox::Box
     }
+}
+
+/// Whether `node_id` is an inline box that lays out no line: a non-atomic
+/// inline element without block size, outside a flex or grid container,
+/// whose descendants are only collapsed white space, boxes with
+/// `display: none`, absolutely positioned boxes and such inline boxes. A
+/// float inside keeps the box, as the walks that stop at floats look at
+/// direct children only. CSS 2.1 §9.4.2 treats a line
+/// holding nothing but these as if it did not exist (a phantom line box), as
+/// Chromium does when it breaks pages. An inline box with inline-axis
+/// margins, borders or padding, or with generated content, has block size
+/// and lays out a line, as do a line break (`br`, and `wbr`, which Chromium
+/// gives a line too) and a replaced element.
+fn is_phantom_inline(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    if !is_empty_inline_box(document, node_id) || in_flex_or_grid_container(document, node_id) {
+        return false;
+    }
+    // An explicit stack, as the inline elements can nest without limit.
+    let mut pending = document.nodes[node_id].children.clone();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        match node.kind() {
+            NodeKind::Text => {
+                let collapse = cascade.computed[id].effective_white_space_collapse;
+                if !node.text_content().is_some_and(|text| {
+                    crate::generated_content::is_collapsed_white_space(text, collapse)
+                }) {
+                    return false;
+                }
+            }
+            NodeKind::Element => match node.display() {
+                DisplayValue::None => {}
+                _ if node.layout_position() == Position::Absolute => {}
+                DisplayValue::Contents => pending.extend_from_slice(&node.children),
+                _ if !is_floating_box_for_pagination(document, cascade, id)
+                    && is_empty_inline_box(document, id) =>
+                {
+                    pending.extend_from_slice(&node.children);
+                }
+                _ => return false,
+            },
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Whether `node_id` is a `display: inline` element that is neither a line
+/// break opportunity (`br`, `wbr`) nor replaced and has no block size in its
+/// writing mode.
+fn is_empty_inline_box(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    let block_size = if node.used_writing_mode.is_vertical() {
+        node.layout.size.width
+    } else {
+        node.layout.size.height
+    };
+    node.kind() == NodeKind::Element
+        && node.display() == DisplayValue::Inline
+        && block_size <= 0.0
+        && !node
+            .tag_name()
+            .is_some_and(|tag| tag.eq_ignore_ascii_case("br") || tag.eq_ignore_ascii_case("wbr"))
+        && !crate::layout::page::is_replaced_for_pagination(document, node_id)
+}
+
+/// Whether the box `node_id` is an item of a flex or grid container, whose
+/// items are blockified, looking through `display: contents` parents.
+fn in_flex_or_grid_container(document: &Document, node_id: usize) -> bool {
+    let mut parent = document.parent_of(node_id);
+    while let Some(id) = parent.filter(|&id| document.nodes[id].display() == DisplayValue::Contents)
+    {
+        parent = document.parent_of(id);
+    }
+    parent.is_some_and(|id| document.nodes[id].display().is_flex_or_grid_container())
 }
