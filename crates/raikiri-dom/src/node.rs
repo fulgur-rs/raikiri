@@ -658,6 +658,12 @@ pub struct BoxState {
     /// `<ratio>` falls back to it, or a `<ratio>` given with `auto`.
     /// Recomputed by the style bridge before every layout pass.
     pub(crate) ratio_in_content_box: bool,
+    /// Whether this grid item with a preferred aspect ratio takes its width
+    /// from the height its `align-self: stretch` gives it, its
+    /// `justify-self` being `normal` (CSS Grid 1 §6.2). Before its area is
+    /// known it contributes the height the ratio gives for the width of its
+    /// column. Recomputed by the style bridge before every layout pass.
+    pub(crate) ratio_width_follows_stretched_height: bool,
     /// Whether painting draws effects sized from the whole border box, such
     /// as background images, rounded corners or shadows. Recomputed by the
     /// style bridge before every layout pass.
@@ -811,6 +817,7 @@ impl BoxState {
             preferred_aspect_ratio: None,
             keyword_aspect_ratio: None,
             ratio_in_content_box: false,
+            ratio_width_follows_stretched_height: false,
             paints_whole_box_effects: false,
             paints_background_color: false,
             clones_box_decorations: false,

@@ -854,6 +854,36 @@ impl LayoutSession<'_> {
             .all(is_zero)
     }
 
+    /// Whether the grid item `idx` is sized along both axes without its
+    /// aspect ratio once its area is known: each axis states a size or is
+    /// stretched by an explicit `stretch` alignment without an `auto`
+    /// margin, and at least one is stretched (CSS Grid 1 §6.2,
+    /// csswg-drafts#5713). The ratio still gives the height the item
+    /// contributes to an intrinsic row, so the item measures itself: the
+    /// library would apply the ratio in the area as well. Chromium lays
+    /// `aspect-ratio: 2/1; align-self: stretch; justify-self: stretch` out
+    /// 100x120 in a 100px column whose `auto` row a 120px sibling sizes, and
+    /// 100x50 when the item is alone in the row. A percentage width, which
+    /// can be cyclic while an intrinsic column is sized, is left to the
+    /// caller.
+    fn grid_item_stretches_on_both_axes(&self, idx: usize, item: &LayoutStyleView<'_>) -> bool {
+        use raikiri_layout_style::values::AlignItemsKeyword;
+        let (size, margin) = (item.size(), item.margin());
+        let justify = self.grid_item_justify_self(idx).keyword == AlignItemsKeyword::Stretch
+            && !margin.left.is_auto()
+            && !margin.right.is_auto()
+            && size.width.is_auto();
+        let align = self.grid_item_align_self(idx).keyword == AlignItemsKeyword::Stretch
+            && !margin.top.is_auto()
+            && !margin.bottom.is_auto()
+            && size.height.is_auto()
+            && self.retained_height_keyword(idx).is_none();
+        // Each axis is stretched or sized, and one of them is stretched.
+        let horizontal = justify || !size.width.is_auto();
+        let vertical = align || !size.height.is_auto();
+        (justify || align) && horizontal && vertical
+    }
+
     /// The inline alignment of the grid item `idx`: its own `justify-self`,
     /// or the `justify-items` of its container for `auto`.
     fn grid_item_justify_self(&self, idx: usize) -> raikiri_layout_style::values::AlignSelf {
@@ -934,7 +964,15 @@ impl LayoutSession<'_> {
             || crate::layout::dispatch::contained_ratio_item(self, idx)
             || self.grid_item_content_outweighs_carried_minimum(idx, &item)
             || self.grid_item_content_raises_unstretched_height(idx, &item)
-            || self.grid_item_ratio_excludes_edges(idx, &item);
+            || self.grid_item_ratio_excludes_edges(idx, &item)
+            || (matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block
+                    | FormattingContext::Inline
+                    | FormattingContext::Flex
+                    | FormattingContext::Grid
+            ) && (self.nodes[idx].ratio_width_follows_stretched_height
+                || (!percentage(size.width) && self.grid_item_stretches_on_both_axes(idx, &item))));
         // Any box measures itself for a minimum that the area resolves.
         if !vertical_container && !measured && !self.grid_item_percent_carry(idx, &item) {
             return GridItemRatio::Declared;
