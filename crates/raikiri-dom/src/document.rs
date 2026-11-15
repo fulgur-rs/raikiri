@@ -339,6 +339,9 @@ pub struct Document {
     /// axis, where the page that holds that position begins in the flow,
     /// when that is not the first page. Set by the most recent paged layout.
     pub(crate) fixed_static_page_origins: HashMap<usize, f32>,
+    /// The offset of each sticky box that the most recent layout found to
+    /// move, which the painter applies (see `layout::sticky`).
+    pub(crate) sticky_offsets: HashMap<usize, (f32, f32)>,
     /// The content-box heights that the children of the root element and of
     /// the body resolve percentages against when the quirks mode fill quirks
     /// apply to them (see [`mod@crate::layout::quirks_fill`]), keyed by the
@@ -497,6 +500,16 @@ impl Document {
         self.fixed_static_page_origins.get(&node_id).copied()
     }
 
+    /// How far the most recent layout found the sticky box `node_id` to move
+    /// from where it laid the box out; `(0, 0)` for any other box.
+    #[doc(hidden)]
+    pub fn sticky_offset(&self, node_id: usize) -> (f32, f32) {
+        self.sticky_offsets
+            .get(&node_id)
+            .copied()
+            .unwrap_or((0.0, 0.0))
+    }
+
     /// Width of the page area the most recent layout was made in, or `None`
     /// before any layout.
     #[doc(hidden)]
@@ -611,6 +624,7 @@ impl Document {
             layout_cascade_generation: None,
             fixed_page_area: None,
             fixed_static_page_origins: HashMap::new(),
+            sticky_offsets: HashMap::new(),
             quirks_percentage_height_bases: Vec::new(),
             quirks_body_fill: None,
             skips_quirks_fill: false,
@@ -2104,6 +2118,7 @@ impl Document {
             layout_cascade_generation: _,
             fixed_page_area: _,
             fixed_static_page_origins: _,
+            sticky_offsets: _,
             quirks_percentage_height_bases: _,
             quirks_body_fill: _,
             skips_quirks_fill: _,

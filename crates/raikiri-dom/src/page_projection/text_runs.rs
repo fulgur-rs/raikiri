@@ -673,13 +673,10 @@ impl RunContext {
 }
 
 /// The block offset that layout applies to a box in normal flow for its
-/// `position: relative` or `position: sticky` insets, which layout treats
-/// alike, resolved against the containing block as layout resolves them.
+/// `position: relative` insets, resolved against the containing block as
+/// layout resolves them. Layout places a sticky box without its offset.
 fn layout_relative_offset_y(document: &Document, cascade: &CascadeResult, id: usize) -> f32 {
-    if !matches!(
-        document.nodes[id].position(),
-        PositionValue::Relative | PositionValue::Sticky
-    ) {
+    if !matches!(document.nodes[id].position(), PositionValue::Relative) {
         return 0.0;
     }
     // Layout takes `top` over `-bottom` in every writing mode.

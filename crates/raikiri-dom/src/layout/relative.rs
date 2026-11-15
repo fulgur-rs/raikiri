@@ -186,8 +186,8 @@ fn relative_insets_with_box_tree(
 
 /// Whether layout places `node_id` without its relative offset, which the
 /// painter applies instead: the body (`body`), a float outside a flex or
-/// grid container, and a table caption, cell, row or row group. Inline-level
-/// boxes are placed on their lines with the offset.
+/// grid container, a table caption, cell, row or row group, and any sticky
+/// box. Other inline-level boxes are placed on their lines with the offset.
 #[doc(hidden)]
 pub fn placed_without_relative_offset(
     document: &Document,
@@ -246,7 +246,10 @@ fn placed_without_offset_with_properties(
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
     );
-    (float || table_part) && !properties.display().is_inline_level()
+    // A sticky box is laid out without its offset, whatever its display:
+    // the offset depends on where layout put the box (see `super::sticky`).
+    *properties.position() == PositionValue::Sticky
+        || ((float || table_part) && !properties.display().is_inline_level())
 }
 
 /// Which of two opposing insets wins.
@@ -264,9 +267,9 @@ pub(crate) enum Precedence {
 /// be an anonymous table cell, and `source` the element whose style it
 /// takes.
 #[derive(Clone, Copy)]
-struct ContainingBlock {
-    key: usize,
-    source: usize,
+pub(super) struct ContainingBlock {
+    pub(super) key: usize,
+    pub(super) source: usize,
 }
 
 /// The nearest ancestor of `node_id` that can be its containing block:
@@ -274,7 +277,7 @@ struct ContainingBlock {
 /// groups and columns are skipped, so a table cell has its table (CSS
 /// Tables 3 §3.5). A box that table fixup wrapped in an anonymous cell or
 /// table (CSS Tables 3 §3.9) has that box instead.
-fn containing_block(
+pub(super) fn containing_block(
     document: &Document,
     boxes: BoxTree<'_>,
     node_id: usize,
@@ -339,7 +342,11 @@ fn is_table_part(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> boo
 }
 
 /// Whether the box is a non-atomic inline in the selected box tree.
-fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> bool {
+pub(super) fn is_non_atomic_inline(
+    document: &Document,
+    boxes: BoxTree<'_>,
+    node_id: usize,
+) -> bool {
     let node = &document.nodes[node_id];
     node.kind() == NodeKind::Element
         && !super::ifc::assign::is_layout_root(document, node_id)
@@ -372,9 +379,9 @@ fn column_content_width(block: &Node) -> f32 {
         .map_or(width, |context| context.column_width)
 }
 
-/// The offset by which a `position: relative` box at `node_id` moves from
-/// its layout location, as the painter applies it to boxes that layout
-/// places without it; `(0, 0)` for any other `position`.
+/// The offset by which a `position: relative` or `sticky` box at `node_id`
+/// moves from its layout location, as the painter applies it to boxes that
+/// layout places without it; `(0, 0)` for any other `position`.
 /// The supplied `cascade` determines ancestor boxes; `cv` remains the
 /// caller-selected style of the box being offset.
 pub fn used_relative_offset(
@@ -383,8 +390,10 @@ pub fn used_relative_offset(
     cv: &ComputedValues,
     node_id: usize,
 ) -> (f32, f32) {
-    if *BoxPropertiesRef::from_computed(cv).position() != PositionValue::Relative {
-        return (0.0, 0.0);
+    match *BoxPropertiesRef::from_computed(cv).position() {
+        PositionValue::Relative => {}
+        PositionValue::Sticky => return document.sticky_offset(node_id),
+        _ => return (0.0, 0.0),
     }
     let (dx, dy) = used_relative_insets(document, cascade, cv, node_id, Precedence::WritingMode);
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
@@ -399,8 +408,10 @@ pub(crate) fn used_relative_offset_for_layout(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> (f32, f32) {
-    if !matches!(document.nodes[node_id].position(), PositionValue::Relative) {
-        return (0.0, 0.0);
+    match document.nodes[node_id].position() {
+        PositionValue::Relative => {}
+        PositionValue::Sticky => return document.sticky_offset(node_id),
+        _ => return (0.0, 0.0),
     }
     let (dx, dy) = layout_relative_insets(document, cascade, node_id, Precedence::WritingMode);
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
