@@ -3962,6 +3962,8 @@ fn negative_absolute_insets_do_not_expand_the_available_table_width() {
 thread_local! {
     pub(super) static AUTHORED_LENGTH_CELL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static COLUMN_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Layouts run to measure an intrinsic width of a cell.
+    pub(super) static CELL_WIDTH_MEASURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn with_retained_border_state_in(

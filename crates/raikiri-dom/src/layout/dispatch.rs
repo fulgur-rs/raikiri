@@ -2695,6 +2695,16 @@ fn measure_ifc_root(
     // A width-only probe of a horizontal paragraph is answered here; its
     // height is never read (the caller restores the node's layout cache).
     if width_only && !vertical && measure.run_mode == RunMode::ComputeSize {
+        // Under an intrinsic constraint the two widths differ in nothing but
+        // which of the paragraph's widths is taken, so one probe has both.
+        if !inline_stretched && !matches!(inline_available, AvailableSpace::Definite(_)) {
+            let bounded = |width: f32| width.min(inline_bounds.1).max(inline_bounds.0);
+            tree.context.ifc_probe_widths = Some(crate::layout::context::IfcProbeWidths {
+                min_content: bounded(min_content),
+                max_content: bounded(max_content),
+                answered: width,
+            });
+        }
         return IfcMeasurement {
             size: Size { width, height: 0.0 },
             ..IfcMeasurement::EMPTY

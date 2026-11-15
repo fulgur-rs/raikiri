@@ -747,7 +747,13 @@ pub fn compute_table_layout(
     table_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
-    match compute_table_layout_checked(doc, table_id, inputs) {
+    let result = compute_table_layout_checked(doc, table_id, inputs);
+    // The widths are kept for the layout that follows a measure. Once a table
+    // is laid out they have served, and a long table would hold many.
+    if inputs.run_mode == RunMode::PerformLayout && TABLE_DEPTH.with(std::cell::Cell::get) == 0 {
+        doc.context.cell_paragraph_widths = CellParagraphWidths::default();
+    }
+    match result {
         Ok(output) => output,
         Err(error) => {
             doc.context.table_layout_error = Some(error.to_string());
@@ -3367,8 +3373,68 @@ fn measure_cell_inline(
     // intrinsic widths, without breaking it into lines; the size cached for
     // that probe would carry no height, so the cell's cache is restored.
     let width_only = is_plain_paragraph_cell(doc, cell_id);
+    let max_content = axis == AvailableSpace::MAX_CONTENT;
+    let content_size = sizing_mode == SizingMode::ContentSize;
+    let key = (cell_id, max_content, content_size);
+    if width_only && let Some(width) = doc.cell_paragraph_width(key) {
+        debug_assert!(
+            (probe_cell_inline(doc, cell_id, axis, sizing_mode, true).0 - width).abs() < 0.01,
+            "the width kept for cell {cell_id} is not the one a probe measures"
+        );
+        return width;
+    }
+    #[cfg(test)]
+    tests::CELL_WIDTH_MEASURES.with(|count| count.set(count.get() + 1));
+    let (width, paragraph) = probe_cell_inline(doc, cell_id, axis, sizing_mode, width_only);
+    if width_only {
+        doc.keep_cell_paragraph_width(key, width);
+    }
+    // The cell adds its padding and border to the paragraph's width, the same
+    // under either constraint unless a size of its own bounds the sum. The
+    // other width is then the paragraph's other width and the same edges.
+    if let Some(paragraph) = paragraph
+        && matches!(
+            axis,
+            AvailableSpace::MinContent | AvailableSpace::MaxContent
+        )
+        && cell_adds_only_its_edges(doc, cell_id)
+    {
+        let (asked, other) = if max_content {
+            (paragraph.max_content, paragraph.min_content)
+        } else {
+            (paragraph.min_content, paragraph.max_content)
+        };
+        if paragraph.answered == asked {
+            doc.keep_cell_paragraph_width(
+                (cell_id, !max_content, content_size),
+                width - asked + other,
+            );
+        }
+    }
+    width
+}
+
+/// Whether the width of `cell` is its content's and its own padding and
+/// border, with no `width`, `min-width` or `max-width` of its own to bound it.
+fn cell_adds_only_its_edges(doc: &LayoutSession<'_>, cell: usize) -> bool {
+    let style = doc.table_style(cell);
+    style.size().width.is_auto()
+        && Dimension::from(style.min_size().width).is_auto()
+        && Dimension::from(style.max_size().width).is_auto()
+}
+
+/// One layout of `cell_id` for its width under `axis`, and for a width-only
+/// probe what the paragraph inside has to say about both intrinsic widths.
+fn probe_cell_inline(
+    doc: &mut LayoutSession<'_>,
+    cell_id: usize,
+    axis: AvailableSpace,
+    sizing_mode: SizingMode,
+    width_only: bool,
+) -> (f32, Option<crate::layout::context::IfcProbeWidths>) {
     let saved_cache = width_only.then(|| doc.clone_layout_cache(cell_id));
     doc.context.ifc_width_probe = width_only;
+    doc.context.ifc_probe_widths = None;
     // Use a fresh measure: indefinite parent size so that % widths resolve to auto (spec §2.3).
     // Height available is MAX_CONTENT (intrinsic).
     let output = doc.compute_child_layout(
@@ -3391,10 +3457,51 @@ fn measure_cell_inline(
         },
     );
     doc.context.ifc_width_probe = false;
+    let paragraph = doc.context.ifc_probe_widths.take().filter(|_| width_only);
     if let Some(cache) = saved_cache {
         doc.restore_layout_cache(cell_id, cache);
     }
-    output.size.width
+    (output.size.width, paragraph)
+}
+
+/// What a kept width was measured for: the cell, whether under max-content
+/// (else min-content), and whether as the content's own size.
+type CellParagraphKey = (usize, bool, bool);
+
+/// See [`LayoutContext::cell_paragraph_widths`](crate::layout::context::LayoutContext).
+#[derive(Debug, Default)]
+pub(in crate::layout) struct CellParagraphWidths {
+    generation: Option<crate::layout::cache_context::CacheEpoch>,
+    widths: rustc_hash::FxHashMap<CellParagraphKey, f32>,
+}
+
+impl LayoutSession<'_> {
+    /// The generation the layout caches are valid in now. A style override or
+    /// a box entered in another view moves it, and every cached result of an
+    /// earlier generation stops being read; the kept widths follow the same
+    /// rule.
+    fn cell_paragraph_generation(&mut self) -> crate::layout::cache_context::CacheEpoch {
+        self.sync_layout_cache_mutations();
+        self.document.layout_cache_context.epoch()
+    }
+
+    fn cell_paragraph_width(&mut self, key: CellParagraphKey) -> Option<f32> {
+        let generation = self.cell_paragraph_generation();
+        let kept = &self.context.cell_paragraph_widths;
+        (kept.generation == Some(generation))
+            .then(|| kept.widths.get(&key).copied())
+            .flatten()
+    }
+
+    fn keep_cell_paragraph_width(&mut self, key: CellParagraphKey, width: f32) {
+        let generation = self.cell_paragraph_generation();
+        let kept = &mut self.context.cell_paragraph_widths;
+        if kept.generation != Some(generation) {
+            kept.widths.clear();
+            kept.generation = Some(generation);
+        }
+        kept.widths.insert(key, width);
+    }
 }
 
 #[derive(Clone, Copy)]

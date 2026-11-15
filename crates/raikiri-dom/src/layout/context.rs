@@ -11,6 +11,14 @@ use crate::layout::taffy_adapter::algorithms::baseline_lines::LineRoom;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
 
+/// See [`LayoutContext::ifc_probe_widths`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IfcProbeWidths {
+    pub(crate) min_content: f32,
+    pub(crate) max_content: f32,
+    pub(crate) answered: f32,
+}
+
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
@@ -18,6 +26,14 @@ pub(crate) struct LayoutContext {
     pub(crate) table_layout_error: Option<String>,
     pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
+    /// What the paragraph answering the last width-only probe would answer
+    /// under min-content and under max-content, and what it did answer.
+    pub(crate) ifc_probe_widths: Option<IfcProbeWidths>,
+    /// Intrinsic widths measured for table cells that hold one plain
+    /// paragraph, with the cache generation they were measured in. A block
+    /// measures a table's width and then lays the table out; both size the
+    /// columns from the same cells.
+    pub(super) cell_paragraph_widths: super::table::CellParagraphWidths,
     /// The table and the inputs of a measure whose caller reads only the
     /// width. That table, laid out with those inputs, answers with its width
     /// before it sizes its rows; any other layout leaves this alone.
