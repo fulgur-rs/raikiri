@@ -1152,3 +1152,84 @@ fn a_heading_in_a_wrapper_that_is_not_a_plain_block_is_left_as_before() {
     assert_eq!(page_flow_y(&doc, heading), 80.0);
     let _ = paragraph_id;
 }
+
+/// `body > [div(spacer px), paragraph > ["aaa", ...]]` on 100px pages, the
+/// paragraph mixing a 10px line of text with the blocks that `build` puts after
+/// it, so that it lays them all out as its lines. Returns the page-flow y of
+/// the ids `build` returns.
+fn after_paragraph_text<const N: usize>(
+    spacer: u32,
+    build: impl FnOnce(&mut Document, usize) -> [usize; N],
+) -> [f32; N] {
+    let mut ids = [0; N];
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{spacer}px"));
+        let mixed = block(
+            doc,
+            body,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(mixed, "aaa");
+        ids = build(doc, mixed);
+    });
+    ids.map(|id| page_flow_y(&doc, id))
+}
+
+#[test]
+fn a_heading_at_the_start_of_a_wrapper_after_text_moves_with_the_paragraph_after_it() {
+    // The text line before the wrapper is a place to break, as a box would be.
+    let wrapped = |spacer| {
+        after_paragraph_text(spacer, |doc, mixed| {
+            let wrapper = block(doc, mixed, "display:block");
+            let heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            [heading, paragraph(doc, wrapper, "", 6)]
+        })
+    };
+    // Two lines fit after the heading, which ends at 80: it stays.
+    assert_eq!(wrapped(60), [70.0, 80.0]);
+    // One line fits, which is too few: the heading and the paragraph move.
+    assert_eq!(wrapped(70), [100.0, 110.0]);
+    // Nothing fits after the heading.
+    assert_eq!(wrapped(75), [100.0, 110.0]);
+}
+
+#[test]
+fn a_heading_after_text_moves_with_the_paragraph_after_it() {
+    // The heading and the paragraph are blocks among the lines of a paragraph.
+    let mixed = |spacer| {
+        after_paragraph_text(spacer, |doc, mixed| {
+            let heading = block(doc, mixed, "display:block;height:10px;break-after:avoid");
+            [heading, paragraph(doc, mixed, "", 6)]
+        })
+    };
+    assert_eq!(mixed(60), [70.0, 80.0]);
+    assert_eq!(mixed(70), [100.0, 110.0]);
+    assert_eq!(mixed(75), [100.0, 110.0]);
+}
+
+#[test]
+fn text_between_a_heading_and_a_paragraph_unties_them() {
+    // The heading avoids a break before the line of text after it, not before
+    // the paragraph after that line: the page breaks before the paragraph.
+    let [heading, paragraph_y] = after_paragraph_text(70, |doc, mixed| {
+        let heading = block(doc, mixed, "display:block;height:10px;break-after:avoid");
+        doc.append_text(mixed, "aaa");
+        [heading, paragraph(doc, mixed, "", 6)]
+    });
+    assert_eq!(heading, 80.0);
+    assert_eq!(paragraph_y, 100.0);
+}
+
+#[test]
+fn a_box_after_text_and_before_a_wrapper_lets_the_page_break_before_the_wrapper() {
+    let after_a_box = |spacer| {
+        after_paragraph_text(spacer, |doc, mixed| {
+            let before = block(doc, mixed, "display:block;height:10px");
+            let wrapper = block(doc, mixed, "display:block");
+            let heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            [before, heading, paragraph(doc, wrapper, "", 6)]
+        })
+    };
+    assert_eq!(after_a_box(50), [60.0, 70.0, 80.0]);
+    assert_eq!(after_a_box(60), [70.0, 100.0, 110.0]);
+}
