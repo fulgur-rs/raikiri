@@ -18,6 +18,10 @@ pub(crate) struct LayoutContext {
     pub(crate) table_layout_error: Option<String>,
     pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
+    /// Set by a caller that reads only the width of the table it is about to
+    /// measure. The table takes the flag as it starts, so no table inside it
+    /// sees it, and answers with its width before it sizes its rows.
+    pub(crate) table_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     /// Placements and completed empty boxes retained from the preceding page walk.
     pub(crate) float_resumptions: super::page_pipeline::float_resumption::Plan,

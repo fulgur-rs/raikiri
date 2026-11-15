@@ -475,3 +475,57 @@ fn isolated_table_edges_clear_topology_on_unwind_without_advancing_the_epoch() {
     assert_eq!(GRID_BUILDS.with(|count| count.get()), 3);
     assert_eq!(session.layout_cache_context.epoch(), epoch);
 }
+
+thread_local! {
+    static ROW_MEASURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn a_table_in_block_flow_measures_each_cell_for_its_rows_once() {
+    fn count(_: &mut LayoutSession<'_>, _: usize) {
+        ROW_MEASURES.with(|count| count.set(count.get() + 1));
+    }
+    let (rows, columns) = (4, 3);
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    doc.set_display(html, DisplayValue::Block);
+    let block = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    doc.set_display(block, DisplayValue::Block);
+    let table = append_grid_part(
+        &mut doc,
+        block,
+        "table",
+        DisplayValue::Table,
+        "display:table;border-collapse:collapse",
+    );
+    for _ in 0..rows {
+        let row = append_grid_part(
+            &mut doc,
+            table,
+            "tr",
+            DisplayValue::TableRow,
+            "display:table-row",
+        );
+        for _ in 0..columns {
+            append_grid_part(
+                &mut doc,
+                row,
+                "td",
+                DisplayValue::TableCell,
+                "display:table-cell;width:20px;height:10px;border:2px solid blue",
+            );
+        }
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    ROW_MEASURES.with(|count| count.set(0));
+    cell_scope_tests::with_inspector(count, || {
+        crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    });
+    // The block measures the table's width before it lays the table out; that
+    // measure needs the columns and not the rows.
+    assert_eq!(ROW_MEASURES.with(|count| count.get()), rows * columns);
+    let layout = doc.nodes[table].layout;
+    assert_eq!(layout.size.width, 68.0);
+    assert_eq!(layout.size.height, 50.0);
+}

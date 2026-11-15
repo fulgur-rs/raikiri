@@ -778,6 +778,8 @@ fn compute_table_layout_checked(
     };
 
     let table_idx = usize::from(table_id);
+    let width_only = std::mem::take(&mut doc.context.table_width_probe)
+        && inputs.run_mode == RunMode::ComputeSize;
     if inputs.run_mode == RunMode::PerformLayout {
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
@@ -1881,6 +1883,15 @@ fn compute_table_layout_checked(
         } else {
             layout_table_captions(doc, table_idx, final_width, inputs.parent_size.height)
         };
+        // The width of a horizontal table is settled here: its rows and the
+        // captions stacked above and below it add height alone.
+        if width_only && !vertical_writing {
+            let width = early_captions
+                .in_flow(doc)
+                .map(|caption| caption.size.width)
+                .fold(final_width, f32::max);
+            return Ok(LayoutOutput::from_outer_size(Size { width, height: 0.0 }));
+        }
         let min_h_outer = min_h_outer_of_grid(doc, min_h_outer, item_is_flexed, &early_captions);
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
