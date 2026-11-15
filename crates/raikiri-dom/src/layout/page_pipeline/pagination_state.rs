@@ -2498,7 +2498,21 @@ impl PaginationState {
                 let edges = layout.padding.bottom + layout.border.bottom;
                 let content = block_height - edges - layout.padding.top - layout.border.top;
                 let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
-                if (content - lines).abs() <= 0.5 && !block_after_last_line(document, block_id) {
+                // Floats may put the first line down below the top of the
+                // content box; the content still ends at the last line.
+                let content_top = block_effective_y(
+                    document,
+                    block_id,
+                    candidate.raw_y,
+                    text.effective_y - text.first_line_shift,
+                    root_flow_offset,
+                    self.flow_shift,
+                ) + layout.border.top
+                    + layout.padding.top;
+                let lead = (text.effective_y + line_metrics[0].0 - content_top).max(0.0);
+                if (content - lead - lines).abs() <= 0.5
+                    && !block_after_last_line(document, block_id)
+                {
                     edges
                 } else {
                     0.0
@@ -2610,6 +2624,19 @@ impl PaginationState {
                 // a line that fits instead of breaking before that margin again.
                 let keep_first_fragment =
                     retained_margin_opens_page && lines_can_move && line_fit.lines_before_break > 0;
+                // A paragraph of one line has no break between its line and
+                // the padding and border below it. When they cross the page
+                // end, Chromium breaks before the paragraph, as before a box
+                // that cannot break inside, even when the paragraph is taller
+                // than a page: its edges then go on to the pages after it.
+                let follows_content = || {
+                    block_effective_y > page_start + 0.001
+                        && follows_flow_content(document, cascade, body_id, block_id)
+                };
+                line_fit.lone_line_moves_with_edges = line_fit.total_lines == 1
+                    && own_closing_edges > 0.0
+                    && line_fit.edges_overflow
+                    && follows_content();
                 let can_move_block = !(moved_whole
                     || leading_page_lines
                     || keep_first_fragment
@@ -2617,9 +2644,8 @@ impl PaginationState {
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
-                        || (block_effective_y > page_start + 0.001
-                            && follows_flow_content(document, cascade, body_id, block_id)
-                            && line_fit.leaves_too_few_orphans()));
+                        || line_fit.lone_line_moves_with_edges
+                        || (line_fit.leaves_too_few_orphans() && follows_content()));
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
