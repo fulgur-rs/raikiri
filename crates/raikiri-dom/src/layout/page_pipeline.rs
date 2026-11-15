@@ -10786,15 +10786,15 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
 
 /// Walks the in-flow boxes before `node_id` in the flow below `body_id`, a
 /// level at a time: for the parent of the box, then of each ancestor of it
-/// that is not the body, `found` sees that parent and the boxes its children
-/// before the box or ancestor generate (see [`push_in_flow_boxes_rev`]),
+/// that is not the body, `found` sees that parent, the box or ancestor, and
+/// the boxes its children before the box or ancestor generate (see [`push_in_flow_boxes_rev`]),
 /// nearest first. True as soon as `found` is.
 fn any_level_before(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-    mut found: impl FnMut(usize, &[usize]) -> bool,
+    mut found: impl FnMut(usize, usize, &[usize]) -> bool,
 ) -> bool {
     let mut node = node_id;
     let mut boxes = Vec::new();
@@ -10810,7 +10810,7 @@ fn any_level_before(
         {
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
         }
-        if found(parent, &boxes) {
+        if found(parent, node, &boxes) {
             return true;
         }
         node = parent;
@@ -10838,26 +10838,63 @@ pub(super) fn follows_box_on_page(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
-    any_level_before(document, cascade, body_id, node_id, |parent, boxes| {
-        boxes.iter().any(|&id| {
-            if document.nodes[id].kind() != NodeKind::Element {
-                // Text has no box of its own: its lines tell where it lies.
-                return document
-                    .ifc_text_lines(id)
-                    .and_then(|owned| {
-                        let bounds = positioned_owned_text_line_bounds(document, &owned)?;
-                        let root = document.ifc_layout_node(owned.root)?.layout;
-                        let origin = flow_y(owned.root) + root.border.top + root.padding.top;
-                        let (first, _) = *bounds.first()?;
-                        let (_, last) = *bounds.last()?;
-                        Some(on_page(origin + first, origin + last))
-                    })
-                    .unwrap_or(false);
-            }
-            let top = flow_y(id);
-            on_page(top, top + document.nodes[id].layout.size.height)
-        }) || (renders_before_pseudo(cascade, parent) && flow_y(parent) >= page_start - 0.001)
-    })
+    any_level_before(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        |parent, node, boxes| {
+            // An element that generates no box of its own may still hold a
+            // block-level generated box, which is content of the page.
+            document.nodes[parent]
+                .children
+                .iter()
+                .take_while(|&&child| child != node)
+                .any(|&child| {
+                    document.nodes[child].kind() == NodeKind::Element
+                        && [
+                            raikiri_style::PseudoElem::Before,
+                            raikiri_style::PseudoElem::After,
+                        ]
+                        .into_iter()
+                        .any(|pseudo| generates_block_pseudo(cascade, child, pseudo))
+                        && flow_y(child) >= page_start - 0.001
+                })
+                || boxes.iter().any(|&id| {
+                    if document.nodes[id].kind() != NodeKind::Element {
+                        // Text has no box of its own: its lines tell where it lies.
+                        return document
+                            .ifc_text_lines(id)
+                            .and_then(|owned| {
+                                let bounds = positioned_owned_text_line_bounds(document, &owned)?;
+                                let root = document.ifc_layout_node(owned.root)?.layout;
+                                let origin =
+                                    flow_y(owned.root) + root.border.top + root.padding.top;
+                                let (first, _) = *bounds.first()?;
+                                let (_, last) = *bounds.last()?;
+                                Some(on_page(origin + first, origin + last))
+                            })
+                            .unwrap_or(false);
+                    }
+                    let top = flow_y(id);
+                    on_page(top, top + document.nodes[id].layout.size.height)
+                })
+                || (renders_before_pseudo(cascade, parent) && flow_y(parent) >= page_start - 0.001)
+        },
+    )
+}
+
+/// Whether the element `node_id` has a `pseudo` box that is block-level and
+/// in the flow, with content to show.
+fn generates_block_pseudo(
+    cascade: &CascadeResult,
+    node_id: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    cascade
+        .pseudo
+        .get(&(raikiri_style::StyleNodeId::new(node_id as u64), pseudo))
+        .is_some_and(|style| !style.display.is_inline_level() && pseudo_style_renders(style))
 }
 
 /// Whether the element `parent` has a `::before` box of the flow: generated
@@ -10870,18 +10907,22 @@ fn renders_before_pseudo(cascade: &CascadeResult, parent: usize) -> bool {
             raikiri_style::StyleNodeId::new(parent as u64),
             raikiri_style::PseudoElem::Before,
         ))
-        .is_some_and(|style| {
-            style.display != DisplayValue::None
-                && !matches!(
-                    style.position,
-                    PositionValue::Absolute | PositionValue::Fixed
-                )
-                && !style.content.is_empty()
-                && !style
-                    .content
-                    .iter()
-                    .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
-        })
+        .is_some_and(|style| pseudo_style_renders(style))
+}
+
+/// Whether a pseudo-element of `style` generates a box of the flow:
+/// content that is not absolutely positioned or hidden by `display: none`.
+fn pseudo_style_renders(style: &raikiri_style::ComputedValues) -> bool {
+    style.display != DisplayValue::None
+        && !matches!(
+            style.position,
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && !style.content.is_empty()
+        && !style
+            .content
+            .iter()
+            .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
 }
 
 /// Whether in-flow content comes before the box `node_id` in the flow below
@@ -10898,7 +10939,7 @@ fn follows_flow_content(
     body_id: usize,
     node_id: usize,
 ) -> bool {
-    any_level_before(document, cascade, body_id, node_id, |parent, boxes| {
+    any_level_before(document, cascade, body_id, node_id, |parent, _, boxes| {
         !boxes.is_empty()
             || (parent != body_id && {
                 let holder = &document.nodes[parent];
