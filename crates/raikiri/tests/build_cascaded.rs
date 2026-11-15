@@ -1009,8 +1009,9 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
 fn hidden_elements_are_display_none_via_ua_css() {
     // HTML LS 15.3.1 "Hidden elements": the elements that never generate a
     // box compute to `display: none`, so a rule that sizes every element
-    // cannot give them one. `style`, `script` and `title` are not carried,
-    // as the same names exist in SVG.
+    // cannot give them one. The cascade hides `style`, `script`, `title` and
+    // `noscript`, which the painter never draws, in the HTML namespace only,
+    // as the same names exist in SVG, and whatever an author rule says.
     for (tag, html) in [
         ("head", "<html><head></head><body></body></html>"),
         ("link", "<html><body><link></body></html>"),
@@ -1035,6 +1036,16 @@ fn hidden_elements_are_display_none_via_ua_css() {
             "template",
             "<html><body><template></template></body></html>",
         ),
+        ("style", "<html><body><style></style></body></html>"),
+        (
+            "script",
+            "<html><body><script style='display:block'></script></body></html>",
+        ),
+        ("title", "<html><body><title></title></body></html>"),
+        (
+            "noscript",
+            "<html><body><noscript>fallback</noscript></body></html>",
+        ),
     ] {
         let doc = parse_html(html);
         let result = build_cascaded(&doc).expect("the cascade succeeds");
@@ -1043,6 +1054,20 @@ fn hidden_elements_are_display_none_via_ua_css() {
             result.computed[el_id.0 as usize].display,
             DisplayValue::None,
             "<{tag}> should be display: none from the hidden-elements UA CSS rule"
+        );
+    }
+
+    // The SVG elements of the same names keep their display.
+    for tag in ["style", "script", "title"] {
+        let doc = parse_html(&format!(
+            "<html><body><svg><{tag}></{tag}></svg></body></html>"
+        ));
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        assert_ne!(
+            result.computed[el_id.0 as usize].display,
+            DisplayValue::None,
+            "SVG <{tag}> should not be hidden as an HTML element"
         );
     }
 
