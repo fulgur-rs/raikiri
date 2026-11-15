@@ -8742,7 +8742,6 @@ fn lineless_piece(
                 && !document.nodes[node_id].is_multicol_container()
                 && !is_floating_box_for_pagination(document, cascade, node_id)
         })
-        || document.nodes[node_id].has_before_or_after_content
     {
         return None;
     }
@@ -8751,6 +8750,22 @@ fn lineless_piece(
     // the block would only push that break on to one more page.
     if depth > 0 && page_break_is_forced(document, node_id, cascade.computed[node_id].break_before)
     {
+        return None;
+    }
+    // A paragraph of one line that no text places, of generated text or
+    // atomic inlines alone, is kept whole by that line (see
+    // [`unplaced_line`]): no break falls between the edges above it and the
+    // line, as none falls above a box that no break goes through.
+    if depth > 0
+        && let Some(line) = unplaced_line(document, cascade, node_id)
+    {
+        return Some(LinelessPiece {
+            end: line.end.min(node.layout.size.height),
+            has_edges: false,
+            monolithic: true,
+        });
+    }
+    if node.has_before_or_after_content {
         return None;
     }
     // The box the walk starts at is judged by the rules of its own.

@@ -1592,11 +1592,17 @@ impl PaginationState {
                                 <= super::leading_space_between(document, cascade, node_id, holder)
                                     + 0.01)
                         && (lead <= 0.0
-                            // A paragraph of one unplaced line moves on
-                            // whatever its height: only the blocks it begins
-                            // decide whether it starts the page.
-                            || unplaced_crosses
-                            || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001
+                            // A paragraph of one unplaced line needs room for
+                            // the line alone: the edges after it go on to the
+                            // pages after it.
+                            || lead
+                                + column_piece
+                                    .or(candidate
+                                        .context
+                                        .unplaced_line()
+                                        .map(|line| line.end.min(height)))
+                                    .unwrap_or(height)
+                                <= next_page_step + 0.001
                             || super::contained_cloned_leading_holder(
                                 document, cascade, node_id, holder, lead,
                             ))
@@ -2566,6 +2572,9 @@ impl PaginationState {
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
+            // A block moved whole may break once more, between the edges it
+            // moved below and its first line (see below).
+            let mut moved_below_edges = false;
             loop {
                 let page_start = page_origins.origin(page);
                 let page_step = page_origins.step_at(page);
@@ -2663,7 +2672,15 @@ impl PaginationState {
                     && own_closing_edges > 0.0
                     && line_fit.edges_overflow
                     && follows_content();
-                let can_move_block = !(moved_whole
+                // A block moved whole below the padding and border of the
+                // boxes it begins, whose first line still crosses the end of
+                // the page they start, breaks between those edges and the
+                // line, as it would on any page those boxes start.
+                let line_crosses_below_moved_edges = moved_whole
+                    && !moved_below_edges
+                    && line_fit.lines_before_break == 0
+                    && block_effective_y > page_start + 0.001;
+                let can_move_block = !((moved_whole && !line_crosses_below_moved_edges)
                     || leading_page_lines
                     || keep_first_fragment
                     || breaks_after_block)
@@ -2688,6 +2705,7 @@ impl PaginationState {
                         break;
                     }
                     LineBreakFix::MoveBlock => {
+                        moved_below_edges = moved_whole;
                         page = page.saturating_add(1);
                         // The floats that put the first line down end where
                         // it starts, so they stay on the page it leaves. The
