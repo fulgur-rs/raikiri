@@ -63,6 +63,14 @@ impl FloatContext {
     ///
     /// `containing_block_insets` are how far the containing block is inset from
     /// the left and the right edge of the formatting context.
+    ///
+    /// `clear` moves the float below the bottom of the floats on the sides it
+    /// names, and no further (CSS 2 §9.5.2): it may sit beside an earlier float
+    /// on the other side, even one that is itself below a cleared float. The
+    /// library also skips the band of segments after the last float on the
+    /// cleared side, which can move the float below a float on the side it
+    /// does not clear, so the clearance is passed to it as the least `y`
+    /// instead (see [`Self::clearance_floor`]).
     #[inline]
     pub(crate) fn place_floated_box(
         &mut self,
@@ -74,10 +82,10 @@ impl FloatContext {
     ) -> Point<f32> {
         Point::from_taffy(self.inner.place_floated_box(
             floated_box.into_taffy(),
-            min_y,
+            self.clearance_floor(min_y, clear),
             containing_block_insets,
             direction.into_taffy(),
-            clear.to_taffy(),
+            taffy::Clear::None,
         ))
     }
 
@@ -86,7 +94,10 @@ impl FloatContext {
     ///
     /// `margins` are the side margins of the box, which the room is measured
     /// inside of, and `direction` is its direction.
-    #[inline]
+    ///
+    /// `clear` moves the room below the bottom of the floats on the sides it
+    /// names, and no further, as for [`Self::place_floated_box`]: the room may
+    /// be beside a float on the other side.
     pub(crate) fn find_bfc_slot(
         &self,
         min_y: f32,
@@ -96,14 +107,39 @@ impl FloatContext {
         clear: Clear,
         after: Option<usize>,
     ) -> BfcSlot {
+        // Without a float at or below `min_y` the library answers the room
+        // beside no float at `min_y`, whatever `clear` names; keep that answer.
+        let min_y = if self.inner.has_active_floats(min_y) {
+            self.clearance_floor(min_y, clear)
+        } else {
+            min_y
+        };
         BfcSlot::from_taffy(self.inner.find_bfc_slot(
             min_y,
             containing_block_insets,
             margins,
             direction.to_taffy(),
-            clear.to_taffy(),
+            taffy::Clear::None,
             after,
         ))
+    }
+
+    /// The least `y` that clears the floats `clear` names, given the least `y`
+    /// the caller asks for.
+    ///
+    /// The bottoms of the cleared floats are all that clearance needs: the
+    /// library raises the least `y` to them as well, but it also starts the
+    /// search after the segment range it last recorded for the cleared side,
+    /// plus one more segment. That range is half-open, so the extra segment is
+    /// the one right below the cleared float, and a float on the other side
+    /// that sits there makes the box skip past it. Passing the bottoms as the
+    /// least `y` and no clearance to the library leaves only the bottoms to
+    /// decide.
+    #[inline]
+    fn clearance_floor(&self, min_y: f32, clear: Clear) -> f32 {
+        self.inner
+            .cleared_threshold(clear.to_taffy())
+            .map_or(min_y, |bottom| min_y.max(bottom))
     }
 
     /// How low the floats that `clear` clears reach, if there are any.
