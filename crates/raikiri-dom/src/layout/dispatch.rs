@@ -3650,7 +3650,16 @@ fn carry_ratio_bounds(style: &mut Style, content_box_ratio: bool, inputs: Layout
     } else {
         Size::ZERO
     };
-    let min = metrics.min.maybe_sub(adjustment);
+    let mut min = metrics.min;
+    // An empty box sized by its content is no narrower than its ratio gives
+    // its padding and border.
+    if metrics.preferred.width.is_none() && metrics.preferred.height.is_none() {
+        let floor = metrics.ratio_edge_width(style, content_box_ratio);
+        if floor > 0.0 && min.width.is_none_or(|width| width < floor) {
+            min.width = Some(floor);
+        }
+    }
+    let min = min.maybe_sub(adjustment);
     let max = metrics.max.maybe_sub(adjustment);
     let overrides: Vec<_> = [
         (min.width, LengthProperty::MinWidth),

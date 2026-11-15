@@ -531,6 +531,7 @@ impl LayoutSession<'_> {
         if matches!(role, ReadRole::FlexItem) {
             context.flex_item_ratio = self.flex_item_ratio(idx);
             context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            context.unbounded_max = self.flex_item_unbounded_max(idx, view.with_context(context));
             context.zero_min_main_axis = self
                 .zero_min_main_axis(idx)
                 .filter(|_| !self.container_is_vertical(idx));
@@ -1107,6 +1108,54 @@ impl LayoutSession<'_> {
             main_min: main_floor,
         };
         (held.min || held.max || held.size.is_some()).then_some(held)
+    }
+
+    /// Whether the view reports the `max-width` and the `max-height` of the
+    /// flex item `idx` that are `none` as unbounded, `[width, height]`, where
+    /// `item` is the view of the item the flex algorithm reads.
+    ///
+    /// The flex algorithm carries a maximum of one axis of an item with a
+    /// preferred aspect ratio across the ratio into the other one, which does
+    /// not hold for a horizontal item of a row with `auto` sizes:
+    ///
+    /// - Its `auto` height is at least the content-based minimum, which the
+    ///   `max-width` carried across the ratio does not clamp (CSS Sizing 4
+    ///   §5.1): a box of ratio 2/1 with a `max-width` of 10px and a line of
+    ///   text 10px high is 10px high. A scroll container has no such minimum,
+    ///   and nor does a box that states its `min-height`.
+    /// - The flex algorithm applies the ratio to the border box, so it carries
+    ///   a `max-height` across with the padding and border of the height where
+    ///   the ratio relates the content boxes, and it carries one smaller than
+    ///   the padding and border, which the box is not, where the ratio relates
+    ///   the border boxes. The item caps its width with the `max-height` it
+    ///   carries across itself when it measures its content.
+    fn flex_item_unbounded_max(
+        &self,
+        idx: usize,
+        item: raikiri_layout_style::LayoutStyleView<'_>,
+    ) -> [bool; 2] {
+        let row = self
+            .taffy_parent_of(idx)
+            .is_some_and(|container| self.physical_style(container).flex_direction_is_row());
+        let (size, min, max) = (item.size(), item.min_size(), item.max_size());
+        if !row
+            || self.container_is_vertical(idx)
+            || self.nodes[idx].used_writing_mode.is_vertical()
+            || self.nodes[idx].size_containment.width
+            || self.nodes[idx].size_containment.height
+            || crate::paint_rules::is_replaced_element(self.document, idx)
+            || item.aspect_ratio().is_none()
+            || !size.width.is_auto()
+            || !size.height.is_auto()
+        {
+            return [false; 2];
+        }
+        let height = !max.width.is_auto()
+            && max.height.is_auto()
+            && min.height.is_auto()
+            && !item.overflow().y.is_scroll_container();
+        let width = max.width.is_auto() && !max.height.is_auto();
+        [width, height]
     }
 
     /// The aspect ratio the flex algorithm is told about the flex item `idx`.

@@ -399,6 +399,12 @@ pub struct ViewContext {
     /// where the minimum its ratio carries over from its `min-width` would
     /// exceed it.
     pub carried_min_height: Option<f32>,
+    /// Whether a `max-width` or `max-height` that is `none` is reported as the
+    /// largest length instead, `[width, height]`, so that the flex algorithm
+    /// carries no maximum of the other axis across the aspect ratio of an item
+    /// into that axis: the item applies the limits its ratio carries over
+    /// itself.
+    pub unbounded_max: [bool; 2],
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -417,6 +423,7 @@ impl Default for ViewContext {
             carried_min_width: None,
             oof_height_follows_width: false,
             carried_min_height: None,
+            unbounded_max: [false; 2],
         }
     }
 }

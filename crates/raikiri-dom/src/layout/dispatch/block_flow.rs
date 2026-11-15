@@ -561,7 +561,15 @@ pub(crate) fn compute_block_flow(
                 AvailableSpace::Definite(limit) => fit(limit),
             },
         };
-        metrics.clamp_width(width)
+        // A width that fills the room it is offered is not the ratio's to give.
+        let fills_room = matches!(style.size.width.expand(), ExpandedDimension::Stretch)
+            && matches!(inputs.available_space.width, AvailableSpace::Definite(_));
+        let ratio_floor = if fills_room {
+            0.0
+        } else {
+            metrics.ratio_edge_width(&style, content_box_ratio)
+        };
+        metrics.clamp_width(width).max(ratio_floor)
     };
     // A width the content settled, with no height to go by, gives the height
     // through the aspect ratio.

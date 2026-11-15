@@ -213,7 +213,16 @@ impl LayoutStyleView<'_> {
             self.library_width(LengthProperty::MaxWidth).auto(false),
             self.library_height(LengthProperty::MaxHeight).auto(false),
         );
-        self.with_held_cross_size(max, |held| held.max)
+        let mut max = self.with_held_cross_size(max, |held| held.max);
+        let [width, height] = self.context.unbounded_max;
+        let unbounded = LengthPercentageAuto::length(crate::length::sanitize(f32::INFINITY));
+        if width && max.width.is_auto() {
+            max.width = unbounded;
+        }
+        if height && max.height.is_auto() {
+            max.height = unbounded;
+        }
+        max
     }
     /// `limit`, a minimum or maximum size, with the side of the cross axis of a
     /// flex item replaced by the cross size the item states where
