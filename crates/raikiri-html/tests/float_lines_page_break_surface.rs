@@ -364,6 +364,32 @@ fn a_box_without_text_in_a_float_that_clears_a_float_grown_beside_it_stays_below
             );
         }
     }
+    // A right float after the box that clears the grown float moves down with
+    // it, at 40 to 100 on the second page, even when the block around them
+    // keeps its height, so a box after the block that clears the right float
+    // starts the third page.
+    for (wrapper, end) in [
+        ("<div style='height:100px'>", "</div>"),
+        ("<div style='min-height:100px'>", "</div>"),
+        ("<div>", "</div>"),
+    ] {
+        for right in [
+            "<div style='float:right;width:20px;height:60px'></div>",
+            "<div><div style='float:right;width:20px;height:60px'></div></div>",
+            "<div style='float:right;width:50px;height:60px'></div>",
+        ] {
+            for after in ["clear:right", "clear:both"] {
+                let body = format!(
+                    "<div style='height:20px'></div><div style='float:left;width:60px'><div style='float:left;width:20px'>X X X</div>{wrapper}<div style='clear:left;height:10px'></div>{right}{end}<div style='{after};height:10px'></div></div>"
+                );
+                assert_eq!(
+                    wide_boxes(&body, 2).last(),
+                    Some(&(0.0, 10.0)),
+                    "{wrapper} {right} {after}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

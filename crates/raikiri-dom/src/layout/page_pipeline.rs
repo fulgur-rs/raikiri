@@ -13427,9 +13427,14 @@ fn below_grown_float(
                     .filter(|&&(_, old, _)| top >= old - 0.01)
                     .map(|&(_, _, new)| new - top)
                     .fold(0.0, f32::max);
-                if shift > 0.001 {
+                // A float that moves only with the boxes before it moves too:
+                // the boxes after a block that takes that move in its own room
+                // still clear it.
+                if shift > 0.001 || carried > 0.001 {
                     let bottom = margin_bottom(next) + carried;
                     moved.push((cascade.computed[next].float, bottom, bottom + shift));
+                }
+                if shift > 0.001 {
                     below.later.push((next, shift, true));
                 }
                 continue;
