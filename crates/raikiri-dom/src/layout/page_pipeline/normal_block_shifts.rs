@@ -452,12 +452,7 @@ impl crate::Document {
             #[cfg(not(test))]
             let _ = pending;
         }
-        // A box already there keeps what it has: a node that layout never
-        // wrote to has no box state to write this into.
-        let target = self.table_layout_node_mut(node);
-        if target.layout.location.y != y {
-            target.layout.location.y = y;
-        }
+        self.table_layout_node_mut(node).layout.location.y = y;
         self.mark_pagination_extent_dirty(node);
     }
 
