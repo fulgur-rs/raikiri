@@ -3000,7 +3000,13 @@ impl PaginationState {
             followers.flush(document, control, Some(&changed))?;
         }
         for root in owners {
-            if !lines_can_shift_inside(document, cascade, root) {
+            // The floats among the lines break between their own lines in
+            // the walk of the box's flow.
+            let holds_floats = document
+                .ifc_layout_node(root)
+                .and_then(|node| node.ifc.as_ref())
+                .is_some_and(|ifc| ifc.boxes.iter().any(|b| b.kind == super::IfcBoxKind::Float));
+            if holds_floats || !lines_can_shift_inside(document, cascade, root) {
                 let followers = followers
                     .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
                 super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;

@@ -1261,3 +1261,211 @@ fn a_relatively_offset_first_child_takes_its_padded_parent_along() {
         &[(1, 'Z', 18)],
     )]);
 }
+
+/// The lines of a float inside an absolutely positioned box break across
+/// pages as those of a float in the normal flow. The flow after the float
+/// stays beside it, and the boxes that clear it or sit below it follow it.
+#[test]
+fn the_lines_of_a_float_inside_an_absolute_box_break_across_pages() {
+    assert_rows(&[
+        (
+            "<div style='height:30px'></div><div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div></div><div style='height:30px'>Z</div>",
+            &[(0, 'X', 35), (0, 'X', 65), (0, 'Z', 35), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:right;width:20px'>X X X</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div>Z</div>",
+            &[(0, 'X', 35), (0, 'X', 65), (0, 'Z', 35), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div>Z</div><div style='clear:left'>Y</div></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (0, 'Z', 35),
+                (1, 'X', 5),
+                (1, 'Y', 35),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='height:10px'></div><div style='float:left;width:20px'>X X X</div></div>",
+            &[(0, 'X', 45), (0, 'X', 75), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:0;width:60px'><div style='height:20px'></div><div style='float:left;width:20px'>X X X X</div><div style='float:left;width:20px'>Y Y Y</div></div>",
+            &[
+                (0, 'X', 25),
+                (0, 'X', 55),
+                (0, 'Y', 25),
+                (0, 'Y', 55),
+                (1, 'X', 5),
+                (1, 'X', 35),
+                (1, 'Y', 5),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div></div><div style='height:150px'></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:relative'><div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div></div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:40px'><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Z Z Z<div style='float:left;width:20px;height:20px'></div> Z Z</div>",
+            &[(0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Z Z<div style='float:left;width:20px'>X</div> Z Z Z</div>",
+            &[(0, 'X', 65), (0, 'Z', 35), (0, 'Z', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X X</div><div style='float:left;width:20px'>Y</div><div style='clear:both'>Z</div></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (0, 'Y', 35),
+                (1, 'X', 5),
+                (1, 'X', 35),
+                (1, 'Z', 65),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:left;width:60px'>Y</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Y', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='float:right;width:20px'>Y Y Y</div><div style='clear:right'>Z</div></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (0, 'Y', 35),
+                (0, 'Y', 65),
+                (1, 'X', 5),
+                (1, 'Y', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px;margin-bottom:10px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div><div>W</div></div>",
+            &[
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'W', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px;height:50px'><div style='float:left;width:20px'>X X X</div></div><div>Q</div>",
+            &[(0, 'Q', 5), (0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px;border:5px solid'><div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 40), (0, 'X', 70), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='padding-top:10px'><div style='float:left;width:20px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 45), (0, 'X', 75), (1, 'X', 5), (1, 'Z', 35)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px;orphans:1;widows:1'>X X X</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px;height:80px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (1, 'Z', 15)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px'>X X X</div><div style='position:absolute;top:0;left:40px'>A</div></div>",
+            &[(0, 'A', 35), (0, 'X', 35), (0, 'X', 65), (1, 'X', 5)],
+        ),
+    ]);
+}
+
+/// A box that clears a float among the lines of an absolutely positioned
+/// box breaks across pages after the float's lines moved it down.
+#[test]
+fn a_box_that_clears_a_float_among_the_lines_of_an_absolute_box_breaks_after_it() {
+    assert_rows(&[
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Q<div style='float:left;width:20px;margin-bottom:50px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[
+                (0, 'Q', 35),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div style='float:left;width:20px;margin-bottom:50px'>X X X</div><div style='clear:left'>Z</div></div>",
+            &[(0, 'X', 35), (0, 'X', 65), (1, 'X', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Q<div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z Z</div></div>",
+            &[
+                (0, 'Q', 35),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Q<div style='float:left;width:20px'>X X X</div><div style='clear:left'>Z</div><div>W</div></div>",
+            &[
+                (0, 'Q', 35),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'W', 65),
+                (1, 'X', 5),
+                (1, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'><div>Q<div style='float:left;width:20px;margin-bottom:50px'>X X X</div></div><div style='clear:left'>Z</div></div>",
+            &[
+                (0, 'Q', 35),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (2, 'Z', 5),
+            ],
+        ),
+        (
+            "<div style='position:absolute;top:30px;width:60px'>Q<div style='float:left;width:20px;margin-bottom:40px'>X X X</div><div style='clear:left'>Z</div><div>W</div></div>",
+            &[
+                (0, 'Q', 35),
+                (0, 'X', 35),
+                (0, 'X', 65),
+                (1, 'X', 5),
+                (1, 'Z', 75),
+                (2, 'W', 5),
+            ],
+        ),
+    ]);
+}

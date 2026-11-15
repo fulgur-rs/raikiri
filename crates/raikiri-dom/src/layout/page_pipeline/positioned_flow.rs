@@ -385,8 +385,7 @@ pub(super) fn keep(
                     && (matches!(
                         document.nodes[node].position(),
                         PositionValue::Absolute | PositionValue::Fixed
-                    ) || document.nodes[node].display().is_atomic_inline_level()
-                        || is_floating_box_for_pagination(document, env.cascade, node))
+                    ) || document.nodes[node].display().is_atomic_inline_level())
                 {
                     continue;
                 }
@@ -420,11 +419,27 @@ pub(super) fn keep(
                     .and_then(|node| node.ifc.as_ref());
                 if let Some(lines) = ifc.and_then(|ifc| ifc.lines.as_ref()) {
                     // Revisit a suffix only after the block before it settles.
+                    // The floats of the paragraph break between their own
+                    // lines once the lines they sit on are in place, and
+                    // before the blocks after them, which can clear them.
+                    let mut floats = ifc
+                        .into_iter()
+                        .flat_map(|ifc| &ifc.boxes)
+                        .filter(|item| item.kind == IfcBoxKind::Float)
+                        .map(|item| item.node)
+                        .collect::<Vec<_>>();
+                    floats.sort_by_key(|&float| followers.source_order[float]);
+                    let mut floats = floats.into_iter().peekable();
                     let mut events = Vec::new();
                     let mut start = 0;
                     for &(block, after) in &lines.block_line_starts {
                         if after > start {
                             events.push(Event::Lines(node, start..after));
+                        }
+                        while let Some(float) = floats.next_if(|&float| {
+                            followers.source_order[float] < followers.source_order[block]
+                        }) {
+                            events.push(Event::Box(float));
                         }
                         events.push(Event::Box(block));
                         start = after;
@@ -432,6 +447,7 @@ pub(super) fn keep(
                     if start < lines.lines.len() {
                         events.push(Event::Lines(node, start..lines.lines.len()));
                     }
+                    events.extend(floats.map(Event::Box));
                     pending.extend(events.into_iter().rev());
                 } else {
                     pending.extend(
@@ -715,6 +731,17 @@ fn keep_run(
                     && follows_line_of_paragraph(document, b.node, root, line)
             })
             .map(|b| b.node)
+            .chain(floats_on_moved_lines(
+                document,
+                &LineMove {
+                    block_id: root,
+                    flex_line: None,
+                    line,
+                    shift,
+                    page,
+                },
+                None,
+            ))
             .collect();
         let float_before = exported_float_end(document, env.cascade, owner, root);
         let layout = document.nodes[root].layout;
@@ -924,8 +951,24 @@ fn static_position_at_block_start(
         )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn grow_inside(
+    document: &mut super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    owner: usize,
+    child: usize,
+    change: ContentChange,
+    followers: &HeightFollowers,
+) {
+    grow_inside_after(
+        document, cascade, body_id, owner, child, change, followers, None,
+    );
+}
+
+/// [`grow_inside`], with `scanned` a float whose boxes below were already
+/// moved with the float that grew before it.
+#[allow(clippy::too_many_arguments)]
+fn grow_inside_after(
     document: &mut super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
@@ -933,7 +976,11 @@ fn grow_inside(
     mut child: usize,
     change: ContentChange,
     followers: &HeightFollowers,
+    scanned: Option<usize>,
 ) {
+    // The boxes below a float that grew, which move once the walk is done:
+    // each with how far it moves and whether it is a float.
+    let mut below_floats = Vec::new();
     let mut flow_delta = change.end_delta;
     let mut size_delta = change.end_delta;
     let mut float_delta = change.float_delta;
@@ -948,6 +995,24 @@ fn grow_inside(
         }
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
+        }
+        // A float that grew or moved does not move the flow after it: only
+        // the boxes that hold their floats grow around it (CSS 2.1 §10.6.7),
+        // and the boxes placed below it or that clear it follow it.
+        if is_floating_box_for_pagination(document, cascade, child) {
+            if scanned != Some(child) && size_delta > 0.001 {
+                let below =
+                    below_grown_float(document, cascade, body_id, parent, child, size_delta)
+                        .unwrap_or_default();
+                below_floats.extend(
+                    below
+                        .clearing
+                        .map(|clearing| (clearing.node, clearing.shift, false)),
+                );
+                below_floats.extend(below.later);
+            }
+            float_delta = size_delta;
+            (flow_delta, size_delta, position_delta) = (0.0, 0.0, 0.0);
         }
         let height = document.nodes[parent].layout.size.height;
         if document.nodes[parent].display().is_flex_or_grid_container()
@@ -1075,5 +1140,24 @@ fn grow_inside(
         if flow_delta.abs() <= 0.001 && size_delta.abs() <= 0.001 && float_delta.abs() <= 0.001 {
             break;
         }
+    }
+    // The first box that clears the float moves before the boxes after it,
+    // whose moves leave out what it carries along.
+    for (node, shift, is_float) in below_floats {
+        document.translate_pagination_y(node, shift);
+        grow_inside_after(
+            document,
+            cascade,
+            body_id,
+            owner,
+            node,
+            ContentChange {
+                end_delta: shift,
+                float_delta: 0.0,
+                position_delta: shift,
+            },
+            followers,
+            is_float.then_some(node),
+        );
     }
 }

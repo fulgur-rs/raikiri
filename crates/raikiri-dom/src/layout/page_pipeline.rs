@@ -13425,12 +13425,12 @@ fn laid_out_children(document: &Document, node_id: usize) -> Vec<usize> {
 
 /// The boxes after `float` in `parent` that have to move down to stay below
 /// the float's margin box, now that the float grew by `grown` with the lines
-/// moved inside it, when `parent` is inside another float: the floats that
-/// were placed below it or below one of those floats, and the first in-flow
-/// box that clears one of them. The boxes before that box stay beside the
-/// floats. Pagination places no box inside a float by itself; outside
-/// floats, the boxes below the float keep there through the edges
-/// [`FloatShifts`] records.
+/// moved inside it, when `parent` is inside another float or an absolutely
+/// positioned box: the floats that were placed below it or below one of
+/// those floats, and the first in-flow box that clears one of them. The boxes
+/// before that box stay beside the floats. Pagination places no box inside a
+/// float or an absolutely positioned box by itself; elsewhere, the boxes
+/// below the float keep there through the edges [`FloatShifts`] records.
 fn below_grown_float(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -13442,7 +13442,13 @@ fn below_grown_float(
     let inside_float = std::iter::once(parent)
         .chain(document.layout_ancestors(parent))
         .take_while(|&id| id != body_id)
-        .any(|id| is_floating_box_for_pagination(document, cascade, id));
+        .any(|id| {
+            is_floating_box_for_pagination(document, cascade, id)
+                || matches!(
+                    document.nodes[id].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        });
     if !inside_float {
         return None;
     }
