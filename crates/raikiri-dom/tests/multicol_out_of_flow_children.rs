@@ -578,3 +578,28 @@ fn block_static_position_first() {
         ],
     );
 }
+
+/// After a spanner, the content goes on in a new row of columns below it, so a
+/// static position after it starts the first of them: Chromium puts the box
+/// at the center of the first column, 58px. The spanner itself stands where
+/// the blocks before it end, which this checks against the spanner's own box.
+#[test]
+fn static_position_after_a_spanner() {
+    let rects = rects_of(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;\
+         text-align:center\"><div id=a style=\"height:40px\"></div>\
+         <div id=h style=\"column-span:all;height:10px\"></div>\
+         <div id=z style=\"position:absolute;display:inline;height:10px;width:10px\"></div>\
+         <div id=b style=\"height:40px\"></div></div>",
+    );
+    let rect = |id: &str| {
+        rects
+            .iter()
+            .find(|(seen, _)| seen == id)
+            .map(|(_, rect)| *rect)
+            .expect("a box")
+    };
+    let (spanner, z) = (rect("h"), rect("z"));
+    assert_eq!(z.0, 58.0, "{rects:?}");
+    assert_eq!(z.1, spanner.1 + spanner.3, "{rects:?}");
+}

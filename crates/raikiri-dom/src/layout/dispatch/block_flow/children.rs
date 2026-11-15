@@ -260,10 +260,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
     let node = &tree.nodes[index];
     node.ifc.is_none()
         && !crate::layout::dispatch::used_writing_mode(tree, index).is_vertical()
-        && matches!(
-            node.formatting_context,
-            FormattingContext::Block | FormattingContext::Multicol
-        )
+        && (node.multicol.is_some() || node.formatting_context == FormattingContext::Block)
         && matches!(
             node.display(),
             DisplayValue::Block

@@ -554,16 +554,13 @@ impl ColumnBox {
     /// the start of the content box.
     fn index_at(&self, x: f32) -> usize {
         let context = self.context;
-        let pitch = context.column_width + context.column_gap;
-        if pitch <= 0.0 {
-            return 0;
-        }
+        let pitch = (context.column_width + context.column_gap).max(f32::EPSILON);
         let steps = if context.rtl {
             ((context.available_width - context.column_width - x) / pitch - 0.01).ceil()
         } else {
             ((x + 0.01) / pitch).floor()
         };
-        steps.max(0.0) as usize
+        steps.clamp(0.0, f32::from(u16::MAX)) as usize
     }
 }
 
@@ -610,9 +607,6 @@ impl FlowPass {
         inputs: &LayoutInput,
         mut output: LayoutOutput,
     ) -> LayoutOutput {
-        if !self.deferred {
-            return output;
-        }
         let grown = output.size.height - self.height;
         if let Some(area) = output.oof_positioning_area.as_mut() {
             area.size.height = (area.size.height + grown).max(0.0);
@@ -623,7 +617,7 @@ impl FlowPass {
             let after = tree.nodes[id].layout;
             after.location != location || after.size.width != size.width
         });
-        if let Some(columns) = self.columns.filter(|_| placed) {
+        if let Some(columns) = self.columns.filter(|_| placed && self.deferred) {
             let index = usize::from(node_id);
             let children = tree.children_through_contents(index);
             let column_height = columns
@@ -647,33 +641,34 @@ impl FlowPass {
                 .collect();
             let mut moves = moves.into_iter();
             output.oof_candidates.for_each_mut(|candidate| {
-                let Some(Some(moved)) = moves.next() else {
-                    return;
-                };
-                let (x, y) = (
-                    &mut candidate.static_position.x,
-                    &mut candidate.static_position.y,
-                );
-                match moved.column {
-                    // The same place in the column as across the line.
-                    Some((line, column)) if line.end > line.start => {
-                        let scale = (column.end - column.start) / (line.end - line.start);
-                        let map = |at: f32| column.start + (at - line.start) * scale;
-                        x.area = Line {
-                            start: map(x.area.start),
-                            end: map(x.area.end),
-                        };
+                if let Some(moved) = moves.next().flatten() {
+                    let (x, y) = (
+                        &mut candidate.static_position.x,
+                        &mut candidate.static_position.y,
+                    );
+                    match moved.column {
+                        // The same place in the column as across the line.
+                        Some((line, column)) if line.end > line.start => {
+                            let scale = (column.end - column.start) / (line.end - line.start);
+                            let map = |at: f32| column.start + (at - line.start) * scale;
+                            x.area = Line {
+                                start: map(x.area.start),
+                                end: map(x.area.end),
+                            };
+                        }
+                        _ => {
+                            x.area.start += moved.shift.x;
+                            x.area.end += moved.shift.x;
+                        }
                     }
-                    _ => {
-                        x.area.start += moved.shift.x;
-                        x.area.end += moved.shift.x;
-                    }
+                    y.area.start += moved.shift.y;
+                    y.area.end += moved.shift.y;
                 }
-                y.area.start += moved.shift.y;
-                y.area.end += moved.shift.y;
             });
         }
-        crate::layout::dispatch::finish_block_local_oof(tree, node_id, inputs, &mut output);
+        if self.deferred {
+            crate::layout::dispatch::finish_block_local_oof(tree, node_id, inputs, &mut output);
+        }
         output
     }
 
@@ -724,12 +719,8 @@ impl FlowPass {
             .rev()
             .copied()
             .find(|child| self.locations.contains_key(child));
-        if let Some(spanner) = previous.filter(|&id| spanning::is_spanner(tree, id)) {
-            return shift_of(spanner).map(|shift| StaticMove {
-                shift,
-                column: None,
-            });
-        }
+        // Content after a spanner starts a new row of columns below it.
+        let after_spanner = previous.is_some_and(|id| spanning::is_spanner(tree, id));
         let (mut column, mut y) = match previous {
             Some(previous) => {
                 // The box may be taller in a column than across the
@@ -751,18 +742,20 @@ impl FlowPass {
                             - columns.origin.y,
                     ),
                     None => (
-                        columns.index_at(start),
+                        if after_spanner {
+                            0
+                        } else {
+                            columns.index_at(start)
+                        },
                         layout.location.y + layout.size.height + past_end - columns.origin.y,
                     ),
                 }
             }
             None => (0, static_y - columns.origin.y),
         };
-        if column_height > 0.0 {
-            while y > column_height + 0.01 {
-                y -= column_height;
-                column += 1;
-            }
+        while !after_spanner && column_height > 0.0 && y > column_height + 0.01 {
+            y -= column_height;
+            column += 1;
         }
         let line = Line {
             start: columns.origin.x,
