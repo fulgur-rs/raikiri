@@ -9002,15 +9002,39 @@ fn tail_edges_move(edges: f32, float_reach: f32, candidate: &PageCandidate, fit:
 
 /// The block size of the bottom padding and border of the block `node_id`
 /// that close it below its last box, when they follow that box: the block
-/// stacks its boxes in block flow, and has a height that is that of its
-/// content. The body is such a block as well.
+/// stacks its boxes in block flow, or is a paragraph that ends with a block
+/// child after its lines, and has a height that is that of its content. The
+/// body is such a block as well.
 fn closing_edges_of(document: &super::context::LayoutSession<'_>, node_id: usize) -> Option<f32> {
     let node = &document.nodes[node_id];
     (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
-        && moves_later_siblings(document, node_id)
+        && (moves_later_siblings(document, node_id) || ends_with_block_child(document, node_id))
         && height_follows_content(document, node_id))
     .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+}
+
+/// Whether the paragraph `node_id` is a block container in one column whose
+/// content ends with a block child: the block comes after all of its lines,
+/// and no other box of the paragraph, such as a float, comes after it.
+fn ends_with_block_child(document: &Document, node_id: usize) -> bool {
+    matches!(
+        document.nodes[node_id].display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) && document
+        .ifc_layout_node(node_id)
+        .and_then(|node| node.ifc.as_ref())
+        .filter(|ifc| ifc.multicol_fragments.is_none())
+        .is_some_and(|ifc| {
+            let (Some(lines), Some(last)) = (ifc.lines.as_ref(), ifc.boxes.last()) else {
+                return false;
+            };
+            last.kind == IfcBoxKind::Block
+                && lines
+                    .block_line_starts
+                    .iter()
+                    .any(|&(block, after)| block == last.node && after >= lines.lines.len())
+        })
 }
 
 /// The block size of the bottom padding and border of the block `node_id`
