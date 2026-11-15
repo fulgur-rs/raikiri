@@ -2405,6 +2405,9 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;break-before:column",
         "display:block;break-after:column",
         "display:block;break-inside:avoid",
+        // A container that holds a flex container keeps its absolutely
+        // positioned boxes in its flow.
+        "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
         "display:grid",
@@ -2422,11 +2425,8 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         assert!(!supported(sized, &[held], true), "{held}");
     }
     // A background inside the box stays inside the clip, and so do block
-    // edges that are cut with the box, or that have nothing to repeat. An
-    // absolutely positioned box whose containing block is outside leaves
-    // the columns.
+    // edges that are cut with the box, or that have nothing to repeat.
     for held in [
-        "display:block;position:absolute",
         "display:block;width:10px;background-color:red",
         "display:block;width:10px;border-top:5px solid red;border-bottom:5px solid red",
         "display:block;width:10px;box-decoration-break:clone",
