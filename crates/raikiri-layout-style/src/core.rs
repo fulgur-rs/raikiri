@@ -175,6 +175,17 @@ impl LayoutStyleView<'_> {
         {
             min.height = LengthPercentageAuto::length(height);
         }
+        if let Some(floor) = self.context.ratio_edge_min_width {
+            match min.width.expand() {
+                values::ExpandedLengthPercentageAuto::Auto => {
+                    min.width = LengthPercentageAuto::length(floor);
+                }
+                values::ExpandedLengthPercentageAuto::Length(width) if width < floor => {
+                    min.width = LengthPercentageAuto::length(floor);
+                }
+                _ => {}
+            }
+        }
         if let Some(axis) = self.context.zero_min_main_axis {
             let main = match axis {
                 Axis::X => &mut min.width,

@@ -558,6 +558,12 @@ impl LayoutSession<'_> {
             context.carried_min_width = carried.width;
             context.carried_min_height = carried.height;
         }
+        if matches!(
+            role,
+            ReadRole::FlexContainer | ReadRole::GridContainer | ReadRole::BlockItem | ReadRole::Oof
+        ) {
+            context.ratio_edge_min_width = self.ratio_edge_width(idx);
+        }
         if matches!(role, ReadRole::BlockItem) {
             context.block_item_basis = self
                 .context
@@ -570,6 +576,56 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         view.with_context(context)
+    }
+
+    /// The minimum width reported for the box `idx` whose preferred aspect
+    /// ratio relates its border boxes and whose sizes are `auto`: the width
+    /// its ratio gives the height of its padding and border, capped by a
+    /// `max-width` it states.
+    ///
+    /// A box is no shorter than its padding and border, so Chromium gives
+    /// such a box at least the width of that height through its ratio, past
+    /// a smaller `min-width` and narrower room: an empty `display:
+    /// inline-flex; aspect-ratio: 2 / 1` box with 2px of border is 8px wide,
+    /// not 4px, and so is a `display: flow-root` one in a 5px-wide block. The
+    /// flex and grid algorithms size a container by its content, and block
+    /// and out-of-flow layout stretch a box to its room, without that floor;
+    /// they read it as the minimum width. A flex or grid item is sized by its
+    /// container's algorithm, which Chromium lets shrink it below the floor.
+    /// Padding and border that only a percentage gives leave the box as it is.
+    fn ratio_edge_width(&self, idx: usize) -> Option<f32> {
+        use raikiri_layout_style::values::{
+            BoxSizing, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+        };
+        let style = self.physical_style(idx);
+        let ratio = style.stated_aspect_ratio()?;
+        if self.nodes[idx].used_writing_mode.is_vertical()
+            || self.nodes[idx].ratio_in_content_box
+            || self.nodes[idx].size_containment.width
+            || self.nodes[idx].size_containment.height
+            || style.box_sizing() == BoxSizing::ContentBox
+            || crate::paint_rules::is_replaced_element(self.document, idx)
+            || !style.size().width.is_auto()
+            || !style.size().height.is_auto()
+        {
+            return None;
+        }
+        let length = |edge: raikiri_layout_style::values::LengthPercentage| match edge.expand() {
+            ExpandedLengthPercentage::Length(length) => Some(length),
+            _ => None,
+        };
+        let (padding, border) = (style.padding(), style.border());
+        let edges_y = length(padding.top)?
+            + length(padding.bottom)?
+            + length(border.top)?
+            + length(border.bottom)?;
+        let width = edges_y * ratio;
+        let width = match style.max_size().width.expand() {
+            ExpandedLengthPercentageAuto::Length(max) => width.min(max),
+            ExpandedLengthPercentageAuto::Auto => width,
+            _ => return None,
+        };
+        (width > 0.0).then_some(width)
     }
 
     /// Whether the minimum height that the aspect ratio of the grid item

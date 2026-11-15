@@ -4054,6 +4054,17 @@ fn compute_inline_block_shrink_wrap(
     let height_fixed = known_height.is_some()
         || MaybeResolve::maybe_resolve(leaf_style.size.height, inputs.parent_size.height).is_some();
     let width_from_ratio = leaf_style.aspect_ratio.is_some() && height_fixed;
+    // A box sized by its content is no narrower than the width its ratio
+    // gives the height of its padding and border, however narrow its
+    // content: `aspect-ratio: 2 / 1` with 2px of border and a 3px-wide line
+    // is 8px wide. A leaf carries that floor in its own bounds.
+    let fit = if is_leaf || height_fixed || tree.has_vertical_writing_mode(idx) {
+        fit
+    } else {
+        block_flow::Metrics::resolve(&leaf_style, false, content_box_ratio, inputs)
+            .ratio_edge_width(&leaf_style, content_box_ratio)
+            .max(fit)
+    };
     let content_decided_width = inputs.known_dimensions.width.is_none()
         && tree.has_vertical_writing_mode(idx)
         && !width_from_ratio;
