@@ -192,7 +192,9 @@ fn placements() -> Vec<Placement> {
     ]
 }
 
-/// Every answer `ours` gives matches what `theirs` gives, bit for bit.
+/// Every answer `ours` gives matches what `theirs` gives, bit for bit, once
+/// the clearance is passed to `theirs` as the least `y` and no clearance, as
+/// the wrapper does (see `FloatContext::place_floated_box`).
 fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
     assert_eq!(ours.has_floats(), theirs.has_floats());
     for min_y in [-5.0, 0.0, 12.5, 40.0, 1e4] {
@@ -210,11 +212,11 @@ fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
                             let slot =
                                 ours.find_bfc_slot(min_y, insets, margins, direction, clear, after);
                             let expected = theirs.find_bfc_slot(
-                                min_y,
+                                ours.clearance_floor(min_y, clear),
                                 insets,
                                 margins,
                                 direction.to_taffy(),
-                                clear.to_taffy(),
+                                taffy::Clear::None,
                                 after,
                             );
                             assert_eq!(bits_of(&slot), bits_of(&BfcSlot::from_taffy(expected)));
@@ -252,14 +254,15 @@ fn a_float_context_places_and_answers_like_the_library() {
         clear,
     } in placements()
     {
-        let placed = ours.place_floated_box(floated_box, min_y, insets, direction, clear);
+        let their_min_y = ours.clearance_floor(min_y, clear);
         let expected = theirs.place_floated_box(
             floated_box.into_taffy(),
-            min_y,
+            their_min_y,
             insets,
             float_direction_in_taffy(direction),
-            clear.to_taffy(),
+            taffy::Clear::None,
         );
+        let placed = ours.place_floated_box(floated_box, min_y, insets, direction, clear);
         assert_eq!(
             bits_of(&placed),
             bits_of(&Point::<f32>::from_taffy(expected))
@@ -267,6 +270,119 @@ fn a_float_context_places_and_answers_like_the_library() {
         assert_same_answers(&ours, &theirs);
     }
     assert!(ours.has_floats());
+}
+
+/// A 60px context with a 20x30 left float at the top and a 20x30 right float
+/// that clears it, below it.
+fn left_float_then_right_float_clearing_it() -> FloatContext {
+    let mut floats = FloatContext::new();
+    floats.set_width(60.0);
+    let size = Size {
+        width: 20.0,
+        height: 30.0,
+    };
+    floats.place_floated_box(size, 0.0, [0.0, 0.0], FloatDirection::Left, Clear::None);
+    let right = floats.place_floated_box(size, 0.0, [0.0, 0.0], FloatDirection::Right, Clear::Left);
+    assert_eq!((right.x, right.y), (40.0, 30.0));
+    floats
+}
+
+#[test]
+fn a_float_that_clears_one_side_sits_beside_a_float_on_the_other_side() {
+    let mut floats = left_float_then_right_float_clearing_it();
+    let left = floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 30.0,
+        },
+        0.0,
+        [0.0, 0.0],
+        FloatDirection::Left,
+        Clear::Left,
+    );
+    // Chromium puts it beside the right float, not below it at 60.
+    assert_eq!((left.x, left.y), (0.0, 30.0));
+}
+
+#[test]
+fn a_box_that_clears_one_side_finds_room_beside_a_float_on_the_other_side() {
+    let floats = left_float_then_right_float_clearing_it();
+    let slot = floats.find_bfc_slot(
+        0.0,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        Direction::Ltr,
+        Clear::Left,
+        None,
+    );
+    assert_eq!((slot.x, slot.y, slot.border_width), (0.0, 30.0, 40.0));
+}
+
+#[test]
+fn a_box_that_clears_below_every_float_finds_room_beside_none() {
+    let floats = left_float_then_right_float_clearing_it();
+    // Below every float there is no float left to clear, so no clearance
+    // applies at all.
+    let slot = floats.find_bfc_slot(
+        70.0,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        Direction::Ltr,
+        Clear::Both,
+        None,
+    );
+    assert_eq!(
+        (slot.segment_id, slot.y, slot.border_width),
+        (None, 70.0, 60.0)
+    );
+}
+
+#[test]
+fn a_box_clears_a_zero_height_float_below_every_segment() {
+    let mut floats = FloatContext::new();
+    floats.set_width(60.0);
+    floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 30.0,
+        },
+        0.0,
+        [0.0, 0.0],
+        FloatDirection::Left,
+        Clear::None,
+    );
+    let empty = floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 0.0,
+        },
+        80.0,
+        [0.0, 0.0],
+        FloatDirection::Left,
+        Clear::None,
+    );
+    assert_eq!(empty.y, 80.0);
+    // The empty float occupies no segment, so no segment reaches below 40,
+    // but the box still clears it as a float clearing the left side does.
+    let slot = floats.find_bfc_slot(
+        40.0,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        Direction::Ltr,
+        Clear::Left,
+        None,
+    );
+    let placed = floats.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 10.0,
+        },
+        40.0,
+        [0.0, 0.0],
+        FloatDirection::Right,
+        Clear::Left,
+    );
+    assert_eq!((slot.y, placed.y), (80.0, 80.0));
 }
 
 #[test]
