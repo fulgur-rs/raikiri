@@ -4749,20 +4749,209 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     }
 }
 
-pub(crate) fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
-    lines.lines.iter().enumerate().find_map(|(index, line)| {
-        line.fragments()
-            .inspect(|_| {
-                #[cfg(test)]
-                tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
-            })
-            .find_map(|fragment| match fragment {
+pub(crate) fn find_oof_anchor(
+    doc: &Document,
+    lines: &IfcLines,
+    node: usize,
+) -> Option<(usize, f32)> {
+    let mut places = AnchorPlaces::new(doc, &lines.lines);
+    for (index, line) in lines.lines.iter().enumerate() {
+        let mut leading = true;
+        for (at, fragment) in line.fragments().enumerate() {
+            #[cfg(test)]
+            tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
+            match fragment {
                 shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
-                    Some((index, anchor.inline_position))
+                    let trailing = (at + 1..line.fragments().len())
+                        .filter_map(|later| line.fragment(later))
+                        .all(|later| !holds_content(&later));
+                    return Some(places.place(index, leading, trailing, anchor));
                 }
-                _ => None,
-            })
-    })
+                fragment => leading &= !starts_content(&fragment),
+            }
+        }
+    }
+    None
+}
+
+/// Whether `fragment` ends the run of anchors and inline boxes that go on
+/// from the line before at the start of a line: anything but an anchor or an
+/// inline box that started on an earlier line.
+fn starts_content(fragment: &shodo::Fragment<'_>) -> bool {
+    match fragment {
+        shodo::Fragment::OutOfFlowAnchor(_) => false,
+        shodo::Fragment::InlineBox(piece) => piece.has_start_edge,
+        _ => true,
+    }
+}
+
+/// Whether `fragment` is text or an atomic inline.
+fn holds_content(fragment: &shodo::Fragment<'_>) -> bool {
+    matches!(
+        fragment,
+        shodo::Fragment::GlyphRun(_) | shodo::Fragment::Atomic(_)
+    )
+}
+
+/// Where the anchors of the positioned boxes of some lines put the boxes,
+/// with the end of the content of each line found once.
+///
+/// Collapsible spaces at the end of a line are removed (CSS Text 3, 4.1.3),
+/// and an anchor after them sits where the content ends. An anchor of an
+/// inline-level box that the line breaker put at the start of a line, past
+/// the spaces where the line before it broke, stays with that line, at its
+/// end, when the spaces fit on it and no inline box around the anchor starts
+/// on the later line: that is where Chromium puts it. A block-level box sits
+/// below that line either way, so its anchor stays where it is.
+///
+/// Only lines that read left to right throughout are changed. Preserved
+/// spaces that hang count as removed.
+pub(super) struct AnchorPlaces<'a> {
+    doc: &'a Document,
+    lines: &'a [shodo::Line],
+    ends: HashMap<usize, Option<LineEnd>>,
+}
+
+/// The end of the content of a line that reads left to right.
+#[derive(Clone, Copy)]
+struct LineEnd {
+    /// Where the spaces that hang at the end of the line start.
+    spaces: f32,
+    /// The advance of those spaces.
+    hang: f32,
+    /// Where the content ends: the end of its text without those spaces, or
+    /// of the box of an inline element or atomic inline that ends later.
+    content: f32,
+}
+
+impl<'a> AnchorPlaces<'a> {
+    pub(super) fn new(doc: &'a Document, lines: &'a [shodo::Line]) -> Self {
+        Self {
+            doc,
+            lines,
+            ends: HashMap::new(),
+        }
+    }
+
+    /// The line and inline position where `anchor`, on line `index`, puts its
+    /// box. `leading` tells that nothing but anchors and inline boxes that
+    /// started on an earlier line come before it on its line, and `trailing`
+    /// that no text or atomic inline comes after it.
+    pub(super) fn place(
+        &mut self,
+        index: usize,
+        leading: bool,
+        trailing: bool,
+        anchor: shodo::AnchorFragment,
+    ) -> (usize, f32) {
+        // Positions are snapped to 1/64 px by the line engine.
+        const SLACK: f32 = 1.0 / 32.0;
+        let position = anchor.inline_position;
+        let node = anchor.node.0 as usize;
+        let inline_level = anchor.kind == shodo::node::OutOfFlowKind::Absolute
+            && self
+                .doc
+                .nodes
+                .get(node)
+                .is_some_and(|node| node.display().is_inline_level());
+        if !inline_level {
+            return (index, position);
+        }
+        let before = index.checked_sub(1).filter(|&before| {
+            let line = &self.lines[before];
+            leading
+                && line.break_reason() == shodo::BreakReason::Regular
+                && line.remaining_inline_size() + SLACK >= hanging_spaces(line)
+        });
+        if let Some(end) = before.and_then(|before| Some((before, self.end(before)?.content))) {
+            return end;
+        }
+        // Only the spaces before the anchor are taken out: an end margin
+        // after them stays, and has no fragment that would tell its end.
+        match trailing.then(|| self.end(index)).flatten() {
+            Some(end) => (
+                index,
+                position - (position - end.spaces).clamp(0.0, end.hang),
+            ),
+            None => (index, position),
+        }
+    }
+
+    /// The end of the content of line `index`, when it reads left to right.
+    fn end(&mut self, index: usize) -> Option<LineEnd> {
+        let lines = self.lines;
+        *self
+            .ends
+            .entry(index)
+            .or_insert_with(|| content_end(&lines[index]))
+    }
+}
+
+/// The advance of the spaces that hang at the end of `line`, without the
+/// punctuation that hangs there.
+fn hanging_spaces(line: &shodo::Line) -> f32 {
+    line.hang_end().min(line.trailing_whitespace())
+}
+
+/// Where the content of `line` ends, before the spaces that hang at its end,
+/// and where those spaces start, when the line and all of its text read left
+/// to right. The runs of text hold those spaces; the boxes of inline elements
+/// leave them out. A tab has no glyph to tell where it ends, so a line whose
+/// trailing white space holds one is left as it is.
+fn content_end(line: &shodo::Line) -> Option<LineEnd> {
+    let trailing_tab = line
+        .text()
+        .get(line.text_range())
+        .unwrap_or_default()
+        .chars()
+        .rev()
+        .take_while(|&c| c.is_whitespace() || c == '\u{FFFC}')
+        .any(|c| c == '\t');
+    let mut text = None::<f32>;
+    let mut boxes = None::<f32>;
+    for fragment in line.fragments() {
+        match fragment {
+            shodo::Fragment::GlyphRun(run) if run.bidi_level() % 2 == 1 => return None,
+            shodo::Fragment::GlyphRun(run) => {
+                let end = run.inline_start() + run.inline_size();
+                text = Some(text.map_or(end, |text| text.max(end)));
+            }
+            shodo::Fragment::Atomic(atomic) => {
+                let end = atomic.margin_rect.inline_start + atomic.margin_rect.inline_size;
+                boxes = Some(boxes.map_or(end, |boxes| boxes.max(end)));
+            }
+            shodo::Fragment::InlineBox(piece) => {
+                let end = piece.rect.inline_start + piece.rect.inline_size;
+                boxes = Some(boxes.map_or(end, |boxes| boxes.max(end)));
+            }
+            _ => {}
+        }
+    }
+    let hang = hanging_spaces(line);
+    let text = text.map(|end| end - hang);
+    // The fragments leave out end margins, but the line's content takes
+    // them: it ends its width after where it starts, unless an inline box
+    // with a margin of its own starts it.
+    let start = line
+        .fragments()
+        .find(|fragment| !matches!(fragment, shodo::Fragment::OutOfFlowAnchor(_)))
+        .and_then(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => Some(run.inline_start()),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.margin_rect.inline_start),
+            shodo::Fragment::InlineBox(piece) if !piece.has_start_edge => {
+                Some(piece.rect.inline_start)
+            }
+            _ => None,
+        });
+    let flow = start.map(|start| start + line.inline_size() + line.hang_end() - hang);
+    let content = [text, boxes, flow].into_iter().flatten().reduce(f32::max);
+    content
+        .map(|content| LineEnd {
+            spaces: text.unwrap_or(f32::INFINITY),
+            hang,
+            content,
+        })
+        .filter(|_| line.used_direction() == Direction::Ltr && !trailing_tab)
 }
 
 /// How far the columns moved the line `line`: the range of `fragments` that
@@ -5054,7 +5243,7 @@ pub(crate) fn place_out_of_flow(
     // anchor.
     let mut box_order: Option<Vec<(usize, IfcBoxKind)>> = None;
     // A single target keeps the early-exit scan and avoids index allocations.
-    let anchors = (positioned.len() > 1).then(|| first_anchors(&lines));
+    let anchors = (positioned.len() > 1).then(|| first_anchors(tree, &lines));
     let mut fallback = None;
 
     let owner = tree.ifc_source_owner(idx);
@@ -5105,7 +5294,7 @@ pub(crate) fn place_out_of_flow(
                 }
             });
         let anchor = anchors.as_ref().map_or_else(
-            || find_oof_anchor(&lines, node),
+            || find_oof_anchor(tree, &lines, node),
             |anchors| anchors.get(&node).copied(),
         );
         let inline_level = tree.nodes[node].display().is_inline_level();
