@@ -227,14 +227,15 @@ fn fixed_descendants_stay_where_the_page_area_puts_them() {
 }
 
 #[test]
-fn an_atomic_inline_is_aligned_as_its_margin_box() {
+fn an_atomic_inline_starts_its_margin_box_at_the_aligned_point() {
+    // The float shortens the line to 50..200, whose center is 125.
     assert_eq!(
         abs_rect(
             "text-align:center",
             "float:left",
             "display:inline-block;margin-left:10px"
         ),
-        (110.0, 50.0, 40.0, 10.0)
+        (135.0, 50.0, 40.0, 10.0)
     );
     assert_eq!(
         abs_rect(
@@ -244,14 +245,15 @@ fn an_atomic_inline_is_aligned_as_its_margin_box() {
         ),
         (100.0, 50.0, 40.0, 10.0)
     );
-    // A box wider than its float-shortened line moves below the float.
+    // The box's own width does not matter: a box wider than its
+    // float-shortened line stays beside the float and overflows it.
     assert_eq!(
         abs_rect(
             "text-align:center",
             "float:left",
             "display:inline-block;width:180px"
         ),
-        (10.0, 100.0, 180.0, 10.0)
+        (125.0, 50.0, 180.0, 10.0)
     );
 }
 
@@ -359,7 +361,7 @@ fn unexpandable_justified_static_lines_use_center_alignment() {
             &[],
             "display:inline-block;width:40px"
         ),
-        (80.0, 0.0, 40.0, 10.0)
+        (100.0, 0.0, 40.0, 10.0)
     );
     assert_eq!(
         abs_rect_after(
@@ -367,12 +369,12 @@ fn unexpandable_justified_static_lines_use_center_alignment() {
             &[],
             "display:inline-block;width:40px"
         ),
-        (80.0, 0.0, 40.0, 10.0)
+        (100.0, 0.0, 40.0, 10.0)
     );
 }
 
 #[test]
-fn inline_static_line_still_avoids_floats_when_horizontal_inset_is_set() {
+fn inline_static_line_keeps_its_float_slot_when_horizontal_inset_is_set() {
     assert_eq!(
         abs_rect_after(
             "text-align:center",
@@ -383,12 +385,12 @@ fn inline_static_line_still_avoids_floats_when_horizontal_inset_is_set() {
             ],
             "left:0;display:inline;top:auto;bottom:auto"
         ),
-        (0.0, 100.0, 40.0, 10.0)
+        (0.0, 50.0, 40.0, 10.0)
     );
 }
 
 #[test]
-fn shrink_wrapped_inline_static_line_accounts_for_margins_when_fitting() {
+fn shrink_wrapped_inline_static_line_stays_beside_the_float() {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
         doc.append_element(Some(parent), "div", Some(css))
@@ -420,7 +422,7 @@ fn shrink_wrapped_inline_static_line_accounts_for_margins_when_fitting() {
 }
 
 #[test]
-fn a_static_line_with_no_float_slot_moves_below_the_floats() {
+fn a_static_line_with_no_float_slot_stays_between_the_floats() {
     assert_eq!(
         abs_rect_after(
             "text-align:center",
@@ -431,7 +433,7 @@ fn a_static_line_with_no_float_slot_moves_below_the_floats() {
             ],
             "display:inline"
         ),
-        (100.0, 100.0, 40.0, 10.0)
+        (100.0, 50.0, 40.0, 10.0)
     );
 }
 
@@ -542,5 +544,23 @@ fn a_replaced_inline_is_aligned_as_its_box() {
         "display:inline;position:absolute;width:40px;height:10px",
         "left:5px",
     );
-    assert_eq!(inner, (180.0, 50.0, 40.0, 10.0));
+    assert_eq!(inner, (200.0, 50.0, 40.0, 10.0));
+}
+
+#[test]
+fn an_atomic_inline_starts_at_the_aligned_point_even_when_it_overflows() {
+    // The 40px box starts at the right end of the line and overflows it.
+    assert_eq!(
+        abs_rect_after("text-align:right", &["height:50px"], "display:inline-block"),
+        (200.0, 50.0, 40.0, 10.0)
+    );
+    // In a right-to-left container the box ends at the left end of the line.
+    assert_eq!(
+        abs_rect_after(
+            "direction:rtl;text-align:left",
+            &["height:50px"],
+            "display:inline-block"
+        ),
+        (-40.0, 50.0, 40.0, 10.0)
+    );
 }
