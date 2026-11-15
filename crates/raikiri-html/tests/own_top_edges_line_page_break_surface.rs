@@ -4,9 +4,11 @@
 //! starts, or on the page it starts anyway, the page breaks between its top
 //! edges and the line, which starts the page after. Lines of text, of
 //! generated text, of inline-blocks and of a `<br>` alone alike, and the
-//! lines after the first break again on the pages after it. Where each line
-//! falls is what Chromium prints for the same documents on pages 100px square,
-//! with Ahem glyphs of 20px on lines of 30px.
+//! lines after the first break again on the pages after it. So does a line
+//! below the floats that put it down, and a line taller than a page. A
+//! paragraph that ends on its page, or that no break goes through, keeps its
+//! line. Where each line falls is what Chromium prints for the same documents
+//! on pages 100px square, with Ahem glyphs of 20px on lines of 30px.
 
 use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -133,4 +135,55 @@ fn the_lines_after_the_first_break_again_on_the_pages_after_it() {
             "{body}"
         );
     }
+}
+
+const TALL_INLINE_BLOCK: &str =
+    r#"<span style="display:inline-block;height:120px;width:20px">A</span>"#;
+
+#[test]
+fn a_line_taller_than_a_page_also_leaves_the_edges_or_floats_above_it() {
+    let paragraph = format!(
+        r#"<p style="margin:0;width:40px;padding-top:50px">{TALL_INLINE_BLOCK}</p><div>Z</div>"#
+    );
+    assert_eq!(
+        glyph_tops(&format!("{BEFORE}{paragraph}")),
+        [(0, 'Y', 5), (2, 'A', 5), (3, 'Z', 25)]
+    );
+    assert_eq!(glyph_tops(&paragraph), [(1, 'A', 5), (2, 'Z', 25)]);
+    let below_float = format!(
+        r#"<div style="float:left;width:100%;height:60px"></div><p style="margin:0;width:20px">{TALL_INLINE_BLOCK}</p><div>Z</div>"#
+    );
+    assert_eq!(glyph_tops(&below_float), [(1, 'A', 5), (2, 'Z', 25)]);
+    let text_below_float = r#"<div style="float:left;width:100%;height:80px"></div><p style="margin:0;width:20px">A</p><div>Z</div>"#;
+    assert_eq!(glyph_tops(text_below_float), [(1, 'A', 5), (1, 'Z', 35)]);
+}
+
+#[test]
+fn a_paragraph_that_ends_on_its_page_keeps_the_line_that_overflows_it() {
+    let fixed = "padding-top:75px;height:100px;box-sizing:border-box";
+    let body = format!(
+        r#"<p style="margin:0;width:20px;{fixed}"><span style="display:inline-block;height:30px">A</span></p><div>Z</div>"#
+    );
+    assert_eq!(glyph_tops(&body), [(0, 'A', 80), (1, 'Z', 5)], "{body}");
+    let body =
+        format!(r#"{BEFORE}<p class="g" style="margin:0;width:20px;{fixed}"></p><div>Z</div>"#);
+    assert_eq!(
+        glyph_tops(&body),
+        [(0, 'Y', 5), (1, 'A', 80), (2, 'Z', 5)],
+        "{body}"
+    );
+    // A box taller than the page breaks below its edges, even with its line
+    // running past its own end.
+    let body = format!(
+        r#"<p style="margin:0;width:20px;padding-top:75px;max-height:150px;box-sizing:border-box">{TALL_INLINE_BLOCK}</p><div>Z</div>"#
+    );
+    assert_eq!(glyph_tops(&body), [(1, 'A', 5), (1, 'Z', 55)], "{body}");
+}
+
+#[test]
+fn a_box_with_size_containment_keeps_its_line() {
+    // Chromium leaves the line below the edges, where its glyph crosses the
+    // page end.
+    let body = r#"<p class="g" style="margin:0;width:20px;contain:size;height:30px;padding-top:80px"></p><div>Z</div>"#;
+    assert_eq!(glyph_tops(body), [(0, 'A', 85), (1, 'Z', 15)], "{body}");
 }
