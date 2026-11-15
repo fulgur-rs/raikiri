@@ -21,7 +21,7 @@ use super::{
     grow_container_beside_item, has_explicit_positioned_block_ancestor, has_fixed_height,
     has_footnote_ancestor, is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in,
     item_of, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
-    line_block_parent, lines_between_blocks, lines_can_shift_above_blocks,
+    line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
     materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
@@ -2355,8 +2355,19 @@ impl PaginationState {
             .or(blocks.flex_line.map(|(root, _)| (root, true)))
             .or(blocks.column_paragraph.map(|root| (root, true)))
             && self.checked_paragraphs.orphans_widows.insert(block_id)
-            && let Some(all_line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
+            && let Some(mut all_line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
+            // The lines on either side of a block child of the paragraph
+            // break apart from those on the other side. A block after them,
+            // not the lines, is what the edges below follow.
+            let run = blocks
+                .paragraph_root
+                .filter(|&root| root == block_id)
+                .and_then(|root| line_run_among_blocks(document, text_lines, node_id, root));
+            let block_follows_run = run.as_ref().is_some_and(|(_, last)| !last);
+            if let Some((lines, _)) = run {
+                all_line_metrics = all_line_metrics.get(lines).unwrap_or_default().to_vec();
+            }
             let clip = clip_edges.get(&block_id);
             let clipped = |document: &LayoutSession<'_>, effective_y: f32| {
                 clipped_line_metrics(
@@ -2373,10 +2384,20 @@ impl PaginationState {
             if line_metrics.is_empty() {
                 return Ok(());
             }
-            let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id);
+            // The lines of a run among block children move down inside the
+            // paragraph as a run after a block child does, the blocks after
+            // them following.
+            let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id)
+                || (block_follows_run
+                    && self.deferred_shifts.line_splits.is_empty()
+                    && lines_can_shift_between_blocks(document, cascade, block_id));
             // The break that keeps the last lines with the padding and border
             // that close the boxes around the paragraph, on `page`.
-            let closing_edges = candidate.context.lines_closing_edges();
+            let closing_edges = if block_follows_run {
+                0.0
+            } else {
+                candidate.context.lines_closing_edges()
+            };
             // A paragraph that avoids a break inside it moves whole with the
             // edges when they fit a page together, along with the blocks it
             // begins (a padding above it goes with it, when those blocks start

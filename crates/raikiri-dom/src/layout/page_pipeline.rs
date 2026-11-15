@@ -10694,21 +10694,33 @@ fn lines_can_shift_between_blocks(
     block_id: usize,
 ) -> bool {
     height_follows_content(document, block_id)
-        && document
-            .ifc_layout_node(block_id)
-            .and_then(|node| node.ifc.as_ref())
-            .is_some_and(|ifc| {
-                ifc.multicol_fragments.is_none()
-                    && ifc.boxes.iter().all(|b| {
-                        matches!(
-                            b.kind,
-                            IfcBoxKind::Block | IfcBoxKind::Atomic | IfcBoxKind::Float
-                        ) || (b.kind == IfcBoxKind::OutOfFlow
-                            && (has_explicit_block_axis_inset(document, cascade, b.node)
-                                || out_of_flow_follow(document, cascade, block_id, b.node)
-                                    .is_some()))
-                    })
-            })
+        && content_follows_block_children(document, cascade, block_id)
+}
+
+/// Whether the content of the paragraph `block_id` after a block child
+/// follows that child down when it moves or grows: the paragraph is in one
+/// column, and lays out only atomic inlines, floats, block children and
+/// out-of-flow boxes that a block-axis inset places away from the lines or
+/// that follow them (see [`out_of_flow_follow`]).
+fn content_follows_block_children(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block_id: usize,
+) -> bool {
+    document
+        .ifc_layout_node(block_id)
+        .and_then(|node| node.ifc.as_ref())
+        .is_some_and(|ifc| {
+            ifc.multicol_fragments.is_none()
+                && ifc.boxes.iter().all(|b| {
+                    matches!(
+                        b.kind,
+                        IfcBoxKind::Block | IfcBoxKind::Atomic | IfcBoxKind::Float
+                    ) || (b.kind == IfcBoxKind::OutOfFlow
+                        && (has_explicit_block_axis_inset(document, cascade, b.node)
+                            || out_of_flow_follow(document, cascade, block_id, b.node).is_some()))
+                })
+        })
 }
 
 /// Whether all the lines of the paragraph `block_id` can move down inside it
@@ -10753,6 +10765,36 @@ fn lines_between_blocks(
     node_id: usize,
     root: usize,
 ) -> Option<std::ops::Range<usize>> {
+    let (start, end, _) = line_run(document, text_lines, node_id, root)?;
+    Some(start?..end)
+}
+
+/// The lines of the paragraph `root` that break with the first line of the
+/// text `node_id`, when a block child of the paragraph stands before or
+/// after them: they break as a paragraph of their own, apart from the lines
+/// on the other side of the block (see [`lines_between_blocks`]). Also
+/// whether they are the last lines of the paragraph. `None` when no block
+/// child stands among the lines.
+fn line_run_among_blocks(
+    document: &Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    root: usize,
+) -> Option<(std::ops::Range<usize>, bool)> {
+    let (start, end, total) = line_run(document, text_lines, node_id, root)?;
+    (start.is_some() || end < total).then(|| (start.unwrap_or(0)..end, end == total))
+}
+
+/// The run of lines of the paragraph `root` that holds the first line of the
+/// text `node_id`, between its block children: the line after the block
+/// before the run (`None` when no block child comes before it), the line
+/// after its last line, and the number of lines in the paragraph.
+fn line_run(
+    document: &Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    root: usize,
+) -> Option<(Option<usize>, usize, usize)> {
     let first = text_lines.get(node_id)?.lines.first()?.line;
     let lines = document
         .ifc_layout_node(root)?
@@ -10760,8 +10802,9 @@ fn lines_between_blocks(
         .as_ref()?
         .lines
         .as_ref()?;
+    let total = lines.lines.len();
     let mut start = None;
-    let mut end = lines.lines.len();
+    let mut end = total;
     for &(_, after) in &lines.block_line_starts {
         if after <= first {
             start = start.max(Some(after));
@@ -10769,7 +10812,7 @@ fn lines_between_blocks(
             end = end.min(after);
         }
     }
-    Some(start?..end)
+    Some((start, end, total))
 }
 
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
@@ -13023,6 +13066,11 @@ fn grow_ancestors_walk(
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
+        // An inline element of a paragraph has no box to grow either: the
+        // paragraph lays the block inside it out among its lines.
+        if document.nodes[parent].in_ifc_subtree() && !document.nodes[child].in_ifc_subtree() {
+            continue;
+        }
         // A float that grew with the lines inside it does not move the flow
         // after it: only the boxes that hold their floats grow around it (CSS
         // 2.1 §10.6.7). The flow past the float gives back the shift that
@@ -13757,9 +13805,12 @@ fn is_paragraph_in_flow(
             cascade,
             block,
             body_id,
-            true,
-            true,
-            through_floats,
+            FlowPassage {
+                sole_items: true,
+                clips: true,
+                floats: through_floats,
+                paragraphs: true,
+            },
         )
 }
 
@@ -13800,24 +13851,48 @@ fn placed_in_flow_to_body(
         cascade,
         block,
         body_id,
-        through_sole_items,
-        through_clips,
-        false,
+        FlowPassage {
+            sole_items: through_sole_items,
+            clips: through_clips,
+            floats: false,
+            paragraphs: false,
+        },
     )
 }
 
-/// [`placed_in_flow_to_body`], which with `through_floats` also passes a
-/// float: it grows with the lines inside it, and the boxes around it follow
-/// that growth as they follow a float's (see [`grow_ancestors_below`]).
+/// The boxes that [`placed_in_flow_or_floats_to_body`] passes on its way up
+/// besides plain block containers.
+#[derive(Clone, Copy)]
+struct FlowPassage {
+    /// A flex or grid container whose item grows alone (see
+    /// [`placed_in_flow_to_body`]).
+    sole_items: bool,
+    /// A box that clips at a set height (see [`holds_moved_lines`]).
+    clips: bool,
+    /// A float, which grows with the lines inside it.
+    floats: bool,
+    /// A paragraph that lays the box out as a block among its lines: the
+    /// paragraph's content after the block follows the block's moved lines.
+    paragraphs: bool,
+}
+
+/// [`placed_in_flow_to_body`], which with `floats` also passes a float: it
+/// grows with the lines inside it, and the boxes around it follow that growth
+/// as they follow a float's (see [`grow_ancestors_below`]). With `paragraphs`
+/// it also passes a paragraph that lays the box out among its lines.
 fn placed_in_flow_or_floats_to_body(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
-    through_sole_items: bool,
-    through_clips: bool,
-    through_floats: bool,
+    through: FlowPassage,
 ) -> bool {
+    let FlowPassage {
+        sole_items: through_sole_items,
+        clips: through_clips,
+        floats: through_floats,
+        paragraphs: through_paragraphs,
+    } = through;
     let mut child = block;
     let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
     loop {
@@ -13849,6 +13924,21 @@ fn placed_in_flow_or_floats_to_body(
                     && (document.nodes[parent].display() == DisplayValue::Contents
                         || moves_later_siblings(document, parent)
                             && holds_moved_lines(document, cascade, parent, through_clips)) =>
+            {
+                child = parent;
+            }
+            // A block among the lines of a paragraph: the paragraph's content
+            // after it follows it when its lines move down and it grows.
+            Some(parent)
+                if !placed_apart
+                    && through_paragraphs
+                    && ifc_paragraph_of_block(document, child) == Some(parent)
+                    && matches!(
+                        document.nodes[parent].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    )
+                    && content_follows_block_children(document, cascade, parent)
+                    && holds_moved_lines(document, cascade, parent, through_clips) =>
             {
                 child = parent;
             }
