@@ -673,3 +673,17 @@ fn inline_block_is_centered_in_its_column_by_its_own_width() {
     ));
     assert_eq!(in_columns, (across.0 + 100.0, 48.0, 20.0, 10.0));
 }
+
+/// A relative offset moves the box before the static position but not the
+/// static position: it stays at the end of the box's place in flow, 40px
+/// down the second column.
+#[test]
+fn static_position_ignores_a_relative_offset_before_it() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\">\
+         <div id=a style=\"height:40px\"></div>\
+         <div id=b style=\"height:40px;position:relative;top:20px\"></div>\
+         <div id=z style=\"position:absolute;width:10px;height:10px\"></div></div>",
+        &[("z", (108.0, 48.0, 10.0, 10.0))],
+    );
+}

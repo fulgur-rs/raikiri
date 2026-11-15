@@ -743,7 +743,13 @@ impl FlowPass {
                 let (before, size) = self.locations[&previous];
                 let layout = tree.nodes[previous].layout;
                 let start = layout.location.x - layout.margin.left - columns.origin.x;
-                let past_end = static_y - (before.y + size.height);
+                // A relative offset moves the box but not the boxes after it.
+                let (_, offset) = crate::layout::used_relative_offset_for_layout(
+                    tree.document,
+                    tree.style_views.cascade(),
+                    previous,
+                );
+                let past_end = static_y - (before.y - offset + size.height);
                 // A paragraph whose lines go on in later columns ends in the
                 // column of its last lines.
                 match paragraph_end(tree, previous) {
