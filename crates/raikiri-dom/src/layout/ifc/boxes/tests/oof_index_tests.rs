@@ -265,9 +265,10 @@ fn first_anchor_index_preserves_duplicate_line_and_fragment_order() {
     assert_eq!(positions.len(), 2);
     assert_ne!(positions[0], positions[1]);
     lines.lines = std::sync::Arc::new(vec![line.clone(), line]);
-    let anchors = first_anchors(&lines);
+    let doc = Document::new();
+    let anchors = first_anchors(&doc, &lines);
     for (&node, &anchor) in &anchors {
-        assert_eq!(Some(anchor), find_oof_anchor(&lines, node));
+        assert_eq!(Some(anchor), find_oof_anchor(&doc, &lines, node));
     }
     assert_eq!(anchors.len(), 1);
     assert_eq!(anchors.values().next().unwrap().0, 0);

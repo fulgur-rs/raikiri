@@ -334,6 +334,28 @@ fn grid_height_in_wrapper(doc: &Document, wrapper_height: f32, captions: &Captio
     f32_max_compat(wrapper_height - caption_height, 0.0)
 }
 
+/// The block size the in-flow captions of the horizontal `table` take
+/// around its grid when the table is `width` wide (its border box) in a
+/// containing block `parent_height` tall, or `None` for a table with no
+/// caption in flow or in a vertical writing mode.
+pub(crate) fn in_flow_caption_height(
+    doc: &mut LayoutSession<'_>,
+    table: usize,
+    width: f32,
+    parent_height: Option<f32>,
+) -> Option<f32> {
+    if table_writing_mode(doc, table).is_vertical() || !caption_in_flow(doc, table) {
+        return None;
+    }
+    let captions = layout_table_captions(doc, table, width, parent_height);
+    Some(
+        captions
+            .in_flow(doc)
+            .map(|caption| caption.size.height)
+            .sum(),
+    )
+}
+
 /// The `min-height` that bounds the grid box of a table whose flex column
 /// grew or shrank it: the container bounds the item, the whole wrapper box, so
 /// the grid has what the captions leave of the minimum. Any other minimum
@@ -1099,16 +1121,25 @@ fn compute_table_layout_checked(
         // captions leave. A `min-height` or `max-height` clamps the item the
         // same way, which is why it counts as flexing. (An item flexed to land
         // on the stated height cannot be told from one that was not.)
-        let item_is_flexed = flex_column_parent
-            && caption_in_flow(doc, table_idx)
-            && inputs.known_dimensions.height.is_some_and(|known| {
-                resolve_dimension(
-                    doc.physical_style(table_idx).flex_basis(),
-                    inputs.parent_size.height,
-                )
-                .or(specified_height)
-                .is_some_and(|stated| (known - (stated + lift_h)).abs() > FLEXED_HEIGHT_TOLERANCE)
-            });
+        //
+        // A flex base size with the captions' height added (see
+        // `caption_inclusive_bases`) is the whole wrapper box's already, so
+        // a height the container gives such an item is the wrapper's too.
+        let basis_includes_captions = inputs.known_dimensions.height.is_some()
+            && doc.context.caption_inclusive_bases.contains(&table_idx);
+        let item_is_flexed = basis_includes_captions
+            || flex_column_parent
+                && caption_in_flow(doc, table_idx)
+                && inputs.known_dimensions.height.is_some_and(|known| {
+                    resolve_dimension(
+                        doc.physical_style(table_idx).flex_basis(),
+                        inputs.parent_size.height,
+                    )
+                    .or(specified_height)
+                    .is_some_and(|stated| {
+                        (known - (stated + lift_h)).abs() > FLEXED_HEIGHT_TOLERANCE
+                    })
+                });
         // A flex or grid parent assigns the height of the whole wrapper box,
         // caption included, and so does the layout of an absolutely positioned
         // table, which measures the wrapper and lays the table out at that

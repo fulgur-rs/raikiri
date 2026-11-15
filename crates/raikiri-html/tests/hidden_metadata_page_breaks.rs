@@ -83,9 +83,9 @@ fn metadata_elements_in_the_body_do_not_count_as_content_before_a_break() {
 fn empty_inline_elements_do_not_count_as_content_before_a_break() {
     let document = "<div style='padding-top:10px'><p id=p style='margin:0;width:20px;padding-top:10px;padding-bottom:60px'>A</p></div><div id=z>Z</div>";
     let expected = boxes(document);
-    // Without text, generated content or inline-axis margins, borders and
-    // padding, an inline element makes a phantom line, which Chromium
-    // ignores when it breaks pages.
+    // Without text, generated content that shows something, or inline-axis
+    // margins, borders and padding, an inline element makes a phantom line,
+    // which Chromium ignores when it breaks pages.
     for element in [
         "<span></span>",
         "<span> </span>",
@@ -94,6 +94,9 @@ fn empty_inline_elements_do_not_count_as_content_before_a_break() {
         "<span style='display:none'>x</span><span></span>",
         "<span><span style='display:contents'></span></span>",
         "<span><span style='position:absolute'></span></span>",
+        "<style>.g::before{content:''}</style><span class=g></span>",
+        "<style>.g::after{content:''}</style><span class=g></span>",
+        "<style>.g::before{content:''}</style><div class=g></div>",
     ] {
         assert_eq!(
             boxes(&format!("{element}{document}")),
@@ -102,7 +105,8 @@ fn empty_inline_elements_do_not_count_as_content_before_a_break() {
         );
     }
     // With inline-axis padding, a line break, a replaced element (even one of
-    // no size), an atomic inline or text, the
+    // no size), an atomic inline, text or generated content that shows
+    // something, the
     // line is real and Chromium moves the paragraph to the next page.
     for element in [
         "<span style='padding-left:5px'></span>",
@@ -111,6 +115,9 @@ fn empty_inline_elements_do_not_count_as_content_before_a_break() {
         "<iframe width=0 height=0 style='border:0'></iframe>",
         "<span style='display:inline-block'></span>",
         "<span>x</span>",
+        "<style>.g::before{content:'x'}</style><span class=g></span>",
+        "<style>.g::before{content:'';padding-left:5px}</style><span class=g></span>",
+        "<style>.g::before{content:'';display:block;height:20px}</style><span class=g></span>",
     ] {
         let laid_out = boxes(&format!("{element}{document}"));
         assert_eq!(

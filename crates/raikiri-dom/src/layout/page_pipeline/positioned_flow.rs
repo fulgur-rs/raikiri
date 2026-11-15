@@ -761,7 +761,7 @@ fn keep_run(
                 anchors
                     .get_or_init(|| {
                         ifc.and_then(|ifc| ifc.lines.as_ref())
-                            .map(first_anchors)
+                            .map(|lines| first_anchors(document, lines))
                             .unwrap_or_default()
                     })
                     .get(&item.node)

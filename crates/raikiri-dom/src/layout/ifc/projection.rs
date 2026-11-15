@@ -234,15 +234,24 @@ impl GeneratedCounters {
     }
 }
 
-/// Whether `element` has generated text or a prepared inside marker image.
-pub(crate) fn has_in_flow_generated_text(
+/// Whether `element` has generated text that can make a line, or a prepared
+/// inside marker image. A blank inline `::before` or `::after` (only empty
+/// strings, no margin, border or padding; see
+/// [`crate::generated_content::is_line_making_generated_text`]) lays out a
+/// phantom line (CSS 2.1 §9.4.2), so it does not count.
+pub(crate) fn has_line_making_generated_text(
     doc: &Document,
     cascade: &CascadeResult,
     element: usize,
     counters: &GeneratedCounters,
 ) -> Result<bool, IfcError> {
     for pseudo in [PseudoElem::Marker, PseudoElem::Before, PseudoElem::After] {
-        if !is_in_flow_generated_text(cascade, element, pseudo) {
+        if !is_in_flow_generated_text(cascade, element, pseudo)
+            || (pseudo != PseudoElem::Marker
+                && crate::generated_content::is_blank_inline_generated_text(
+                    cascade, element, pseudo,
+                ))
+        {
             continue;
         }
         if pseudo != PseudoElem::Marker
