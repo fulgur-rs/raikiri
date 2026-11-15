@@ -10673,8 +10673,9 @@ fn lines_can_shift_inside(
         .is_some_and(|ifc| {
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
-                    b.kind == IfcBoxKind::OutOfFlow
-                        && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                    b.kind == IfcBoxKind::Float
+                        || (b.kind == IfcBoxKind::OutOfFlow
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                 })
         })
 }
@@ -10729,7 +10730,7 @@ fn lines_can_shift_above_blocks(
         .is_some_and(|ifc| {
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
-                    b.kind == IfcBoxKind::Block
+                    matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Float)
                         || b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
                 })
@@ -12426,6 +12427,7 @@ fn shift_paragraph_lines(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     moved: &LineMove,
+    went_ahead: Option<&[usize]>,
 ) -> (f32, Vec<usize>) {
     let growth = lines_shift_growth(document, moved.block_id, moved.shift);
     let follows = out_of_flow_moves(document, cascade, moved, growth);
@@ -12445,7 +12447,7 @@ fn shift_paragraph_lines(
             _ => None,
         })
         .collect();
-    let floats = floats_on_moved_lines(document, moved);
+    let floats = floats_on_moved_lines(document, moved, went_ahead);
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
     for node in atomics.into_iter().chain(floats.iter().copied()) {
         document.translate_pagination_y(node, moved.shift);
@@ -12460,11 +12462,16 @@ fn shift_paragraph_lines(
 /// from `moved.line` on: those whose margin box starts on or below the first
 /// of them. A float is placed on the line it comes in, or lower, so it starts
 /// the next page with that line (Chromium); one placed beside an earlier line
-/// stays. A float that already starts at or below where the line goes, as one
-/// that went to the next page by itself does, stays too. Positions are
+/// stays. A float that went to the next page by itself stays too: one of
+/// `went_ahead`, or, when the caller does not know those, any float that
+/// already starts at or below where the line goes. Positions are
 /// compared without the offsets of relatively positioned inlines. Lines that move up
 /// leave the floats to their caller.
-fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> Vec<usize> {
+fn floats_on_moved_lines(
+    document: &Document,
+    moved: &LineMove,
+    went_ahead: Option<&[usize]>,
+) -> Vec<usize> {
     let node = document
         .ifc_layout_node(moved.block_id)
         .filter(|_| moved.shift > 0.0);
@@ -12496,7 +12503,10 @@ fn floats_on_moved_lines(document: &Document, moved: &LineMove) -> Vec<usize> {
             let margin_top = document.pagination_local_y(float)
                 - relative
                 - document.nodes[float].layout.margin.top;
-            margin_top >= top - 0.01 && margin_top < moved_top - 0.01
+            margin_top >= top - 0.01
+                && went_ahead.map_or(margin_top < moved_top - 0.01, |ahead| {
+                    !ahead.contains(&float)
+                })
         })
         .collect()
 }
@@ -12513,7 +12523,12 @@ fn move_paragraph_lines(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> f32 {
-    let (growth, floats) = shift_paragraph_lines(document, cascade, moved);
+    let went_ahead: Vec<usize> = shifts
+        .floats_ahead
+        .iter()
+        .map(|&(float, _)| float)
+        .collect();
+    let (growth, floats) = shift_paragraph_lines(document, cascade, moved, Some(&went_ahead));
     if let Some((item, container)) = moved.flex_line {
         shift_later_flex_lines(document, container, item, growth);
     }
