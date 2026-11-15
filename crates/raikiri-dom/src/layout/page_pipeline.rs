@@ -6180,6 +6180,10 @@ fn first_box_ancestor_at_start(
             child_top - document.pagination_local_y(box_child)
         };
         let child_start = child_top;
+        // Where the flow puts the child below the parent's edges, without the
+        // relative offset that only paints it elsewhere.
+        let child_flow_start =
+            child_start - layout_relative_offset_y(document, cascade, body_id, box_child);
         let child_margin = document.nodes[box_child].layout.margin.top.max(0.0);
         box_child = parent;
         child_top = parent_top;
@@ -6192,7 +6196,7 @@ fn first_box_ancestor_at_start(
             // gap after the edges, and the page breaks in that gap (Chromium).
             let content_top = parent_top + layout.border.top + layout.padding.top;
             is_plain_block_box(document, parent)
-                && child_start - content_top <= child_margin + 0.01
+                && child_flow_start - content_top <= child_margin + 0.01
                 && parent_top - accumulated_relative_offset_y(document, cascade, body_id, parent)
                     > page_start + 0.001
         } else {

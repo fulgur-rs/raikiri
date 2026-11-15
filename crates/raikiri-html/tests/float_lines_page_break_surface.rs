@@ -1043,3 +1043,11 @@ fn a_clearing_box_below_the_top_edges_of_its_parent_leaves_them_on_the_first_pag
         ),
     ]);
 }
+
+#[test]
+fn a_relatively_offset_first_child_takes_its_padded_parent_along() {
+    assert_rows(&[(
+        "<div style='height:70px'></div><div style='width:60px'><div style='padding-top:5px'><div style='position:relative;top:8px'>Z</div></div></div>",
+        &[(1, 'Z', 18)],
+    )]);
+}
