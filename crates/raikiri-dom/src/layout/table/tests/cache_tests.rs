@@ -480,25 +480,32 @@ thread_local! {
     static ROW_MEASURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[test]
-fn a_table_in_block_flow_measures_each_cell_for_its_rows_once() {
+/// A 4 by 3 table in the body of a document, after a float when `float_css`
+/// is given and with a caption when `caption_css` is: the table's border box
+/// as `[x, y, width, height]` and how many times a cell was measured for its
+/// rows.
+fn block_flow_table(
+    table_css: &str,
+    float_css: Option<&str>,
+    caption_css: Option<&str>,
+) -> ([f32; 4], usize) {
     fn count(_: &mut LayoutSession<'_>, _: usize) {
         ROW_MEASURES.with(|count| count.set(count.get() + 1));
     }
-    let (rows, columns) = (4, 3);
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     doc.set_display(html, DisplayValue::Block);
-    let block = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
-    doc.set_display(block, DisplayValue::Block);
-    let table = append_grid_part(
-        &mut doc,
-        block,
-        "table",
-        DisplayValue::Table,
-        "display:table;border-collapse:collapse",
-    );
-    for _ in 0..rows {
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    doc.set_display(body, DisplayValue::Block);
+    if let Some(css) = float_css {
+        let float = doc.append_element(Some(body), "div", Some(css));
+        doc.set_display(float, DisplayValue::Block);
+    }
+    let table = append_grid_part(&mut doc, body, "table", DisplayValue::Table, table_css);
+    if let Some(css) = caption_css {
+        append_grid_part(&mut doc, table, "caption", DisplayValue::TableCaption, css);
+    }
+    for _ in 0..4 {
         let row = append_grid_part(
             &mut doc,
             table,
@@ -506,7 +513,7 @@ fn a_table_in_block_flow_measures_each_cell_for_its_rows_once() {
             DisplayValue::TableRow,
             "display:table-row",
         );
-        for _ in 0..columns {
+        for _ in 0..3 {
             append_grid_part(
                 &mut doc,
                 row,
@@ -522,10 +529,56 @@ fn a_table_in_block_flow_measures_each_cell_for_its_rows_once() {
     cell_scope_tests::with_inspector(count, || {
         crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     });
+    let layout = doc.nodes[table].layout;
+    (
+        [
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ],
+        ROW_MEASURES.with(|count| count.get()),
+    )
+}
+
+#[test]
+fn a_table_in_block_flow_measures_each_cell_for_its_rows_once() {
     // The block measures the table's width before it lays the table out; that
     // measure needs the columns and not the rows.
-    assert_eq!(ROW_MEASURES.with(|count| count.get()), rows * columns);
-    let layout = doc.nodes[table].layout;
-    assert_eq!(layout.size.width, 68.0);
-    assert_eq!(layout.size.height, 50.0);
+    let (rect, measures) = block_flow_table("display:table;border-collapse:collapse", None, None);
+    assert_eq!(measures, 12);
+    assert_eq!(rect, [0.0, 0.0, 68.0, 50.0]);
+}
+
+#[test]
+fn a_caption_wider_than_the_grid_sets_the_width_a_block_measures() {
+    let (rect, measures) = block_flow_table(
+        "display:table;border-collapse:collapse",
+        None,
+        Some("display:table-caption;width:200px;height:5px"),
+    );
+    assert_eq!(measures, 12);
+    assert_eq!(rect, [0.0, 0.0, 200.0, 55.0]);
+}
+
+#[test]
+fn a_table_with_a_content_sized_minimum_height_keeps_its_size() {
+    let (rect, _) = block_flow_table(
+        "display:table;border-collapse:collapse;min-height:max-content",
+        None,
+        None,
+    );
+    assert_eq!(rect, [0.0, 0.0, 68.0, 50.0]);
+}
+
+#[test]
+fn a_table_beside_a_float_keeps_its_place_and_size() {
+    let (rect, measures) = block_flow_table(
+        "display:table;border-collapse:collapse",
+        Some("display:block;float:left;width:100px;height:30px"),
+        None,
+    );
+    assert_eq!(rect, [100.0, 0.0, 68.0, 50.0]);
+    // One pass for the height the float search asks for, one to lay it out.
+    assert_eq!(measures, 24);
 }

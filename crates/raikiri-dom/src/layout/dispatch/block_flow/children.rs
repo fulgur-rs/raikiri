@@ -887,9 +887,9 @@ pub(super) fn layout(
                         // carries no height, so its cache is restored.
                         let idx = usize::from(child);
                         let saved = tree.clone_layout_cache(idx);
-                        tree.context.table_width_probe = true;
+                        let outer = tree.context.table_width_probe.replace((idx, measure));
                         let output = tree.compute_child_layout_with_block_ctx(child, measure, None);
-                        tree.context.table_width_probe = false;
+                        tree.context.table_width_probe = outer;
                         tree.restore_layout_cache(idx, saved);
                         break 'width output.size.width;
                     }

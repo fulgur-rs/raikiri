@@ -778,8 +778,8 @@ fn compute_table_layout_checked(
     };
 
     let table_idx = usize::from(table_id);
-    let width_only = std::mem::take(&mut doc.context.table_width_probe)
-        && inputs.run_mode == RunMode::ComputeSize;
+    let width_only = inputs.run_mode == RunMode::ComputeSize
+        && doc.context.table_width_probe == Some((table_idx, inputs));
     if inputs.run_mode == RunMode::PerformLayout {
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
