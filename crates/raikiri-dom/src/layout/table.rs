@@ -3393,10 +3393,6 @@ fn measure_cell_inline(
     // under either constraint unless a size of its own bounds the sum. The
     // other width is then the paragraph's other width and the same edges.
     if let Some(paragraph) = paragraph
-        && matches!(
-            axis,
-            AvailableSpace::MinContent | AvailableSpace::MaxContent
-        )
         && cell_adds_only_its_edges(doc, cell_id)
     {
         let (asked, other) = if max_content {

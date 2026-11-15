@@ -595,13 +595,7 @@ fn text_table(table_css: &str, cell_css: &str) -> ([f32; 2], usize) {
         Some("display:block;margin:0;font:10px Ahem"),
     );
     doc.set_display(body, DisplayValue::Block);
-    let table = append_grid_part(
-        &mut doc,
-        body,
-        "table",
-        DisplayValue::Table,
-        "display:table",
-    );
+    let table = append_grid_part(&mut doc, body, "table", DisplayValue::Table, table_css);
     for texts in [["a", "bb cc", "d"], ["eee", "f", "gg hh ii"]] {
         let row = append_grid_part(
             &mut doc,
@@ -639,12 +633,14 @@ fn a_table_in_block_flow_measures_the_widths_of_a_text_cell_once() {
 }
 
 #[test]
-fn collapsed_borders_keep_the_widths_measured_for_a_text_cell() {
+fn collapsed_borders_measure_a_text_cell_once_for_each_pass() {
+    // Resolving the collapsed borders moves the cache generation between the
+    // block's measure and the layout, so each pass measures the cells anew.
     assert_eq!(
         text_table(
             "display:table;border-collapse:collapse",
             "display:table-cell;border:1px solid;padding:2px"
         ),
-        ([178.0, 32.0], 6)
+        ([176.0, 31.0], 12)
     );
 }
