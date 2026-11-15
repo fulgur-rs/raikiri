@@ -1592,11 +1592,22 @@ impl PaginationState {
                                 <= super::leading_space_between(document, cascade, node_id, holder)
                                     + 0.01)
                         && (lead <= 0.0
-                            // A paragraph of one unplaced line moves on
-                            // whatever its height: only the blocks it begins
-                            // decide whether it starts the page.
-                            || unplaced_crosses
-                            || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001
+                            // A paragraph of one unplaced line needs room for
+                            // the line alone: the edges after it go on to the
+                            // pages after it.
+                            || lead
+                                + column_piece
+                                    .or(candidate
+                                        .context
+                                        .unplaced_line()
+                                        .filter(|&line| {
+                                            super::unplaced_line_ends_content(
+                                                document, node_id, line, height,
+                                            )
+                                        })
+                                        .map(|line| line.end_within(height)))
+                                    .unwrap_or(height)
+                                <= next_page_step + 0.001
                             || super::contained_cloned_leading_holder(
                                 document, cascade, node_id, holder, lead,
                             ))
@@ -2566,7 +2577,8 @@ impl PaginationState {
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
-            loop {
+            // Lines a clip hides after a move are left where they are.
+            while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
                 let page_step = page_origins.step_at(page);
                 let lines_fit = line_metrics.last().is_some_and(|(_, bottom)| {
@@ -2672,6 +2684,38 @@ impl PaginationState {
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
                         || (line_fit.leaves_too_few_orphans() && follows_content()));
+                // A block moved whole below the padding and border of the
+                // boxes it begins, where they leave its first line no room
+                // before the page end, breaks between those edges and the
+                // line, as Chromium does: the line starts the page after.
+                // The lines after it are judged again from there, as they
+                // may break on the pages after it in turn.
+                if moved_whole
+                    && lines_can_move
+                    && line_fit.lines_before_break == 0
+                    && block_effective_y > page_start + 0.001
+                    && first_line_top < page_start + page_step - 0.001
+                {
+                    page = page.saturating_add(1);
+                    let shift = page_origins.origin(page) - first_line_top;
+                    let moved = self.move_lines(
+                        document,
+                        env,
+                        candidate,
+                        entry,
+                        blocks,
+                        text,
+                        block_id,
+                        [(0, shift, page)],
+                    );
+                    moved?;
+                    // A clip that stays where it was hides more of the
+                    // moved lines.
+                    if clip.is_some() {
+                        (line_metrics, widows) = clipped(document, text.effective_y);
+                    }
+                    continue;
+                }
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
@@ -2747,9 +2791,6 @@ impl PaginationState {
                         // moved lines.
                         if clip.is_some() {
                             (line_metrics, widows) = clipped(document, text.effective_y);
-                            if line_metrics.is_empty() {
-                                break;
-                            }
                         }
                     }
                     LineBreakFix::Keep => {
