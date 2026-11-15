@@ -7,7 +7,9 @@ mod positioned;
 mod sizing;
 pub(crate) mod style_input;
 
-pub(crate) use children::{justified_offset, justified_offset_along, justify_fits_content};
+pub(crate) use children::{
+    justified_offset, justified_offset_along, justify_fits_content, static_inline_share,
+};
 pub(crate) use positioned::aligned_static_position;
 
 use crate::layout::context::{LayoutSession, TextGroupScope};

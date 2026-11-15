@@ -283,7 +283,7 @@ pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> b
         && !REPLACED_BOX_TAGS.contains(&tag)
 }
 
-fn static_inline_share(
+pub(crate) fn static_inline_share(
     text_align: TextAlign,
     text_align_last: TextAlignLast,
     direction: Direction,

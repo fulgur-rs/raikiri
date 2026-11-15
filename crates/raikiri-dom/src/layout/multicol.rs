@@ -619,14 +619,22 @@ impl FlowPass {
         if let Some(area) = output.oof_positioning_area.as_mut() {
             area.size.height = (area.size.height + grown).max(0.0);
         }
-        // The columns placed the children only if they moved one, or made it
-        // narrower; a strategy that gives up leaves them where they were.
-        let placed = self.locations.iter().any(|(&id, &(location, size))| {
-            let after = tree.nodes[id].layout;
-            after.location != location || after.size.width != size.width
-        });
-        if let Some(columns) = self.columns.filter(|_| placed && self.deferred) {
-            let index = usize::from(node_id);
+        let index = usize::from(node_id);
+        // The columns placed the children only if they moved one, made it
+        // narrower or broke it; a strategy that gives up leaves them where
+        // they were.
+        let placed = |columns: ColumnBox| {
+            self.locations.iter().any(|(&id, &(location, size))| {
+                let after = tree.nodes[id].layout;
+                after.location != location
+                    || after.size.width != size.width
+                    || column_pieces(tree, index, columns, id).len() > 1
+            })
+        };
+        if let Some(columns) = self
+            .columns
+            .filter(|&columns| self.deferred && placed(columns))
+        {
             let children = tree.children_through_contents(index);
             let moves: Vec<Option<StaticMove>> = output
                 .oof_candidates
@@ -643,6 +651,21 @@ impl FlowPass {
                 })
                 .collect();
             let mut moves = moves.into_iter();
+            // Where an inline-level box goes on its line: the share of the
+            // room the box leaves that is before it.
+            let share = {
+                let node = &tree.nodes[index];
+                let direction = if columns.context.rtl {
+                    Direction::Rtl
+                } else {
+                    Direction::Ltr
+                };
+                crate::layout::dispatch::block_flow::static_inline_share(
+                    node.static_position_text_align,
+                    node.static_position_text_align_last,
+                    direction,
+                )
+            };
             output.oof_candidates.for_each_mut(|candidate| {
                 // A candidate with no move keeps its place.
                 let same = Line {
@@ -658,13 +681,23 @@ impl FlowPass {
                     &mut candidate.static_position.x,
                     &mut candidate.static_position.y,
                 );
-                // The same place in the column as across the line.
                 let (line, column) = (moved.line, moved.column);
-                let scale = (column.end - column.start) / (line.end - line.start).max(f32::EPSILON);
-                let map = |at: f32| column.start + (at - line.start) * scale;
-                x.area = Line {
-                    start: map(x.area.start),
-                    end: map(x.area.end),
+                x.area = if x.area.start == x.area.end {
+                    // A point on the line, where the box keeps its own width:
+                    // the room it leaves changes with the width of the column.
+                    let at = x.area.start
+                        + (column.start - line.start)
+                        + ((column.end - column.start) - (line.end - line.start)) * share;
+                    Line { start: at, end: at }
+                } else {
+                    // The same area in the column as across the line.
+                    let scale =
+                        (column.end - column.start) / (line.end - line.start).max(f32::EPSILON);
+                    let map = |at: f32| column.start + (at - line.start) * scale;
+                    Line {
+                        start: map(x.area.start),
+                        end: map(x.area.end),
+                    }
                 };
                 y.area.start += moved.shift;
                 y.area.end += moved.shift;

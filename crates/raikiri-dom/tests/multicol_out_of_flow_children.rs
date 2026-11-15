@@ -633,3 +633,43 @@ fn box_inside_a_broken_box_follows_its_content() {
         ],
     );
 }
+
+/// A box with a width of its own that the columns break keeps its place and
+/// width in the first column; the static position after it still follows
+/// its last piece, 60px down the second column.
+#[test]
+fn static_position_after_a_broken_box_of_its_own_width() {
+    check(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative\">\
+         <div id=a style=\"width:50px;height:120px\"></div>\
+         <div id=z style=\"position:absolute;width:10px;height:10px\"></div></div>",
+        &[("z", (108.0, 68.0, 10.0, 10.0))],
+    );
+}
+
+/// An inline-level box with a width of its own is centered in its column as
+/// it is centered across a line of the same width outside columns: the
+/// 20px box starts 40px into the 100px column. (Chromium starts it at the
+/// center point instead, outside columns as well.)
+#[test]
+fn inline_block_is_centered_in_its_column_by_its_own_width() {
+    let column = |body: &str| {
+        rects_of(body)
+            .into_iter()
+            .find(|(id, _)| id == "z")
+            .map(|(_, rect)| rect)
+            .expect("a box")
+    };
+    let z =
+        "<div id=z style=\"position:absolute;display:inline-block;width:20px;height:10px\"></div>";
+    let in_columns = column(&format!(
+        "<div id=m style=\"columns:2;column-gap:0;width:200px;position:relative;\
+         text-align:center\"><div style=\"height:40px\"></div>\
+         <div style=\"height:40px\"></div>{z}</div>"
+    ));
+    let across = column(&format!(
+        "<div id=m style=\"width:100px;position:relative;text-align:center\">\
+         <div style=\"height:40px\"></div>{z}</div>"
+    ));
+    assert_eq!(in_columns, (across.0 + 100.0, 48.0, 20.0, 10.0));
+}
