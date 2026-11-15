@@ -363,7 +363,10 @@ pub(super) fn relative(
     parent: Size<Option<f32>>,
     direction: Direction,
 ) -> Point<f32> {
-    if !matches!(style.position, Position::Relative | Position::Sticky) {
+    // A sticky box is laid out in normal flow without an offset; the offset
+    // depends on where the box ends up, so the painter applies it (see
+    // `layout::sticky`).
+    if style.position != Position::Relative {
         return Point::ZERO;
     }
     let inset = Edges {

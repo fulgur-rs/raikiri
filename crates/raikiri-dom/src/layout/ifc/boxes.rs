@@ -4469,13 +4469,13 @@ fn relative_inset(
     axes: IfcAxes,
 ) -> (f32, f32) {
     let inset = tree.physical_style(node).inset();
-    if !matches!(
-        tree.nodes[node].layout_position(),
-        Position::Relative | Position::Sticky
-    ) || inset.left.is_auto()
-        && inset.right.is_auto()
-        && inset.top.is_auto()
-        && inset.bottom.is_auto()
+    // A sticky box keeps its place in the line; the painter applies its
+    // offset (see `layout::sticky`).
+    if tree.nodes[node].layout_position() != Position::Relative
+        || inset.left.is_auto()
+            && inset.right.is_auto()
+            && inset.top.is_auto()
+            && inset.bottom.is_auto()
     {
         return (0.0, 0.0);
     }

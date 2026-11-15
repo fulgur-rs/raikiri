@@ -446,9 +446,13 @@ pub(super) fn element_motion(
     cv: &ComputedValues,
 ) -> Motion {
     if cv.transform.is_empty()
-        && document
-            .get_node(id)
-            .is_none_or(|node| node.position() != &raikiri_style::property::PositionValue::Relative)
+        && document.get_node(id).is_none_or(|node| {
+            !matches!(
+                node.position(),
+                raikiri_style::property::PositionValue::Relative
+                    | raikiri_style::property::PositionValue::Sticky
+            )
+        })
     {
         return Motion::Still;
     }

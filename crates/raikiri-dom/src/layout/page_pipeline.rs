@@ -507,8 +507,8 @@ fn fragment_tree_end(
     end
 }
 
-/// The block offset that layout applied to a relatively positioned or
-/// sticky box. It moves the box but not the flow around it (CSS 2.1
+/// The block offset that layout applied to a relatively positioned box.
+/// It moves the box but not the flow around it (CSS 2.1
 /// §9.4.3), and fragmentation happens before it (CSS Fragmentation 3 §5.5).
 fn layout_relative_offset_y(
     document: &Document,
@@ -520,8 +520,7 @@ fn layout_relative_offset_y(
 }
 
 /// The inline and block offsets that layout applied to a relatively
-/// positioned or sticky box, as [`layout_relative_offset_y`] takes the
-/// block one.
+/// positioned box, as [`layout_relative_offset_y`] takes the block one.
 fn layout_relative_offset(
     document: &Document,
     cascade: &CascadeResult,
@@ -529,16 +528,13 @@ fn layout_relative_offset(
     node_id: usize,
 ) -> (f32, f32) {
     // A `display: contents` element generates no box to offset.
-    if !matches!(
-        document.nodes[node_id].position(),
-        PositionValue::Relative | PositionValue::Sticky
-    ) || matches!(
-        document.nodes[node_id].display(),
-        DisplayValue::Contents | DisplayValue::None
-    ) || relative_offset_is_painted(document, cascade, body_id, node_id)
-        // Layout places a sticky float without its offset.
-        || (matches!(document.nodes[node_id].position(), PositionValue::Sticky)
-            && is_floating_box_for_pagination(document, cascade, node_id))
+    // Layout places a sticky box without its offset.
+    if !matches!(document.nodes[node_id].position(), PositionValue::Relative)
+        || matches!(
+            document.nodes[node_id].display(),
+            DisplayValue::Contents | DisplayValue::None
+        )
+        || relative_offset_is_painted(document, cascade, body_id, node_id)
     {
         return (0.0, 0.0);
     }
@@ -613,7 +609,10 @@ fn relative_offset_is_painted(
     body_id: usize,
     node_id: usize,
 ) -> bool {
-    if !matches!(document.nodes[node_id].position(), PositionValue::Relative) {
+    if !matches!(
+        document.nodes[node_id].position(),
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
         return false;
     }
     super::relative::placed_without_relative_offset_for_layout(
@@ -1518,6 +1517,7 @@ fn layout_single_page_with_table_projection(
 
     document.fragment_tree.clear();
     document.column_rules.clear();
+    document.sticky_offsets.clear();
     for state in document
         .nodes
         .iter_mut()
@@ -1605,6 +1605,7 @@ fn layout_single_page_with_table_projection(
     // `enforce_layout_invariants` documentation. Events enter the session's
     // warning buffer along with Steps 1 and 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
+    super::sticky::resolve_offsets(document, cascade);
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
@@ -15202,7 +15203,7 @@ fn is_flex_or_grid_item(document: &super::context::LayoutSession<'_>, node_id: u
 /// common case out of the hot ancestor walks. Style comparison builds assert
 /// the shortcut against the view for every box they lay out, so an override
 /// that made a `visible` box scroll has to teach this function first.
-fn scrolls_overflow(
+pub(super) fn scrolls_overflow(
     document: &super::context::LayoutSession<'_>,
     computed: &raikiri_style::ComputedValues,
     node_id: usize,

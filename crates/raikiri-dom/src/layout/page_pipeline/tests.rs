@@ -9036,7 +9036,9 @@ fn a_fixed_box_inside_a_paragraph_is_laid_out() {
 fn a_relatively_positioned_block_child_is_offset() {
     let mut expected_5920 = [
         ((4.0, 23.0, 200.0, 10.0), 40.0),
-        ((0.0, 23.0, 200.0, 10.0), 40.0),
+        // Layout places a sticky box where the flow puts it; the painter
+        // applies its offset.
+        ((0.0, 20.0, 200.0, 10.0), 40.0),
     ]
     .into_iter();
     for css in [
@@ -13795,8 +13797,8 @@ fn a_box_moving_inside_a_fixed_height_context_keeps_the_outer_float_floor() {
 }
 
 #[test]
-fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
-    for position in ["relative", "sticky"] {
+fn a_relative_offset_does_not_grow_the_ancestor_of_a_moved_box() {
+    let wrapper_height = |position: &str| {
         let mut wrapper = 0;
         let (doc, _) = paged_body(|doc, body| {
             doc.append_element(Some(body), "div", Some("display:block;height:50px"));
@@ -13809,11 +13811,15 @@ fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
                 )),
             );
         });
-        // The box's flow position 50..110 crosses the page end, so it moves
-        // 50px and ends 110px into the wrapper. The 30px inset moves the box
-        // but not the flow it ends.
-        assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0, "{position}");
-    }
+        doc.nodes[wrapper].layout.size.height
+    };
+    // The box's flow position 50..110 crosses the page end, so it moves
+    // 50px and ends 110px into the wrapper. The 30px inset moves the box
+    // but not the flow it ends.
+    assert_eq!(wrapper_height("relative"), 110.0);
+    // A sticky box already below its `top` stays where the flow puts it,
+    // as a static one does.
+    assert_eq!(wrapper_height("sticky"), wrapper_height("static"));
 }
 
 #[test]
