@@ -1246,10 +1246,14 @@ fn compute_table_layout_checked(
                         && (states_height || inputs.known_dimensions.height.is_some())
                 })
                 .map(|stated| {
-                    f32_max_compat(
-                        inputs.known_dimensions.height.unwrap_or(stated + lift_h),
-                        padding_border_size.height,
-                    )
+                    // The height a parent measured of an item that owns its
+                    // height is the wrapper's, captions and all, and not one
+                    // the grid box can take.
+                    let known = inputs
+                        .known_dimensions
+                        .height
+                        .filter(|_| !resolves_item_height);
+                    f32_max_compat(known.unwrap_or(stated + lift_h), padding_border_size.height)
                 });
             let mut height = stated_h.unwrap_or_else(|| {
                 let known = effective_known
@@ -2366,23 +2370,43 @@ fn compute_table_layout_checked(
 /// those of its grid box with the caption on top of it (CSS Tables 3 section
 /// 3): the row or track is as tall as the whole wrapper box, as in Chromium.
 pub(super) fn item_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
+    item_height_owner(doc, table).is_some()
+}
+
+/// Why a horizontal table item of a grid or of a flex row owns its height
+/// (see [`item_owns_height`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeightOwner {
+    /// Its collapsed rows leave a height the library cannot tell.
+    CollapsedRows,
+    /// A caption in flow comes on top of the height it states.
+    Caption,
+}
+
+/// Why `table` owns its height, or `None` where the layout library takes it
+/// from the style of the table.
+fn item_height_owner(doc: &LayoutSession<'_>, table: usize) -> Option<HeightOwner> {
     if doc.nodes[table].formatting_context != FormattingContext::Table
         || doc.nodes[table].layout_position() == Position::Absolute
         || table_writing_mode(doc, table).is_vertical()
     {
-        return false;
+        return None;
     }
-    let Some(parent) = doc.taffy_parent_of(table) else {
-        return false;
-    };
+    let parent = doc.taffy_parent_of(table)?;
     match doc.nodes[parent].formatting_context {
         FormattingContext::Grid => {}
         FormattingContext::Flex
             if doc.physical_style(parent).flex_direction_is_row()
                 != super::dispatch::used_writing_mode(doc, parent).is_vertical() => {}
-        _ => return false,
+        _ => return None,
     }
-    table_has_collapsed_rows(doc, table) || caption_in_flow(doc, table)
+    if table_has_collapsed_rows(doc, table) {
+        return Some(HeightOwner::CollapsedRows);
+    }
+    // The layout library applies a ratio to the whole wrapper box, which it
+    // can do only from the size it reads.
+    (caption_in_flow(doc, table) && doc.table_style(table).aspect_ratio().is_none())
+        .then_some(HeightOwner::Caption)
 }
 
 pub(super) fn item_owns_width(doc: &LayoutSession<'_>, table: usize) -> bool {
@@ -2448,7 +2472,12 @@ pub(super) fn item_style<'a>(
 ) -> LayoutStyleView<'a> {
     let view = doc.query_style(table, role);
     let owns_width = item_owns_width(doc, table);
-    if !owns_width && !item_owns_height(doc, table) {
+    let height_owner = if owns_width {
+        None
+    } else {
+        item_height_owner(doc, table)
+    };
+    if !owns_width && height_owner.is_none() {
         return view;
     }
     let parent = doc.taffy_parent_of(table).expect("table item has a parent");
@@ -2460,12 +2489,18 @@ pub(super) fn item_style<'a>(
     };
     let parent = doc.query_style(parent, parent_role);
     if owns_width {
-        view.with_collapsing_table_width(parent.align_items(), parent.justify_items(), flex)
-    } else if table_has_collapsed_rows(doc, table) {
-        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
+        return view.with_collapsing_table_width(
+            parent.align_items(),
+            parent.justify_items(),
+            flex,
+        );
+    }
+    let view =
+        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex);
+    if height_owner == Some(HeightOwner::Caption) {
+        view.with_visible_table_min_height()
     } else {
-        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
-            .with_visible_table_min_height()
+        view
     }
 }
 

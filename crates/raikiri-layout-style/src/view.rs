@@ -190,7 +190,9 @@ impl<'a> LayoutStyleView<'a> {
     /// section 3), so the library measures the whole wrapper box instead. A
     /// grid still takes the `min-height` for the minimum contribution of such
     /// an item to the tracks it spans, as Chromium does, though the table lays
-    /// its grid box out at that height and its caption on top of it.
+    /// its grid box out at that height and its caption on top of it. A flex
+    /// row reads it as the minimum of the item's cross size, which the
+    /// measured wrapper box never falls under.
     #[inline]
     pub const fn with_visible_table_min_height(mut self) -> Self {
         self.visible_table_min_height = true;

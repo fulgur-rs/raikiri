@@ -89,11 +89,114 @@ fn assert_cases(cases: &[(&str, Expected<'_>)]) {
 }
 
 /// The line of a flex row whose height follows its items is as tall as the
-/// stated height of a table item and its captions, whatever the item aligns
-/// to, and a row of a definite height aligns that whole box in its line.
+/// stated height of a table item and its captions, whatever the item aligns to
+/// and whether the table has rows, and a row of a definite height aligns that
+/// whole box in its line.
 #[test]
 fn a_flex_row_is_as_tall_as_the_whole_wrapper_box_of_a_table_that_states_its_height() {
     assert_cases(&[
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 60.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [0.0, 20.0, 20.0, 50.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style=';border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style=';border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='min-height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 60.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex'><table id=t style='min-height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [0.0, 20.0, 20.0, 50.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style=';border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style=';border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='min-height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 0.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='min-height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 50.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 70.0, 800.0, 10.0]),
+            ],
+        ),
         (
             "<div id=c style='display:flex'><table id=t style=';height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
             &[
@@ -917,10 +1020,113 @@ fn a_table_that_overflows_a_shorter_line_keeps_its_captions() {
 }
 
 /// An auto track of a grid holds the whole wrapper box of a table item that
-/// states its height, and a fixed track aligns that box in it.
+/// states its height, whether the table has rows, and a fixed track aligns that
+/// box in it.
 #[test]
 fn a_grid_track_holds_the_stated_height_of_a_table_item_and_its_captions() {
     assert_cases(&[
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("d", [0.0, 70.0, 20.0, 10.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style=';border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 20.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 30.0, 20.0, 10.0]),
+                ("z", [0.0, 40.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style=';border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 20.0, 20.0, 10.0]),
+                ("z", [0.0, 30.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='min-height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='min-height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("d", [0.0, 70.0, 20.0, 10.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style=';border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style=';border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='min-height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("cap", [0.0, 20.0, 800.0, 10.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid;grid-template-rows:100px'><table id=t style='min-height:50px;border-spacing:0'></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 110.0]),
+                ("d", [0.0, 120.0, 20.0, 10.0]),
+                ("z", [0.0, 130.0, 800.0, 10.0]),
+            ],
+        ),
         (
             "<div id=c style='display:grid'><table id=t style=';height:50px;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
             &[
