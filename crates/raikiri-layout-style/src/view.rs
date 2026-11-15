@@ -26,6 +26,9 @@ pub struct LayoutStyleView<'a> {
     /// Whether the layout library is told nothing of the height of a table
     /// that owns it (see [`Self::with_hidden_table_height`]).
     hidden_table_height: bool,
+    /// Whether the `min-height` of such a table stays in sight of the layout
+    /// library (see [`Self::with_visible_table_min_height`]).
+    visible_table_min_height: bool,
     pub(crate) collapsing_table_height: bool,
     pub(crate) collapsing_table_width: bool,
     pub(crate) table_item_align_self: Option<values::AlignSelf>,
@@ -68,6 +71,7 @@ impl<'a> LayoutStyleView<'a> {
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
             hidden_table_height: false,
+            visible_table_min_height: false,
             collapsing_table_height: false,
             collapsing_table_width: false,
             table_item_align_self: None,
@@ -91,6 +95,7 @@ impl<'a> LayoutStyleView<'a> {
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
             swapped_oof_alignment: false,
             hidden_table_height: false,
+            visible_table_min_height: false,
             collapsing_table_height: false,
             collapsing_table_width: false,
             table_item_align_self: None,
@@ -177,6 +182,21 @@ impl<'a> LayoutStyleView<'a> {
         self
     }
 
+    /// Leave the `min-height` of a table whose height this view hides (see
+    /// [`Self::with_collapsing_table_height`]) for the layout library to read.
+    ///
+    /// The `height` and limits of a table with a caption in flow are those of
+    /// its grid box, and the caption comes on top of them (CSS Tables 3
+    /// section 3), so the library measures the whole wrapper box instead. A
+    /// grid still takes the `min-height` for the minimum contribution of such
+    /// an item to the tracks it spans, as Chromium does, though the table lays
+    /// its grid box out at that height and its caption on top of it.
+    #[inline]
+    pub const fn with_visible_table_min_height(mut self) -> Self {
+        self.visible_table_min_height = true;
+        self
+    }
+
     /// Let a vertical table measure the width its collapsed rows leave.
     /// The parent consumes that width without reapplying authored limits or
     /// deriving another width from its aspect ratio.
@@ -242,7 +262,9 @@ impl<'a> LayoutStyleView<'a> {
     /// it.
     #[inline]
     pub(crate) fn library_height(&self, property: LengthProperty) -> LengthValue<'a> {
-        if self.hidden_table_height {
+        if self.hidden_table_height
+            && !(self.visible_table_min_height && matches!(property, LengthProperty::MinHeight))
+        {
             return self.with_payload(Cow::Owned(L::Auto), property);
         }
         self.length(property)
