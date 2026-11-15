@@ -3,9 +3,14 @@
 //! Run `cargo bench -p raikiri-bench --bench table_memory`.
 //! `RAIKIRI_TABLE_ROWS=2500,5000,20000` selects the row counts. Each row of
 //! output reports the peak live heap during a stage and the heap that stage
-//! leaves behind, then the time of that same run. The time includes the
-//! counter updates of every allocation, so it compares runs of this bench
-//! with each other, not with an uninstrumented layout.
+//! leaves behind, then the time of that same run. `dom_mb` and `cascade_mb`
+//! are the sizes of a copy of the parsed tree and of the parsed cascade.
+//! The time includes the counter updates of every allocation, so it compares
+//! runs of this bench with each other, not with an uninstrumented layout.
+//!
+//! `RAIKIRI_TABLE_TIMING=1` reports times only and updates no counter. The
+//! allocator is still this bench's wrapper, which then costs one atomic load
+//! per call.
 
 // cov:ignore: benchmark harness; workspace coverage does not build this target.
 mod common {
@@ -96,6 +101,12 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, isize, isize) {
     (value, PEAK.load(Relaxed), LIVE.load(Relaxed))
 }
 
+/// `f` under the counters, or `f` alone with zeroes when `counting` is off.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+fn staged<T>(counting: bool, f: impl FnOnce() -> T) -> (T, isize, isize) {
+    if counting { measure(f) } else { (f(), 0, 0) }
+}
+
 /// Three columns of short text, sized by their content.
 // cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn table_document(rows: usize) -> String {
@@ -171,17 +182,27 @@ fn main() {
         .unwrap_or_else(|| vec![2_500, 5_000]);
     let only = std::env::var("RAIKIRI_TABLE_MODE").ok();
     let wants = |mode: &str| only.as_deref().is_none_or(|only| only == mode);
+    let counting = std::env::var("RAIKIRI_TABLE_TIMING").as_deref() != Ok("1");
     let resources = common::workloads::resources();
     let _ = stream(&table_document(1), &resources);
     for rows in rows {
         let html = table_document(rows);
         if wants("batch") {
             let start = Instant::now();
-            let (document, parse_peak, parse_live) =
-                measure(|| parse_html_with_resources(html.as_bytes(), &resources).expect("parse"));
+            let (document, parse_peak, parse_live) = staged(counting, || {
+                parse_html_with_resources(html.as_bytes(), &resources).expect("parse")
+            });
             let parse_time = start.elapsed();
+            let (dom_bytes, cascade_bytes) = if counting {
+                (
+                    measure(|| document.dom().clone()).2,
+                    measure(|| document.cascade().clone()).2,
+                )
+            } else {
+                (0, 0)
+            };
             let start = Instant::now();
-            let (laid_out, layout_peak, layout_live) = measure(|| {
+            let (laid_out, layout_peak, layout_live) = staged(counting, || {
                 let LayoutStatus::Completed(laid_out) = layout(
                     &document,
                     PageDefaults::default(),
@@ -195,32 +216,53 @@ fn main() {
             });
             let layout_time = start.elapsed();
             let cells = (rows + 1) * 3;
-            println!(
-                "rows={rows} input={} mode=batch pages={} parse_peak_mb={:.1} parse_live_mb={:.1} \
-                 layout_peak_mb={:.1} layout_live_mb={:.1} total_peak_mb={:.1} \
-                 peak_kb_per_cell={:.1} parse_s={:.2} layout_s={:.2}",
-                html.len(),
-                laid_out.page_count(),
-                mb(parse_peak),
-                mb(parse_live),
-                mb(layout_peak),
-                mb(layout_live),
-                mb(parse_live + layout_peak),
-                (parse_live + layout_peak) as f64 / 1024.0 / cells as f64,
-                parse_time.as_secs_f64(),
-                layout_time.as_secs_f64(),
-            );
+            if counting {
+                println!(
+                    "rows={rows} input={} mode=batch pages={} parse_peak_mb={:.1} \
+                     parse_live_mb={:.1} layout_peak_mb={:.1} layout_live_mb={:.1} \
+                     total_peak_mb={:.1} peak_kb_per_cell={:.1} parse_s={:.2} layout_s={:.2} \
+                     dom_mb={:.1} cascade_mb={:.1}",
+                    html.len(),
+                    laid_out.page_count(),
+                    mb(parse_peak),
+                    mb(parse_live),
+                    mb(layout_peak),
+                    mb(layout_live),
+                    mb(parse_live + layout_peak),
+                    (parse_live + layout_peak) as f64 / 1024.0 / cells as f64,
+                    parse_time.as_secs_f64(),
+                    layout_time.as_secs_f64(),
+                    mb(dom_bytes),
+                    mb(cascade_bytes),
+                );
+            } else {
+                println!(
+                    "rows={rows} input={} mode=batch-timing pages={} parse_s={:.2} layout_s={:.2}",
+                    html.len(),
+                    laid_out.page_count(),
+                    parse_time.as_secs_f64(),
+                    layout_time.as_secs_f64(),
+                );
+            }
         }
         if wants("stream") {
             let start = Instant::now();
-            let (pages, peak, live) = measure(|| stream(&html, &resources));
-            println!(
-                "rows={rows} input={} mode=stream pages={pages} peak_mb={:.1} end_live_mb={:.1} s={:.2}",
-                html.len(),
-                mb(peak),
-                mb(live),
-                start.elapsed().as_secs_f64(),
-            );
+            let (pages, peak, live) = staged(counting, || stream(&html, &resources));
+            let time = start.elapsed().as_secs_f64();
+            if counting {
+                println!(
+                    "rows={rows} input={} mode=stream pages={pages} peak_mb={:.1} \
+                     end_live_mb={:.1} s={time:.2}",
+                    html.len(),
+                    mb(peak),
+                    mb(live),
+                );
+            } else {
+                println!(
+                    "rows={rows} input={} mode=stream-timing pages={pages} s={time:.2}",
+                    html.len(),
+                );
+            }
         }
     }
 }
