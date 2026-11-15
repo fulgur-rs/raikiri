@@ -28,6 +28,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
     cascade: &CascadeResult,
 ) {
     let mut placed = Vec::new();
+    let mut over_budget = false;
     for paragraph in 0..tree.nodes.len() {
         let Some(root) = tree.nodes[paragraph]
             .ifc
@@ -38,19 +39,16 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
         };
         let records = &tree.fragment_tree;
         let live = |index: &&usize| !records.is_retired(**index);
-        let pieces: Vec<(usize, Point<f32>)> = records
+        let mut pieces: Vec<(usize, Point<f32>)> = records
             .records_of(paragraph)
             .iter()
             .filter(live)
             .filter_map(|&piece| Some((piece, record_origin(tree, piece)?)))
             .collect();
-        if pieces.is_empty() {
+        pieces.sort_by_key(|(piece, _)| records.fragments[*piece].fragmentainer);
+        let Some(&first_piece) = pieces.first() else {
             continue;
-        }
-        let last_piece = *pieces
-            .iter()
-            .max_by_key(|(piece, _)| records.fragments[*piece].fragmentainer)
-            .unwrap_or(&pieces[0]);
+        };
         let positioned = root
             .boxes
             .iter()
@@ -66,6 +64,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
         let mut columns: Option<Option<(usize, Columns)>> = None;
         for box_ in positioned {
             let node = box_.node;
+            let block = containing_block(tree, node);
             let origin = tree.layout_origin_of(node).unwrap_or_default();
             // The piece in the column of the line the box sits on, else the
             // first.
@@ -78,7 +77,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                     })
                     .map(|&piece| (line, piece))
             });
-            let (piece, piece_origin) = line_piece.map_or(pieces[0], |(_, piece)| piece);
+            let (piece, piece_origin) = line_piece.map_or(first_piece, |(_, piece)| piece);
             let size = tree.nodes[node].layout.size;
             let mut rect = FragmentRect {
                 x: origin.x - piece_origin.x,
@@ -94,7 +93,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
             // paragraph, from the origin of the piece.
             if let Some((line, _)) = line_piece
                 && let Some(paragraph_origin) = tree.layout_origin_of(paragraph)
-                && follows_line_block_offset(tree, cascade, paragraph, node)
+                && follows_line_block_offset(tree, cascade, paragraph, node, block)
             {
                 let range_offset = if root.multicol_fragment_origins_recorded {
                     line.y
@@ -103,19 +102,23 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 };
                 rect.y += piece_origin.y - paragraph_origin.y - range_offset;
             }
+            // A box positioned against the container itself, or against a
+            // box outside it, is laid out outside the columns.
             let columns = columns
                 .get_or_insert_with(|| {
                     let container = tree
                         .inclusive_ancestors(paragraph)
                         .find(|&id| tree.nodes[id].multicol.is_some())?;
-                    Some((container, Columns::of(tree, container)?))
+                    Some((container, Columns::of(tree, cascade, container)?))
                 })
                 .as_ref()
-                .filter(|(container, _)| breaks_in_columns(tree, *container, node));
+                .filter(|(container, _)| {
+                    block.is_some_and(|block| strictly_inside(tree, block, *container))
+                });
             let budget = records
                 .limit
                 .saturating_sub(records.fragments.len() + placed.len());
-            let split = columns.and_then(|(_, columns)| {
+            let split = columns.map_or(Split::Whole, |(_, columns)| {
                 columns.pieces(
                     &tree.nodes[node].layout,
                     FragmentRect {
@@ -127,16 +130,18 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 )
             });
             match split {
-                Some(split) => {
+                Split::Pieces(split) => {
                     let count = split.len();
                     for (index, (column, rect, clip)) in split.into_iter().enumerate() {
-                        // The piece of the paragraph in the column, else its
-                        // last piece, which holds the columns after its own.
+                        // The piece of the paragraph in the nearest column up
+                        // to this one, which holds the columns after its own,
+                        // else the first.
                         let (parent, parent_origin) = pieces
                             .iter()
-                            .find(|(piece, _)| records.fragments[*piece].fragmentainer == column)
+                            .rev()
+                            .find(|(piece, _)| records.fragments[*piece].fragmentainer <= column)
                             .copied()
-                            .unwrap_or(last_piece);
+                            .unwrap_or(first_piece);
                         let local = |rect: FragmentRect| FragmentRect {
                             x: rect.x - parent_origin.x,
                             y: rect.y - parent_origin.y,
@@ -155,7 +160,8 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                         });
                     }
                 }
-                None if pieces.len() > 1 => placed.push(LayoutFragment {
+                Split::OverBudget => over_budget = true,
+                Split::Whole if pieces.len() > 1 => placed.push(LayoutFragment {
                     node_id: node,
                     parent: Some(piece),
                     fragmentainer: records.fragments[piece].fragmentainer,
@@ -166,15 +172,29 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                     line_start: None,
                     line_end: None,
                 }),
-                None => {}
+                Split::Whole => {}
             }
         }
     }
+    // A layout past the cap of records fails as a whole: the caller checks
+    // the cap after this.
+    if over_budget {
+        tree.fragment_tree.limit_exceeded = true;
+    }
     for record in placed {
-        // A layout past the cap of records fails as a whole: the caller
-        // checks the cap after this.
         let _ = tree.fragment_tree.try_push(record);
     }
+}
+
+/// How the columns break an out-of-flow box.
+enum Split {
+    /// The box stays whole in its column.
+    Whole,
+    /// For each column the box reaches, the column, the whole box moved
+    /// there and the clip of the column.
+    Pieces(Vec<(usize, FragmentRect, FragmentRect)>),
+    /// The pieces would pass the cap of records.
+    OverBudget,
 }
 
 /// The range of the columns that holds the line the box `node` of the
@@ -189,23 +209,20 @@ fn line_fragment(tree: &Document, root: &IfcRoot, node: usize) -> Option<Multico
 }
 
 /// Whether the block offset of the out-of-flow box `node` on the lines of
-/// `paragraph` comes from its line: it has a static block position (CSS 2,
-/// 10.6.4), or its containing block is an inline element of the paragraph,
-/// which lies on the lines.
+/// `paragraph`, whose containing block is `block`, comes from its line: it
+/// has a static block position (CSS 2, 10.6.4), or its containing block is an
+/// inline element of the paragraph, which lies on the lines.
 fn follows_line_block_offset(
     tree: &Document,
     cascade: &CascadeResult,
     paragraph: usize,
     node: usize,
+    block: Option<usize>,
 ) -> bool {
     let style = &cascade.computed[node];
-    let is_auto = |inset: &ComputedLengthPercentageOrAuto| {
-        matches!(inset, ComputedLengthPercentageOrAuto::Auto)
-    };
-    (is_auto(&style.top) && is_auto(&style.bottom))
-        || containing_block(tree, node).is_some_and(|block| {
-            block != paragraph && tree.ancestors(block).any(|id| id == paragraph)
-        })
+    (crate::layout::page::inset_is_auto(&style.top)
+        && crate::layout::page::inset_is_auto(&style.bottom))
+        || block.is_some_and(|block| strictly_inside(tree, block, paragraph))
 }
 
 /// The box that is the containing block of the out-of-flow box `node`, when
@@ -222,18 +239,16 @@ fn containing_block(tree: &Document, node: usize) -> Option<usize> {
     })
 }
 
-/// Whether the columns of `container` break the out-of-flow box `node`: its
-/// containing block lies inside them. A box positioned against the container
-/// itself, or against a box outside it, is laid out outside the columns.
-fn breaks_in_columns(tree: &Document, container: usize, node: usize) -> bool {
-    containing_block(tree, node)
-        .is_some_and(|block| block != container && tree.ancestors(block).any(|id| id == container))
+/// Whether `id` is a descendant of `ancestor`, and not `ancestor` itself.
+fn strictly_inside(tree: &Document, id: usize, ancestor: usize) -> bool {
+    tree.ancestors(id).any(|above| above == ancestor)
 }
 
-/// The columns of a container that is laid out in one piece.
+/// The columns of the last row of a container laid out in one piece, which
+/// `column-fill: auto` fills one after the other.
 struct Columns {
     context: FragmentationContext,
-    /// The top left corner of the container's content box in the layout.
+    /// The top left corner of the row in the layout.
     origin: Point<f32>,
     /// The block size of each column.
     height: f32,
@@ -241,11 +256,15 @@ struct Columns {
 
 impl Columns {
     /// The columns of the multicol container `container`, when it has a
-    /// single record and horizontal columns.
-    fn of(tree: &Document, container: usize) -> Option<Self> {
+    /// single record, horizontal columns and `column-fill: auto`. Balanced
+    /// columns are as tall as the content in flow makes them, which does
+    /// not count the positioned boxes, so those stay whole there. Only the
+    /// last row of columns, after any spanner, is filled one column after
+    /// the other.
+    fn of(tree: &Document, cascade: &CascadeResult, container: usize) -> Option<Self> {
         let style = tree.nodes[container]
             .multicol
-            .filter(|style| style.horizontal)?;
+            .filter(|style| style.horizontal && style.column_fill == ColumnFillValue::Auto)?;
         let records = &tree.fragment_tree;
         let [record] = records
             .records_of(container)
@@ -257,6 +276,24 @@ impl Columns {
             return None;
         };
         let origin = record_origin(tree, record)?;
+        // The rows that the strategy kept, each in the container's border
+        // box, with the block size its columns had to fill.
+        if let Some(row) = tree.nodes[container].multicol_groups.last() {
+            let height = row.context.available_height.unwrap_or(row.height);
+            return (height > 0.0).then_some(Self {
+                context: row.context,
+                origin: Point {
+                    x: origin.x + row.context.origin_x,
+                    y: origin.y + row.context.origin_y,
+                },
+                height,
+            });
+        }
+        // Else the container is one row of columns as tall as its content
+        // box.
+        if !style.height_definite || holds_spanner(tree, cascade, container) {
+            return None;
+        }
         let border_box = records.fragments[record].rect;
         let layout = &tree.nodes[container].layout;
         let (border, padding) = (layout.border, layout.padding);
@@ -277,14 +314,14 @@ impl Columns {
     /// it reaches past the end of the column it starts in: for each column it
     /// reaches, the column, the whole box moved there and up by the columns
     /// before it, and the clip of that column, which lets what the box holds
-    /// reach past it inline. `None` when the box ends in its
-    /// column, starts outside it, or needs more than `budget` pieces.
+    /// reach past it inline. The box stays whole when it ends in its column
+    /// or starts outside it.
     fn pieces(
         &self,
         layout: &raikiri_layout_geometry::BoxLayout,
         rect: FragmentRect,
         budget: usize,
-    ) -> Option<Vec<(usize, FragmentRect, FragmentRect)>> {
+    ) -> Split {
         let overflow = layout.scrollable_overflow_rect;
         let top = rect.y - self.origin.y;
         // Descendants that overflow the box are cut with it. The overflow
@@ -294,11 +331,11 @@ impl Columns {
         if !(painted_top >= -lineless::EPSILON && top < self.height && end.is_finite())
             || end <= self.height + lineless::EPSILON
         {
-            return None;
+            return Split::Whole;
         }
         let count = ((end - lineless::EPSILON) / self.height).floor() as usize + 1;
         if count > budget {
-            return None;
+            return Split::OverBudget;
         }
         let left = rect.x + (layout.border.left + overflow.left).min(0.0);
         let right = rect.x + rect.width.max(layout.border.left + overflow.right);
@@ -308,7 +345,7 @@ impl Columns {
             rect.x
         });
         let first_x = self.context.column_offset_x(column);
-        Some(
+        Split::Pieces(
             (0..count)
                 .map(|index| {
                     let at = column + index;
@@ -350,6 +387,23 @@ impl Columns {
         let step = context.column_width + context.column_gap;
         ((advance + lineless::EPSILON) / step).floor().max(0.0) as usize
     }
+}
+
+/// Whether a box in the flow of the columns of `container` spans them, which
+/// makes rows of columns above and below it.
+fn holds_spanner(tree: &Document, cascade: &CascadeResult, container: usize) -> bool {
+    let mut pending = tree.nodes[container].children.clone();
+    while let Some(id) = pending.pop() {
+        let node = &tree.nodes[id];
+        if !node.is_in_document() || node.is_display_none() || node.multicol.is_some() {
+            continue;
+        }
+        if spanning::is_spanner_in(tree, cascade, id) {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
 }
 
 /// Where the record `index` places the origin of its box in the layout: a

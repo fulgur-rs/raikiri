@@ -579,6 +579,18 @@ fn the_content_of_a_box_inside_a_positioned_inline_element_breaks_with_the_colum
             ("d", (-12.0, 8.0, 70.0, 40.0)),
         ],
     );
+    // A box that ends in its column of balanced columns stays in it.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px">{}</div>"#,
+            paragraph("xxx")
+        ),
+        &[
+            ("m", (8.0, 8.0, 60.0, 30.0)),
+            ("a", (8.0, 28.0, 30.0, 10.0)),
+            ("d", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
     // A box against the container is laid out outside the columns.
     check_painted(
         r#"<div id=m style="position:relative;columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r>y<span id=a style="position:absolute;width:30px;left:0;top:20px"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#,
