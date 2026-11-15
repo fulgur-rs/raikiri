@@ -327,7 +327,7 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
 }
 
 #[test]
-fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
+fn only_a_float_child_the_columns_can_place_counts_as_a_direct_float() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -336,43 +336,31 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
-    let mut container = |children: &[&str], text: Option<&str>| {
+    let mut container = |children: &[&str]| {
         let container = doc.append_element(
             Some(body),
             "div",
             Some("display:block;column-count:2;width:100px;height:40px;font:20px/20px Ahem"),
         );
-        if let Some(text) = text {
-            doc.append_text(container, text);
-        }
         for css in children {
             doc.append_element(Some(container), "div", Some(*css));
         }
         container
     };
-    let empty = container(&[], None);
-    let alone = container(&[float], None);
-    let trailing = container(&[block, float], None);
-    let leading = container(&[float, block], None);
-    let two = container(&[float, float], None);
-    let inline = container(&[float], Some("A B"));
-    let nested = container(&[block, float], None);
-    let margin = container(
-        &["display:block;height:20px;margin-bottom:20px", float],
-        None,
-    );
-    let nested_margin = container(&[block, float], None);
-    let hidden = container(&[block, float], None);
+    let empty = container(&[]);
+    let blocks = container(&[block, block]);
+    let leading = container(&[float, block]);
+    let trailing = container(&[block, float]);
+    let nested = container(&[block]);
+    let hidden = container(&[block, "display:none;float:left"]);
+    let margin = container(&["display:block;height:20px;margin-bottom:20px", float]);
+    let hidden_margin = container(&[block, float]);
+    let inline = container(&[float]);
     let wrapper = doc.nodes[nested].children[0];
     doc.append_element(Some(wrapper), "div", Some(float));
-    let wrapper = doc.nodes[nested_margin].children[0];
-    doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:20px"));
-    let wrapper = doc.nodes[hidden].children[0];
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Some("display:none;float:left;margin-top:20px"),
-    );
+    let wrapper = doc.nodes[hidden_margin].children[0];
+    doc.append_element(Some(wrapper), "div", Some("display:none;margin-top:20px"));
+    doc.append_text(inline, "A B");
     doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
 
     let rules = build_rule_tree(&doc);
@@ -381,43 +369,31 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     page.width = 300.0;
     page.height = 400.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
-
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, empty)
-    }));
-    assert!(with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, alone)
-    }));
-    assert!(with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, trailing)
-    }));
-    // Content after the float wraps beside it, and a second float shares its
-    // line, also when that float is inside an earlier child.
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, leading)
-    }));
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, two)
-    }));
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, nested)
-    }));
-    // Adjoining margins collapse on the block layout, also through a wrapper.
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, margin)
-    }));
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, nested_margin)
-    }));
-    // Hidden content takes no part in either.
-    assert!(with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, hidden)
-    }));
-    // Lines of the container's own are laid out beside the float.
     assert!(doc.nodes[inline].ifc.is_some());
-    assert!(!with_bridged_session(&mut doc, |session| {
-        multicol_ends_with_its_only_float(session, inline)
-    }));
+
+    for (container, expected) in [
+        (empty, false),
+        (blocks, false),
+        (leading, true),
+        (trailing, true),
+        // A float inside a child is not one of the container's own.
+        (nested, false),
+        // A float that is not rendered is none.
+        (hidden, false),
+        // Adjoining margins collapse on the block layout, and lines of the
+        // container's own are laid out beside the float there.
+        (margin, false),
+        (inline, false),
+        // A margin that is not rendered collapses with nothing.
+        (hidden_margin, true),
+    ] {
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_direct_float(session, container)
+            }),
+            expected
+        );
+    }
 }
 
 #[test]

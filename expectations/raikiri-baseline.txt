@@ -5354,6 +5354,7 @@ css/filter-effects/svg-empty-element-with-filter-001.html
 css/css-break/break-at-end-container-edge-000.html
 css/css-break/break-at-end-container-edge-001.html
 css/css-break/break-at-end-container-edge-002.html
+css/css-break/break-at-end-container-edge-003.html
 
 # --- a block with a height and nothing inside it among paragraphs in definite-height columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
 # An empty block with a height, followed by a padded paragraph in the definite-height columns of a `column-fill: auto` container, takes its place in the column like a one-line paragraph, so the paragraph breaks between its lines under it as in Chromium. The test failed before the change (the paragraph stayed whole in one column) and KEEPs in two audit-vacuous-passes runs.
