@@ -10831,17 +10831,31 @@ fn lines_between_blocks(
 /// The lines of the paragraph `root` that break with the first line of the
 /// text `node_id`, when a block child of the paragraph stands before or
 /// after them: they break as a paragraph of their own, apart from the lines
-/// on the other side of the block (see [`lines_between_blocks`]). Also
-/// whether they are the last lines of the paragraph. `None` when no block
-/// child stands among the lines.
+/// on the other side of the block (see [`lines_between_blocks`]), with
+/// whether a block child comes before them and whether they are the last
+/// lines of the paragraph. `None` when no block child stands among the lines.
 fn line_run_among_blocks(
     document: &Document,
     text_lines: &TextLineIndex,
     node_id: usize,
     root: usize,
-) -> Option<(std::ops::Range<usize>, bool)> {
+) -> Option<LineRun> {
     let (start, end, total) = line_run(document, text_lines, node_id, root)?;
-    (start.is_some() || end < total).then(|| (start.unwrap_or(0)..end, end == total))
+    (start.is_some() || end < total).then(|| LineRun {
+        lines: start.unwrap_or(0)..end,
+        after_block: start.is_some(),
+        ends_paragraph: end == total,
+    })
+}
+
+/// A run of lines of a paragraph between its block children.
+pub(super) struct LineRun {
+    /// The lines of the run, as indices into the paragraph's lines.
+    pub(super) lines: std::ops::Range<usize>,
+    /// Whether a block child of the paragraph comes before the run.
+    pub(super) after_block: bool,
+    /// Whether no block child comes after the run.
+    pub(super) ends_paragraph: bool,
 }
 
 /// The run of lines of the paragraph `root` that holds the first line of the
