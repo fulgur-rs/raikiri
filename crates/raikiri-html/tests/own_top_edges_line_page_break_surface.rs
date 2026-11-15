@@ -187,3 +187,16 @@ fn a_box_with_size_containment_keeps_its_line() {
     let body = r#"<p class="g" style="margin:0;width:20px;contain:size;height:30px;padding-top:80px"></p><div>Z</div>"#;
     assert_eq!(glyph_tops(body), [(0, 'A', 85), (1, 'Z', 15)], "{body}");
 }
+
+#[test]
+fn a_box_around_the_paragraph_that_ends_on_its_page_keeps_the_line() {
+    for content in [
+        "A",
+        r#"<span style="display:inline-block;height:30px">A</span>"#,
+    ] {
+        let body = format!(
+            r#"<div style="max-height:100px"><p style="margin:0;width:20px;padding-top:75px">{content}</p></div><div>Z</div>"#
+        );
+        assert_eq!(glyph_tops(&body), [(0, 'A', 80), (1, 'Z', 5)], "{body}");
+    }
+}

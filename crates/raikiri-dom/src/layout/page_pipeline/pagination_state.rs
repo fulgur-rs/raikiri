@@ -1053,8 +1053,13 @@ impl PaginationState {
         let page = page_origins.page_index_for_y(flow_top + 0.001);
         let next = page.saturating_add(1);
         if flow_top - box_top <= 0.5
-            || box_top + document.nodes[node_id].layout.size.height
-                <= page_origins.origin(next) + 0.001
+            || !runs_past_page_end(
+                document,
+                env.cascade,
+                env.body_id,
+                node_id,
+                page_origins.origin(next),
+            )
             || flow_top <= page_origins.origin(page) + 0.001
             || flow_top + height <= page_origins.origin(next) + 0.001
         {
@@ -2771,8 +2776,13 @@ impl PaginationState {
                     && line_fit.lines_before_break == 0
                     && first_line_top > page_start + 0.001
                     && first_line_top < page_start + page_step - 0.001
-                    && block_effective_y + document.nodes[block_id].layout.size.height
-                        > page_start + page_step + 0.001
+                    && runs_past_page_end(
+                        document,
+                        cascade,
+                        body_id,
+                        block_id,
+                        page_start + page_step,
+                    )
                     && (first_line_top - block_effective_y > 0.5
                         || block_fits_page_step(
                             line_metrics[0].1 - line_metrics[0].0,
@@ -3714,4 +3724,30 @@ fn clipped_line_metrics(
         }
     }
     (line_metrics, widows)
+}
+
+/// Whether the block `node_id` and every block around it inside the body run
+/// past `page_end`: a box that ends on the page has no break inside it, and
+/// the content that overflows it, such as a line below its end, stays on the
+/// page with it, as in Chromium.
+fn runs_past_page_end(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_end: f32,
+) -> bool {
+    std::iter::once(node_id)
+        .chain(
+            document
+                .layout_ancestors(node_id)
+                .take_while(|&id| id != body_id),
+        )
+        .filter(|&id| !document.nodes[id].display().is_inline_level())
+        .all(|id| {
+            current_abs_y(document, id)
+                - accumulated_relative_offset_y(document, cascade, body_id, id)
+                + document.nodes[id].layout.size.height
+                > page_end + 0.001
+        })
 }
