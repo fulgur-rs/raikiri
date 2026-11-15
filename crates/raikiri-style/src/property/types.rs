@@ -6985,6 +6985,11 @@ css_keywords!(ClearValue {
 ///   "others" (same as specified), even when floated. The treatment of
 ///   `flex`/`grid`/`list-item` as "others" is unchanged.
 ///
+/// `inline-flex` and `inline-grid` postdate the CSS2 table. CSS Display 3
+/// §2.7 <https://www.w3.org/TR/css-display-3/#transformations> blockifies a
+/// box by setting its outer display type to `block` and keeping its inner
+/// one, so they compute to `flex` and `grid`.
+///
 /// # `display: none` is handled by a separate branch before this function is called
 ///
 /// §9.7 opens with: "If 'display' has the value 'none', then
@@ -7038,13 +7043,16 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         DisplayValue::Contents => DisplayValue::Contents,
         // CSS2 §9.7, first table row: `inline-table` → `table`
         DisplayValue::InlineTable => DisplayValue::Table,
+        // CSS Display 3 §2.7: blockification sets the outer display type to
+        // `block` and keeps the inner one, so an `inline-flex` box stays a
+        // flex container and an `inline-grid` box a grid container.
+        DisplayValue::InlineFlex => DisplayValue::Flex,
+        DisplayValue::InlineGrid => DisplayValue::Grid,
         // CSS2 §9.7, second table row: `inline`, `table-row-group`, `table-column`,
         // `table-column-group`, `table-header-group`, `table-footer-group`,
         // `table-row`, `table-cell`, `table-caption`, `inline-block` → `block`
         DisplayValue::Inline
         | DisplayValue::InlineBlock
-        | DisplayValue::InlineFlex
-        | DisplayValue::InlineGrid
         | DisplayValue::TableRowGroup
         | DisplayValue::TableColumn
         | DisplayValue::TableColumnGroup

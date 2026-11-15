@@ -471,6 +471,21 @@ fn resolve_display_for_float_forces_inline_and_inline_block_to_block() {
 }
 
 #[test]
+fn resolve_display_for_float_keeps_the_inner_display_of_inline_flex_and_grid() {
+    // CSS Display 3 §2.7: blockification changes only the outer display type.
+    for float in [FloatValue::Left, FloatValue::Right] {
+        assert_eq!(
+            resolve_display_for_float(DisplayValue::InlineFlex, float),
+            DisplayValue::Flex
+        );
+        assert_eq!(
+            resolve_display_for_float(DisplayValue::InlineGrid, float),
+            DisplayValue::Grid
+        );
+    }
+}
+
+#[test]
 fn resolve_display_for_float_leaves_block_flex_grid_list_item_unchanged() {
     // §9.7 table's "others" row — not in the forced-to-block list.
     for float in [FloatValue::Left, FloatValue::Right] {
