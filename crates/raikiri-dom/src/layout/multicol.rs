@@ -641,29 +641,32 @@ impl FlowPass {
                 .collect();
             let mut moves = moves.into_iter();
             output.oof_candidates.for_each_mut(|candidate| {
-                if let Some(moved) = moves.next().flatten() {
-                    let (x, y) = (
-                        &mut candidate.static_position.x,
-                        &mut candidate.static_position.y,
-                    );
-                    match moved.column {
-                        // The same place in the column as across the line.
-                        Some((line, column)) if line.end > line.start => {
-                            let scale = (column.end - column.start) / (line.end - line.start);
-                            let map = |at: f32| column.start + (at - line.start) * scale;
-                            x.area = Line {
-                                start: map(x.area.start),
-                                end: map(x.area.end),
-                            };
-                        }
-                        _ => {
-                            x.area.start += moved.shift.x;
-                            x.area.end += moved.shift.x;
-                        }
+                // A candidate with no move keeps its place: a zero shift.
+                let moved = moves.next().flatten().unwrap_or(StaticMove {
+                    shift: Point::ZERO,
+                    column: None,
+                });
+                let (x, y) = (
+                    &mut candidate.static_position.x,
+                    &mut candidate.static_position.y,
+                );
+                match moved.column {
+                    // The same place in the column as across the line.
+                    Some((line, column)) if line.end > line.start => {
+                        let scale = (column.end - column.start) / (line.end - line.start);
+                        let map = |at: f32| column.start + (at - line.start) * scale;
+                        x.area = Line {
+                            start: map(x.area.start),
+                            end: map(x.area.end),
+                        };
                     }
-                    y.area.start += moved.shift.y;
-                    y.area.end += moved.shift.y;
+                    _ => {
+                        x.area.start += moved.shift.x;
+                        x.area.end += moved.shift.x;
+                    }
                 }
+                y.area.start += moved.shift.y;
+                y.area.end += moved.shift.y;
             });
         }
         if self.deferred {
@@ -1256,23 +1259,19 @@ pub(super) fn leaves_the_columns(tree: &Document, id: usize) -> bool {
     if node.kind() != NodeKind::Element || node.layout_position() != Position::Absolute {
         return false;
     }
-    let mut current = node.parent;
-    while let Some(ancestor) = current {
-        let ancestor_node = &tree.nodes[ancestor];
-        if ancestor_node.multicol.is_some() {
-            return true;
-        }
-        let claims = if node.fixed_position {
-            ancestor_node.claims_fixed_oof
+    let claims = |ancestor: &crate::Node| {
+        if node.fixed_position {
+            ancestor.claims_fixed_oof
         } else {
-            ancestor_node.claims_absolute_oof
-        };
-        if claims {
-            return false;
+            ancestor.claims_absolute_oof
         }
-        current = ancestor_node.parent;
-    }
-    false
+    };
+    // The nearest ancestor that is a multicol container or the containing
+    // block decides: the box leaves the columns only for the former.
+    std::iter::successors(node.parent, |&ancestor| tree.nodes[ancestor].parent)
+        .map(|ancestor| &tree.nodes[ancestor])
+        .find(|ancestor| ancestor.multicol.is_some() || claims(ancestor))
+        .is_some_and(|ancestor| ancestor.multicol.is_some())
 }
 
 /// The children of `parent` that take part in the flow of the columns: those
