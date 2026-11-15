@@ -4,7 +4,10 @@
 //! `RAIKIRI_TABLE_ROWS=2500,5000,20000` selects the row counts. Each row of
 //! output reports the peak live heap during a stage and the heap that stage
 //! leaves behind, then the time of that same run. `dom_mb` and `cascade_mb`
-//! are the sizes of a copy of the parsed tree and of the parsed cascade.
+//! are the sizes of a copy of the parsed tree and of the parsed cascade. A
+//! copy shares what the original holds behind a reference count, computed
+//! values among them, so `cascade_mb` leaves those out: `parse_live_mb` less
+//! `dom_mb` bounds everything the parse keeps besides the tree.
 //! The time includes the counter updates of every allocation, so it compares
 //! runs of this bench with each other, not with an uninstrumented layout.
 //!
