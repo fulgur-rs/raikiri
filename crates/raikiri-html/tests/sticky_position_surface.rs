@@ -322,6 +322,24 @@ fn a_sticky_box_in_a_scroll_container_sticks_to_its_content_box() {
                 (0, "b", [0, 50, 800, 20]),
             ],
         ),
+        (
+            "<div id=s style='overflow:scroll;height:100px'><div id=a style='height:150px'></div><div id=b style='position:sticky;bottom:10px;height:20px'></div></div>",
+            &[
+                (0, "s", [0, 0, 800, 100]),
+                (0, "a", [0, 0, 800, 150]),
+                (0, "b", [0, 70, 800, 20]),
+            ],
+        ),
+        // A fixed box takes what it holds out of the scroll container.
+        (
+            "<div id=s style='overflow:hidden;height:100px;margin-top:300px'><div id=f style='position:fixed;top:0;left:0;width:100px;height:100px'><div id=a style='height:20px'></div><div id=b style='position:sticky;top:10px;height:20px'></div></div></div>",
+            &[
+                (0, "s", [0, 300, 800, 100]),
+                (0, "f", [0, 0, 100, 100]),
+                (0, "a", [0, 0, 100, 20]),
+                (0, "b", [0, 20, 100, 20]),
+            ],
+        ),
     ]);
 }
 

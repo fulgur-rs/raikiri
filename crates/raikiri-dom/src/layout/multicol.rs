@@ -48,9 +48,9 @@ fn is_floated(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 /// How far block flow moved a box right for its `position: relative` insets
-/// when the container's content box is `width` wide. A sticky box is moved
-/// alike, but its offset is not one that a painter applies again, so it has
-/// none here. This is the left-to-right offset that block flow gives a child.
+/// when the container's content box is `width` wide. Block flow places a
+/// sticky box without an offset. This is the left-to-right offset that block
+/// flow gives a child.
 fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
     if style.position() != Position::Relative {
         return 0.0;

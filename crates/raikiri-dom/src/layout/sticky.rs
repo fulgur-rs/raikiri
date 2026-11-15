@@ -65,14 +65,19 @@ pub(super) fn resolve_offsets(document: &mut LayoutSession<'_>, cascade: &Cascad
 }
 
 /// Whether `id` is a sticky element that generates a box other than a
-/// non-atomic inline. The text of such an inline is placed from the line it
-/// sits on, which carries relative offsets only, so it keeps its place.
+/// non-atomic inline, outside any multi-column container. The text of such
+/// an inline is placed from the line it sits on, which carries relative
+/// offsets only; the columns place their boxes after the flow is laid out.
+/// Either keeps its place.
 fn is_sticky_box(document: &Document, id: usize) -> bool {
     let node = &document.nodes[id];
     node.kind() == raikiri_traits::NodeKind::Element
         && *node.position() == PositionValue::Sticky
         && !matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
         && !super::relative::is_non_atomic_inline(document, BoxTree::for_layout(document), id)
+        && !document
+            .ancestors(id)
+            .any(|ancestor| document.nodes[ancestor].is_multicol_container())
 }
 
 /// How far the sticky boxes among the inclusive ancestors of `id` moved it.
@@ -93,11 +98,13 @@ fn boxes_of(document: &Document, id: usize) -> Option<(Area, Area)> {
         right: origin.x + layout.size.width,
         bottom: origin.y + layout.size.height,
     };
+    let left = border_box.left + layout.border.left + layout.padding.left;
+    let top = border_box.top + layout.border.top + layout.padding.top;
     let content_box = Area {
-        left: border_box.left + layout.border.left + layout.padding.left,
-        top: border_box.top + layout.border.top + layout.padding.top,
-        right: border_box.right - layout.border.right - layout.padding.right,
-        bottom: border_box.bottom - layout.border.bottom - layout.padding.bottom,
+        left,
+        top,
+        right: left + layout.content_box_width(),
+        bottom: top + layout.content_box_height(),
     };
     Some((border_box, content_box))
 }
@@ -110,15 +117,27 @@ fn view_of(
     offsets: &HashMap<usize, (f32, f32)>,
     id: usize,
 ) -> Option<(Area, bool)> {
-    let scroller = document.ancestors(id).find(|&ancestor| {
-        cascade.computed.get(ancestor).is_some_and(|computed| {
-            super::page_pipeline::scrolls_overflow(document, computed, ancestor)
-        })
-    });
+    // A fixed box takes what it holds out of the scroll containers around
+    // it, to the page area.
+    let scroller = document
+        .ancestors(id)
+        .take_while(|&ancestor| *document.nodes[ancestor].position() != PositionValue::Fixed)
+        .find(|&ancestor| {
+            cascade.computed.get(ancestor).is_some_and(|computed| {
+                super::page_pipeline::scrolls_overflow(document, computed, ancestor)
+            })
+        });
     if let Some(scroller) = scroller {
         let (_, content_box) = boxes_of(document, scroller)?;
+        // Its scrollbars cover the far edges of the view.
+        let scrollbars = document.ifc_layout_node(scroller)?.layout.scrollbar_size;
+        let view = Area {
+            right: content_box.right - scrollbars.width,
+            bottom: content_box.bottom - scrollbars.height,
+            ..content_box
+        };
         return Some((
-            content_box.translated(moved_by(document, offsets, scroller)),
+            view.translated(moved_by(document, offsets, scroller)),
             false,
         ));
     }
@@ -164,21 +183,27 @@ fn offset_of(
     };
     let width = view.right - view.left;
     let height = view.bottom - view.top;
-    let x = axis_offset(
-        (sticky_box.left, sticky_box.right),
-        (limits.left, limits.right),
-        (view.left, view.right),
-        (inset(&computed.left, width), inset(&computed.right, width)),
-    );
-    // Chromium would pull a box below the first page up onto it with its
-    // `bottom`, over content the pages cut there. The painter draws a box on
-    // the page the flow cuts it onto, where such a pull would hide it, so
-    // that box keeps its place.
-    let bottom = if in_page_area && sticky_box.top >= view.bottom {
+    // Chromium pulls a box that does not lie wholly on the first page back
+    // onto it with its `bottom` (or, when the pages run along the x axis,
+    // its `right`), over content the pages cut there. The painter draws a
+    // box on the page the flow cuts it onto, from where such a pull would
+    // move it off the page, so that box keeps its place.
+    let right = if in_page_area && sticky_box.right > view.right {
+        None
+    } else {
+        inset(&computed.right, width)
+    };
+    let bottom = if in_page_area && sticky_box.bottom > view.bottom {
         None
     } else {
         inset(&computed.bottom, height)
     };
+    let x = axis_offset(
+        (sticky_box.left, sticky_box.right),
+        (limits.left, limits.right),
+        (view.left, view.right),
+        (inset(&computed.left, width), right),
+    );
     let y = axis_offset(
         (sticky_box.top, sticky_box.bottom),
         (limits.top, limits.bottom),

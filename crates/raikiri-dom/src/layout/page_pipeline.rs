@@ -1517,6 +1517,7 @@ fn layout_single_page_with_table_projection(
 
     document.fragment_tree.clear();
     document.column_rules.clear();
+    document.sticky_offsets.clear();
     for state in document
         .nodes
         .iter_mut()
@@ -1597,7 +1598,6 @@ fn layout_single_page_with_table_projection(
         },
     );
     document.finalize_oof_layout();
-    super::sticky::resolve_offsets(document, cascade);
     // After Step 5, check semantic parent-child geometry invariants and
     // replace any invalid subtree with the deterministic fallback (zero).
     // `set_unrounded_layout` sanitizes non-finite values; this check validates
@@ -1605,6 +1605,7 @@ fn layout_single_page_with_table_projection(
     // `enforce_layout_invariants` documentation. Events enter the session's
     // warning buffer along with Steps 1 and 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
+    super::sticky::resolve_offsets(document, cascade);
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
