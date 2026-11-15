@@ -356,18 +356,18 @@ pub(crate) fn in_flow_caption_height(
     )
 }
 
-/// The `min-height` that bounds the grid box of a table whose flex column
-/// grew or shrank it: the container bounds the item, the whole wrapper box, so
-/// the grid has what the captions leave of the minimum. Any other minimum
-/// bounds the grid box itself.
+/// The `min-height` that bounds the grid box of a table, an item of a flex
+/// column when `flex_column_item`: the container bounds the item, the whole
+/// wrapper box, by the minimum, as Chromium does, so the grid has what the
+/// captions leave of it. Any other minimum bounds the grid box itself.
 fn min_h_outer_of_grid(
     doc: &Document,
     min_h_outer: Option<f32>,
-    item_is_flexed: bool,
+    flex_column_item: bool,
     captions: &CaptionBoxes,
 ) -> Option<f32> {
     min_h_outer.map(|minimum| {
-        if item_is_flexed {
+        if flex_column_item {
             grid_height_in_wrapper(doc, minimum, captions)
         } else {
             minimum
@@ -1236,7 +1236,7 @@ fn compute_table_layout_checked(
                 layout_table_captions(doc, table_idx, width, inputs.parent_size.height)
             };
             let min_h_outer =
-                min_h_outer_of_grid(doc, min_h_outer, item_is_flexed, &early_captions);
+                min_h_outer_of_grid(doc, min_h_outer, flex_column_parent, &early_captions);
             // A content-size measure of a flex column item has no height to
             // state: it reports the content, so the container can shrink the
             // item below its `height`.
@@ -1246,10 +1246,14 @@ fn compute_table_layout_checked(
                         && (states_height || inputs.known_dimensions.height.is_some())
                 })
                 .map(|stated| {
-                    f32_max_compat(
-                        inputs.known_dimensions.height.unwrap_or(stated + lift_h),
-                        padding_border_size.height,
-                    )
+                    // The height a parent measured of an item that owns its
+                    // height is the wrapper's, captions and all, and not one
+                    // the grid box can take.
+                    let known = inputs
+                        .known_dimensions
+                        .height
+                        .filter(|_| !resolves_item_height);
+                    f32_max_compat(known.unwrap_or(stated + lift_h), padding_border_size.height)
                 });
             let mut height = stated_h.unwrap_or_else(|| {
                 let known = effective_known
@@ -1929,7 +1933,8 @@ fn compute_table_layout_checked(
                 .fold(final_width, f32::max);
             return Ok(LayoutOutput::from_outer_size(Size { width, height: 0.0 }));
         }
-        let min_h_outer = min_h_outer_of_grid(doc, min_h_outer, item_is_flexed, &early_captions);
+        let min_h_outer =
+            min_h_outer_of_grid(doc, min_h_outer, flex_column_parent, &early_captions);
         // A flex or grid parent assigns the table the height of the whole
         // wrapper box, caption included, and the grid box takes what is left of
         // it; so does the layout of an absolutely positioned table. This does
@@ -1951,7 +1956,16 @@ fn compute_table_layout_checked(
                         && !vertical_writing
                         && (specified_height.is_none() || known_is_wrapper_height)
                 })
-                .map(|wrapper_height| grid_height_in_wrapper(doc, wrapper_height, &early_captions))
+                .map(|wrapper_height| {
+                    let grid_height = grid_height_in_wrapper(doc, wrapper_height, &early_captions);
+                    // A grid or flex row that stretches the item cannot clamp
+                    // it by a `max-height` it does not read (see
+                    // `item_owns_height`), so the grid box keeps to it here.
+                    match max_h_outer.filter(|_| item_owns_height(doc, table_idx)) {
+                        Some(maximum) => grid_height.min(maximum.max(padding_border_size.height)),
+                        None => grid_height,
+                    }
+                })
         });
 
         // Row heights
@@ -2348,24 +2362,51 @@ fn compute_table_layout_checked(
     }
 }
 
+/// Whether `table`, a horizontal item of a grid or of a flex row, lays out
+/// the height its parent sizes it by rather than letting the layout library
+/// take that height from its style: the library measures the table instead.
+/// The height its collapsed rows leave is the table's to measure, and so is
+/// the height of a table with a caption in flow, whose `height` and limits are
+/// those of its grid box with the caption on top of it (CSS Tables 3 section
+/// 3): the row or track is as tall as the whole wrapper box, as in Chromium.
 pub(super) fn item_owns_height(doc: &LayoutSession<'_>, table: usize) -> bool {
+    item_height_owner(doc, table).is_some()
+}
+
+/// Why a horizontal table item of a grid or of a flex row owns its height
+/// (see [`item_owns_height`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeightOwner {
+    /// Its collapsed rows leave a height the library cannot tell.
+    CollapsedRows,
+    /// A caption in flow comes on top of the height it states.
+    Caption,
+}
+
+/// Why `table` owns its height, or `None` where the layout library takes it
+/// from the style of the table.
+fn item_height_owner(doc: &LayoutSession<'_>, table: usize) -> Option<HeightOwner> {
     if doc.nodes[table].formatting_context != FormattingContext::Table
         || doc.nodes[table].layout_position() == Position::Absolute
         || table_writing_mode(doc, table).is_vertical()
     {
-        return false;
+        return None;
     }
-    let Some(parent) = doc.taffy_parent_of(table) else {
-        return false;
-    };
+    let parent = doc.taffy_parent_of(table)?;
     match doc.nodes[parent].formatting_context {
         FormattingContext::Grid => {}
         FormattingContext::Flex
             if doc.physical_style(parent).flex_direction_is_row()
                 != super::dispatch::used_writing_mode(doc, parent).is_vertical() => {}
-        _ => return false,
+        _ => return None,
     }
-    table_has_collapsed_rows(doc, table)
+    if table_has_collapsed_rows(doc, table) {
+        return Some(HeightOwner::CollapsedRows);
+    }
+    // The layout library applies a ratio to the whole wrapper box, which it
+    // can do only from the size it reads.
+    (caption_in_flow(doc, table) && doc.table_style(table).aspect_ratio().is_none())
+        .then_some(HeightOwner::Caption)
 }
 
 pub(super) fn item_owns_width(doc: &LayoutSession<'_>, table: usize) -> bool {
@@ -2431,7 +2472,12 @@ pub(super) fn item_style<'a>(
 ) -> LayoutStyleView<'a> {
     let view = doc.query_style(table, role);
     let owns_width = item_owns_width(doc, table);
-    if !owns_width && !item_owns_height(doc, table) {
+    let height_owner = if owns_width {
+        None
+    } else {
+        item_height_owner(doc, table)
+    };
+    if !owns_width && height_owner.is_none() {
         return view;
     }
     let parent = doc.taffy_parent_of(table).expect("table item has a parent");
@@ -2443,9 +2489,18 @@ pub(super) fn item_style<'a>(
     };
     let parent = doc.query_style(parent, parent_role);
     if owns_width {
-        view.with_collapsing_table_width(parent.align_items(), parent.justify_items(), flex)
+        return view.with_collapsing_table_width(
+            parent.align_items(),
+            parent.justify_items(),
+            flex,
+        );
+    }
+    let view =
+        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex);
+    if height_owner == Some(HeightOwner::Caption) {
+        view.with_visible_table_min_height()
     } else {
-        view.with_collapsing_table_height(parent.align_items(), parent.justify_items(), flex)
+        view
     }
 }
 
