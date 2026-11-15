@@ -5858,40 +5858,36 @@ impl AvoidedBreaks {
         });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();
-        // A replaced element is unbreakable whole, and so is a line of
-        // atomic inlines alone, which keeps the block that holds it whole.
-        let unbreakable_end = if candidate.context.is_unbreakable() {
-            Some(page_box_end - height + candidate.context.unbreakable_extent(height))
-        } else {
-            unplaced_line
-                .filter(|line| line.atomic)
-                .map(|line| flow_y + line.end.min(height))
-        };
-        let unbreakable = unbreakable_end.is_some_and(|end| {
-            // The box moves with the blocks it begins, which start above it:
-            // the page is theirs to start.
-            unbreakable_box_moves(
+        // A replaced element is unbreakable whole.
+        let unbreakable = candidate.context.is_unbreakable()
+            && unbreakable_box_moves(
                 flow_y - holder_lead,
                 holder_margin_top,
                 flow_y,
-                end,
+                page_box_end - height + candidate.context.unbreakable_extent(height),
                 page_start,
                 page_end,
-            )
-        });
-        // A paragraph of one generated or glyphless line is kept whole by its
-        // line alone: the margin and padding after the line break across
-        // the edge like those of a paragraph of text. A box shorter than the
-        // line ends where the box does.
+            );
+        // A paragraph of one line that no text places, of atomic inlines or
+        // generated content alone, is kept whole by that line and the edges
+        // that follow it (see `unplaced_line_extent`), as such a box is, and
+        // moves with the blocks it begins.
+        let unbreakable = unbreakable
+            || unplaced_line.is_some_and(|line| {
+                unbreakable_box_moves(
+                    flow_y - holder_lead,
+                    holder_margin_top,
+                    flow_y,
+                    flow_y + unplaced_line_extent(document, node_id, line, height),
+                    page_start,
+                    page_end,
+                )
+            });
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
-        let avoided_end = if avoids_break_inside {
-            Some(flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin)
-        } else {
-            unplaced_line
-                .filter(|line| !line.atomic)
-                .map(|line| flow_y + line.end.min(height))
-        };
+        let avoided_end = avoids_break_inside.then(|| {
+            flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin
+        });
         // The blocks that a box which avoids a break inside it begins, with
         // the padding and border they keep above it, are what starts a page.
         let moves_for_avoided_end = avoided_end.is_some_and(|end| {
@@ -8427,6 +8423,27 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
+}
+
+/// How far below the border-box top of the block `node_id`, of block size
+/// `height`, its unplaced `line` keeps the block whole. The padding and border
+/// below the line go with it when the content box ends at the line: no break
+/// falls between a line and the edges after it, so Chromium moves the block
+/// whole when they cross the page end. A box taller than its line ends where
+/// the box does, and its edges follow that end, not the line.
+fn unplaced_line_extent(
+    document: &Document,
+    node_id: usize,
+    line: UnplacedBlockLine,
+    height: f32,
+) -> f32 {
+    let layout = &document.nodes[node_id].layout;
+    let content_end = height - layout.padding.bottom - layout.border.bottom;
+    if (content_end - line.end).abs() <= 0.5 {
+        height
+    } else {
+        line.end.min(height)
+    }
 }
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line

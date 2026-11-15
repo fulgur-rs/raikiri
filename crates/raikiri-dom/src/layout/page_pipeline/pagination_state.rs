@@ -1564,7 +1564,16 @@ impl PaginationState {
             + candidate.context.unbreakable_extent(height)
             + trailing_margin
             > fit_page_start + page_origins.step_at(fit_page);
+        // A paragraph of one unplaced line is kept whole by that line and the
+        // edges that follow it (see `unplaced_line_extent`): it goes with the
+        // blocks it begins, as a box that no break goes through does.
+        let unplaced_crosses = candidate.context.unplaced_line().is_some_and(|line| {
+            effective_y - relative_offset
+                + super::unplaced_line_extent(document, node_id, line, height)
+                > fit_page_start + page_origins.step_at(fit_page)
+        });
         let holder = if (candidate.context.is_unbreakable() && unbreakable_crosses
+            || unplaced_crosses
             || column_crosses)
             && !keeps_margin_at_break
             && is_block_flow_box(document, cascade, candidate)
@@ -1583,6 +1592,10 @@ impl PaginationState {
                                 <= super::leading_space_between(document, cascade, node_id, holder)
                                     + 0.01)
                         && (lead <= 0.0
+                            // A paragraph of one unplaced line moves on
+                            // whatever its height: only the blocks it begins
+                            // decide whether it starts the page.
+                            || unplaced_crosses
                             || lead + column_piece.unwrap_or(height) <= next_page_step + 0.001
                             || super::contained_cloned_leading_holder(
                                 document, cascade, node_id, holder, lead,
