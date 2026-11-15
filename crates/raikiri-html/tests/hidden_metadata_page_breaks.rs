@@ -1,7 +1,8 @@
 //! A `<style>`, `<script>`, `<title>` or `<noscript>` in the body generates
-//! no box, as in Chromium (HTML "Rendering" §15.3.1), so page breaks do not
-//! count it as content before the boxes that follow: each document lays out
-//! as it does without it.
+//! no box, as in Chromium (HTML "Rendering" §15.3.1), and an empty inline
+//! element lays out no line (CSS 2.1 §9.4.2), so page breaks do not count
+//! either as content before the boxes that follow: each document lays out as
+//! it does without it.
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent, RenderResources, layout,
     parse_html_with_resources,
@@ -76,4 +77,75 @@ fn metadata_elements_in_the_body_do_not_count_as_content_before_a_break() {
             );
         }
     }
+}
+
+#[test]
+fn empty_inline_elements_do_not_count_as_content_before_a_break() {
+    let document = "<div style='padding-top:10px'><p id=p style='margin:0;width:20px;padding-top:10px;padding-bottom:60px'>A</p></div><div id=z>Z</div>";
+    let expected = boxes(document);
+    // Without text, generated content or inline-axis margins, borders and
+    // padding, an inline element makes a phantom line, which Chromium
+    // ignores when it breaks pages.
+    for element in [
+        "<span></span>",
+        "<span> </span>",
+        "<b><i></i></b>",
+        "<span style='padding-top:5px'></span>",
+        "<span style='display:none'>x</span><span></span>",
+        "<span><span style='display:contents'></span></span>",
+        "<span><span style='position:absolute'></span></span>",
+    ] {
+        assert_eq!(
+            boxes(&format!("{element}{document}")),
+            expected,
+            "{element}{document}"
+        );
+    }
+    // With inline-axis padding, a line break, a replaced element (even one of
+    // no size), an atomic inline or text, the
+    // line is real and Chromium moves the paragraph to the next page.
+    for element in [
+        "<span style='padding-left:5px'></span>",
+        "<br>",
+        "<wbr>",
+        "<iframe width=0 height=0 style='border:0'></iframe>",
+        "<span style='display:inline-block'></span>",
+        "<span>x</span>",
+    ] {
+        let laid_out = boxes(&format!("{element}{document}"));
+        assert_eq!(
+            laid_out
+                .iter()
+                .find(|(_, id, _)| id == "p")
+                .map(|(page, ..)| *page),
+            Some(1),
+            "{element}{document}: {laid_out:?}"
+        );
+    }
+}
+
+#[test]
+fn empty_inline_elements_lay_out_no_line_in_vertical_writing() {
+    // In vertical writing the block size of an inline box is its width.
+    let document = "<div style='writing-mode:vertical-rl;height:100px'><span></span><div id=a style='width:20px'>A</div></div>";
+    let without = "<div style='writing-mode:vertical-rl;height:100px'><div id=a style='width:20px'>A</div></div>";
+    assert_eq!(boxes(document), boxes(without));
+}
+
+#[test]
+fn an_empty_inline_flex_item_still_counts() {
+    // Flex items are blockified, so an empty span is a box of the flex
+    // container, not a phantom line.
+    let document = "<div style='display:flex;flex-direction:column'><span style='margin-top:50px'></span><div style='padding-top:10px'><p id=p style='margin:0;width:20px;padding-top:10px;padding-bottom:60px'>A</p></div></div>";
+    let laid_out = boxes(document);
+    assert!(
+        laid_out.iter().any(|(page, id, _)| id == "p" && *page == 1),
+        "{laid_out:?}"
+    );
+    // A `display: contents` element between them changes nothing.
+    let through_contents = document.replace(
+        "<span style='margin-top:50px'></span>",
+        "<div style='display:contents'><span style='margin-top:50px'></span></div>",
+    );
+    assert_eq!(boxes(&through_contents), laid_out);
 }
