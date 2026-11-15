@@ -1518,9 +1518,13 @@ fn layout_single_page_with_table_projection(
 
     document.fragment_tree.clear();
     document.column_rules.clear();
-    for node in &mut document.nodes {
-        node.multicol_groups.clear();
-        node.multicol_rows.clear();
+    for state in document
+        .nodes
+        .iter_mut()
+        .filter_map(crate::node::Node::written_state)
+    {
+        state.multicol_groups.clear();
+        state.multicol_rows.clear();
     }
 
     let (icb, available_space, content_width, content_height, body_id) = document
