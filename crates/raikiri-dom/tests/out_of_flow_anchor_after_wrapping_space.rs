@@ -274,3 +274,17 @@ fn a_box_in_columns_goes_with_the_end_of_its_line() {
         &[("s", (198.0, 8.0, 10.0, 10.0))],
     );
 }
+
+/// A tab that stays on the line keeps its advance before the box.
+#[test]
+fn a_box_after_a_kept_tab_stays_at_the_tab_stop() {
+    let s = positioned("s");
+    for content in [format!("x\t{s}"), format!("x\t{s}y")] {
+        check_body(
+            &format!(
+                r#"<div id=p style="width:300px;position:relative;white-space:pre;tab-size:4">{content}</div>"#
+            ),
+            &[("s", (48.0, 8.0, 10.0, 10.0))],
+        );
+    }
+}

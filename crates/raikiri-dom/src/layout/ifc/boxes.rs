@@ -4878,8 +4878,18 @@ fn hanging_spaces(line: &shodo::Line) -> f32 {
 
 /// Where the content of `line` ends, before the spaces that hang at its end,
 /// when the line and all of its text read left to right. The runs of text
-/// hold those spaces; the boxes of inline elements leave them out.
+/// hold those spaces; the boxes of inline elements leave them out. A tab has
+/// no glyph to tell where it ends, so a line whose trailing white space holds
+/// one is left as it is.
 fn content_end(line: &shodo::Line) -> Option<f32> {
+    let trailing_tab = line
+        .text()
+        .get(line.text_range())
+        .unwrap_or_default()
+        .chars()
+        .rev()
+        .take_while(|&c| c.is_whitespace() || c == '\u{FFFC}')
+        .any(|c| c == '\t');
     let mut text = None::<f32>;
     let mut boxes = None::<f32>;
     for fragment in line.fragments() {
@@ -4905,7 +4915,7 @@ fn content_end(line: &shodo::Line) -> Option<f32> {
         (Some(text), Some(boxes)) => Some(text.max(boxes)),
         (end, None) | (None, end) => end,
     };
-    end.filter(|_| line.used_direction() == Direction::Ltr)
+    end.filter(|_| line.used_direction() == Direction::Ltr && !trailing_tab)
 }
 
 /// How far the columns moved the line `line`: the range of `fragments` that
