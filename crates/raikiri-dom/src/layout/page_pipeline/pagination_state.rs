@@ -2364,9 +2364,10 @@ impl PaginationState {
                 .paragraph_root
                 .filter(|&root| root == block_id)
                 .and_then(|root| line_run_among_blocks(document, text_lines, node_id, root));
-            let block_follows_run = run.as_ref().is_some_and(|(_, last)| !last);
-            if let Some((lines, _)) = run {
-                all_line_metrics = all_line_metrics.get(lines).unwrap_or_default().to_vec();
+            let block_follows_run = run.as_ref().is_some_and(|run| !run.ends_paragraph);
+            let block_precedes_run = run.as_ref().is_some_and(|run| run.after_block);
+            if let Some(run) = run {
+                all_line_metrics = all_line_metrics.get(run.lines).unwrap_or_default().to_vec();
             }
             let clip = clip_edges.get(&block_id);
             let clipped = |document: &LayoutSession<'_>, effective_y: f32| {
@@ -2384,11 +2385,14 @@ impl PaginationState {
             if line_metrics.is_empty() {
                 return Ok(());
             }
-            // The lines of a run among block children move down inside the
-            // paragraph as a run after a block child does, the blocks after
-            // them following.
+            // The lines of a run before the first block child of the
+            // paragraph move down inside it as a run after a block child does,
+            // the blocks after them following. A run after a block child is
+            // moved by `keep_lines_after_block`, which counts its lines from
+            // the paragraph's first; the moves here count them from the run's.
             let lines_can_move = self.lines_can_move(document, cascade, blocks, block_id)
                 || (block_follows_run
+                    && !block_precedes_run
                     && self.deferred_shifts.line_splits.is_empty()
                     && lines_can_shift_between_blocks(document, cascade, block_id));
             // The break that keeps the last lines with the padding and border
@@ -2506,6 +2510,19 @@ impl PaginationState {
             let edges_follow_moved_lines = !lines_can_move
                 || own_closing_edges <= 0.0
                 || lines_move_grows_box(document, block_id);
+            // The page breaks between a block child of the paragraph and the
+            // lines after it, rather than before the paragraph, when those
+            // lines can move down inside it: they break as a block of their own
+            // (see `keep_lines_after_block`).
+            let breaks_after_block = block_precedes_run
+                && self.breaks_run_after_block(
+                    document,
+                    env,
+                    candidate,
+                    entry,
+                    block_id,
+                    &all_line_metrics,
+                );
             let mut page = self.current_page;
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
@@ -2591,7 +2608,10 @@ impl PaginationState {
                 // a line that fits instead of breaking before that margin again.
                 let keep_first_fragment =
                     retained_margin_opens_page && lines_can_move && line_fit.lines_before_break > 0;
-                let can_move_block = !(moved_whole || leading_page_lines || keep_first_fragment)
+                let can_move_block = !(moved_whole
+                    || leading_page_lines
+                    || keep_first_fragment
+                    || breaks_after_block)
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
@@ -2706,6 +2726,39 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Whether the run of lines `metrics` (block-start and block-end edges of
+    /// each line) after a block child of the paragraph `root` breaks as a
+    /// block of its own (see [`Self::keep_lines_after_block`]): the lines can
+    /// move down inside the paragraph, which is in the flow that the moved
+    /// lines push down, and no gap lies between two of them.
+    fn breaks_run_after_block(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        root: usize,
+        metrics: &[(f32, f32)],
+    ) -> bool {
+        // Text placed by positioned insets, or inside an out-of-flow box, is
+        // not in the flow that the moved lines push down. A paragraph inside
+        // a float grows the float, as one in the flow grows its block; inside
+        // a float, only floats may stand between the paragraph and plain
+        // block flow.
+        let in_flow = !entry.uses_positioned_coordinates
+            && !candidate.context.is_out_of_flow_descendant()
+            && (!candidate.context.is_float_descendant()
+                || super::is_float_flow_paragraph(document, env.cascade, root, env.body_id));
+        // A float that a line cannot sit beside, or a clearance below one,
+        // leaves a gap of at least a fraction of a pixel between two lines of
+        // the run: they do not break as one block of lines, and the gap is not
+        // theirs to move.
+        in_flow
+            && self.deferred_shifts.line_splits.is_empty()
+            && lines_can_shift_between_blocks(document, env.cascade, root)
+            && !metrics.windows(2).any(|pair| pair[1].0 - pair[0].1 > 0.5)
+    }
+
     /// Keeps the lines that come after a block child of a paragraph from
     /// straddling the end of the page. The paragraph's own checks judge all
     /// of its lines as one run, which cannot move when blocks lie among the
@@ -2736,19 +2789,9 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        // Text placed by positioned insets, or inside an out-of-flow box, is
-        // not in the flow that the moved lines push down. A paragraph inside
-        // a float grows the float, as one in the flow grows its block.
-        let in_flow =
-            !entry.uses_positioned_coordinates && !candidate.context.is_out_of_flow_descendant();
-        let Some(root) = blocks.paragraph_root.filter(|_| in_flow) else {
+        let Some(root) = blocks.paragraph_root else {
             return Ok(());
         };
-        if !self.deferred_shifts.line_splits.is_empty()
-            || !lines_can_shift_between_blocks(document, env.cascade, root)
-        {
-            return Ok(());
-        }
         let Some(run) = lines_between_blocks(document, text_lines, node_id, root) else {
             return Ok(());
         };
@@ -2758,26 +2801,18 @@ impl PaginationState {
                 .filter(|metrics| !metrics.is_empty())
         };
         // The first candidate on the run judges it for all of them.
-        let first_visit = self
+        if !self
             .checked_paragraphs
             .lines_after_blocks
-            .insert((root, run.start));
-        // Inside a float, only floats may stand between the paragraph and
-        // plain block flow.
-        let Some(mut metrics) = run_metrics(document).filter(|_| {
-            first_visit
-                && (!candidate.context.is_float_descendant()
-                    || super::is_float_flow_paragraph(document, cascade, root, body_id))
+            .insert((root, run.start))
+        {
+            return Ok(());
+        }
+        let Some(mut metrics) = run_metrics(document).filter(|metrics| {
+            self.breaks_run_after_block(document, env, candidate, entry, root, metrics)
         }) else {
             return Ok(());
         };
-        // A float that a line cannot sit beside, or a clearance below one,
-        // leaves a gap of at least a fraction of a pixel between two lines of
-        // the run: they do not break as one block of lines, and the gap is not
-        // theirs to move.
-        if metrics.windows(2).any(|pair| pair[1].0 - pair[0].1 > 0.5) {
-            return Ok(());
-        }
         let first_owned_line = text_lines
             .get(node_id)
             .and_then(|owned| owned.lines.first())
