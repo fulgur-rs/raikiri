@@ -3706,42 +3706,45 @@ fn layout_formatting_context_child(
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let own = own_inline_width(tree, node, &geometry);
+    let rtl = geometry.axes.direction() == Direction::Rtl;
+    // The room beside the floats starts on the side the container's
+    // direction leads with: that side absorbs the margin into a float there.
+    let direction = if rtl {
+        values::Direction::Rtl
+    } else {
+        values::Direction::Ltr
+    };
     let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
-        let slot = ctx
-            .find_box_slot(
-                min_y,
-                [margin.left, margin.right],
-                values::Direction::Ltr,
-                clear,
-                |probe| match probe {
-                    BoxProbe::Width { stretch } => {
-                        let stretch = stretch.max(-x_margins);
-                        clamp_block_width(
-                            tree,
-                            node,
-                            geometry.width,
-                            own.map_or(stretch, |own| own.at(stretch)),
-                        )
-                    }
-                    BoxProbe::Height { width, .. } => {
-                        let inputs = formatting_context_inputs(
-                            &geometry,
-                            RunMode::ComputeSize,
-                            width,
-                            width,
-                        );
-                        tree.compute_child_layout(NodeId::from(node), inputs)
-                            .size
-                            .height
-                    }
-                },
-            )
-            .slot;
+        let placed = ctx.find_box_slot(
+            min_y,
+            [margin.left, margin.right],
+            direction,
+            clear,
+            |probe| match probe {
+                BoxProbe::Width { stretch } => {
+                    let stretch = stretch.max(-x_margins);
+                    clamp_block_width(
+                        tree,
+                        node,
+                        geometry.width,
+                        own.map_or(stretch, |own| own.at(stretch)),
+                    )
+                }
+                BoxProbe::Height { width, .. } => {
+                    let inputs =
+                        formatting_context_inputs(&geometry, RunMode::ComputeSize, width, width);
+                    tree.compute_child_layout(NodeId::from(node), inputs)
+                        .size
+                        .height
+                }
+            },
+        );
+        let (start, stretch) = placed.stretch_room(direction);
         (
-            slot.stretch_width.max(-x_margins),
+            stretch.max(-x_margins),
             Point {
-                x: slot.x,
-                y: slot.y,
+                x: start,
+                y: placed.slot.y,
             },
             true,
         )
@@ -3790,7 +3793,6 @@ fn layout_formatting_context_child(
     } else {
         0.0
     };
-    let rtl = geometry.axes.direction() == Direction::Rtl;
     let justified = block_flow::justified_offset(tree, node, rtl, stretch - output.size.width);
     let extra_left = if let Some(offset) = justified {
         // `justify-self` places a box whose margins are not auto, in the
@@ -3801,10 +3803,14 @@ fn layout_formatting_context_child(
             margin.left + offset
         }
     } else if beside_floats {
-        auto_left
-    } else if (autos == 0 || output.size.width > stretch)
-        && geometry.axes.direction() == Direction::Rtl
-    {
+        // The slot already holds the margins: an over-constrained RTL box
+        // keeps the end of the room, as below.
+        if rtl && (autos == 0 || output.size.width > stretch) {
+            stretch - output.size.width
+        } else {
+            auto_left
+        }
+    } else if (autos == 0 || output.size.width > stretch) && rtl {
         // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
         // its used left margin. A block that overflows counts auto margins as
         // zero, so it is over-constrained as well.
