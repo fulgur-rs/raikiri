@@ -684,15 +684,8 @@ impl PaginationState {
             env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
-            || {
-                super::clip_holds_breaks(
-                    document,
-                    env,
-                    node_id,
-                    false,
-                    page_origins.page_index_for_end(text.effective_y + text.height),
-                )
-            },
+            // A text node forces no break after it, so no clip holds one.
+            || false,
         );
 
         Ok(())
