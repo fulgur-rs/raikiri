@@ -88,6 +88,7 @@ fn balanced_stack_height_ends_where_the_heights_have_no_float_between_them() {
             top: 0.0,
             bottom: total,
             lines,
+            sliced: false,
         },
     ];
     let height = balanced_stack_height(&children, 2, total, (1, 1));

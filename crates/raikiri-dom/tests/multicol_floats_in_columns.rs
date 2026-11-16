@@ -3,6 +3,8 @@
 //! sits at the column's edge, and the boxes after it flow beside it in the
 //! column, as in a block container of the column's width (CSS Multi-column 1,
 //! 6.1; CSS 2, 9.5). Content past the last column goes on in overflow columns.
+//! Balanced columns are as tall as their content needs, up to the container's
+//! height, and a column end cuts a sized box with nothing inside it.
 //!
 //! The expected rectangles are the ones Chromium gives the same markup in an
 //! 800px by 600px viewport with a body margin of 8px, `div` boxes sized by
@@ -75,10 +77,21 @@ fn check(content: &str, expected: &[(&str, Rect)]) {
 /// Lay out `content` in a 40px tall container of each of `fills` and compare
 /// the box of each `id` with `expected`.
 fn check_fills(content: &str, fills: &[&str], expected: &[(&str, Rect)]) {
-    for fill in fills {
+    let containers: Vec<String> = fills
+        .iter()
+        .map(|fill| format!("height:40px;column-fill:{fill}"))
+        .collect();
+    let containers: Vec<&str> = containers.iter().map(String::as_str).collect();
+    check_containers(content, &containers, expected);
+}
+
+/// Lay out `content` in a container with each of the extra declarations in
+/// `containers` and compare the box of each `id` with `expected`.
+fn check_containers(content: &str, containers: &[&str], expected: &[(&str, Rect)]) {
+    for container in containers {
         let rects = rects_of(&format!(
-            "<div style=\"width:100px;column-count:2;column-gap:20px;height:40px;\
-             column-fill:{fill}\">{content}</div>"
+            "<div id=m style=\"width:100px;column-count:2;column-gap:20px;{container}\">\
+             {content}</div>"
         ));
         for &(id, want) in expected {
             let got = rects
@@ -86,7 +99,7 @@ fn check_fills(content: &str, fills: &[&str], expected: &[(&str, Rect)]) {
                 .find(|(seen, _)| seen == id)
                 .map(|(_, rect)| *rect)
                 .unwrap_or_else(|| panic!("no box for #{id} in {rects:?}"));
-            assert_eq!(got, want, "#{id} with column-fill: {fill}");
+            assert_eq!(got, want, "#{id} with {container}");
         }
     }
 }
@@ -144,22 +157,92 @@ fn a_box_with_its_own_context_sits_beside_the_float_in_its_column() {
     );
 }
 
+const CLEARED: &str = "<div id=f style=\"float:left;width:20px;height:20px\"></div><div id=b style=\"clear:both;height:20px\"></div><p id=p style=\"margin:0\">A</p>";
+
 /// A block that clears the float starts below it, and the paragraph after it
 /// goes on in the second column.
-///
-/// Only `column-fill: auto` is checked. With `balance`, Chromium balances the
-/// 60px of content into 30px columns and breaks the cleared block between
-/// them, which these columns do not do yet: they keep the 40px columns.
 #[test]
 fn a_cleared_block_goes_below_the_float_in_its_column() {
     check_fills(
-        "<div id=f style=\"float:left;width:20px;height:20px\"></div><div id=b style=\"clear:both;height:20px\"></div><p id=p style=\"margin:0\">A</p>",
+        CLEARED,
         &["auto"],
         &[
             ("f", (8.0, 8.0, 20.0, 20.0)),
             ("b", (8.0, 28.0, 40.0, 20.0)),
             ("p", (68.0, 8.0, 40.0, 20.0)),
         ],
+    );
+}
+
+/// Balanced columns are as tall as their content needs, whatever height the
+/// container has (CSS Multi-column 1, 8.1): the 60px of content go into 30px
+/// columns, which break the cleared block between them. So do 30px columns
+/// that fill in turn.
+#[test]
+fn balanced_columns_with_a_float_break_the_cleared_block_after_it() {
+    check_containers(
+        CLEARED,
+        &[
+            "",
+            "height:40px;column-fill:balance",
+            "height:70px;column-fill:balance",
+            "height:200px;column-fill:balance",
+            "height:30px;column-fill:auto",
+        ],
+        &[
+            ("f", (8.0, 8.0, 20.0, 20.0)),
+            ("b", (8.0, 8.0, 100.0, 30.0)),
+            ("p", (68.0, 18.0, 40.0, 20.0)),
+        ],
+    );
+    check_containers(CLEARED, &[""], &[("m", (8.0, 8.0, 100.0, 30.0))]);
+    check_containers(
+        CLEARED,
+        &["height:70px;column-fill:balance"],
+        &[("m", (8.0, 8.0, 100.0, 70.0))],
+    );
+}
+
+/// Lines beside a float balance to the same columns in a taller container
+/// as in one whose height is auto.
+#[test]
+fn balanced_columns_with_a_float_do_not_grow_with_the_container() {
+    check_containers(
+        "<div id=f style=\"float:right;width:20px;height:20px\"></div><p id=p style=\"margin:0\">A B C</p>",
+        &[
+            "",
+            "height:50px;column-fill:balance",
+            "height:70px;column-fill:balance",
+            "height:200px;column-fill:balance",
+        ],
+        &[
+            ("f", (28.0, 8.0, 20.0, 20.0)),
+            ("p", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+/// A sized box with nothing inside it is cut where a balanced column ends,
+/// with no float before it too.
+#[test]
+fn balanced_columns_break_a_sized_box_between_them() {
+    check_containers(
+        "<div id=x style=\"height:20px\"></div><div id=b style=\"height:20px\"></div><p id=p style=\"margin:0\">A</p>",
+        &[
+            "",
+            "height:40px;column-fill:balance",
+            "height:30px;column-fill:auto",
+        ],
+        &[
+            ("x", (8.0, 8.0, 40.0, 20.0)),
+            ("b", (8.0, 8.0, 100.0, 30.0)),
+            ("p", (68.0, 18.0, 40.0, 20.0)),
+        ],
+    );
+    check_containers(
+        "<div id=x style=\"height:20px\"></div><div id=b style=\"height:20px\"></div><p id=p style=\"margin:0\">A</p>",
+        &[""],
+        &[("m", (8.0, 8.0, 100.0, 30.0))],
     );
 }
 
