@@ -17,8 +17,8 @@ use super::{
     collapses_through, collapses_with_previous_block, content_overflow, current_abs_y,
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
-    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
-    grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
+    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
+    forced_target_page, grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
     lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
@@ -1749,6 +1749,7 @@ impl PaginationState {
         let mut overflow = avoided_breaks.measure(
             document,
             cascade,
+            body_id,
             candidate,
             &fit,
             &self.table_headers,
@@ -2750,6 +2751,11 @@ impl PaginationState {
                     && own_closing_edges > 0.0
                     && line_fit.edges_overflow
                     && follows_content();
+                // A paragraph with padding or border above its first line,
+                // and nothing but margins before it on the page, has no break
+                // before it, unless those edges cross the page end
+                // themselves: the page breaks between the edges and the line
+                // instead (see `follows_box_on_page`).
                 let can_move_block = !(moved_whole
                     || leading_page_lines
                     || keep_first_fragment
@@ -2758,7 +2764,10 @@ impl PaginationState {
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
-                        || (line_fit.leaves_too_few_orphans() && follows_content()));
+                        || (line_fit.leaves_too_few_orphans() && follows_content()))
+                    && (first_line_top - block_effective_y <= 0.5
+                        || first_line_top > page_start + page_step + 0.001
+                        || follows_box_on_page(document, cascade, body_id, block_id, page_start));
                 // A block that stays on its page, below the padding and
                 // border of its own box or of the boxes it begins, or below
                 // the floats that put its first line down, where they leave

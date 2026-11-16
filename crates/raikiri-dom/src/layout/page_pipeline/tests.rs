@@ -17364,7 +17364,15 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
                 named_flex_context: None,
                 ifc_root: None,
             };
-            breaks.measure(&session, &cascade, &candidate, fit, &headers, &mut trailing)
+            breaks.measure(
+                &session,
+                &cascade,
+                body,
+                &candidate,
+                fit,
+                &headers,
+                &mut trailing,
+            )
         };
     let fit = BoxFit {
         effective_y: 80.0,
