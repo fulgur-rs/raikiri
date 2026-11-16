@@ -1265,14 +1265,20 @@ fn compute_table_layout_checked(
             // or, without one, the stated length plus the padding and border
             // that a content-box table keeps outside it (a `stretch` room is
             // outer already). A `max-width` that took the resolved width below
-            // the padding and border does not take the table below them.
+            // the padding and border does not take the table below them. A
+            // grid does not stretch the width a stated height transfers
+            // through the ratio, as for a table with rows above.
             let stated_w = specified_w.map(|stated| {
                 let is_length = resolve_dimension(table_size.width, inputs.parent_size.width)
                     .is_some()
                     || owned_height_ratio_width.is_some();
                 let outer = if is_length { stated + lift_w } else { stated };
                 f32_max_compat(
-                    inputs.known_dimensions.width.unwrap_or(outer),
+                    inputs
+                        .known_dimensions
+                        .width
+                        .filter(|_| !ratio_keeps_width)
+                        .unwrap_or(outer),
                     padding_border_size.width,
                 )
             });
