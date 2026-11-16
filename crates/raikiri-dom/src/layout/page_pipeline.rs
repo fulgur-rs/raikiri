@@ -16806,10 +16806,9 @@ fn shift_rows_after(
         shift_block_sibling(document, document.nodes[row].children[later], delta);
     }
     let mut up = row;
-    while up != table {
-        let Some(parent) = document.parent_of(up) else {
-            break;
-        };
+    while up != table
+        && let Some(parent) = document.parent_of(up)
+    {
         // The table puts its header and footer groups first and last
         // (CSS 2.1 §17.2), whatever their place among its children.
         let order = if parent == table {
