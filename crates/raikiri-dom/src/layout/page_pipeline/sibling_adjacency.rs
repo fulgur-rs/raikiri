@@ -66,7 +66,7 @@ fn preceding_box(
     previous: usize,
 ) -> Option<bool> {
     match flow_box(document, cascade, node_id) {
-        FlowBox::Skip => None,
+        FlowBox::Skip | FlowBox::Phantom => None,
         FlowBox::Contents => document.nodes[node_id]
             .children
             .iter()
@@ -91,6 +91,10 @@ pub(super) enum FlowBox {
     Skip,
     Contents,
     Box,
+    /// An empty inline element that lays out a phantom line (see
+    /// [`is_phantom_inline`]): no content, which most walks skip, though the
+    /// anonymous block around its line is still a box of no height.
+    Phantom,
 }
 
 /// Shared by lazy adjacency and the eager box collectors elsewhere in
@@ -114,7 +118,7 @@ pub(super) fn flow_box(document: &Document, cascade: &CascadeResult, node_id: us
     } else if node.kind() != NodeKind::Text && node.display() == DisplayValue::Contents {
         FlowBox::Contents
     } else if is_phantom_inline(document, cascade, node_id) {
-        FlowBox::Skip
+        FlowBox::Phantom
     } else {
         FlowBox::Box
     }

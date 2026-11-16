@@ -197,8 +197,9 @@ fn text_inline_boxes_and_contents_elements_before_the_wrapper_come_before_the_bo
     assert!(!begins_page_below_leading_edges(
         &doc, &cascade, body, child, 100.0
     ));
-    // An empty inline box lays out a phantom line, which is not content
-    // (CSS 2.1 9.4.2).
+    // An empty inline box lays out a phantom line (CSS 2.1 9.4.2), whose
+    // anonymous block is an empty box, which comes before the box as an empty
+    // `div` does.
     let (doc, cascade, body, child) = child_after(
         |doc, body| {
             break_after_block(doc, body);
@@ -206,19 +207,82 @@ fn text_inline_boxes_and_contents_elements_before_the_wrapper_come_before_the_bo
         },
         "display:block;padding-top:5px",
     );
-    assert!(begins_page_below_leading_edges(
-        &doc, &cascade, body, child, 100.0
-    ));
-    let (doc, cascade, body, child) = child_after(
-        |doc, body| {
-            break_after_block(doc, body);
-            block(doc, body, "display:contents");
-        },
-        "display:block;padding-top:5px",
-    );
     assert!(!begins_page_below_leading_edges(
         &doc, &cascade, body, child, 100.0
     ));
+    // A `display: contents` element counts as its children: text or an empty
+    // inline box in it comes before the box, while nothing does not.
+    let text = |doc: &mut Document, contents: usize| {
+        doc.append_text(contents, "x");
+    };
+    let span = |doc: &mut Document, contents: usize| {
+        doc.append_element(Some(contents), "span", Some("display:inline"));
+    };
+    let nothing = |_: &mut Document, _: usize| {};
+    type Fill = fn(&mut Document, usize);
+    let cases: [(Fill, bool); 3] = [(text, false), (span, false), (nothing, true)];
+    for (index, (fill, begins)) in cases.into_iter().enumerate() {
+        let (doc, cascade, body, child) = child_after(
+            |doc, body| {
+                break_after_block(doc, body);
+                let contents = block(doc, body, "display:contents");
+                fill(doc, contents);
+            },
+            "display:block;padding-top:5px",
+        );
+        assert_eq!(
+            begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0),
+            begins,
+            "case {index}"
+        );
+    }
+}
+
+#[test]
+fn generated_text_of_a_contents_element_comes_before_the_box() {
+    for (sheet, begins) in [
+        (r#"section::before { content: "x" }"#, false),
+        (r#"section::after { content: "x" }"#, false),
+        (r#"section::before { content: "" }"#, true),
+    ] {
+        let (doc, cascade, body, child) = child_after(
+            |doc, body| {
+                let style = doc.append_element(Some(body), "style", Some("display:none"));
+                doc.append_text(style, sheet);
+                break_after_block(doc, body);
+                doc.append_element(Some(body), "section", Some("display:contents"));
+            },
+            "display:block;padding-top:5px",
+        );
+        assert_eq!(
+            begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0),
+            begins,
+            "{sheet}"
+        );
+    }
+}
+
+#[test]
+fn a_phantom_line_first_in_the_wrapper_is_an_empty_box_before_the_box() {
+    // The anonymous block of the line lies below the padding, as an empty
+    // block there does.
+    let begins = |empty: &dyn Fn(&mut Document, usize)| {
+        let mut child = 0;
+        let (doc, cascade, body) = laid_out(|doc, body| {
+            break_after_block(doc, body);
+            let wrapper = block(doc, body, "display:block;padding-top:5px");
+            empty(doc, wrapper);
+            child = block(doc, wrapper, "display:block;height:20px;break-before:page");
+        });
+        begins_page_below_leading_edges(&doc, &cascade, body, child, 100.0)
+    };
+    let span = |doc: &mut Document, wrapper: usize| {
+        doc.append_element(Some(wrapper), "span", Some("display:inline"));
+    };
+    let div = |doc: &mut Document, wrapper: usize| {
+        block(doc, wrapper, "display:block");
+    };
+    assert_eq!(begins(&span), begins(&div));
 }
 
 #[test]
