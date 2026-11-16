@@ -164,6 +164,23 @@ fn the_lines_after_it_follow_on_unless_orphans_move_the_paragraph() {
             (3, 'H', 35)
         ]
     );
+    // A tall second line that crosses the end of the next page starts the
+    // page after it too.
+    let body = "<div style='height:80px'></div><p style='margin:0;width:20px;height:20px;\
+                line-height:90px;orphans:1;widows:1'>A B</p><div>Z</div>";
+    assert_eq!(glyph_tops(body), [(1, 'A', 15), (1, 'Z', 5), (2, 'B', 35)]);
+    let body = "<div style='height:80px'></div><p style='margin:0;width:20px;height:20px;\
+                line-height:60px;orphans:1;widows:1'>A B C D</p><div>Z</div>";
+    assert_eq!(
+        glyph_tops(body),
+        [
+            (1, 'A', 0),
+            (1, 'B', 60),
+            (1, 'Z', 5),
+            (2, 'C', 20),
+            (3, 'D', 20)
+        ]
+    );
     // Two orphans: the break before the second line would leave the first
     // alone, so the page breaks before the paragraph.
     let body = paragraph(20, "padding-top:60px;height:80px", "A B");

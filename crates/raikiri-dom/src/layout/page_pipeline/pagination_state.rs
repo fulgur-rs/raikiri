@@ -29,13 +29,13 @@ use super::{
     make_room_for_table_header, margin_box_starts_page, margin_kept_by_floats,
     margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
     move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
-    positioned_text_start_y, push_in_flow_boxes_rev, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
-    shift_paragraph_lines, shift_text_candidate, shrink_ancestors_after_content_change,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
-    truncation_after_generated_content,
+    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
+    participates_in_margin_adjacency, place_first_table_header, place_table_footer,
+    place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
+    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
+    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
+    text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -3123,38 +3123,26 @@ impl PaginationState {
                         page_start + page_step,
                     )
                 {
-                    let rest = &line_metrics[1..];
-                    let next = page.saturating_add(1);
-                    let next_start = page_origins.origin(next);
-                    let mut rest_fit = ParagraphLineFit::measure(
-                        rest,
-                        text.effective_y,
-                        next_start,
-                        next_start + page_origins.step_at(next),
-                        cascade.computed[block_id].orphans,
-                        widows,
-                        0.0,
+                    // The pieces of the lines start at the first, which no
+                    // move takes: every later line that crosses a page end
+                    // starts the page after it.
+                    line_fit.first_fragment = false;
+                    line_fit.tail_edges = 0.0;
+                    let moves = if lines_can_move {
+                        paragraph_line_moves(
+                            &line_metrics,
+                            text.effective_y,
+                            page,
+                            &line_fit,
+                            page_origins,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    let moved = self.move_lines(
+                        document, env, candidate, entry, blocks, text, block_id, moves,
                     );
-                    rest_fit.first_fragment = false;
-                    if let LineBreakFix::MoveLines(moves) =
-                        rest_fit.fix(rest, text.effective_y, next, page_origins, false, || {
-                            lines_can_move
-                        })
-                    {
-                        let moved = self.move_lines(
-                            document,
-                            env,
-                            candidate,
-                            entry,
-                            blocks,
-                            text,
-                            block_id,
-                            moves
-                                .into_iter()
-                                .map(|(line, shift, page)| (line + 1, shift, page)),
-                        );
-                        moved?;
-                    }
+                    moved?;
                     break;
                 }
                 let fix = line_fit.fix(
