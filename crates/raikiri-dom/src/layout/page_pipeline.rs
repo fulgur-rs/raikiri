@@ -477,9 +477,12 @@ fn moved_clip_end(
     end
 }
 
-/// Whether a forced break at the start (`before`) or end of `node_id`, on
-/// `page`, falls inside a box that clips its overflow, keeps its height and
-/// whose border box ends on that page. Chromium prints the rest of such a box
+/// Whether a forced break at the start (`before`) or end of `node_id`, at
+/// `at` in candidate coordinates, falls inside a box that clips its
+/// overflow, has a height its content cannot grow (`height`, `max-height` or
+/// size containment; a `min-height` alone lets it grow) and whose border box
+/// ends on the page of the break. Both are judged where the normal flow puts
+/// them, without relative offsets. Chromium prints the rest of such a box
 /// in one piece: the forced breaks in it break nothing. A box that runs past
 /// the end of the page breaks there as any other; a clip margin past its
 /// border box does not count. A break at the first or last box of a box is a
@@ -490,7 +493,7 @@ fn clip_holds_breaks(
     env: &FlowEnv<'_>,
     node_id: usize,
     before: bool,
-    page: u32,
+    at: f32,
 ) -> bool {
     let FlowEnv {
         cascade,
@@ -514,13 +517,19 @@ fn clip_holds_breaks(
     {
         edge = parent;
     }
+    let at = at - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+    let page = if before {
+        page_origins.page_index_for_y(at)
+    } else {
+        page_origins.page_index_for_end(at)
+    };
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let mut next = document.parent_of(edge).filter(|_| !positioned(edge));
     while let Some(id) = next.filter(|&id| id != body_id) {
         if element_clips_overflow(document, cascade, id)
-            && !height_follows_content(document, id)
-            && current_abs_y(document, id)
-                + root_flow_offset
+            && height_is_capped(document, id)
+            && current_abs_y(document, id) + root_flow_offset
+                - accumulated_relative_offset_y(document, cascade, body_id, id)
                 + document.nodes[id].layout.size.height
                 <= page_end + 0.001
         {
@@ -15339,6 +15348,15 @@ fn height_follows_content(document: &super::context::LayoutSession<'_>, block: u
         && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
         && block_axis.max_height().is_auto()
         && !node.size_containment.height
+}
+
+/// Whether the content of `block` cannot grow its height: `height` or
+/// `max-height` sets it, or size containment ignores the content.
+fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    let block_axis = document.block_axis(block);
+    !block_axis.height().is_auto()
+        || !block_axis.max_height().is_auto()
+        || document.nodes[block].size_containment.height
 }
 
 /// Whether `parent` is a block container whose later children follow a
