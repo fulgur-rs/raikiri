@@ -18,14 +18,15 @@ use super::{
     first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
     follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
-    forced_target_page, grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
-    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
-    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
-    line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    forced_target_page, generated_content_runs_past, grow_ancestors_below,
+    grow_ancestors_for_shift, grow_container_beside_item, has_explicit_positioned_block_ancestor,
+    has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
+    is_unfixed_absolute_box, item_bottom_in, item_of, lead_below_ancestor, lead_below_edges,
+    leading_edges_move, leading_holder, line_block_parent, line_run_among_blocks,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
+    make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
@@ -732,6 +733,33 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The page that the box `node_id` at `flow_y` in the flow fits on: the
+    /// page of that position once the flow has reached it, by a box placed
+    /// there or by generated content that runs onto it (see
+    /// [`generated_content_runs_past`]), and the current page before that.
+    fn flow_page(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        flow_y: f32,
+    ) -> u32 {
+        env.page_origins
+            .page_index_in_flow(flow_y)
+            .filter(|&page| {
+                page > self.current_page
+                    && (self.reach.flow_max >= page
+                        || generated_content_runs_past(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            node_id,
+                            env.page_origins.origin(page),
+                        ))
+            })
+            .unwrap_or(self.current_page)
+    }
+
     /// Move a deferred first row without moving its grid's leading edges.
     fn move_first_grid_row(
         &mut self,
@@ -744,11 +772,7 @@ impl PaginationState {
         let row = candidate.context.first_grid_row()?;
         let flow_y = effective_y
             - accumulated_relative_offset_y(document, env.cascade, env.body_id, candidate.node_id);
-        let page = env
-            .page_origins
-            .page_index_in_flow(flow_y)
-            .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
-            .unwrap_or(self.current_page);
+        let page = self.flow_page(document, env, candidate.node_id, flow_y);
         let start = env.page_origins.origin(page);
         let delta = row.content_shift(flow_y, start, start + env.page_origins.step_at(page))?;
         if delta <= 0.001 {
@@ -1617,10 +1641,7 @@ impl PaginationState {
         // Content before the box that runs over a page edge leaves the page the
         // box before it started on behind: the box fits the page the flow has
         // reached.
-        let fit_page = page_origins
-            .page_index_in_flow(effective_y - relative_offset)
-            .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
-            .unwrap_or(self.current_page);
+        let fit_page = self.flow_page(document, env, node_id, effective_y - relative_offset);
         let fit_page_start = page_origins.origin(fit_page);
         let next_page_step = page_origins.step_at(fit_page.saturating_add(1));
         // A box that no page break goes through and that begins the plain

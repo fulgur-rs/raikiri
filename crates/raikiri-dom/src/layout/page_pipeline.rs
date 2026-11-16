@@ -10839,39 +10839,8 @@ pub(super) fn follows_box_on_page(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
-    // A generated box of `element` lies in the paragraph of `parent`: a
-    // block-level one where the line loop placed it, an inline one on the
-    // lines that hold its text. Whether it is on the page.
     let pseudo_on_page = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
-        // A `display: contents` element has no box: its content, generated
-        // content too, lies in the paragraph of the box around it.
-        let mut root = parent;
-        while document.nodes[root].kind() == NodeKind::Element
-            && document.nodes[root].display() == DisplayValue::Contents
-            && let Some(up) = document.parent_of(root)
-        {
-            root = up;
-        }
-        let id = crate::generated_content::generated_node_id(element, pseudo);
-        document.ifc_layout_node(root).is_some_and(|node| {
-            let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
-            node.ifc
-                .as_ref()
-                .and_then(|ifc| ifc.lines.as_ref())
-                .is_some_and(|lines| {
-                    lines.placed_blocks.iter().any(|placed| {
-                        let top = origin + placed.border_box.y;
-                        placed.node == id as u64 && on_page(top, top + placed.border_box.height)
-                    }) || lines.lines.iter().enumerate().any(|(index, line)| {
-                        let top = origin + lines.line_top(index);
-                        super::ifc::text_lines::glyph_owners(line).contains(&id)
-                            && on_page(
-                                top,
-                                top + crate::layout::ifc::outside_marker::fit_height(line),
-                            )
-                    })
-                })
-        })
+        generated_box_lies(document, &flow_y, parent, element, pseudo, &on_page)
     };
     any_level_before(
         document,
@@ -10913,6 +10882,89 @@ pub(super) fn follows_box_on_page(
                 && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
         },
     )
+}
+
+/// Whether the generated `pseudo` box of `element` has bounds that `accept`
+/// takes, as top and bottom in the flow. It lies in the paragraph of
+/// `parent`, or of the box around it when `parent` is a `display: contents`
+/// element, which has no box: a block-level one where the line loop placed
+/// it, an inline one on the lines that hold its text. `flow_y` gives the flow
+/// position of a box.
+fn generated_box_lies(
+    document: &Document,
+    flow_y: &dyn Fn(usize) -> f32,
+    parent: usize,
+    element: usize,
+    pseudo: raikiri_style::PseudoElem,
+    accept: &dyn Fn(f32, f32) -> bool,
+) -> bool {
+    let mut root = parent;
+    while document.nodes[root].kind() == NodeKind::Element
+        && document.nodes[root].display() == DisplayValue::Contents
+        && let Some(up) = document.parent_of(root)
+    {
+        root = up;
+    }
+    let id = crate::generated_content::generated_node_id(element, pseudo);
+    document.ifc_layout_node(root).is_some_and(|node| {
+        let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
+        node.ifc
+            .as_ref()
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| {
+                lines.placed_blocks.iter().any(|placed| {
+                    let top = origin + placed.border_box.y;
+                    placed.node == id as u64 && accept(top, top + placed.border_box.height)
+                }) || lines.lines.iter().enumerate().any(|(index, line)| {
+                    let top = origin + lines.line_top(index);
+                    super::ifc::text_lines::glyph_owners(line).contains(&id)
+                        && accept(
+                            top,
+                            top + crate::layout::ifc::outside_marker::fit_height(line),
+                        )
+                })
+            })
+    })
+}
+
+/// Whether generated content before the box `node_id` in the flow below
+/// `body_id` runs past `y`: the `::before` of an ancestor of it, the body
+/// too, or the generated content of an element before it, or before an
+/// ancestor, that has no box of its own (see [`boxless_content_before`]).
+/// Such content reaches the pages it runs onto, though no box of the flow
+/// is placed there, so a box after it fits from the page it is on.
+pub(super) fn generated_content_runs_past(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    y: f32,
+) -> bool {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let runs_past = |_top: f32, bottom: f32| bottom > y + 0.001;
+    any_level_before(document, cascade, body_id, node_id, |parent, node, _| {
+        boxless_content_before(
+            document,
+            cascade,
+            parent,
+            node,
+            &|child, pseudo| {
+                renders_pseudo(cascade, child, pseudo)
+                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &runs_past)
+            },
+            &|_| false,
+        ) || (renders_before_pseudo(cascade, parent)
+            && generated_box_lies(
+                document,
+                &flow_y,
+                parent,
+                parent,
+                raikiri_style::PseudoElem::Before,
+                &runs_past,
+            ))
+    })
 }
 
 /// Whether an element among the children of `parent` before `node` that
