@@ -1,6 +1,7 @@
 mod authored;
 mod break_flow;
 mod column_line_boxes;
+mod column_lines;
 mod constrained_chain;
 mod lineless;
 mod paged_spanning;

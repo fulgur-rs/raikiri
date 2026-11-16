@@ -7,6 +7,7 @@
 //! strategies place such a box atomically in one column. This one lays the
 //! children out as one stream and slices each box at the column boundaries.
 
+use super::column_lines::{self, LineMoves};
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
@@ -820,6 +821,10 @@ fn absolute_children(tree: &LayoutSession<'_>, child: usize) -> Vec<usize> {
         .collect()
 }
 
+/// The pieces of the absolutely positioned boxes of each child, with the
+/// moves of the content of each box whose lines a column end crosses.
+type AbsoluteLayout = (Vec<Vec<AbsolutePiece>>, Vec<(usize, LineMoves)>);
+
 /// One column's share of an absolutely positioned box, which paints the
 /// whole box moved into the column and clipped to it.
 struct AbsolutePiece {
@@ -871,7 +876,9 @@ fn first_piece_per_column(pieces: &[Piece]) -> HashMap<usize, usize> {
 /// holds the rest of the box. The last piece of the containing block holds
 /// the box's pieces in the columns after it. `None` when a box starts above
 /// the columns or its containing block, or when its pieces would not fit in
-/// `budget` fragments.
+/// `budget` fragments. With them, how the content of each box moves where a
+/// column end crosses its lines (see [`column_lines`]): the pieces are those
+/// of the moved box, and the caller moves it once it keeps the layout.
 #[allow(clippy::too_many_arguments)]
 fn absolute_pieces(
     tree: &LayoutSession<'_>,
@@ -882,13 +889,14 @@ fn absolute_pieces(
     column_height: f32,
     last_column: Option<usize>,
     budget: usize,
-) -> Option<Vec<Vec<AbsolutePiece>>> {
+) -> Option<AbsoluteLayout> {
     let column_of = |offset: f32| {
         let column = (offset / column_height).floor() as usize;
         last_column.map_or(column, |last| column.min(last))
     };
     let mut count = 0usize;
     let mut all = Vec::with_capacity(children.len());
+    let mut line_moves = Vec::new();
     for ((&child, &flex), pieces) in children.iter().zip(sliced_flex).zip(placements) {
         let mut own = Vec::new();
         let first = pieces.first()?;
@@ -905,8 +913,15 @@ fn absolute_pieces(
         // absolutely positioned children.
         let mut piece_of_column: Option<HashMap<usize, usize>> = None;
         for node in absolute_children(tree, child) {
-            let layout = tree.nodes[node].layout;
+            let mut layout = tree.nodes[node].layout;
             let start = flow_top + layout.location.y;
+            // The lines that a column end crosses start the next column.
+            if let Some(moves) =
+                column_lines::line_moves(tree, node, start, column_height, last_column)
+            {
+                layout = moves.moved(layout);
+                line_moves.push((node, moves));
+            }
             // Descendants that overflow the box are cut with it. The overflow
             // rect is measured from the padding box, so shift it by the
             // border to compare it with the border box.
@@ -974,7 +989,7 @@ fn absolute_pieces(
         }
         all.push(own);
     }
-    Some(all)
+    Some((all, line_moves))
 }
 
 /// One column's share of a child box.
@@ -2381,7 +2396,7 @@ pub(super) fn layout(
         .map(Vec::len)
         .sum::<usize>()
         .checked_add(wrapped_fragments)?;
-    let absolute = absolute_pieces(
+    let (absolute, line_moves) = absolute_pieces(
         tree,
         children,
         &sliced_flex,
@@ -2406,6 +2421,9 @@ pub(super) fn layout(
     // strategies that are.
     if outer_height.is_some_and(|outer| used_height > outer + EPSILON) {
         return None;
+    }
+    for (node, moves) in &line_moves {
+        column_lines::apply(tree, *node, moves);
     }
     tree.fragment_tree.retire_previous_roots(parent);
     tree.nodes[parent].multicol_groups.clear();

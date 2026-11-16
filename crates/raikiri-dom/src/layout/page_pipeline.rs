@@ -2666,7 +2666,7 @@ fn forced_line_moves(
 
 /// Moves line `line` of the paragraph `root` and every line after it down by
 /// `shift`, and grows the root's box by `growth` to hold them.
-fn shift_ifc_lines_from(
+pub(in crate::layout) fn shift_ifc_lines_from(
     document: &mut Document,
     root: usize,
     line: usize,
@@ -2688,7 +2688,7 @@ fn shift_ifc_lines_from(
 /// as far as its content end passes the bounds (CSS 2.1 §10.7). A flex or
 /// grid item stretched to its line or row has room below its content, which
 /// lines moving down take first.
-fn lines_shift_growth(
+pub(in crate::layout) fn lines_shift_growth(
     document: &super::context::LayoutSession<'_>,
     root: usize,
     shift: f32,
