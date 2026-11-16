@@ -13439,8 +13439,59 @@ fn move_box_for_transition(
             node_delta.max(shift_delta)
         };
         shift_block_flow_after(document, holder, body_id, following_delta);
+        bound_forced_shift(
+            document,
+            cascade,
+            holder,
+            body_id,
+            following_delta,
+            shifts,
+            flow_page,
+        );
     }
     moved_in_bounded_ancestor
+}
+
+/// Ends the shift a forced break inside `node_id` gives the flow where an
+/// ancestor that cannot grow to hold the moved content ends.
+///
+/// A box with a definite block size that a break goes through fills the rest
+/// of its fragmentainer, and its remaining size continues on the next one
+/// (CSS Fragmentation 3 §4.4), so its end stays where its size puts it, and
+/// the flow after it does not move. `min-height` and `max-height` bound the
+/// growth of the others (CSS 2.1 §10.7). The part of `delta` an ancestor does
+/// not pass on ends with its subtree (see [`SubtreeShifts::bounded`]).
+fn bound_forced_shift(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+    delta: f32,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) {
+    let mut remaining = delta;
+    let mut child = node_id;
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        walk.advance(document);
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
+        if remaining <= 0.001 || (!paragraph && !stacks_children_in_block_flow(document, parent)) {
+            break;
+        }
+        // The content after the break already moved, so it ended `remaining`
+        // higher before.
+        let end = flow_content_end(document, cascade, body_id, parent);
+        let passed = growth_for_content_end(document, parent, (end - remaining, end));
+        if passed < remaining - 0.001 {
+            shifts.bounded.push((parent, remaining - passed, flow_page));
+            remaining = passed;
+        }
+        child = parent;
+    }
 }
 
 /// Grows the formatting context that holds a moved float. A formatting
@@ -13949,17 +14000,29 @@ fn passed_growth(
     block: usize,
     moved: f32,
 ) -> f32 {
+    let end = flow_content_end(document, cascade, body_id, block);
+    growth_for_content_end(document, block, (end, end + moved))
+}
+
+/// How far `block` grows when the end of its in-flow content moves from
+/// `before` to `after` in its border box: as far as its height can follow
+/// within `min-height` and `max-height` (CSS 2.1 §10.7), and not at all for
+/// a definite height.
+fn growth_for_content_end(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+    (before, after): (f32, f32),
+) -> f32 {
     if !height_can_grow(document, block) {
         return 0.0;
     }
     let layout = &document.nodes[block].layout;
     let edges_below = layout.padding.bottom + layout.border.bottom;
-    let end = flow_content_end(document, cascade, body_id, block);
     let (height, _) = grown_height(
         layout.size.height,
         border_box_height_bounds(document, block),
         edges_below,
-        (end, end + moved),
+        (before, after),
     );
     (height - layout.size.height).max(0.0)
 }
