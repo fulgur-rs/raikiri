@@ -258,6 +258,10 @@ pub(crate) struct LineShifts {
     totals: Vec<f32>,
     /// Some entry starts at an earlier line than the one before it.
     unordered: bool,
+    /// How far `align-content` moved all of the content down, before
+    /// pagination moved any of it. Not an entry: the content was laid out
+    /// there, and no page or column moved it.
+    aligned: f32,
 }
 
 impl Default for LineShifts {
@@ -266,11 +270,23 @@ impl Default for LineShifts {
             entries: Vec::new(),
             totals: vec![std::iter::empty::<f32>().sum()],
             unordered: false,
+            aligned: 0.0,
         }
     }
 }
 
 impl LineShifts {
+    /// Move every line down by `offset`, the content alignment of the
+    /// paragraph box.
+    pub(crate) fn align(&mut self, offset: f32) {
+        self.aligned = offset;
+    }
+
+    /// How far the content alignment of the paragraph box moved every line.
+    pub(crate) fn aligned(&self) -> f32 {
+        self.aligned
+    }
+
     /// Move line `first` and every later line down by `delta`.
     pub(crate) fn push(&mut self, first: usize, delta: f32) {
         self.unordered |= self.entries.last().is_some_and(|&(last, _)| last > first);
@@ -295,17 +311,24 @@ impl LineShifts {
         self.totals[self.totals.len() - 1]
     }
 
-    /// How far the entries move line `index` down.
+    /// How far the entries, and the content alignment, move line `index`
+    /// down.
     pub(crate) fn of(&self, index: usize) -> f32 {
-        if self.unordered {
-            return self
-                .entries
+        let moved = if self.unordered {
+            self.entries
                 .iter()
                 .filter(|(first, _)| *first <= index)
                 .map(|(_, delta)| delta)
-                .sum();
+                .sum()
+        } else {
+            self.totals[self.entries.partition_point(|&(first, _)| first <= index)]
+        };
+        // Adding nothing keeps the sign of a zero sum.
+        if self.aligned == 0.0 {
+            moved
+        } else {
+            moved + self.aligned
         }
-        self.totals[self.entries.partition_point(|&(first, _)| first <= index)]
     }
 }
 
@@ -319,7 +342,7 @@ impl IntoIterator for LineShifts {
 }
 
 impl IfcLines {
-    /// How far pagination moved line `index` down.
+    /// How far pagination and the content alignment moved line `index` down.
     pub(crate) fn shift_of(&self, index: usize) -> f32 {
         self.shifts.of(index)
     }
