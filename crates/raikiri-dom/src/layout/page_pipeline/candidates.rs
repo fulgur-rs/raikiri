@@ -1807,15 +1807,30 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let run_tail_base = frame.run_tail
                     && (in_flow_block || in_flow_container)
                     && frame.closing_edges > 0.0;
-                // A nested block after a block of its parent's flow, with a
-                // margin between the two: a page edge in that margin cuts it.
+                // A nested block after a block of its parent's flow, or
+                // first in it after generated content that has no candidate
+                // of its own, with a margin between the two: a page edge in
+                // that margin cuts it.
                 let margin_shape = in_flow_block_level
                     && !direct_body_child
                     && !node.used_writing_mode.is_vertical()
-                    && frame.previous_box.is_some_and(|previous| {
-                        node.layout.margin.top > 0.0
-                            || document.nodes[previous].layout.margin.bottom > 0.0
-                    });
+                    && match frame.previous_box {
+                        Some(previous) => {
+                            node.layout.margin.top > 0.0
+                                || document.nodes[previous].layout.margin.bottom > 0.0
+                        }
+                        None => {
+                            node.layout.margin.top > 0.0
+                                && super::generated_content_end_above(
+                                    document,
+                                    cascade,
+                                    body_id,
+                                    node_id,
+                                    candidate_raw_y - node.layout.margin.top,
+                                )
+                                .is_some()
+                        }
+                    };
                 let needs_ancestor_constraints = margin_shape
                     || (nested_candidate_base
                         && ((!inline_level && is_block_flow_box && avoids_break)
