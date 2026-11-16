@@ -8965,3 +8965,29 @@ fn a_box_cut_below_a_float_stops_layout_when_its_pieces_reach_the_fragment_limit
         "{result:?}"
     );
 }
+
+#[test]
+fn the_height_a_positioned_box_needs_counts_the_columns_it_has_left() {
+    use super::column_line_boxes::out_of_flow_need;
+    // A box that breaks shares the columns from where it starts.
+    assert_eq!(out_of_flow_need(10.0, 0, 80.0, false, 30.0, 2), 45.0);
+    // One that starts past the end of its column starts the next one.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 30.0, 3), 15.0);
+    // A monolithic box stays whole in the column it starts in.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, true, 30.0, 3), 30.0);
+    // A box past the last column, or with no place, needs nothing.
+    assert_eq!(out_of_flow_need(70.0, 0, 20.0, false, 30.0, 2), 0.0);
+    assert_eq!(out_of_flow_need(-5.0, 0, 20.0, false, 30.0, 2), 0.0);
+    assert_eq!(out_of_flow_need(f32::NAN, 0, 20.0, false, 30.0, 2), 0.0);
+    // A single column, or columns with no height yet, hold the box where it
+    // starts.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 30.0, 1), 60.0);
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 0.0, 2), 30.0);
+}
+
+#[test]
+fn the_last_step_of_the_growth_takes_what_a_positioned_box_needs() {
+    use super::{OUT_OF_FLOW_STEPS, out_of_flow_step};
+    assert_eq!(out_of_flow_step(0, 40.0, 35.0), 35.0);
+    assert_eq!(out_of_flow_step(OUT_OF_FLOW_STEPS - 1, 40.0, 35.0), 40.0);
+}

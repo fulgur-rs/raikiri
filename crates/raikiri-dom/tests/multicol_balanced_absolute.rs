@@ -402,6 +402,27 @@ fn a_paragraph_makes_room_for_a_positioned_box_on_its_lines() {
             ("a", (38.0, 8.0, 30.0, 35.0)),
         ],
     );
+    // After a box with no lines, or after another paragraph.
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=b style="height:20px"></div><p id=p style="margin:0;position:relative">xxx xxx<span id=a style="position:absolute;left:0;top:0;width:30px;height:80px"></span></p></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 50.0)),
+            ("b", (8.0, 8.0, 30.0, 20.0)),
+            ("p", (8.0, 28.0, 30.0, 20.0)),
+            ("a", (8.0, 28.0, 30.0, 30.0)),
+            ("a", (38.0, 8.0, 30.0, 50.0)),
+        ],
+    );
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><p id=q style="margin:0">xxx xxx</p><p id=p style="margin:0;position:relative">xxx xxx<span id=a style="position:absolute;left:0;top:0;width:30px;height:80px"></span></p></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 50.0)),
+            ("q", (8.0, 8.0, 30.0, 20.0)),
+            ("p", (8.0, 28.0, 30.0, 20.0)),
+            ("a", (8.0, 28.0, 30.0, 30.0)),
+            ("a", (38.0, 8.0, 30.0, 50.0)),
+        ],
+    );
 }
 
 /// The columns grow until the line a column end would cut fits, rather than

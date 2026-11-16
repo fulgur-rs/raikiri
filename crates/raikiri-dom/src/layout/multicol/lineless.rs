@@ -890,11 +890,9 @@ fn pieces_of_children(
             }
             Some(wrapped_tree) => {
                 let leaf_pieces = make_wrapped_leaf_pieces(wrapped_tree, pieces)?;
-                child_pieces.push(wrapper_pieces_for_tree(
-                    wrapped_tree,
-                    &leaf_pieces,
-                    Columns::Uniform(column_height),
-                )?);
+                let columns = Columns::Uniform(column_height);
+                let wrapper = wrapper_pieces_for_tree(wrapped_tree, &leaf_pieces, columns)?;
+                child_pieces.push(wrapper);
                 wrapped_leaf_pieces.push(Some(leaf_pieces));
             }
         }
@@ -952,22 +950,16 @@ fn out_of_flow_height(
     for step in 0..super::OUT_OF_FLOW_STEPS {
         // Columns with no height yet lay the stream out in one column.
         let place_height = if height > 0.0 { height } else { f32::INFINITY };
-        let Some((pieces, _)) =
-            place(stream.items, place_height, usize::MAX)
-                .ok()
-                .and_then(|placement| {
-                    pieces_of_children(stream.spans, stream.wrapped, &placement, place_height)
-                })
-        else {
-            break;
-        };
+        let placement = place(stream.items, place_height, usize::MAX).ok();
+        let pieces = placement.and_then(|placement| {
+            pieces_of_children(stream.spans, stream.wrapped, &placement, place_height)
+        });
+        let Some((pieces, _)) = pieces else { break };
         // The least height past this one that one of the boxes that do not
         // fit needs.
         let mut needed = f32::INFINITY;
-        for (pieces, boxes) in pieces.iter().zip(&boxes) {
-            let Some(first) = pieces.first() else {
-                continue;
-            };
+        let firsts = pieces.iter().zip(&boxes);
+        for (first, boxes) in firsts.filter_map(|(pieces, boxes)| Some((pieces.first()?, boxes))) {
             let top = if height > 0.0 {
                 first.column as f32 * height + first.top
             } else {

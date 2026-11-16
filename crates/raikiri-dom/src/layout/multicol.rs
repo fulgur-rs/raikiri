@@ -3050,10 +3050,9 @@ fn out_of_flow_boxes(
             {
                 continue;
             }
-            let Some(at) = tree.layout_origin_of(node) else {
-                continue;
-            };
-            boxes.push((node, top + at.y - origin.y, monolithic));
+            if let Some(at) = tree.layout_origin_of(node) {
+                boxes.push((node, top + at.y - origin.y, monolithic));
+            }
         }
     }
     boxes
