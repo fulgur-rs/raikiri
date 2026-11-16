@@ -436,3 +436,75 @@ fn a_generated_box_that_runs_onto_the_page_lets_a_one_line_paragraph_move_whole(
         }
     }
 }
+
+#[test]
+fn the_page_end_cuts_the_margin_after_a_generated_box() {
+    // A generated box that ends at or just above the page end: the page
+    // breaks in the margin between it and the paragraph, which is cut, so the
+    // paragraph starts the next page with its padding.
+    let generated = |height: u32| {
+        [
+            format!(r#"<style>body::before{{content:"";display:block;height:{height}px}}</style>"#),
+            format!(
+                r#"<style>.s::before{{content:"";display:block;height:{height}px}}</style><span class="s"></span>"#
+            ),
+            format!(
+                r#"<style>.s::after{{content:"";display:block;height:{height}px}}</style><span class="s"></span>"#
+            ),
+        ]
+    };
+    for height in [95, 100] {
+        for before in generated(height) {
+            for (class, content) in LINES {
+                for (padding, tops) in [
+                    (40, [(1, 'A', 45), (1, 'Z', 75)]),
+                    (60, [(1, 'A', 65), (2, 'Z', 5)]),
+                ] {
+                    let body = document(
+                        &before,
+                        "",
+                        class,
+                        &format!("margin:10px 0 0;padding-top:{padding}px"),
+                        content,
+                    );
+                    assert_eq!(glyph_tops(&body), tops, "{body}");
+                }
+            }
+        }
+    }
+    // The ::before of a wrapper, before a paragraph of generated text or of
+    // an inline-block, with the wrapper's padding above it too.
+    for (before, page) in [
+        (
+            r#"<style>.w::before{content:"";display:block;height:100px}</style><div class="w">"#,
+            1,
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:95px}</style><div class="w">"#,
+            1,
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:90px}</style><div class="w" style="padding-top:10px">"#,
+            1,
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:190px}</style><div class="w" style="padding-top:10px">"#,
+            2,
+        ),
+    ] {
+        for (class, content) in &LINES[1..] {
+            let body = document(
+                before,
+                "</div>",
+                class,
+                "margin:10px 0 0;padding-top:40px",
+                content,
+            );
+            assert_eq!(
+                glyph_tops(&body),
+                [(page, 'A', 45), (page, 'Z', 75)],
+                "{body}"
+            );
+        }
+    }
+}

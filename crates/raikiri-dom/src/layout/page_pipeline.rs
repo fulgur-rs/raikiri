@@ -10982,10 +10982,52 @@ pub(super) fn generated_content_runs_past(
     node_id: usize,
     y: f32,
 ) -> bool {
+    generated_content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > y + 0.001
+    })
+}
+
+/// The lowest end, in the flow, of the generated content before the box
+/// `node_id` (see [`generated_content_runs_past`]) when it is the last
+/// in-flow content above `y`, the block-start margin edge of the box: no
+/// box or line ends below it there (see [`content_end_above`]). The margin
+/// between that content and the box then adjoins it, as one between
+/// sibling blocks does.
+pub(super) fn generated_content_end_above(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Option<f32> {
+    let end = std::cell::Cell::new(None::<f32>);
+    generated_content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        if bottom <= y + 0.001 {
+            end.set(Some(end.get().map_or(bottom, |end| end.max(bottom))));
+        }
+        false
+    });
+    let end = end.get()?;
+    content_end_above(document, cascade, body_id, node_id, y)
+        .is_some_and(|last| last <= end + 0.001)
+        .then_some(end)
+}
+
+/// Whether `accept` takes the top and bottom in the flow of some generated
+/// content before the box `node_id`: the `::before` of an ancestor of it,
+/// the body too, or the generated content of an element before it, or
+/// before an ancestor, that has no box of its own (see
+/// [`boxless_content_before`]).
+fn generated_content_lies_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    accept: &dyn Fn(f32, f32) -> bool,
+) -> bool {
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let runs_past = |_top: f32, bottom: f32| bottom > y + 0.001;
     any_level_before(document, cascade, body_id, node_id, |parent, node, _| {
         boxless_content_before(
             document,
@@ -10994,7 +11036,7 @@ pub(super) fn generated_content_runs_past(
             node,
             &|child, pseudo| {
                 renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &runs_past)
+                    && generated_box_lies(document, &flow_y, parent, child, pseudo, accept)
             },
             &|_| false,
         ) || (renders_before_pseudo(cascade, parent)
@@ -11004,7 +11046,7 @@ pub(super) fn generated_content_runs_past(
                 parent,
                 parent,
                 raikiri_style::PseudoElem::Before,
-                &runs_past,
+                accept,
             ))
     })
 }
@@ -11735,6 +11777,51 @@ struct MarginRunEnd {
     raw_y: f32,
     /// The block size of the box.
     height: f32,
+}
+
+/// How the top of `at.natural_page` truncates the margin between the box
+/// `at` and generated content right before it, a block-level `::before` or
+/// `::after` that is no candidate of its own (see
+/// [`generated_content_end_above`]), as it truncates one between sibling
+/// blocks: Chromium breaks the margin there too.
+fn truncation_after_generated_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    page_origins: &PageOrigins,
+    at: &MarginBreak,
+) -> Option<MarginTruncation> {
+    if !at.collapses_with_previous_block || at.run_end.is_some() {
+        return None;
+    }
+    let previous_bottom = generated_content_end_above(
+        document,
+        cascade,
+        body_id,
+        at.node_id,
+        at.effective_y - at.margin_top.max(0.0),
+    )?;
+    let page_top = page_origins.origin(at.natural_page);
+    if !page_edge_falls_in_margin(
+        at.natural_page,
+        page_top,
+        previous_bottom,
+        at.effective_y,
+        false,
+    ) {
+        return None;
+    }
+    let (target_top, target_y) = page_origins.truncated_margin_target(
+        at.natural_page,
+        at.forced_before,
+        at.margin_top,
+        || previous_bottom,
+        false,
+    );
+    Some(MarginTruncation {
+        delta: target_y - at.effective_y,
+        underflow: (target_y < target_top).then_some(target_top - target_y),
+    })
 }
 
 /// How a page edge truncates the margin above a box.

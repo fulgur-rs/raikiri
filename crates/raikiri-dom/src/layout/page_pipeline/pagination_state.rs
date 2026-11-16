@@ -33,6 +33,7 @@ use super::{
     reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
     run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
     starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -1492,9 +1493,9 @@ impl PaginationState {
         }
     }
 
-    /// Starts the box `candidate` on a page: the first box of the flow starts
-    /// on the first page, unless a forced break before it follows content
-    /// that places no box of the flow, and a later one opens the page its
+    /// Starts the box `candidate` on a page: the first box of the flow, with
+    /// no content above it, starts on the first page, and a later one, or one
+    /// below content that places no box of the flow, opens the page its
     /// transition asks for, or starts on the page its position falls on.
     /// Returns whether the box met a page transition.
     pub(super) fn start_box_page(
@@ -1510,7 +1511,6 @@ impl PaginationState {
         let margin_edge =
             position.effective_y - page_break.relative_offset - page_break.margin_top.max(0.0);
         if !self.saw_child
-            && page_break.forced_transition
             && let Some(end) = in_flow_box(document, env.cascade, candidate)
                 .then(|| {
                     content_end_above(document, env.cascade, env.body_id, node_id, margin_edge)
@@ -1519,9 +1519,10 @@ impl PaginationState {
         {
             // Content that places no box of the flow on a page, as generated
             // content, an empty box or the phantom line of an empty inline
-            // element, still comes before the box, so a forced break before
-            // it opens the page after the one that content ends on, as
-            // Chromium breaks there.
+            // element, still comes before the box, so the box is not the
+            // first of the flow: a forced break before it opens the page
+            // after the one that content ends on, and an unforced one cuts
+            // the margin between them, as Chromium breaks there.
             self.saw_child = true;
             self.current_page = env.page_origins.page_index_for_end(end);
         }
@@ -2303,9 +2304,12 @@ impl PaginationState {
         if let Some((end, pulled)) = pull {
             natural_page = page_origins.start_page(flow_y - pulled, end.height);
         }
-        let truncation =
-            self.sibling_margins
-                .truncation_at_break(document, cascade, page_origins, &at);
+        let truncation = self
+            .sibling_margins
+            .truncation_at_break(document, cascade, page_origins, &at)
+            .or_else(|| {
+                truncation_after_generated_content(document, cascade, body_id, page_origins, &at)
+            });
         if let Some(MarginTruncation { delta, underflow }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
             let held = move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
