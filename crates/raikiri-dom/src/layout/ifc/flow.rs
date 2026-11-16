@@ -481,6 +481,38 @@ pub(crate) fn rebreak_roots(
         // The inline elements follow the new lines; the root's box keeps the
         // border and padding it was laid out with.
         let layout = doc.nodes[id].layout;
+        // The new lines are aligned in the content box as layout aligned the
+        // lines they replace (see `align_ifc_content`).
+        let horizontal = doc.nodes[id]
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
+        let alignment = doc
+            .finished_style(cascade, id)
+            .filter(|_| {
+                horizontal && !crate::layout::dispatch::is_table_box(doc.nodes[id].display())
+            })
+            .map_or(
+                raikiri_layout_style::values::AlignContent::NORMAL,
+                |style| style.view().align_content(),
+            );
+        if let Some(lines) = doc.nodes[id]
+            .ifc
+            .as_mut()
+            .and_then(|root| root.lines.as_mut())
+        {
+            let content = layout.size.height
+                - layout.padding.top
+                - layout.padding.bottom
+                - layout.border.top
+                - layout.border.bottom
+                - layout.scrollbar_size.height;
+            let offset = crate::layout::dispatch::block_flow::content_alignment_offset(
+                alignment,
+                content - lines.height,
+            );
+            lines.shifts.align(offset);
+        }
         let geometry = FlowGeometry::horizontal(
             width,
             (

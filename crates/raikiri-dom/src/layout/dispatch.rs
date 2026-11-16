@@ -2277,7 +2277,7 @@ fn compute_ifc_root(
     {
         let free =
             output.size.height - measure.insets.top - measure.insets.bottom - measured.height;
-        let offset = block_flow::content_alignment_offset(&style, free);
+        let offset = block_flow::content_alignment_offset(style.align_content, free);
         if offset != 0.0 {
             align_ifc_content(tree, idx, offset, inputs.run_mode, &mut output);
         }
