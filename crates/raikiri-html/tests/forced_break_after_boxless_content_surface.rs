@@ -141,6 +141,33 @@ fn content_of_no_height_on_the_first_page_comes_before_the_box() {
             "empty generated box",
             r#"<style>.s::before{content:"";display:block}</style><span class="s"></span>"#,
         ),
+        // The empty `::before` of the body, whose margins collapse through
+        // it, or an inline one that makes no line, is a box of no height at
+        // the start of the body's content all the same.
+        (
+            "empty generated box of the body",
+            r#"<style>body::before{content:"";display:block}</style>"#,
+        ),
+        (
+            "empty generated box with margins",
+            r#"<style>body::before{content:"";display:block;margin:10px 0}</style>"#,
+        ),
+        (
+            "empty generated list item",
+            r#"<style>body::before{content:"";display:list-item;list-style:none}</style>"#,
+        ),
+        (
+            "empty inline generated box",
+            r#"<style>body::before{content:""}</style>"#,
+        ),
+        (
+            "blank inline generated box",
+            r#"<style>body::before{content:" "}</style>"#,
+        ),
+        (
+            "below the padding of the body",
+            r#"<style>body{padding-top:10px}body::before{content:""}</style>"#,
+        ),
     ] {
         assert_eq!(
             glyph_tops(&format!("{before}{BREAK}")),
@@ -148,11 +175,136 @@ fn content_of_no_height_on_the_first_page_comes_before_the_box() {
             "{name}"
         );
     }
+    // The `::before` of a wrapper around the box, below its padding too.
+    for wrapper in [
+        r#"<div class="w">"#,
+        r#"<div class="w" style="padding-top:10px">"#,
+    ] {
+        for display in ["block", "inline"] {
+            assert_eq!(
+                glyph_tops(&format!(
+                    r#"<style>.w::before{{content:"";display:{display}}}</style>{wrapper}{BREAK}</div>"#
+                )),
+                [(1, 'A', 5), (1, 'Z', 35)],
+                "{wrapper} {display}"
+            );
+        }
+    }
     // On a later page, such content stays at the end of the page before, where
     // the break already is.
     assert_eq!(
         glyph_tops(&format!(
             r#"<div style="height:100px"></div><div></div>{BREAK}"#
+        )),
+        [(1, 'A', 5), (1, 'Z', 35)],
+    );
+}
+
+#[test]
+fn an_empty_box_whose_margins_collapse_with_the_box_comes_before_it() {
+    // The empty box lies where the collapsed margins end, at the top of the
+    // border box, not above the margin of the box; the break keeps the margin
+    // on the new page.
+    for before in [
+        "<div></div>",
+        "<span></span>",
+        r#"<div style="margin:5px 0"></div>"#,
+        r#"<style>body::before{content:"";display:block}</style>"#,
+        r#"<style>body::before{content:""}</style>"#,
+    ] {
+        for (margin, top) in [(10, 15), (40, 45)] {
+            assert_eq!(
+                glyph_tops(&format!(
+                    r#"{before}<p style="break-before:page;margin:{margin}px 0 0;width:20px">A</p><div>Z</div>"#
+                )),
+                [(1, 'A', top), (1, 'Z', top + 30)],
+                "{before} {margin}px"
+            );
+        }
+    }
+    assert_eq!(
+        glyph_tops(
+            r#"<style>body::before{content:"";display:block;margin-top:15px}</style><p style="break-before:page;margin:10px 0 0;width:20px">A</p><div>Z</div>"#
+        ),
+        [(1, 'A', 15), (1, 'Z', 45)],
+    );
+}
+
+#[test]
+fn an_empty_item_before_comes_before_the_item_of_a_column_flex_container() {
+    let item = r#"<div style="break-before:page;margin-top:10px">A</div>"#;
+    for before in ["", "<div></div>", "<span></span>"] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"{before}<div style="display:flex;flex-direction:column"><div></div>{item}</div>"#
+            )),
+            [(1, 'A', 15)],
+            "{before}"
+        );
+    }
+    // Behind a `display: contents` wrapper the item is still one of the
+    // container.
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;flex-direction:column"><div></div><section style="display:contents"><div style="break-before:page">A</div></section></div>"#
+        ),
+        [(1, 'A', 5)],
+    );
+    // In a row, or in a later column of a wrapping column, the empty item is
+    // beside the item, not before it, even within the item's margin.
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<div style="display:flex"><div></div>{item}</div>"#
+        )),
+        [(0, 'A', 15)],
+    );
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;flex-direction:column;flex-wrap:wrap;height:40px"><div></div><div style="height:40px"></div><div style="break-before:page">A</div></div>"#
+        ),
+        [(0, 'A', 5)],
+    );
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;align-items:center"><div></div><div><p style="break-before:page;margin:40px 0 0;width:20px">A</p></div></div>"#
+        ),
+        [(0, 'A', 45)],
+    );
+    assert_eq!(
+        glyph_tops(
+            r#"<style>body{display:flex;align-items:center}</style><div></div><div><p style="break-before:page;margin:40px 0 0;width:20px">A</p></div>"#
+        ),
+        [(0, 'A', 45)],
+    );
+}
+
+#[test]
+fn an_empty_generated_box_of_a_contents_element_comes_before_the_box() {
+    for before in [
+        r#"<style>body::before{content:"";display:contents}</style>"#,
+        r#"<style>body::before{content:" ";display:contents}</style>"#,
+    ] {
+        assert_eq!(
+            glyph_tops(&format!("{before}{BREAK}")),
+            [(1, 'A', 5), (1, 'Z', 35)],
+            "{before}"
+        );
+    }
+    // The `::before` of a `display: contents` wrapper lies at its first box.
+    for display in ["inline", "block"] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"<style>.w::before{{content:"";display:{display}}}</style><div class="w" style="display:contents">{BREAK}</div>"#
+            )),
+            [(1, 'A', 5), (1, 'Z', 35)],
+            "{display}"
+        );
+    }
+    // Its first box may lie behind an element that generates none and
+    // inside a nested `display: contents` element.
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<style>.w::before{{content:""}}</style><div class="w" style="display:contents"><div style="display:none">q</div><div style="display:contents">{BREAK}</div></div>"#
         )),
         [(1, 'A', 5), (1, 'Z', 35)],
     );
@@ -214,7 +366,13 @@ fn a_page_type_after_generated_content_opens_a_page() {
             "{name}"
         );
     }
-    for before in ["<div></div>", "<span></span>"] {
+    for before in [
+        "<div></div>",
+        "<span></span>",
+        r#"<style>body::before{content:""}</style>"#,
+        r#"<style>body::before{content:" "}</style>"#,
+        r#"<style>body::before{content:"";display:block}</style>"#,
+    ] {
         assert_eq!(
             glyph_tops(&format!("{before}{named}")),
             [(1, 'A', 5), (2, 'Z', 5)],

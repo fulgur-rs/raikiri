@@ -11167,18 +11167,25 @@ pub(super) fn follows_box_on_page(
 /// The lowest end, in the flow, of the in-flow content before the box
 /// `node_id` (see [`follows_box_on_page`]) that ends at or above `y`, the
 /// block-start margin edge of the box: content beside the box, as an earlier
-/// flex item, grid item or table cell, ends below it. `None` when no such
-/// content comes before the box.
+/// flex item, grid item or table cell, ends below it. Content of no height
+/// counts up to `border_top` too: an empty box whose margins collapse with
+/// those of the box lies at the end of the collapsed margins in the flow,
+/// below the margin edge of the box, and Chromium breaks after it all the
+/// same. Callers pass the block-start border edge of the box there only when
+/// its margin can adjoin content before it (see [`margins_adjoin_in_flow`]),
+/// and the margin edge otherwise. `None` when no such content comes before
+/// the box.
 pub(super) fn content_end_above(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
     y: f32,
+    border_top: f32,
 ) -> Option<f32> {
     let end = std::cell::Cell::new(None::<f32>);
-    content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
-        if bottom <= y + 0.001 {
+    content_lies_before(document, cascade, body_id, node_id, &|top, bottom| {
+        if bottom <= y + 0.001 || (bottom <= top + 0.001 && bottom <= border_top + 0.001) {
             end.set(Some(end.get().map_or(bottom, |end| end.max(bottom))));
         }
         false
@@ -11203,7 +11210,7 @@ fn content_lies_before(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let pseudo_lies = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
-        generated_box_lies(document, &flow_y, parent, element, pseudo, accept)
+        generated_box_lies(document, cascade, &flow_y, parent, element, pseudo, accept)
     };
     any_level_before(
         document,
@@ -11258,6 +11265,7 @@ fn content_lies_before(
 /// position of a box.
 fn generated_box_lies(
     document: &Document,
+    cascade: &CascadeResult,
     flow_y: &dyn Fn(usize) -> f32,
     parent: usize,
     element: usize,
@@ -11272,25 +11280,106 @@ fn generated_box_lies(
         root = up;
     }
     let id = crate::generated_content::generated_node_id(element, pseudo);
-    document.ifc_layout_node(root).is_some_and(|node| {
-        let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
-        node.ifc
-            .as_ref()
-            .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| {
-                lines.placed_blocks.iter().any(|placed| {
-                    let top = origin + placed.border_box.y;
-                    placed.node == id as u64 && accept(top, top + placed.border_box.height)
-                }) || lines.lines.iter().enumerate().any(|(index, line)| {
-                    let top = origin + lines.line_top(index);
-                    super::ifc::text_lines::glyph_owners(line).contains(&id)
-                        && accept(
-                            top,
-                            top + crate::layout::ifc::outside_marker::fit_height(line),
-                        )
-                })
-            })
+    let node = document
+        .ifc_layout_node(root)
+        .unwrap_or(&document.nodes[root]);
+    let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
+    if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref()) {
+        let blocks = lines
+            .placed_blocks
+            .iter()
+            .filter(|block| block.node == id as u64)
+            .map(|block| {
+                let top = origin + block.border_box.y;
+                (top, top + block.border_box.height)
+            });
+        let line_bounds = lines
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| super::ifc::text_lines::glyph_owners(line).contains(&id))
+            .map(|(index, line)| {
+                let top = origin + lines.line_top(index);
+                (
+                    top,
+                    top + crate::layout::ifc::outside_marker::fit_height(line),
+                )
+            });
+        let mut bounds = blocks.chain(line_bounds).peekable();
+        if bounds.peek().is_some() {
+            return bounds.any(|(top, bottom)| accept(top, bottom));
+        }
+    }
+    // An empty `::before` leaves neither a block nor a line: a block-level
+    // one whose margins collapse through it, or an inline one that makes no
+    // line, which may not even make its element hold a paragraph. Its
+    // anonymous block is still a box of no height at the start of the
+    // element's content (CSS 2.1 §9.2.1.1, §9.4.2), as an empty `div` is, and
+    // Chromium breaks after it as after such a box. The content of a
+    // `display: contents` element starts at its first box.
+    element == parent
+        && pseudo == raikiri_style::PseudoElem::Before
+        && holds_block_flow(document.nodes[root].display())
+        && crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo)
+        && if element == root {
+            Some(origin)
+        } else {
+            first_box_in(document, element).map(flow_y)
+        }
+        .is_some_and(|start| accept(start, start))
+}
+
+/// Whether a box of `display` lays its in-flow children out one below
+/// another, in block flow: not a flex or grid container, nor a table or a
+/// part of one that holds rows, columns or cells side by side.
+fn holds_block_flow(display: DisplayValue) -> bool {
+    !display.is_flex_or_grid_container()
+        && !matches!(
+            display,
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableColumnGroup
+                | DisplayValue::TableColumn
+        )
+}
+
+/// The first element among the children of the `display: contents` element
+/// `element`, or of the `display: contents` elements there, that generates
+/// a box.
+fn first_box_in(document: &Document, element: usize) -> Option<usize> {
+    document.nodes[element].children.iter().find_map(|&child| {
+        let node = &document.nodes[child];
+        match node.display() {
+            _ if node.kind() != NodeKind::Element => None,
+            DisplayValue::None => None,
+            DisplayValue::Contents => first_box_in(document, child),
+            _ => Some(child),
+        }
     })
+}
+
+/// Whether the block-start margin of the box `node_id` can adjoin content
+/// before it in the flow below `body_id`: every ancestor of it up to the
+/// body, the body too, lays its children out in block flow (see [`holds_block_flow`]) and
+/// in one column. In a flex, grid or table container, or a multi-column
+/// one, content before the box may lie beside it instead.
+pub(super) fn margins_adjoin_in_flow(document: &Document, body_id: usize, node_id: usize) -> bool {
+    let mut node = node_id;
+    while let Some(parent) = document.parent_of(node) {
+        let holder = &document.nodes[parent];
+        if holder.is_multicol_container() || !holds_block_flow(holder.display()) {
+            return false;
+        }
+        if parent == body_id {
+            break;
+        }
+        node = parent;
+    }
+    true
 }
 
 /// Whether generated content before the box `node_id` in the flow below
@@ -11347,13 +11436,16 @@ pub(super) fn generated_content_end_above(
             node,
             &|child, pseudo| {
                 renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &record)
+                    && generated_box_lies(
+                        document, cascade, &flow_y, parent, child, pseudo, &record,
+                    )
             },
             &|_| false,
         );
         if renders_before_pseudo(cascade, parent) {
             generated_box_lies(
                 document,
+                cascade,
                 &flow_y,
                 parent,
                 parent,
@@ -11395,12 +11487,13 @@ fn generated_content_lies_before(
             node,
             &|child, pseudo| {
                 renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(document, &flow_y, parent, child, pseudo, accept)
+                    && generated_box_lies(document, cascade, &flow_y, parent, child, pseudo, accept)
             },
             &|_| false,
         ) || (renders_before_pseudo(cascade, parent)
             && generated_box_lies(
                 document,
+                cascade,
                 &flow_y,
                 parent,
                 parent,

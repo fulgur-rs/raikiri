@@ -2090,11 +2090,12 @@ fn pipeline_clears_a_named_page_after_leading_generated_content() {
 }
 
 #[test]
-fn pipeline_names_the_first_page_after_generated_white_space_that_collapses() {
-    // White space that collapses away makes no line, so the box on page `b`
-    // after the float names the first page. Preserved white space is
-    // content on the unnamed page, and the box starts a new page.
-    for (white_space, slices) in [("normal", 1), ("pre", 2)] {
+fn pipeline_keeps_the_first_page_after_generated_white_space_that_collapses() {
+    // White space that collapses away makes no line, but the inline
+    // `::before` still puts an anonymous block before the box on page `b`,
+    // as an empty inline element does: Chromium prints the unnamed page
+    // first and starts a new page for the box, as for preserved white space.
+    for (white_space, slices) in [("normal", 2), ("pre", 2)] {
         let doc = parse(&format!(
             "<style>@page {{ size: 400px 400px; margin: 0 }} body {{ margin: 0 }}\
              body::before {{ content: ' '; white-space: {white_space} }}\

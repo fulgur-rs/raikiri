@@ -320,11 +320,13 @@ pub(crate) fn is_page_flow_generated_text(
 }
 
 /// Whether generated boxes before the children fix the box's starting page.
-/// An inside marker counts even when its content or string list style is empty;
-/// ordinary `::before` text retains the blank-text rules of
-/// [`is_page_flow_generated_text`].
+/// Any in-flow `::before` counts, even an inline one of only empty strings or
+/// white space that makes no line: like an empty inline element, it still
+/// puts an anonymous block before the box's block children (CSS 2.1
+/// §9.2.1.1), as Chromium does. An inside marker counts even when its content
+/// or string list style is empty.
 pub(crate) fn has_page_flow_generated_prefix(cascade: &CascadeResult, element: usize) -> bool {
-    is_page_flow_generated_text(cascade, element, PseudoElem::Before)
+    is_in_flow_generated_text(cascade, element, PseudoElem::Before)
         || (inside_marker_in_flow(cascade, element)
             && (!matches!(
                 &cascade.computed[element].list_style_type,

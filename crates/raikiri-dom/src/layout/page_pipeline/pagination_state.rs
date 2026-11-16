@@ -26,15 +26,15 @@ use super::{
     line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    margin_kept_by_floats, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
-    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
-    positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
-    shift_paragraph_lines, shift_text_candidate, shrink_ancestors_after_content_change,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
-    truncation_after_generated_content,
+    margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
+    move_box_for_transition, move_flex_line_siblings, move_line_block, move_paragraph_lines,
+    page_break_is_forced, page_type_leaves_local_flow, paragraph_line_bounds,
+    participates_in_margin_adjacency, place_first_table_header, place_table_footer,
+    place_text_candidate, positioned_line_moves, positioned_text_start_y, reaches_line,
+    record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
+    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
+    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
+    text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -751,9 +751,32 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The block-start margin edge of the box `node_id` whose border box
+    /// starts at `border_top` in the flow below its block-start margin
+    /// `margin_top`, and the edge up to which content of no height before it
+    /// counts as content above it (see [`content_end_above`]): the border edge
+    /// when its margin can adjoin that content (see
+    /// [`margins_adjoin_in_flow`]), the margin edge otherwise.
+    fn content_edges(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        border_top: f32,
+        margin_top: f32,
+    ) -> (f32, f32) {
+        let margin_edge = border_top - margin_top.max(0.0);
+        if margins_adjoin_in_flow(document, env.body_id, node_id) {
+            (margin_edge, border_top)
+        } else {
+            (margin_edge, margin_edge)
+        }
+    }
+
     /// Whether in-flow content ends above the box `candidate` whose
     /// block-start margin edge, at `margin_edge` in the flow, lies on the
-    /// page the flow starts on, not at its end (see [`content_end_above`]).
+    /// page the flow starts on, not at its end, and whose border box starts
+    /// at `border_top` (see [`content_end_above`]).
     /// The box is in the normal flow: one out of it or floated has no forced
     /// break of the flow.
     fn follows_content_at_flow_start(
@@ -761,17 +784,18 @@ impl PaginationState {
         document: &LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
-        margin_edge: f32,
+        (margin_edge, border_top): (f32, f32),
     ) -> bool {
         let first_page = env.page_origins.page_index_in_flow(0.0).unwrap_or(0);
         margin_edge < env.page_origins.origin(first_page.saturating_add(1)) - 0.001
-            && in_flow_box(document, env.cascade, candidate)
+            && stacks_in_flow(document, env.cascade, candidate)
             && content_end_above(
                 document,
                 env.cascade,
                 env.body_id,
                 candidate.node_id,
                 margin_edge,
+                border_top,
             )
             .is_some()
     }
@@ -1626,12 +1650,24 @@ impl PaginationState {
         position: &mut BoxPosition,
     ) -> Result<bool, Halt> {
         let node_id = candidate.node_id;
-        let margin_edge =
-            position.effective_y - page_break.relative_offset - page_break.margin_top.max(0.0);
+        let (margin_edge, border_top) = self.content_edges(
+            document,
+            env,
+            node_id,
+            position.effective_y - page_break.relative_offset,
+            page_break.margin_top,
+        );
         if !self.saw_child
-            && let Some(end) = in_flow_box(document, env.cascade, candidate)
+            && let Some(end) = stacks_in_flow(document, env.cascade, candidate)
                 .then(|| {
-                    content_end_above(document, env.cascade, env.body_id, node_id, margin_edge)
+                    content_end_above(
+                        document,
+                        env.cascade,
+                        env.body_id,
+                        node_id,
+                        margin_edge,
+                        border_top,
+                    )
                 })
                 .flatten()
         {
@@ -2049,7 +2085,13 @@ impl PaginationState {
                 document,
                 env,
                 candidate,
-                effective_y - relative_offset - margin_top.max(0.0),
+                self.content_edges(
+                    document,
+                    env,
+                    node_id,
+                    effective_y - relative_offset,
+                    margin_top,
+                ),
             )
             && if let Some(owner) = potential_forced_holder {
                 let owner_margin_box_y = current_abs_y(document, owner.node)
@@ -3912,14 +3954,32 @@ fn holds_block_flow_paragraph(
     float_paragraph && !other_lines
 }
 
-/// Whether the box `candidate` lies in the normal flow of its block
-/// container: not a flex or grid item, floated or out of flow.
-fn in_flow_box(
+/// Whether `candidate` lies below the in-flow content before it: a box in
+/// the normal flow (see [`is_block_flow_box`]), or an item of a flex container
+/// whose items stack in the block axis in their order, a single column that
+/// is not reversed, as the items before it lie above it; and not inside a
+/// float or an out-of-flow box.
+fn stacks_in_flow(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
     candidate: &PageCandidate,
 ) -> bool {
-    is_block_flow_box(document, cascade, candidate)
+    let stacked_flex_item = || {
+        candidate.context.is_flex_item()
+            && crate::layout::box_parent(
+                document,
+                cascade,
+                candidate.node_id,
+                crate::layout::BoxParentScope::Document,
+            )
+            .is_some_and(|parent| {
+                let container = document.physical_style(parent);
+                !container.flex_direction_is_row()
+                    && !container.flex_direction_is_reversed()
+                    && !container.flex_wraps()
+            })
+    };
+    (is_block_flow_box(document, cascade, candidate) || stacked_flex_item())
         && !candidate.context.is_float_descendant()
         && !candidate.context.is_out_of_flow_descendant()
 }
