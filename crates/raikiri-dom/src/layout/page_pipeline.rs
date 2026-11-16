@@ -6557,11 +6557,35 @@ fn lead_below_edges(
     body_id: usize,
     node_id: usize,
 ) -> Option<(usize, f32)> {
+    holder_below_edges(document, cascade, body_id, node_id).filter(|&(_, lead)| lead > 0.0)
+}
+
+/// As [`lead_below_edges`], but the boxes between `node_id` and its holder
+/// may also have no border or padding at its top, so that `node_id` starts
+/// where its holder does.
+fn holder_below_edges(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<(usize, f32)> {
     let (holder, lead) = leading_holder(document, cascade, body_id, node_id, true);
-    (holder != node_id
-        && lead > 0.0
-        && lead <= leading_space_between(document, cascade, node_id, holder) + 0.01)
+    (holder != node_id && lead <= leading_space_between(document, cascade, node_id, holder) + 0.01)
         .then_some((holder, lead))
+}
+
+/// The margin above the border box of `holder`: the one that the margins
+/// adjoining its top collapse into (CSS 2 §8.3.1). A margin that collapses up
+/// through `holder` from a box inside it, as at the start of the document
+/// where the margin of the first block collapses through `body`, lies above
+/// the border box as the holder's own margin would.
+fn collapsed_margin_above(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    holder: usize,
+) -> f32 {
+    let (positive, negative) = adjoining_margin_extremes(document, cascade, holder, true, None);
+    positive + negative
 }
 
 /// Whether the position of `node_id` does not follow its layout parent's in

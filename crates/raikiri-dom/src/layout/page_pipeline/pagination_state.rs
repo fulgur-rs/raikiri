@@ -1940,14 +1940,17 @@ impl PaginationState {
         } else {
             None
         };
-        // A box that avoids a break inside it, below the padding or border
-        // that the plain blocks around it keep above it, goes with them: the
-        // page does not break between their start and the box (CSS Break 3
-        // §4.1), so it is their margin box that tells whether the box starts
-        // its page. Where they start the page, the box stays below that edge
-        // and breaks inside, as browsers do, rather than leave it alone at the
-        // top of the page. Only a box that runs past the page end moves, so
-        // the walk over its ancestors is left to those.
+        // A box that avoids a break inside it, at the start of the plain
+        // blocks around it or below the padding or border they keep above
+        // it, goes with them: the page does not break between their start and
+        // the box (CSS Break 3 §4.1), so it is their margin box that tells
+        // whether the box starts its page. That margin box reaches up over
+        // every margin that collapses into the top of the outermost block,
+        // also one that collapses up through it from a block inside. Where
+        // they start the page, the box stays below that edge and breaks
+        // inside, as browsers do, rather than leave it alone at the top of
+        // the page. Only a box that runs past the page end moves, so the walk
+        // over its ancestors is left to those.
         let avoided_holder = if crosses_page_end
             && !candidate.context.is_unbreakable()
             && !keeps_margin_at_break
@@ -1963,9 +1966,14 @@ impl PaginationState {
         {
             // The blocks begin on the page the box does; blocks that began on
             // an earlier one have left it.
-            lead_below_edges(document, cascade, body_id, node_id)
+            super::holder_below_edges(document, cascade, body_id, node_id)
                 .filter(|&(_, lead)| effective_y - relative_offset - lead >= fit_page_start - 0.001)
-                .map(|(ancestor, lead)| (lead, document.nodes[ancestor].layout.margin.top))
+                .map(|(holder, lead)| {
+                    (
+                        lead,
+                        super::collapsed_margin_above(document, cascade, holder),
+                    )
+                })
         } else {
             None
         };
