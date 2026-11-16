@@ -134,8 +134,8 @@ fn a_max_height_lets_the_edges_follow_only_as_far_as_it_grows() {
     let last_line = |style: &str| {
         glyph_tops(&paragraph(15, style, 5, ""))
             .into_iter()
-            .filter(|&(_, glyph, _)| glyph == 'X')
-            .last()
+            .rev()
+            .find(|&(_, glyph, _)| glyph == 'X')
             .unwrap()
     };
     // The moved lines grow the paragraph to its `max-height` or short of it:
