@@ -9373,17 +9373,67 @@ fn last_flow_child(document: &Document, cascade: &CascadeResult, node_id: usize)
         .iter()
         .rev()
         .copied()
-        .find(|&child| {
-            let node = &document.nodes[child];
-            node.is_in_document()
-                && !node.is_display_none()
-                && node.kind() == NodeKind::Element
-                && matches!(
-                    node.position(),
-                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                )
-                && !super::page::is_floating_box_for_pagination(document, cascade, child)
-        })
+        .find(|&child| takes_part_in_flow(document, cascade, child))
+}
+
+/// Whether `node_id` is an element that takes part in the flow of its
+/// parent: neither floated nor absolutely positioned.
+fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.is_in_document()
+        && !node.is_display_none()
+        && node.kind() == NodeKind::Element
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
+        && !super::page::is_floating_box_for_pagination(document, cascade, node_id)
+}
+
+/// The box before the empty boxes that end at `node_id`, and how far above
+/// the top of the first of them it ends: empty boxes that establish no
+/// formatting context of their own let the margins around them collapse
+/// through.
+fn before_empty_boxes(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> (usize, f32) {
+    // A relative offset paints a box elsewhere but leaves the flow be.
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - layout_relative_offset_y(document, cascade, body_id, id)
+    };
+    let mut current = node_id;
+    let mut lift = 0.0_f32;
+    loop {
+        let Some(parent) = document.parent_of(current).filter(|_| {
+            let height = document.nodes[current].layout.size.height;
+            height.abs() <= 0.001 && collapses_through(document, cascade, current, 0.0)
+        }) else {
+            return (current, lift);
+        };
+        let siblings = &document.nodes[parent].children;
+        let Some(before) = siblings
+            .iter()
+            .position(|&child| child == current)
+            .and_then(|index| {
+                siblings[..index]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&child| takes_part_in_flow(document, cascade, child))
+            })
+        else {
+            return (current, lift);
+        };
+        let gap = flow_top(current) - flow_top(before) - document.nodes[before].layout.size.height;
+        if !gap.is_finite() || gap < -0.001 {
+            return (current, lift);
+        }
+        lift += gap;
+        current = before;
+    }
 }
 
 /// Whether the paragraph `node_id` is a block container in one column whose
@@ -9629,6 +9679,122 @@ pub(super) fn last_flow_box(
         last = last_flow_child(document, cascade, last)?;
     }
     Some(last)
+}
+
+/// Where the box `previous`, which ends at `bottom`, ends its block-end
+/// padding and borders, when a page edge falls inside them or, where it has
+/// none, inside those of a box that ends with it: the last in-flow box of a
+/// block that stacks its boxes in block flow, or any item of a flex or grid
+/// container that ends its content, when the height of the outer box follows
+/// them and no margin separates the two, and so on down. Edges that end the
+/// outer box after a split inside it begin on the page, so they keep the
+/// margin after them, as does an edge between the edges of two boxes. Empty
+/// boxes at the end of the flow are passed over to the box before them.
+fn split_edges_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_origins: &PageOrigins,
+    previous: usize,
+    bottom: f32,
+) -> Option<f32> {
+    let body_id = super::page::find_body(document).unwrap_or(document.root);
+    let (current, lift) = before_empty_boxes(document, cascade, body_id, previous);
+    let split_end = bottom - lift;
+    // Far down a long flow the edges are only as exact as `f32` keeps them.
+    let tolerance = 0.001_f32.max(bottom.abs() * 4.0 * f32::EPSILON);
+    let ends = SplitEdgesEnd {
+        document,
+        cascade,
+        page_origins,
+        body_id,
+        tolerance,
+    };
+    ends.split(current, split_end).then_some(split_end)
+}
+
+/// What [`split_edges_end`] walks the boxes that end a box with.
+struct SplitEdgesEnd<'a, 'b> {
+    document: &'a super::context::LayoutSession<'b>,
+    cascade: &'a CascadeResult,
+    page_origins: &'a PageOrigins,
+    body_id: usize,
+    tolerance: f32,
+}
+
+impl SplitEdgesEnd<'_, '_> {
+    /// Whether a page edge falls inside the block-end padding and borders of
+    /// `current`, which ends at `end`, or, when `current` has none, inside
+    /// those of a box that ends with it. A block that stacks its boxes in block flow ends with its last
+    /// in-flow box. A flex or grid container may end with any of its items,
+    /// side by side or not: the one that reaches the end of its content.
+    fn split(&self, current: usize, end: f32) -> bool {
+        let document = self.document;
+        let node = &document.nodes[current];
+        let own = node.layout.padding.bottom + node.layout.border.bottom;
+        // Edges that a page edge does not split begin on the page they end
+        // on, after any split inside: they are content of that page.
+        if own > self.tolerance {
+            let edge = self
+                .page_origins
+                .origin(self.page_origins.page_index_for_end(end));
+            return edge > end - own + self.tolerance && edge < end - self.tolerance;
+        }
+        if node.is_ifc_root()
+            || node.multicol.is_some()
+            || node.used_writing_mode.is_vertical()
+            || !(height_follows_content(document, current)
+                || min_height_left_behind(document, current))
+        {
+            return false;
+        }
+        let end = end - own;
+        if is_flex_or_grid(document, current) {
+            let mut items = Vec::new();
+            push_flow_items(document, self.cascade, current, &mut items);
+            return items
+                .into_iter()
+                .any(|item| self.ends_content(current, item) && self.split(item, end));
+        }
+        last_flow_box(document, self.cascade, current)
+            .is_some_and(|last| self.ends_content(current, last) && self.split(last, end))
+    }
+
+    /// Whether `child`, with no margin below it, ends where the content of
+    /// `current` does: nothing else, such as a float `current` holds or a
+    /// longer item beside it, reaches lower.
+    fn ends_content(&self, current: usize, child: usize) -> bool {
+        let document = self.document;
+        let node = &document.nodes[current];
+        let content_end =
+            node.layout.size.height - node.layout.padding.bottom - node.layout.border.bottom;
+        // A relative offset paints a box elsewhere but leaves the flow be.
+        let child_bottom = current_abs_y(document, child)
+            - layout_relative_offset_y(document, self.cascade, self.body_id, child)
+            - current_abs_y(document, current)
+            + document.nodes[child].layout.size.height;
+        document.nodes[child].layout.margin.bottom.abs() <= self.tolerance
+            && (content_end - child_bottom).abs() <= self.tolerance
+    }
+}
+
+/// The in-flow boxes that `node_id` lays out, in order: its in-flow children,
+/// with those of a child that generates no box of its own in its place.
+fn push_flow_items(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    items: &mut Vec<usize>,
+) {
+    for &child in &document.nodes[node_id].children {
+        if !takes_part_in_flow(document, cascade, child) {
+            continue;
+        }
+        if document.nodes[child].display() == DisplayValue::Contents {
+            push_flow_items(document, cascade, child, items);
+        } else {
+            items.push(child);
+        }
+    }
 }
 
 /// For each block below `body_id` whose height follows its content, the
@@ -12485,6 +12651,19 @@ impl SiblingMargins {
             return None;
         }
         let effective_y = at.effective_y - pulled;
+        // Chromium drops the margin after a box whose block-end edges run
+        // over a page edge, so the box after it follows the last fragment
+        // of the edges directly.
+        if let Some(end) = (!forced_before && !follows_forced_break)
+            .then(|| split_edges_end(document, cascade, page_origins, previous, effective_y - gap))
+            .flatten()
+            .filter(|_| self.adjacency.adjoins(document, cascade, node_id, previous))
+        {
+            return Some(MarginTruncation {
+                delta: end - effective_y,
+                underflow: None,
+            });
+        }
         let natural_page = run_end.map_or(at.natural_page, |end| {
             page_origins.start_page(effective_y, end.height)
         });

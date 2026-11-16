@@ -4722,3 +4722,198 @@ fn edges_that_begin_a_page_reach_it_past_margins_that_stay_whole() {
         assert_eq!(pages.len(), 3, "{children:?}");
     }
 }
+
+/// Where a block with `after_css` lands after a block with `css` holding a
+/// 30px block.
+fn after_split_edges(css: &str, inner_css: Option<&str>, after_css: &str) -> f32 {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{css}"));
+        let holder = match inner_css {
+            Some(inner) => block(doc, parent, &format!("display:block;{inner}")),
+            None => parent,
+        };
+        block(doc, holder, "display:block;height:30px");
+        after = block(doc, body, &format!("display:block;height:10px;{after_css}"));
+    });
+    page_flow_y(&doc, after)
+}
+
+#[test]
+fn the_edges_of_an_item_inside_a_box_without_a_box_of_its_own_count_too() {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let container = block(doc, body, "display:flex");
+        let contents = block(doc, container, "display:contents");
+        let item = block(doc, contents, "display:block;padding-bottom:120px");
+        block(doc, item, "display:block;height:30px");
+        block(doc, container, "position:absolute;width:10px;height:10px");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    // As in Chromium, the margin after the item's split padding is dropped.
+    assert_eq!(page_flow_y(&doc, after), 220.0);
+}
+
+#[test]
+fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
+    // The padding moves to the second page and runs on to the third; the
+    // box after it follows its end there without the margin, as in Chromium.
+    assert_eq!(
+        after_split_edges("padding-bottom:120px", None, "margin-top:15px"),
+        220.0
+    );
+    assert_eq!(
+        after_split_edges("border-bottom:120px solid", None, "margin-top:15px"),
+        220.0
+    );
+    // Edges that end with a box inside the previous one count too.
+    assert_eq!(
+        after_split_edges("", Some("padding-bottom:120px"), "margin-top:15px"),
+        220.0
+    );
+    assert_eq!(
+        after_split_edges(
+            "min-height:20px",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        220.0
+    );
+    // So do the edges of a flex or grid item that ends the content of its
+    // container, whether the items lie side by side or not.
+    for container in [
+        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:grid",
+    ] {
+        assert_eq!(
+            after_split_edges(container, Some("padding-bottom:120px"), "margin-top:15px"),
+            220.0,
+            "{container}"
+        );
+    }
+    assert_eq!(
+        after_split_edges(
+            "display:flex",
+            Some("padding-bottom:120px"),
+            "margin-top:5px"
+        ),
+        220.0
+    );
+    // Edges of the outer box that begin on the page after the split are
+    // content there, so the margin after them stays.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:5px",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        240.0
+    );
+    assert_eq!(
+        after_split_edges(
+            "display:flex;padding-bottom:5px",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        240.0
+    );
+    // A page edge between the edges of two boxes splits neither.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:30px",
+            Some("padding-bottom:100px"),
+            "margin-top:15px"
+        ),
+        245.0
+    );
+    // Edges that end on the page they begin keep the margin after them.
+    assert_eq!(
+        after_split_edges("padding-bottom:80px", None, "margin-top:5px"),
+        185.0
+    );
+    // A forced break keeps the margin after it.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:120px",
+            None,
+            "margin-top:15px;break-before:page"
+        ),
+        315.0
+    );
+}
+
+#[test]
+fn an_empty_box_after_split_edges_leaves_the_margin_after_it_dropped() {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:120px");
+        block(doc, parent, "display:block;height:30px");
+        block(doc, body, "display:block");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 220.0);
+    // The margins around the empty box are dropped with it, as in Chromium.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(
+            doc,
+            body,
+            "display:block;padding-bottom:120px;margin-bottom:5px",
+        );
+        block(doc, parent, "display:block;height:30px");
+        block(doc, body, "display:block");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 220.0);
+    // A relative offset moves the empty box but not the flow, as in Chromium.
+    for offset in ["10px", "-10px"] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:120px");
+            block(doc, parent, "display:block;height:30px");
+            block(
+                doc,
+                body,
+                &format!("display:block;position:relative;top:{offset}"),
+            );
+            after = block(doc, body, "display:block;height:10px;margin-top:15px");
+        });
+        assert_eq!(page_flow_y(&doc, after), 220.0, "{offset}");
+    }
+    // An empty box that holds its own formatting context, or that forces a
+    // break, keeps the margin after it, as in Chromium.
+    for (empty_css, expected) in [
+        ("display:flow-root", 235.0),
+        ("display:block;overflow:hidden", 235.0),
+        ("display:block;break-before:page", 315.0),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:120px");
+            block(doc, parent, "display:block;height:30px");
+            block(doc, body, empty_css);
+            after = block(doc, body, "display:block;height:10px;margin-top:15px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{empty_css}");
+    }
+}
+
+#[test]
+fn edges_that_end_above_a_float_the_block_holds_keep_the_margin_after_it() {
+    // The float holds the block down to 220, below the edges of its last
+    // box, which end at 180 and split nothing, so the margin after the
+    // block stays whole, as in Chromium.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:flow-root");
+        block(doc, parent, "float:left;width:10px;height:220px");
+        block(
+            doc,
+            parent,
+            "display:block;height:100px;padding-bottom:80px",
+        );
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 235.0);
+}
