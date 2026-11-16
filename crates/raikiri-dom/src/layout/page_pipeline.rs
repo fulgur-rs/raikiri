@@ -16704,7 +16704,7 @@ fn shift_block_flow_after(
                     break;
                 }
                 shifts.from_box.push((row, end, added));
-                shift_rows_after(document, (row, end), table, added);
+                shift_rows_after(document, cascade, (row, end), table, added);
                 // The table grows with the row: its ancestors take the growth
                 // on as they take a moved box's.
                 flow_delta = added;
@@ -16761,7 +16761,13 @@ fn shift_block_flow_after(
 /// Moves the boxes of `table` after a row down by `delta`: those from index
 /// `end` on in `row`, the box that holds the row, and those after it up to
 /// the table. The flow reaches them `delta` further down.
-fn shift_rows_after(document: &mut Document, (row, end): (usize, usize), table: usize, delta: f32) {
+fn shift_rows_after(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    (row, end): (usize, usize),
+    table: usize,
+    delta: f32,
+) {
     for later in end..document.nodes[row].children.len() {
         shift_block_sibling(document, document.nodes[row].children[later], delta);
     }
@@ -16770,14 +16776,19 @@ fn shift_rows_after(document: &mut Document, (row, end): (usize, usize), table: 
         let Some(parent) = document.parent_of(up) else {
             break;
         };
-        let count = document.nodes[parent].children.len();
-        let start = document.nodes[parent]
-            .children
+        // The table puts its header and footer groups first and last
+        // (CSS 2.1 §17.2), whatever their place among its children.
+        let order = if parent == table {
+            super::page::pagination_child_order(document, cascade, table)
+        } else {
+            document.nodes[parent].children.clone()
+        };
+        let start = order
             .iter()
             .position(|&id| id == up)
-            .map_or(count, |index| index + 1);
-        for later in start..count {
-            shift_block_sibling(document, document.nodes[parent].children[later], delta);
+            .map_or(order.len(), |index| index + 1);
+        for &later in &order[start..] {
+            shift_block_sibling(document, later, delta);
         }
         up = parent;
     }
