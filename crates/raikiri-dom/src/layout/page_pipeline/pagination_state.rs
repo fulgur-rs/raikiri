@@ -753,7 +753,8 @@ impl PaginationState {
 
     /// Whether in-flow content ends above the box `candidate` whose
     /// block-start margin edge, at `margin_edge` in the flow, lies on the
-    /// page the flow starts on, not at its end (see [`content_end_above`]).
+    /// page the flow starts on, not at its end, and whose border box starts
+    /// at `border_top` (see [`content_end_above`]).
     /// The box is in the normal flow: one out of it or floated has no forced
     /// break of the flow.
     fn follows_content_at_flow_start(
@@ -762,16 +763,19 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         margin_edge: f32,
+        border_top: f32,
     ) -> bool {
         let first_page = env.page_origins.page_index_in_flow(0.0).unwrap_or(0);
         margin_edge < env.page_origins.origin(first_page.saturating_add(1)) - 0.001
-            && in_flow_box(document, env.cascade, candidate)
+            && (in_flow_box(document, env.cascade, candidate)
+                || stacked_flex_item(document, candidate))
             && content_end_above(
                 document,
                 env.cascade,
                 env.body_id,
                 candidate.node_id,
                 margin_edge,
+                border_top,
             )
             .is_some()
     }
@@ -1617,12 +1621,19 @@ impl PaginationState {
         position: &mut BoxPosition,
     ) -> Result<bool, Halt> {
         let node_id = candidate.node_id;
-        let margin_edge =
-            position.effective_y - page_break.relative_offset - page_break.margin_top.max(0.0);
+        let border_top = position.effective_y - page_break.relative_offset;
+        let margin_edge = border_top - page_break.margin_top.max(0.0);
         if !self.saw_child
             && let Some(end) = in_flow_box(document, env.cascade, candidate)
                 .then(|| {
-                    content_end_above(document, env.cascade, env.body_id, node_id, margin_edge)
+                    content_end_above(
+                        document,
+                        env.cascade,
+                        env.body_id,
+                        node_id,
+                        margin_edge,
+                        border_top,
+                    )
                 })
                 .flatten()
         {
@@ -2041,6 +2052,7 @@ impl PaginationState {
                 env,
                 candidate,
                 effective_y - relative_offset - margin_top.max(0.0),
+                effective_y - relative_offset,
             )
             && if let Some(owner) = potential_forced_holder {
                 let owner_margin_box_y = current_abs_y(document, owner.node)
@@ -3913,6 +3925,21 @@ fn in_flow_box(
     is_block_flow_box(document, cascade, candidate)
         && !candidate.context.is_float_descendant()
         && !candidate.context.is_out_of_flow_descendant()
+}
+
+/// Whether `candidate` is an item of a flex container whose items stack in
+/// the block axis in their order, a column that is not reversed: the items
+/// before it in the container lie above it, as boxes of the block flow do.
+fn stacked_flex_item(document: &LayoutSession<'_>, candidate: &PageCandidate) -> bool {
+    candidate.context.is_flex_item()
+        && !candidate.context.is_float_descendant()
+        && !candidate.context.is_out_of_flow_descendant()
+        && document.parent_of(candidate.node_id).is_some_and(|parent| {
+            let container = document.physical_style(parent);
+            document.nodes[parent].display().is_flex_container()
+                && !container.flex_direction_is_row()
+                && !container.flex_direction_is_reversed()
+        })
 }
 
 /// Whether `candidate` is a box of ordinary block flow: not a flex or grid
