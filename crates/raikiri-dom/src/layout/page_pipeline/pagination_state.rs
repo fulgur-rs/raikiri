@@ -2056,13 +2056,29 @@ impl PaginationState {
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
-        }) || closing_edges_move(candidate, &fit)
+        }) || (closing_edges_move(candidate, &fit)
+            && super::capped_edges_follow(
+                document,
+                cascade,
+                body_id,
+                env.root_flow_offset,
+                candidate,
+                &fit,
+            ))
             // A flex container goes on with its edges first; its line may then
             // break after them on the page it moves to.
             || ((grid_content_break.is_none()
                 || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
                 && leading_edges_move(candidate, &fit))
-            || run_tail_move(candidate, &fit);
+            || run_tail_move(candidate, &fit)
+            || super::min_height_edges_move(
+                document,
+                cascade,
+                body_id,
+                env.root_flow_offset,
+                candidate,
+                &fit,
+            );
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
         let potential_forced_holder = (forced_before
@@ -2929,6 +2945,25 @@ impl PaginationState {
             } else {
                 0.0
             };
+            // A paragraph whose `min-height` leaves room below its last line:
+            // that room, and the padding and border below it. Once the
+            // lines move down by as much, the paragraph grows with them, and
+            // the edges follow the last line, as in Chromium.
+            let min_height_room = (blocks.paragraph_root == Some(block_id)
+                && own_closing_edges <= 0.0
+                && lines_can_move
+                && lines_move_grows_box(document, block_id)
+                && !height_follows_content(document, block_id)
+                && !block_after_last_line(document, block_id))
+            .then(|| {
+                let layout = &document.nodes[block_id].layout;
+                let edges = layout.padding.bottom + layout.border.bottom;
+                let content =
+                    block_height - edges - layout.padding.top - layout.border.top - float_lead;
+                let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
+                (content - lines, edges)
+            })
+            .filter(|&(room, edges)| room > 0.5 && edges > 0.0);
             // A box that keeps its height ends where it ends, wherever its
             // lines go: its edges follow the lines only while they all fit
             // the page, before any of them moves.
@@ -3163,7 +3198,7 @@ impl PaginationState {
                     moved?;
                     break;
                 }
-                let fix = line_fit.fix(
+                let mut fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
                     page,
@@ -3171,6 +3206,25 @@ impl PaginationState {
                     can_move_block,
                     || lines_can_move,
                 );
+                // Moves that take the last line down past the room that
+                // `min-height` left below it grow the paragraph: its edges then
+                // follow that line, which the moves must keep with them.
+                if let (Some((room, edges)), LineBreakFix::MoveLines(moves)) =
+                    (min_height_room, &fix)
+                    && line_fit.total_lines > 1
+                    && line_fit.tail_edges <= 0.0
+                    && moves.iter().map(|&(_, delta, _)| delta).sum::<f32>() >= room - 0.5
+                {
+                    line_fit.tail_edges = edges;
+                    fix = line_fit.fix(
+                        &line_metrics,
+                        text.effective_y,
+                        page,
+                        page_origins,
+                        can_move_block,
+                        || lines_can_move,
+                    );
+                }
                 match fix {
                     LineBreakFix::MoveLines(moves) => {
                         self.move_lines(

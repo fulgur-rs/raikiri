@@ -9329,6 +9329,84 @@ fn closing_edges_of(
     })
 }
 
+/// The bottom padding and border of the block `node_id`, when its
+/// `min-height` leaves room below its last box in the flow, where
+/// [`closing_edges_of`] finds no edges that follow that box: moved content may
+/// still grow the block past that room during pagination, and the edges then
+/// follow the box (see [`min_height_edges_move`]). A `height` or `max-height`
+/// that ends the box where it ends leaves no such room.
+fn min_height_room_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    let edges = node.layout.padding.bottom + node.layout.border.bottom;
+    let shaped = !node.used_writing_mode.is_vertical()
+        && ((node.kind() == NodeKind::Element && moves_later_siblings(document, node_id))
+            || ends_with_block_child(document, node_id));
+    (edges > 0.0
+        && shaped
+        && !height_follows_content(document, node_id)
+        && !height_is_capped(document, node_id))
+    .then(|| flow_content_overflow(document, cascade, body_id, node_id))
+    .flatten()
+    .filter(|&overflow| overflow < -CONTENT_END_TOLERANCE)
+    .map(|_| edges)
+}
+
+/// Whether the bottom padding and border that close the block of set height
+/// around `candidate` still follow it: the block ends where it ends, so once
+/// pagination moved content in it down and the box now ends at or past the
+/// block's end, the edges are above the box, and do not move it.
+fn capped_edges_follow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    candidate.context.capped_edges_block().is_none_or(|block| {
+        let block_end = current_abs_y(document, block)
+            - accumulated_relative_offset_y(document, cascade, body_id, block)
+            + root_flow_offset
+            + document.nodes[block].layout.size.height;
+        let margin = document.nodes[candidate.node_id].layout.margin.bottom;
+        fit.flow_y + candidate.height + margin < block_end - 0.001
+    })
+}
+
+/// Whether a box that ends a block whose `min-height` left room below it
+/// moves to the next page with the bottom padding and border of that block,
+/// as [`tail_edges_move`] moves a box with the edges that follow it. That room
+/// is gone once pagination moved the content above the box down far enough:
+/// the block then grows with its content, and its edges follow the box, as in
+/// Chromium. While the room is left, the page breaks inside it instead.
+fn min_height_edges_move(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    let Some((block, edges)) = candidate.context.min_height_edges() else {
+        return false;
+    };
+    let layout = &document.nodes[block].layout;
+    let content_end = current_abs_y(document, block)
+        - accumulated_relative_offset_y(document, cascade, body_id, block)
+        + root_flow_offset
+        + layout.size.height
+        - layout.padding.bottom
+        - layout.border.bottom;
+    let margin = document.nodes[candidate.node_id].layout.margin.bottom;
+    fit.flow_y + candidate.height + margin >= content_end - 0.001
+        && tail_edges_move(edges + margin.max(0.0), 0.0, candidate, fit)
+}
+
 /// [`closing_edges_of`] for a block that stacks its boxes in block flow and
 /// holds no lines. The body is such a block as well.
 fn block_flow_closing_edges(
