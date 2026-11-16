@@ -6,7 +6,6 @@ use super::{
     CascadeResult, DisplayValue, Document, NodeKind, current_abs_y, has_unusual_coordinates,
     is_floating_box_for_pagination, is_plain_block_box, layout_relative_offset_y,
 };
-use raikiri_style::PseudoElem;
 use std::collections::HashMap;
 
 /// How far apart two positions may be and still be the same edge.
@@ -198,9 +197,10 @@ enum Before {
 /// What the children of `parent` render before `child` on the page that starts
 /// at `page_start`. White space, boxes that generate nothing, out-of-flow
 /// boxes, and floats that start the page or lie on an earlier one are not
-/// content, and a `display: contents` element counts as its children and the
-/// generated content it holds. An empty inline box lays out a phantom line
-/// (CSS 2.1 §9.4.2), whose anonymous block is a box of no height. With
+/// content, and a `display: contents` element counts as its children. (Its
+/// generated text is inline content of the parent, which then holds its
+/// blocks in boxes it does not list.) An empty inline box lays out a phantom
+/// line (CSS 2.1 §9.4.2), whose anonymous block is a box of no height. With
 /// `past_empty_starts`, neither are boxes of no height at the page start,
 /// when the child itself starts at the page start. The nearest of the others
 /// decides.
@@ -262,19 +262,7 @@ fn before_child(
                     phantom_top = phantom_top.or(Some(top));
                 }
             }
-            FlowBox::Contents => {
-                if [PseudoElem::Before, PseudoElem::After]
-                    .into_iter()
-                    .any(|pseudo| {
-                        crate::generated_content::is_line_making_generated_text(
-                            cascade, sibling, pseudo,
-                        )
-                    })
-                {
-                    return Before::Other;
-                }
-                levels.push(node.children.iter().rev());
-            }
+            FlowBox::Contents => levels.push(node.children.iter().rev()),
             FlowBox::Box => {
                 let block_box = node.kind() == NodeKind::Element
                     && !node.display().is_inline_level()
