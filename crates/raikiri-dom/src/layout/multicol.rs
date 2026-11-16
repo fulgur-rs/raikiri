@@ -2880,6 +2880,7 @@ fn slices_at_column_end(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// A measured child of a column container where it stands in one column:
 /// its top and bottom, and the extents of its lines, between which a column
 /// may end, when it is a paragraph.
+#[derive(Clone)]
 struct StackedChild {
     top: f32,
     bottom: f32,
@@ -3016,6 +3017,86 @@ fn fill_stacked_columns(
     (column < count, used)
 }
 
+/// The absolutely positioned boxes inside `children` that the columns of
+/// `container` hold, each child at its offset in `tops` in one column: for
+/// each box, its offset in that column and whether it is monolithic.
+fn out_of_flow_boxes(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    children: &[usize],
+    tops: &[Option<f32>],
+) -> Vec<(usize, f32, bool)> {
+    let cascade = tree.style_views.cascade();
+    let mut boxes = Vec::new();
+    for (&child, &top) in children.iter().zip(tops) {
+        let (Some(top), Some(origin)) = (top, tree.layout_origin_of(child)) else {
+            continue;
+        };
+        let mut pending = tree.nodes[child].children.clone();
+        while let Some(node) = pending.pop() {
+            pending.extend_from_slice(&tree.nodes[node].children);
+            if tree.nodes[node].kind() != NodeKind::Element
+                || tree.nodes[node].layout_position() != Position::Absolute
+                || !column_line_boxes::in_columns(tree, container, node)
+            {
+                continue;
+            }
+            let Some(at) = tree.layout_origin_of(node) else {
+                continue;
+            };
+            let monolithic = column_line_boxes::is_monolithic(tree, cascade, node);
+            boxes.push((node, top + at.y - origin.y, monolithic));
+        }
+    }
+    boxes
+}
+
+/// The height of `count` balanced columns that hold the positioned `boxes`
+/// (see [`out_of_flow_boxes`]) as well as content in flow that needs
+/// `in_flow`. A box that breaks is taken to continue the flow of the column
+/// it starts in, and a monolithic one to start a column where the content
+/// in flow alone would put it. Each step grows the columns to the height a
+/// box that does not fit needs, or by the least that keeps one of the lines
+/// a column end crosses in its column, as Chromium's balancer does with the
+/// shortage of space; the search stops after a few steps.
+fn out_of_flow_floor(
+    tree: &LayoutSession<'_>,
+    boxes: &[(usize, f32, bool)],
+    in_flow: f32,
+    count: usize,
+) -> f32 {
+    let mut height = in_flow;
+    for _ in 0..16 {
+        let mut needed = f32::INFINITY;
+        for &(node, y, monolithic) in boxes {
+            let mut layout = tree.nodes[node].layout;
+            let mut shortage = f32::INFINITY;
+            if count > 1
+                && let Some(moves) = column_lines::line_moves(tree, node, y, height, None)
+            {
+                layout = moves.moved(layout);
+                shortage = moves.shortage();
+            }
+            let need = column_line_boxes::out_of_flow_need(
+                y,
+                0,
+                column_line_boxes::painted_extent(layout),
+                monolithic,
+                if monolithic { in_flow } else { f32::INFINITY },
+                count,
+            );
+            if need > height + LINE_EPSILON {
+                needed = needed.min(need.min(height + shortage));
+            }
+        }
+        if !needed.is_finite() {
+            break;
+        }
+        height = needed;
+    }
+    height
+}
+
 /// The height of `count` balanced columns holding `children`, which take
 /// `total` in one column: the lowest that fits them all, found to within
 /// a thousandth of a pixel or the precision of the heights.
@@ -3052,7 +3133,7 @@ fn layout_column_group(
     children: &[usize],
     source_order: usize,
     container_fragment: usize,
-    context: FragmentationContext,
+    mut context: FragmentationContext,
     border_box_size: Size<f32>,
     content_origin: Point<f32>,
     block_end_inset: f32,
@@ -3085,7 +3166,7 @@ fn layout_column_group(
     // than necessary.
     // Paragraphs in definite-height columns are placed by the same planner,
     // so that a paragraph broken between columns hands its end to the next.
-    let definite_paragraphs = fragment_height.is_some()
+    let mut definite_paragraphs = fragment_height.is_some()
         && tree.context.fragmentation_stack.len() <= 1
         && multicol_has_only_paragraph_children(
             tree,
@@ -3105,6 +3186,14 @@ fn layout_column_group(
     // The measured children laid out with their lines beside the floats
     // before them.
     let mut measured_beside: Vec<bool> = Vec::new();
+    // The height of balanced columns that the positioned boxes in them need,
+    // when it is more than the content in flow needs.
+    let mut out_of_flow_height = None;
+    // Rows of columns between spanners keep the heights their content in
+    // flow gives them.
+    let spanned = flow_children(tree, index)
+        .into_iter()
+        .any(|child| spanning::is_spanner(tree, child));
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
         && !multicol_has_nested_descendant(tree, index))
@@ -3115,6 +3204,10 @@ fn layout_column_group(
         let mut stack = ColumnStack::default();
         // Where each child stands in one column, for the columns to divide.
         let mut stacked = Vec::new();
+        // The block offset of each child in flow in one column.
+        let mut tops = vec![None; children.len()];
+        // The child of each entry of `stacked`.
+        let mut stacked_children = Vec::new();
         measured_beside = vec![false; children.len()];
         for (local_order, &child) in children.iter().enumerate() {
             let child_inputs = column_child_layout_input(
@@ -3138,6 +3231,8 @@ fn layout_column_group(
                 ColumnFloat::of(tree, child, context.column_width, output.size.width)
             {
                 let top = stack.float(float, needed, context.column_width);
+                tops[local_order] = Some(top + margin_top);
+                stacked_children.push(local_order);
                 stacked.push(StackedChild::atomic(top, needed));
             } else if !(matches!(tree.nodes[child].data, NodeData::Text(_)) && needed == 0.0
                 || tree.nodes[child].layout_position() == Position::Absolute)
@@ -3173,6 +3268,8 @@ fn layout_column_group(
                     beside,
                     keeps_float_line(tree, child, skipped + needed),
                 ) + skipped;
+                tops[local_order] = Some(top + margin_top);
+                stacked_children.push(local_order);
                 // Only the lines that flow beside floats break between
                 // columns where they are, and a box with no lines breaks
                 // where a column ends; any other block goes whole.
@@ -3206,10 +3303,77 @@ fn layout_column_group(
         } else {
             (total / context.column_count as f32).max(largest)
         };
+        // Balanced columns also hold the positioned boxes whose containing
+        // block they hold, which can make them taller than the content in
+        // flow needs, its paragraphs broken between their lines.
+        let boxes = if retain_group
+            && fragment_height.is_none()
+            && definite_balance.is_none()
+            && !spanned
+        {
+            out_of_flow_boxes(tree, index, children, &tops)
+        } else {
+            Vec::new()
+        };
+        let floor = (!boxes.is_empty())
+            .then(|| {
+                let in_flow = if breaks_inside {
+                    target
+                } else {
+                    let lined: Vec<StackedChild> = stacked
+                        .iter()
+                        .zip(&stacked_children)
+                        .map(|(entry, &child)| match tops[child] {
+                            Some(top) if entry.lines.is_empty() && !entry.sliced => {
+                                StackedChild::of(
+                                    tree,
+                                    children[child],
+                                    entry.top,
+                                    top - entry.top,
+                                    entry.bottom - entry.top,
+                                )
+                            }
+                            _ => entry.clone(),
+                        })
+                        .collect();
+                    balanced_stack_height(
+                        &lined,
+                        context.column_count,
+                        total,
+                        (context.orphans.max(1), context.widows.max(1)),
+                    )
+                };
+                let floor = out_of_flow_floor(tree, &boxes, in_flow, context.column_count);
+                (floor > in_flow + LINE_EPSILON).then_some(floor)
+            })
+            .flatten();
+        if let Some(floor) = floor {
+            out_of_flow_height = Some(floor);
+        }
         Some((measurements, target))
     } else {
         None
     };
+    // Columns that the positioned boxes make taller are filled in turn at
+    // the height those need, as the columns of a container of that height
+    // with `column-fill: auto` are.
+    if let Some(height) = out_of_flow_height {
+        fragment_height = Some(height);
+        context = FragmentationContext {
+            available_height: Some(height),
+            column_fill: ColumnFillValue::Auto,
+            ..context
+        };
+        if let Some(active) = tree.context.fragmentation_stack.last_mut() {
+            *active = context;
+        }
+        definite_paragraphs = multicol_has_only_paragraph_children(tree, index, false);
+        if !definite_paragraphs {
+            measured_beside.fill(false);
+        }
+    }
+    let auto_measurements =
+        auto_measurements.filter(|_| out_of_flow_height.is_none() || definite_paragraphs);
     // Content that needs more than the container's height fills it, as in
     // columns that do not balance, and goes on in overflow columns.
     let auto_measurements = match (definite_balance, auto_measurements) {
@@ -3959,6 +4123,26 @@ fn layout_column_group(
         && run.column == column
     {
         cursor = cursor.max(run.bottom);
+    }
+    // The columns are as tall as the positioned boxes in them need, even
+    // where the content in flow ends higher.
+    if let Some(height) = out_of_flow_height {
+        maximum = maximum.max(height);
+        cursor = cursor.min(height);
+    }
+    // Columns that fill in turn with no height to fill are one column that
+    // nothing ends, which holds the positioned boxes whole.
+    if retain_group
+        && context.column_fill == ColumnFillValue::Auto
+        && fragment_height.is_none()
+        && !spanned
+    {
+        let tops: Vec<Option<f32>> = children
+            .iter()
+            .map(|&child| Some(tree.nodes[child].layout.location.y - content_origin.y))
+            .collect();
+        let boxes = out_of_flow_boxes(tree, index, children, &tops);
+        cursor = cursor.max(out_of_flow_floor(tree, &boxes, maximum.max(cursor), 1));
     }
     // Balanced columns of a container with a definite height are as tall as
     // their content, which the rules between them follow.

@@ -4893,7 +4893,7 @@ fn an_absolute_box_starts_where_its_overflow_above_it_starts() {
 }
 
 #[test]
-fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box() {
+fn balanced_columns_grow_to_hold_an_absolute_box() {
     let (doc, _, ids) = absolute_fixture(
         "display:block;width:200px;columns:2;column-gap:0",
         &[(
@@ -4901,13 +4901,15 @@ fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box()
             &["position:absolute;top:0;width:10px;height:300px"],
         )],
     );
-    // The columns balance at 50px; the second, last one grows to hold the
-    // 250px left of the box.
+    // The box in flow alone balances at 50px; the positioned box makes the
+    // columns 150px tall, so that it ends in the last one. The box in flow
+    // ends in the first column, whose piece holds the second piece of the
+    // positioned box, one column to the right.
     assert_eq!(
         fragment_rects(&doc, ids[0].1[0]),
-        vec![(0, 0.0, 0.0, 300.0), (1, 0.0, -50.0, 300.0)]
+        vec![(0, 0.0, 0.0, 300.0), (1, 100.0, -150.0, 300.0)]
     );
-    assert_eq!(fragment_clips(&doc, ids[0].1[0])[1].height, 250.0);
+    assert_eq!(fragment_clips(&doc, ids[0].1[0])[1].height, 150.0);
 }
 
 #[test]

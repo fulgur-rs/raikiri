@@ -7,6 +7,7 @@
 //! strategies place such a box atomically in one column. This one lays the
 //! children out as one stream and slices each box at the column boundaries.
 
+use super::column_line_boxes;
 use super::column_lines::{self, LineMoves};
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
@@ -866,6 +867,116 @@ fn first_piece_per_column(pieces: &[Piece]) -> HashMap<usize, usize> {
         first.entry(piece.column).or_insert(index);
     }
     first
+}
+
+/// The pieces of each child placed by `placements` in columns of
+/// `column_height`, with the pieces of the leaves of each wrapper.
+type ChildPieces = (Vec<Vec<Piece>>, Vec<Option<Vec<Vec<Piece>>>>);
+
+fn pieces_of_children(
+    spans: &[std::ops::Range<usize>],
+    wrapped: &[Option<WrappedBlockTree>],
+    placements: &Placement,
+    column_height: f32,
+) -> Option<ChildPieces> {
+    let mut child_pieces = Vec::with_capacity(spans.len());
+    let mut wrapped_leaf_pieces = Vec::with_capacity(spans.len());
+    for (span, wrapped_tree) in spans.iter().zip(wrapped) {
+        let pieces = &placements.pieces[span.clone()];
+        match wrapped_tree {
+            None => {
+                child_pieces.push(pieces.first()?.clone());
+                wrapped_leaf_pieces.push(None);
+            }
+            Some(wrapped_tree) => {
+                let leaf_pieces = make_wrapped_leaf_pieces(wrapped_tree, pieces)?;
+                child_pieces.push(wrapper_pieces_for_tree(
+                    wrapped_tree,
+                    &leaf_pieces,
+                    Columns::Uniform(column_height),
+                )?);
+                wrapped_leaf_pieces.push(Some(leaf_pieces));
+            }
+        }
+    }
+    Some((child_pieces, wrapped_leaf_pieces))
+}
+
+/// The children of a column container laid end to end as stream items.
+#[derive(Clone, Copy)]
+struct Stream<'a> {
+    children: &'a [usize],
+    sliced_flex: &'a [bool],
+    items: &'a [Item],
+    spans: &'a [std::ops::Range<usize>],
+    wrapped: &'a [Option<WrappedBlockTree>],
+}
+
+/// The height of balanced columns that also hold the absolutely positioned
+/// boxes of the children, from the `balanced` height of the boxes in flow:
+/// balancing counts the content out of flow whose containing block is in the
+/// columns, as Chromium does (see [`column_line_boxes::out_of_flow_need`]).
+/// Each step grows the columns to the height a box that does not fit needs,
+/// or by the least that keeps one of the lines a column end crosses in its
+/// column, and lays the stream out again, which moves the containing blocks;
+/// the search stops after a few steps.
+fn out_of_flow_height(
+    tree: &LayoutSession<'_>,
+    stream: Stream<'_>,
+    column_count: usize,
+    balanced: f32,
+) -> f32 {
+    let mut height = balanced;
+    for _ in 0..16 {
+        let Some((pieces, _)) =
+            place(stream.items, height, usize::MAX)
+                .ok()
+                .and_then(|placement| {
+                    pieces_of_children(stream.spans, stream.wrapped, &placement, height)
+                })
+        else {
+            break;
+        };
+        // The least height past this one that one of the boxes that do not
+        // fit needs.
+        let mut needed = f32::INFINITY;
+        for ((&child, &flex), pieces) in stream.children.iter().zip(stream.sliced_flex).zip(&pieces)
+        {
+            let Some(first) = pieces.first().filter(|_| !flex) else {
+                continue;
+            };
+            let top = first.column as f32 * height + first.top;
+            for node in absolute_children(tree, child) {
+                let mut layout = tree.nodes[node].layout;
+                let start = top + layout.location.y;
+                // Lines that a column end crosses start the next column, and
+                // the column could instead grow until the first of them fits.
+                let mut shortage = f32::INFINITY;
+                if column_count > 1
+                    && let Some(moves) = column_lines::line_moves(tree, node, start, height, None)
+                {
+                    layout = moves.moved(layout);
+                    shortage = moves.shortage();
+                }
+                let need = column_line_boxes::out_of_flow_need(
+                    first.top + layout.location.y,
+                    first.column,
+                    column_line_boxes::painted_extent(layout),
+                    column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), node),
+                    height,
+                    column_count,
+                );
+                if need > height + EPSILON {
+                    needed = needed.min(need.min(height + shortage));
+                }
+            }
+        }
+        if !needed.is_finite() {
+            break;
+        }
+        height = needed;
+    }
+    height
 }
 
 /// The pieces of the absolutely positioned boxes of each child, in the
@@ -2313,7 +2424,18 @@ pub(super) fn layout(
         // keeps its own height. Content that needs more than the container
         // gives fills it, and continues in overflow columns.
         Some(height) if context.column_fill != ColumnFillValue::Auto => balanced_below(
-            balanced_height(&items, context.column_count, max_pieces),
+            out_of_flow_height(
+                tree,
+                Stream {
+                    children,
+                    sliced_flex: &sliced_flex,
+                    items: &items,
+                    spans: &spans,
+                    wrapped: &wrapped,
+                },
+                context.column_count,
+                balanced_height(&items, context.column_count, max_pieces),
+            ),
             height,
         )
         .unwrap_or(height),
@@ -2325,9 +2447,32 @@ pub(super) fn layout(
                 tree.fragment_tree.limit_exceeded = true;
                 return None;
             };
-            height
+            // The one column holds the positioned boxes too.
+            out_of_flow_height(
+                tree,
+                Stream {
+                    children,
+                    sliced_flex: &sliced_flex,
+                    items: &items,
+                    spans: &spans,
+                    wrapped: &wrapped,
+                },
+                1,
+                height,
+            )
         }
-        None => balanced_height(&items, context.column_count, max_pieces),
+        None => out_of_flow_height(
+            tree,
+            Stream {
+                children,
+                sliced_flex: &sliced_flex,
+                items: &items,
+                spans: &spans,
+                wrapped: &wrapped,
+            },
+            context.column_count,
+            balanced_height(&items, context.column_count, max_pieces),
+        ),
     };
     let minimum_content = minimum - origin.y - block_end_inset;
     // A maximum height bounds the columns of an auto-height container, though
@@ -2359,26 +2504,8 @@ pub(super) fn layout(
             return None;
         }
     };
-    let mut child_pieces: Vec<Vec<Piece>> = Vec::with_capacity(children.len());
-    let mut wrapped_leaf_pieces: Vec<Option<Vec<Vec<Piece>>>> = Vec::with_capacity(children.len());
-    for (span, wrapped_tree) in spans.iter().zip(&wrapped) {
-        let pieces = &placements.pieces[span.clone()];
-        match wrapped_tree {
-            None => {
-                child_pieces.push(pieces.first()?.clone());
-                wrapped_leaf_pieces.push(None);
-            }
-            Some(wrapped_tree) => {
-                let leaf_pieces = make_wrapped_leaf_pieces(wrapped_tree, pieces)?;
-                child_pieces.push(wrapper_pieces_for_tree(
-                    wrapped_tree,
-                    &leaf_pieces,
-                    Columns::Uniform(column_height),
-                )?);
-                wrapped_leaf_pieces.push(Some(leaf_pieces));
-            }
-        }
-    }
+    let (child_pieces, wrapped_leaf_pieces) =
+        pieces_of_children(&spans, &wrapped, &placements, column_height)?;
     let wrapped_fragments =
         wrapped.iter().zip(&wrapped_leaf_pieces).try_fold(
             0usize,
