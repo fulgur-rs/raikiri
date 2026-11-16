@@ -4606,3 +4606,37 @@ fn a_min_height_past_the_first_page_edge_keeps_the_cut_at_that_edge() {
         (160.0, 2)
     );
 }
+
+#[test]
+fn a_min_height_bounds_the_margins_its_pages_leave_out() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The margin between the children is truncated at the page edge, but
+    // the block keeps its min-height and reaches the third page, as in
+    // Chromium, even when the body clips its overflow.
+    for body_css in ["", "overflow:hidden"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some(&format!("display:block;margin:0;width:100px;{body_css}")),
+        );
+        let parent = doc.append_element(Some(body), "div", Some("display:block;min-height:220px"));
+        doc.append_element(Some(parent), "div", Some("display:block;height:90px"));
+        doc.append_element(
+            Some(parent),
+            "div",
+            Some("display:block;height:90px;margin-top:150px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+        assert_eq!(pages.len(), 3, "{body_css}");
+    }
+}

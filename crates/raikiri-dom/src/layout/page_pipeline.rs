@@ -9445,7 +9445,8 @@ fn last_flow_box(
 /// above its edges (see [`margin_above_edges`]), and those inside the blocks
 /// in it whose heights follow their content too. A truncated margin reaches
 /// no page of its own: the content and the edges around it reach the pages
-/// the block runs on to. Flex and grid items keep their margins whole.
+/// the block runs on to, and no more than its min-height leaves. Flex and
+/// grid items keep their margins whole.
 fn truncatable_margin_rooms(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9454,12 +9455,7 @@ fn truncatable_margin_rooms(
 ) -> HashMap<usize, f32> {
     let mut rooms: HashMap<usize, f32> = edges_breaks
         .iter()
-        .map(|found| {
-            let (min_height, _) = border_box_height_bounds(document, found.node_id);
-            let room = (found.margin_above - found.margin_kept)
-                .min(document.nodes[found.node_id].layout.size.height - min_height);
-            (found.node_id, room)
-        })
+        .map(|found| (found.node_id, found.margin_above - found.margin_kept))
         .filter(|&(_, room)| room > 0.0)
         .collect();
     let order: Vec<_> = document.preorder(body_id).collect();
@@ -9480,8 +9476,12 @@ fn truncatable_margin_rooms(
             continue;
         }
         let gaps = margins_between_children(document, cascade, body_id, node_id);
-        let room = rooms.get(&node_id).copied().unwrap_or(0.0) + gaps;
+        // The block keeps its min-height whatever the cuts inside it take.
+        let (min_height, _) = border_box_height_bounds(document, node_id);
+        let room = (rooms.get(&node_id).copied().unwrap_or(0.0) + gaps)
+            .min(document.nodes[node_id].layout.size.height - min_height);
         if room <= 0.0 {
+            rooms.remove(&node_id);
             continue;
         }
         rooms.insert(node_id, room);
