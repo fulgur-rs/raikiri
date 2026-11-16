@@ -4821,4 +4821,38 @@ fn an_empty_box_after_split_edges_leaves_the_margin_after_it_dropped() {
         after = block(doc, body, "display:block;height:10px;margin-top:15px");
     });
     assert_eq!(page_flow_y(&doc, after), 220.0);
+    // A relative offset moves the empty box but not the flow, as in Chromium.
+    for offset in ["10px", "-10px"] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:120px");
+            block(doc, parent, "display:block;height:30px");
+            block(
+                doc,
+                body,
+                &format!("display:block;position:relative;top:{offset}"),
+            );
+            after = block(doc, body, "display:block;height:10px;margin-top:15px");
+        });
+        assert_eq!(page_flow_y(&doc, after), 220.0, "{offset}");
+    }
+}
+
+#[test]
+fn edges_that_end_above_a_float_the_block_holds_keep_the_margin_after_it() {
+    // The float holds the block down to 220, below the edges of its last
+    // box, which end at 180 and split nothing, so the margin after the
+    // block stays whole, as in Chromium.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:flow-root");
+        block(doc, parent, "float:left;width:10px;height:220px");
+        block(
+            doc,
+            parent,
+            "display:block;height:100px;padding-bottom:80px",
+        );
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 235.0);
 }

@@ -9260,8 +9260,13 @@ fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usi
 fn before_empty_boxes(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     node_id: usize,
 ) -> (usize, f32) {
+    // A relative offset paints a box elsewhere but leaves the flow be.
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - layout_relative_offset_y(document, cascade, body_id, id)
+    };
     let mut current = node_id;
     let mut lift = 0.0_f32;
     loop {
@@ -9285,9 +9290,7 @@ fn before_empty_boxes(
         else {
             return (current, lift);
         };
-        let gap = current_abs_y(document, current)
-            - current_abs_y(document, before)
-            - document.nodes[before].layout.size.height;
+        let gap = flow_top(current) - flow_top(before) - document.nodes[before].layout.size.height;
         if !gap.is_finite() || gap < -0.001 {
             return (current, lift);
         }
@@ -9555,7 +9558,8 @@ fn split_edges_end(
     previous: usize,
     bottom: f32,
 ) -> Option<f32> {
-    let (mut current, lift) = before_empty_boxes(document, cascade, previous);
+    let body_id = super::page::find_body(document).unwrap_or(document.root);
+    let (mut current, lift) = before_empty_boxes(document, cascade, body_id, previous);
     let split_end = bottom - lift;
     // Far down a long flow the edges are only as exact as `f32` keeps them.
     let tolerance = 0.001_f32.max(bottom.abs() * 4.0 * f32::EPSILON);
@@ -9581,6 +9585,16 @@ fn split_edges_end(
         }
         let last = last_flow_box(document, cascade, current)?;
         if document.nodes[last].layout.margin.bottom.abs() > tolerance {
+            return None;
+        }
+        // The last box ends where the content of the block does, unless
+        // something else, such as a float the block holds, reaches lower.
+        let content_end = node.layout.size.height - own;
+        let last_bottom = current_abs_y(document, last)
+            - layout_relative_offset_y(document, cascade, body_id, last)
+            - current_abs_y(document, current)
+            + document.nodes[last].layout.size.height;
+        if (content_end - last_bottom).abs() > tolerance {
             return None;
         }
         current = last;
