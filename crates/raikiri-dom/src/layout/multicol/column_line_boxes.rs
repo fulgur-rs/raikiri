@@ -289,10 +289,8 @@ impl Columns {
             });
         }
         // Else the container is one row of columns as tall as its content
-        // box.
-        if !style.height_definite {
-            return None;
-        }
+        // box, which only a definite height fills one column after another.
+        style.height_definite.then_some(())?;
         let border_box = records.fragments[record].rect;
         let layout = &tree.nodes[container].layout;
         let (border, padding) = (layout.border, layout.padding);
