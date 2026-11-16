@@ -21635,3 +21635,27 @@ fn a_length_that_does_not_depend_on_the_paragraph_height_keeps_the_child_followi
         );
     }
 }
+
+#[test]
+fn a_block_formatting_context_holds_only_the_floats_of_its_own_flow() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let root = doc.append_element(Some(body), "div", Some("display:flow-root"));
+    let plain = doc.append_element(Some(root), "div", Some("display:block"));
+    let own = doc.append_element(Some(plain), "div", Some("float:left;width:10px"));
+    let nested = doc.append_element(Some(root), "div", Some("display:flow-root"));
+    doc.append_element(Some(nested), "div", Some("float:left;width:10px"));
+    let out = doc.append_element(Some(root), "div", Some("position:absolute"));
+    doc.append_element(Some(out), "div", Some("float:left;width:10px"));
+    let contents = doc.append_element(Some(root), "div", Some("display:contents"));
+    let through = doc.append_element(Some(contents), "div", Some("float:right;width:10px"));
+    doc.append_element(Some(root), "div", Some("display:none;float:left"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    let mut floats = own_floats(&session, &cascade, root);
+    floats.sort_unstable();
+    assert_eq!(floats, vec![own, through]);
+}

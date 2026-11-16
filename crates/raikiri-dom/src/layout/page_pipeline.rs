@@ -9402,10 +9402,8 @@ fn margin_above_edges(
     // them stand out of it and keep nothing.
     let float_bottom = if holds_floats(document, cascade, node_id) {
         let top = current_abs_y(document, node_id);
-        document
-            .preorder(node_id)
-            .skip(1)
-            .filter(|&id| is_floating_box_for_pagination(document, cascade, id))
+        own_floats(document, cascade, node_id)
+            .into_iter()
             .map(|float| float_extent(document, float).1 - top)
             .fold(last_bottom, f32::max)
     } else {
@@ -9422,6 +9420,37 @@ fn margin_above_edges(
         margin_above,
         (float_bottom - last_bottom).clamp(0.0, margin_above),
     )
+}
+
+/// The floats that the block formatting context of `node_id` holds: those
+/// in its flow, outside the boxes in it that hold their own floats or leave
+/// the flow.
+fn own_floats(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Vec<usize> {
+    let mut floats = Vec::new();
+    let mut pending: Vec<usize> = document.nodes[node_id].children.clone();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        if node.kind() != NodeKind::Element || node.is_display_none() {
+            continue;
+        }
+        if is_floating_box_for_pagination(document, cascade, id) {
+            floats.push(id);
+            continue;
+        }
+        if !matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        ) || node.display() != DisplayValue::Contents && holds_floats(document, cascade, id)
+        {
+            continue;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    floats
 }
 
 /// The last box in the flow of the block `node_id`: its last flow child (see
