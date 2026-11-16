@@ -447,6 +447,138 @@ fn clip_block_end(
     y + layout.size.height + geometry.block_end_outset()
 }
 
+/// Where the clips of `owner` and of the boxes around it that keep their
+/// height hide the content inside them now, in the coordinates of placed
+/// candidates: the nearest of their block-end clip edges at the places
+/// pagination has moved them to. A box whose height follows its content
+/// grows with what is pushed down inside it, so its clip ends nothing here.
+/// The clips above an absolutely positioned or fixed box do not cut it.
+fn moved_clip_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    owner: usize,
+    root_flow_offset: f32,
+) -> f32 {
+    let mut end = f32::INFINITY;
+    let mut next = Some(owner);
+    while let Some(id) = next.filter(|&id| id != body_id) {
+        if element_clips_overflow(document, cascade, id) && !height_follows_content(document, id) {
+            let top = current_abs_y(document, id) + root_flow_offset;
+            end = end.min(clip_block_end(document, cascade, id, top));
+        }
+        // The walk stops after an absolutely positioned or fixed box.
+        let positioned = matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        );
+        next = document.parent_of(id).filter(|_| !positioned);
+    }
+    end
+}
+
+/// Whether a forced break at the start (`before`) or end of `node_id`, at
+/// `at` in candidate coordinates, falls inside a box that clips its
+/// overflow, has a height its content cannot grow (`height`, `max-height` or
+/// size containment; a `min-height` alone lets it grow) and whose border box
+/// ends on the page of the break. Both are judged where the normal flow puts
+/// them, without relative offsets. Chromium prints the rest of such a box
+/// in one piece: the forced breaks in it break nothing. A box that runs past
+/// the end of the page breaks there as any other; a clip margin past its
+/// border box does not count. A break at the first or last box of a box is a
+/// break before or after that box, so it is not inside it. The clips above
+/// an absolutely positioned or fixed box do not hold it.
+fn clip_holds_breaks(
+    document: &super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    before: bool,
+    at: f32,
+) -> bool {
+    let FlowEnv {
+        cascade,
+        body_id,
+        page_origins,
+        root_flow_offset,
+        ..
+    } = *env;
+    let positioned = |id: usize| {
+        matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    };
+    let mut edge = node_id;
+    while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
+        && !document.nodes[parent].has_before_or_after_content
+        && ordered_edge_child(document, cascade, parent, before)
+            .is_some_and(|child| is_descendant_or_self(document, child, edge))
+    {
+        edge = parent;
+    }
+    let at = at - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+    let page = if before {
+        page_origins.page_index_for_y(at)
+    } else {
+        page_origins.page_index_for_end(at)
+    };
+    let page_end = page_origins.origin(page) + page_origins.step_at(page);
+    let mut next = document.parent_of(edge).filter(|_| !positioned(edge));
+    while let Some(id) = next.filter(|&id| id != body_id) {
+        if element_clips_overflow(document, cascade, id)
+            && height_is_capped(document, id)
+            && current_abs_y(document, id) + root_flow_offset
+                - accumulated_relative_offset_y(document, cascade, body_id, id)
+                + document.nodes[id].layout.size.height
+                <= page_end + 0.001
+        {
+            return true;
+        }
+        next = document.parent_of(id).filter(|_| !positioned(id));
+    }
+    false
+}
+
+/// The first (`before`) or last box of `parent` in the order pagination
+/// visits its children: a flex or grid container visits its items in
+/// `order`-modified order, a block container in source order (see
+/// [`page_edge_child`]).
+fn ordered_edge_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    before: bool,
+) -> Option<usize> {
+    if !matches!(
+        document.nodes[parent].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    ) {
+        return page_edge_child(document, cascade, parent, before, 0)
+            .ok()
+            .flatten();
+    }
+    let order = super::page::pagination_child_order_borrowed(document, cascade, parent);
+    let is_item = |&child: &usize| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && match &node.data {
+                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                _ => true,
+            }
+    };
+    if before {
+        order.iter().copied().find(is_item)
+    } else {
+        order.iter().rev().copied().find(is_item)
+    }
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///
@@ -8155,13 +8287,17 @@ impl PendingBreak {
         body_id: usize,
         node_id: usize,
         deferred_named_break_after: bool,
+        held: impl FnOnce() -> bool,
     ) {
-        let breaks_after = box_forces_break_after(
+        // A forced break held by a clip box around the node breaks nothing;
+        // a change of page name after it still applies.
+        let breaks_after = (box_forces_break_after(
             document,
             cascade,
             node_id,
             cascade.computed[node_id].break_after,
-        ) || deferred_named_break_after;
+        ) && !held())
+            || deferred_named_break_after;
         let source_is_ancestor = self
             .source
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
@@ -11303,18 +11439,25 @@ pub(super) fn follows_box_on_page(
 /// The lowest end, in the flow, of the in-flow content before the box
 /// `node_id` (see [`follows_box_on_page`]) that ends at or above `y`, the
 /// block-start margin edge of the box: content beside the box, as an earlier
-/// flex item, grid item or table cell, ends below it. `None` when no such
-/// content comes before the box.
+/// flex item, grid item or table cell, ends below it. Content of no height
+/// counts up to `border_top` too: an empty box whose margins collapse with
+/// those of the box lies at the end of the collapsed margins in the flow,
+/// below the margin edge of the box, and Chromium breaks after it all the
+/// same. Callers pass the block-start border edge of the box there only when
+/// its margin can adjoin content before it (see [`margins_adjoin_in_flow`]),
+/// and the margin edge otherwise. `None` when no such content comes before
+/// the box.
 pub(super) fn content_end_above(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
     y: f32,
+    border_top: f32,
 ) -> Option<f32> {
     let end = std::cell::Cell::new(None::<f32>);
-    content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
-        if bottom <= y + 0.001 {
+    content_lies_before(document, cascade, body_id, node_id, &|top, bottom| {
+        if bottom <= y + 0.001 || (bottom <= top + 0.001 && bottom <= border_top + 0.001) {
             end.set(Some(end.get().map_or(bottom, |end| end.max(bottom))));
         }
         false
@@ -11339,7 +11482,7 @@ fn content_lies_before(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let pseudo_lies = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
-        generated_box_lies(document, &flow_y, parent, element, pseudo, accept)
+        generated_box_lies(document, cascade, &flow_y, parent, element, pseudo, accept)
     };
     any_level_before(
         document,
@@ -11394,6 +11537,7 @@ fn content_lies_before(
 /// position of a box.
 fn generated_box_lies(
     document: &Document,
+    cascade: &CascadeResult,
     flow_y: &dyn Fn(usize) -> f32,
     parent: usize,
     element: usize,
@@ -11408,25 +11552,106 @@ fn generated_box_lies(
         root = up;
     }
     let id = crate::generated_content::generated_node_id(element, pseudo);
-    document.ifc_layout_node(root).is_some_and(|node| {
-        let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
-        node.ifc
-            .as_ref()
-            .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| {
-                lines.placed_blocks.iter().any(|placed| {
-                    let top = origin + placed.border_box.y;
-                    placed.node == id as u64 && accept(top, top + placed.border_box.height)
-                }) || lines.lines.iter().enumerate().any(|(index, line)| {
-                    let top = origin + lines.line_top(index);
-                    super::ifc::text_lines::glyph_owners(line).contains(&id)
-                        && accept(
-                            top,
-                            top + crate::layout::ifc::outside_marker::fit_height(line),
-                        )
-                })
-            })
+    let node = document
+        .ifc_layout_node(root)
+        .unwrap_or(&document.nodes[root]);
+    let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
+    if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref()) {
+        let blocks = lines
+            .placed_blocks
+            .iter()
+            .filter(|block| block.node == id as u64)
+            .map(|block| {
+                let top = origin + block.border_box.y;
+                (top, top + block.border_box.height)
+            });
+        let line_bounds = lines
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| super::ifc::text_lines::glyph_owners(line).contains(&id))
+            .map(|(index, line)| {
+                let top = origin + lines.line_top(index);
+                (
+                    top,
+                    top + crate::layout::ifc::outside_marker::fit_height(line),
+                )
+            });
+        let mut bounds = blocks.chain(line_bounds).peekable();
+        if bounds.peek().is_some() {
+            return bounds.any(|(top, bottom)| accept(top, bottom));
+        }
+    }
+    // An empty `::before` leaves neither a block nor a line: a block-level
+    // one whose margins collapse through it, or an inline one that makes no
+    // line, which may not even make its element hold a paragraph. Its
+    // anonymous block is still a box of no height at the start of the
+    // element's content (CSS 2.1 §9.2.1.1, §9.4.2), as an empty `div` is, and
+    // Chromium breaks after it as after such a box. The content of a
+    // `display: contents` element starts at its first box.
+    element == parent
+        && pseudo == raikiri_style::PseudoElem::Before
+        && holds_block_flow(document.nodes[root].display())
+        && crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo)
+        && if element == root {
+            Some(origin)
+        } else {
+            first_box_in(document, element).map(flow_y)
+        }
+        .is_some_and(|start| accept(start, start))
+}
+
+/// Whether a box of `display` lays its in-flow children out one below
+/// another, in block flow: not a flex or grid container, nor a table or a
+/// part of one that holds rows, columns or cells side by side.
+fn holds_block_flow(display: DisplayValue) -> bool {
+    !display.is_flex_or_grid_container()
+        && !matches!(
+            display,
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableColumnGroup
+                | DisplayValue::TableColumn
+        )
+}
+
+/// The first element among the children of the `display: contents` element
+/// `element`, or of the `display: contents` elements there, that generates
+/// a box.
+fn first_box_in(document: &Document, element: usize) -> Option<usize> {
+    document.nodes[element].children.iter().find_map(|&child| {
+        let node = &document.nodes[child];
+        match node.display() {
+            _ if node.kind() != NodeKind::Element => None,
+            DisplayValue::None => None,
+            DisplayValue::Contents => first_box_in(document, child),
+            _ => Some(child),
+        }
     })
+}
+
+/// Whether the block-start margin of the box `node_id` can adjoin content
+/// before it in the flow below `body_id`: every ancestor of it up to the
+/// body, the body too, lays its children out in block flow (see [`holds_block_flow`]) and
+/// in one column. In a flex, grid or table container, or a multi-column
+/// one, content before the box may lie beside it instead.
+pub(super) fn margins_adjoin_in_flow(document: &Document, body_id: usize, node_id: usize) -> bool {
+    let mut node = node_id;
+    while let Some(parent) = document.parent_of(node) {
+        let holder = &document.nodes[parent];
+        if holder.is_multicol_container() || !holds_block_flow(holder.display()) {
+            return false;
+        }
+        if parent == body_id {
+            break;
+        }
+        node = parent;
+    }
+    true
 }
 
 /// Whether generated content before the box `node_id` in the flow below
@@ -11442,10 +11667,136 @@ pub(super) fn generated_content_runs_past(
     node_id: usize,
     y: f32,
 ) -> bool {
+    generated_content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > y + 0.001
+    })
+}
+
+/// The top and the end, in the flow, of the generated content right before
+/// the box `node_id`, the lowest of it, when it ends at or above `y`, a
+/// position in the flow above the box, and no other in-flow content before
+/// the box ends below it (see [`content_lies_before`]).
+/// That is the `::before` of its parent, or the generated content of an
+/// element before the box that has no box of its own (see
+/// [`boxless_content_before`]); or, when the box begins its parent and its
+/// margin collapses through the parent's top (see
+/// [`starts_with_child_margin`]), such content before the parent, and so on
+/// up. The margin of the box then adjoins it, as one between sibling blocks
+/// does.
+pub(super) fn generated_content_end_above(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Option<(f32, f32)> {
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let runs_past = |_top: f32, bottom: f32| bottom > y + 0.001;
+    let last = std::cell::Cell::new(None::<(f32, f32)>);
+    let record = |top: f32, bottom: f32| {
+        if bottom <= y + 0.001 && last.get().is_none_or(|(_, end)| bottom > end) {
+            last.set(Some((top, bottom)));
+        }
+        false
+    };
+    // Generated content before an ancestor is separated from the box by the
+    // ancestor's own edges or margin, unless the box begins the ancestor and
+    // its margin collapses through the ancestor's top (see
+    // `starts_with_child_margin`): the walk goes up only from such a level.
+    any_level_before(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        |parent, node, boxes| {
+            let lies_before = boxless_content_before(
+                document,
+                cascade,
+                parent,
+                node,
+                &|child, pseudo| {
+                    renders_pseudo(cascade, child, pseudo)
+                        && generated_box_lies(
+                            document, cascade, &flow_y, parent, child, pseudo, &record,
+                        )
+                },
+                &|_| false,
+            ) || !boxes.is_empty();
+            if renders_before_pseudo(cascade, parent) {
+                generated_box_lies(
+                    document,
+                    cascade,
+                    &flow_y,
+                    parent,
+                    parent,
+                    raikiri_style::PseudoElem::Before,
+                    &record,
+                );
+                return true;
+            }
+            lies_before
+                || last.get().is_some()
+                || !starts_with_child_margin(document, cascade, body_id, parent, node)
+        },
+    );
+    let (top, end) = last.get()?;
+    // Any other in-flow content that ends below it comes between: a box
+    // after it whose negative margin pulls the box above that box's end too.
+    (!content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > end + 0.001
+    }))
+    .then_some((top, end))
+}
+
+/// Whether the margin of `child`, the first of the in-flow content of
+/// `parent`, collapses through the top of `parent`: `parent` is a
+/// `display: contents` element, which has no box, or a plain block of the
+/// normal flow with no padding or border above, where the first box of
+/// `child` starts in the flow, as it does only when the margin is not held
+/// inside `parent`.
+fn starts_with_child_margin(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    parent: usize,
+    child: usize,
+) -> bool {
+    let node = &document.nodes[parent];
+    if node.display() == DisplayValue::Contents {
+        return true;
+    }
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let child_box = if document.nodes[child].display() == DisplayValue::Contents {
+        first_box_in(document, child)
+    } else {
+        Some(child)
+    };
+    matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && is_plain_block_box(document, parent)
+        && !node.is_multicol_container()
+        && !is_floating_box_for_pagination(document, cascade, parent)
+        && node.layout.border.top + node.layout.padding.top <= 0.001
+        && child_box.is_some_and(|child| (flow_y(child) - flow_y(parent)).abs() <= 0.001)
+}
+
+/// Whether `accept` takes the top and bottom in the flow of some generated
+/// content before the box `node_id`: the `::before` of an ancestor of it,
+/// the body too, or the generated content of an element before it, or
+/// before an ancestor, that has no box of its own (see
+/// [`boxless_content_before`]).
+fn generated_content_lies_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    accept: &dyn Fn(f32, f32) -> bool,
+) -> bool {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
     any_level_before(document, cascade, body_id, node_id, |parent, node, _| {
         boxless_content_before(
             document,
@@ -11454,17 +11805,18 @@ pub(super) fn generated_content_runs_past(
             node,
             &|child, pseudo| {
                 renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &runs_past)
+                    && generated_box_lies(document, cascade, &flow_y, parent, child, pseudo, accept)
             },
             &|_| false,
         ) || (renders_before_pseudo(cascade, parent)
             && generated_box_lies(
                 document,
+                cascade,
                 &flow_y,
                 parent,
                 parent,
                 raikiri_style::PseudoElem::Before,
-                &runs_past,
+                accept,
             ))
     })
 }
@@ -12195,6 +12547,55 @@ struct MarginRunEnd {
     raw_y: f32,
     /// The block size of the box.
     height: f32,
+}
+
+/// How the top of `at.natural_page` truncates the margin between the box
+/// `at` and generated content right before it, a block-level `::before` or
+/// `::after` that is no candidate of its own (see
+/// [`generated_content_end_above`]), as it truncates one between sibling
+/// blocks: Chromium breaks the margin there too.
+fn truncation_after_generated_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    page_origins: &PageOrigins,
+    at: &MarginBreak,
+) -> Option<MarginTruncation> {
+    let page_top = page_origins.origin(at.natural_page);
+    // A box that may have clearance keeps its gap, as between siblings; and
+    // only a page edge in the margin above the box cuts it.
+    if !at.collapses_with_previous_block
+        || at.run_end.is_some()
+        || !at.clearance_free
+            && !matches!(
+                cascade.computed[at.node_id].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        || at.natural_page == 0
+        || at.effective_y <= page_top + 0.001
+    {
+        return None;
+    }
+    // Nothing but margins lies between the generated content and the box:
+    // those of both, collapsed, which the page edge must fall in. Generated
+    // content at the top of the page, as a table of no height there, starts
+    // the page: the margin after it is not at a break.
+    let (content_top, previous_bottom) =
+        generated_content_end_above(document, cascade, body_id, at.node_id, at.effective_y)?;
+    if previous_bottom > page_top + 0.001 || content_top >= page_top - 0.001 {
+        return None;
+    }
+    let (target_top, target_y) = page_origins.truncated_margin_target(
+        at.natural_page,
+        at.forced_before,
+        at.margin_top,
+        || previous_bottom,
+        false,
+    );
+    Some(MarginTruncation {
+        delta: target_y - at.effective_y,
+        underflow: (target_y < target_top).then_some(target_top - target_y),
+    })
 }
 
 /// How a page edge truncates the margin above a box.
@@ -13908,7 +14309,15 @@ fn move_box_for_transition(
         } else {
             node_delta.max(shift_delta)
         };
-        shift_block_flow_after(document, holder, body_id, following_delta);
+        moved_in_bounded_ancestor = shift_block_flow_after(
+            document,
+            cascade,
+            holder,
+            body_id,
+            following_delta,
+            shifts,
+            flow_page,
+        );
     }
     moved_in_bounded_ancestor
 }
@@ -15299,6 +15708,16 @@ fn height_follows_content(document: &super::context::LayoutSession<'_>, block: u
         && !node.size_containment.height
 }
 
+/// Whether the content of `block` cannot grow its height: a definite
+/// `height` or a `max-height` that resolves sets it, or size containment
+/// ignores the content. A percentage of a containing block whose height is
+/// not definite caps nothing.
+fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    definite_content_height(document, block).is_some()
+        || border_box_height_bounds(document, block).1.is_finite()
+        || document.nodes[block].size_containment.height
+}
+
 /// Whether `parent` is a block container whose later children follow a
 /// moved child. Flex, grid and table containers place their children
 /// themselves, and a paragraph's lines follow a moved block child through
@@ -16311,18 +16730,28 @@ fn collapses_with_previous_block(
 
 /// Moves the boxes after `node_id` in block flow down by `flow_delta`, up to
 /// the first ancestor below `body_id` that does not stack its children in
-/// block order.
+/// block order, for a forced break before `node_id`. Returns whether an
+/// ancestor's height kept it from holding the moved content.
 ///
 /// A `display: contents` ancestor has no box; its parent lays the moved box
 /// out among its siblings. A paragraph's content after a block on its lines
 /// follows the same way, also when the moved box sits deeper inside that
 /// block.
+///
+/// Each ancestor passes on only as much of the shift as it grows (see
+/// [`forced_break_growth`]); the rest ends with its subtree (see
+/// [`SubtreeShifts::bounded`]).
 fn shift_block_flow_after(
     document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     node_id: usize,
     body_id: usize,
     flow_delta: f32,
-) {
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) -> bool {
+    let mut flow_delta = flow_delta;
+    let mut bounded = false;
     let mut child = node_id;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
@@ -16348,8 +16777,80 @@ fn shift_block_flow_after(
             );
         }
         shift_later_block_siblings(document, parent, child, flow_delta);
+        // The moved box moved whole; an ancestor of it keeps its stored
+        // height while its content end moves down with the shift.
+        let child_growth = if child == node_id { 0.0 } else { flow_delta };
+        let passed = forced_break_growth(
+            document,
+            cascade,
+            body_id,
+            parent,
+            (child, child_growth),
+            flow_delta,
+        );
+        if passed < flow_delta - 0.001 {
+            shifts
+                .bounded
+                .push((parent, flow_delta - passed, flow_page));
+            bounded = true;
+            flow_delta = passed;
+            if flow_delta <= 0.001 {
+                break;
+            }
+        }
         child = parent;
     }
+    bounded
+}
+
+/// How far `block` grows when a forced break inside its child `child` moves
+/// the content from there on down by `moved`, while `child` itself keeps its
+/// stored height and grows by `child_growth`.
+///
+/// A box with a definite height that a break goes through fills the rest of
+/// its fragmentainer and continues on the next one with the rest of that
+/// height (CSS Fragmentation 3 §4.4), so it does not grow, and neither does a
+/// box whose size containment ignores its content. The others grow to hold
+/// the moved content within `min-height` and `max-height` (CSS 2.1 §10.7),
+/// and a box that holds its floats keeps the room they take.
+fn forced_break_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    moved: f32,
+) -> f32 {
+    if !lines_move_grows_box(document, block) {
+        return 0.0;
+    }
+    let (min, max) = border_box_height_bounds(document, block);
+    let old = document.nodes[block].layout.size.height;
+    let holds = holds_floats(document, cascade, block);
+    // A height between its bounds follows the end of the in-flow content,
+    // which moves down by the whole shift.
+    if !holds && old > min + 0.001 && max.is_infinite() {
+        return moved;
+    }
+    let layout = &document.nodes[block].layout;
+    let edges_below = layout.padding.bottom + layout.border.bottom;
+    let child_end = if child_growth > 0.0 {
+        let node = &document.nodes[child];
+        let margin = if edges_below > 0.0 {
+            node.layout.margin.bottom
+        } else {
+            0.0
+        };
+        pagination_child_parent_y(document, block, child, document.pagination_local_y(child))
+            - layout_relative_offset_y(document, cascade, body_id, child)
+            + node.layout.size.height
+            + margin
+            + child_growth
+    } else {
+        f32::NEG_INFINITY
+    };
+    let end = flow_content_end(document, cascade, body_id, block).max(child_end);
+    (old.max(end + edges_below).min(max) - old).max(0.0)
 }
 
 /// The effective flex parent of `node_id` when its main axis is the inline

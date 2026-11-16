@@ -1,6 +1,7 @@
 //! Project-owned block flow using public Taffy primitives.
 
 mod children;
+pub(crate) use children::content_alignment_offset;
 pub(crate) mod context;
 mod legend;
 mod positioned;

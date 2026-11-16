@@ -2269,6 +2269,19 @@ fn compute_ifc_root(
         };
     }
     output.oof_candidates.append(&mut nested_oof_candidates);
+    // A table cell aligns its content by `vertical-align` (see `table.rs`).
+    if !vertical_paragraph
+        && !multicol
+        && !is_table_box(tree.nodes[idx].display())
+        && let Some(measured) = measured_size
+    {
+        let free =
+            output.size.height - measure.insets.top - measure.insets.bottom - measured.height;
+        let offset = block_flow::content_alignment_offset(style.align_content, free);
+        if offset != 0.0 {
+            align_ifc_content(tree, idx, offset, inputs.run_mode, &mut output);
+        }
+    }
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
     }
@@ -2318,6 +2331,49 @@ fn compute_ifc_root(
         }
     }
     output
+}
+
+/// Move the content of the horizontal paragraph box `idx` down by `offset`,
+/// the `align-content` it states, as block flow moves block children (CSS
+/// Box Alignment 3 §5.1): its lines, the floats, atomic inlines and blocks
+/// among them, and the out-of-flow candidates, baseline and overflow they
+/// carry. The box's own out-of-flow children are placed afterwards from the
+/// moved lines. A layout that only measures the box moves its baseline alone.
+fn align_ifc_content(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    offset: f32,
+    run_mode: RunMode,
+    output: &mut LayoutOutput,
+) {
+    output.baselines.first = output.baselines.first.map(|baseline| baseline + offset);
+    if run_mode != RunMode::PerformLayout {
+        return;
+    }
+    let boxes: Vec<usize> = tree.nodes[idx]
+        .ifc
+        .as_mut()
+        .map(|root| {
+            if let Some(lines) = root.lines.as_mut() {
+                lines.shifts.align(offset);
+            }
+            root.boxes
+                .iter()
+                .filter(|b| b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+                .map(|b| b.node)
+                .collect()
+        })
+        .unwrap_or_default();
+    for node in boxes {
+        let mut layout = tree.nodes[node].layout;
+        layout.location.y += offset;
+        tree.set_unrounded_layout(NodeId::from(node), &layout);
+    }
+    if output.scrollable_overflow_rect != Edges::ZERO {
+        output.scrollable_overflow_rect.top += offset;
+        output.scrollable_overflow_rect.bottom += offset;
+    }
+    output.oof_candidates.translate(Point { x: 0.0, y: offset });
 }
 
 /// The min-content width of the border box of the paragraph box `node_id`,

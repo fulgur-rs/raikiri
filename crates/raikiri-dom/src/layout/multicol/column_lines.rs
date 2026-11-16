@@ -349,7 +349,7 @@ fn paragraph_moves(
     let mut moves = Vec::new();
     let mut moved = 0.0f32;
     for (index, line) in lines.lines.iter().enumerate() {
-        let start = content_top + line.block_offset() + moved;
+        let start = content_top + lines.line_top(index) + moved;
         if let Some(shift) = crossing(start, line.block_size(), columns) {
             moves.push((index, shift));
             moved += shift;

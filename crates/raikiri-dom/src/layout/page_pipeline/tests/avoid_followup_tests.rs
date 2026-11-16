@@ -850,8 +850,11 @@ fn a_formatting_context_keeps_its_max_height_when_a_float_moves_inside_a_min_hei
     }
 }
 
+/// A forced break inside a fixed-height block leaves the flow after it at the
+/// block's end: the block ends on the first page, and the content after the
+/// break overflows it onto the next page (Chromium prints the same).
 #[test]
-fn the_flow_after_a_fixed_height_block_stays_past_a_forced_break_in_it() {
+fn the_flow_after_a_fixed_height_block_stays_at_its_end_past_a_forced_break_in_it() {
     let mut ids = Vec::new();
     let (doc, pages) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:30px");
@@ -865,7 +868,7 @@ fn the_flow_after_a_fixed_height_block_stays_past_a_forced_break_in_it() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    assert_eq!((ys, pages), (vec![100.0, 130.0], 2));
+    assert_eq!((ys, pages), (vec![100.0, 80.0], 2));
 }
 
 #[test]

@@ -192,6 +192,11 @@ pub(super) struct ElementContext {
     pub(super) is_flex_item: bool,
     pub(super) is_grid_item: bool,
     pub(super) is_named: bool,
+    /// The nearest box around the candidate whose height does not follow its
+    /// content and that clips its overflow (see [`ClipBounds::lines_clip`]).
+    /// Its clip hides what the candidate paints past it, wherever pagination
+    /// moves the candidate inside it.
+    pub(super) clip_box: Option<usize>,
     pub(super) deferred_named_break_after: bool,
     /// The line of a paragraph of one line of generated text or of atomic
     /// inlines that no text places: the box is kept whole by that line.
@@ -319,6 +324,11 @@ impl BoxContext {
     pub(super) fn is_rendered_leaf(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.is_rendered_leaf)
+    }
+
+    pub(super) fn clip_box(self) -> Option<usize> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.clip_box)
     }
 
     pub(super) fn is_direct_body_element(self) -> bool {
@@ -1797,15 +1807,32 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let run_tail_base = frame.run_tail
                     && (in_flow_block || in_flow_container)
                     && frame.closing_edges > 0.0;
-                // A nested block after a block of its parent's flow, with a
+                // A nested block after a block of its parent's flow, or
+                // first in it after generated content that has no candidate
+                // of its own (see `generated_content_end_above`), with a
                 // margin between the two: a page edge in that margin cuts it.
+                // Only margins lie between such content and the block, so
+                // any gap there is one.
                 let margin_shape = in_flow_block_level
                     && !direct_body_child
                     && !node.used_writing_mode.is_vertical()
-                    && frame.previous_box.is_some_and(|previous| {
-                        node.layout.margin.top > 0.0
-                            || document.nodes[previous].layout.margin.bottom > 0.0
-                    });
+                    && match frame.previous_box {
+                        Some(previous) => {
+                            node.layout.margin.top > 0.0
+                                || document.nodes[previous].layout.margin.bottom > 0.0
+                        }
+                        None if !cascade.pseudo.is_empty() => {
+                            let flow_top = candidate_raw_y
+                                - accumulated_relative_offset_y(
+                                    document, cascade, body_id, node_id,
+                                );
+                            super::generated_content_end_above(
+                                document, cascade, body_id, node_id, flow_top,
+                            )
+                            .is_some_and(|(_, end)| end < flow_top - 0.001)
+                        }
+                        None => false,
+                    };
                 let needs_ancestor_constraints = margin_shape
                     || (nested_candidate_base
                         && ((!inline_level && is_block_flow_box && avoids_break)
@@ -1820,7 +1847,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || (column_replaced_piece.is_some() && !direct_body_child)
                     || (first_grid_row.is_some() && !direct_body_child);
                 // A forced break and a page name change the pages wherever the
-                // box sits, even past the edge of a clipping ancestor.
+                // box sits, even past the edge of a clipping ancestor. Whether
+                // a clip box around it holds the break depends on where
+                // pagination puts that box, so it is judged there (see
+                // `clip_holds_breaks`).
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
                     || page_break_is_forced(document, node_id, computed.break_before)
@@ -1998,6 +2028,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_flex_item: flex_item_candidate,
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),
+                                // The clips between an absolutely positioned
+                                // or fixed box and its containing block do
+                                // not cut it.
+                                clip_box: frame.lines_clip_box.filter(|_| {
+                                    !matches!(
+                                        node.position(),
+                                        PositionValue::Absolute | PositionValue::Fixed
+                                    )
+                                }),
                                 deferred_named_break_after,
                                 unplaced_line,
                                 unbreakable: unbreakable_box,

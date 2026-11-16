@@ -1462,13 +1462,14 @@ fn translucent_overflow_box_content_past_the_box_adds_no_pages() {
     );
 }
 
-/// A forced break inside an overflow box still starts a page, so the box
-/// continues on the next one with its clip, in the same order in the walker
-/// and the public list.
+/// A forced break inside an overflow box that runs past the page still
+/// starts a page, so the box continues on the next one with its clip, in the
+/// same order in the walker and the public list. (A box that ends on the page
+/// is printed whole, without the break.)
 #[test]
 fn overflow_box_split_by_a_forced_break_continues_on_the_next_page() {
     let result = assert_same_order(
-        "<p>x</p><div style=\"overflow: hidden; height: 100px; background: #eee\">\
+        "<p>x</p><div style=\"overflow: hidden; height: 2000px; background: #eee\">\
          <p>line 0</p><p style=\"break-before: page\">line 1</p><p>line 2</p></div>\
          <p>after</p>",
         "",
