@@ -119,7 +119,7 @@ impl<'a> LayoutStyleView<'a> {
     /// `align-self` aligns the box along the physical horizontal axis and
     /// `justify-self` along the physical vertical one (CSS Position 3 §5.2).
     /// The out-of-flow projection takes them the other way round otherwise.
-    /// The post-pass that places a box in a vertical container afterwards reads
+    /// The post-pass that places a box in a vertical containing block afterwards reads
     /// `bridge_align_self` and `bridge_justify_self`, on the axes it resolves
     /// itself, and does not use the swapped view.
     #[inline]
@@ -306,6 +306,40 @@ impl<'a> LayoutStyleView<'a> {
             .map(|payload| payload.resolve(basis))
     }
 
+    /// The override of the alignment an out-of-flow box takes between its
+    /// insets along one axis of the box: a scoped entry of either kind, then a
+    /// pass entry that applies between the insets only, then any other pass
+    /// entry.
+    pub(crate) fn oof_alignment_override(&self, inline: bool) -> Option<Option<values::AlignSelf>> {
+        if !self.has_overrides {
+            return None;
+        }
+        // `Some((value, insets_only))` for an entry of this axis.
+        let pick = |kind: OverrideKind<'_>| match kind {
+            OverrideKind::AlignSelf(value) if !inline => Some((value, false)),
+            OverrideKind::JustifySelf(value) if inline => Some((value, false)),
+            OverrideKind::OofAlignSelf(value) if !inline => Some((value, true)),
+            OverrideKind::OofJustifySelf(value) if inline => Some((value, true)),
+            _ => None,
+        };
+        if let Some((value, _)) = (0..self.scoped.len())
+            .rev()
+            .find_map(|index| pick(self.scoped.get(index).0))
+        {
+            return Some(value);
+        }
+        let mut shared = None;
+        for index in (0..self.pass.len()).rev() {
+            match pick(self.pass.get(index).0) {
+                Some((value, true)) => return Some(value),
+                Some((value, false)) => {
+                    shared.get_or_insert(value);
+                }
+                None => {}
+            }
+        }
+        shared
+    }
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
         self.has_overrides
             .then(|| {

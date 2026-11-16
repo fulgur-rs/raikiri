@@ -88,14 +88,25 @@ impl LayoutSession<'_> {
             .is_some_and(|parent| super::block_right_to_left(self, parent).is_some())
     }
 
-    /// Whether the library reads the alignment of the out-of-flow box `node`
-    /// along the physical vertical axis from `justify-self` and the one along
-    /// the horizontal axis from `align-self`, rather than the other way round.
+    /// Whether the library reads the alignment of an out-of-flow box along the
+    /// physical vertical axis from `justify-self` and the one along the
+    /// horizontal axis from `align-self`, rather than the other way round.
     ///
-    /// The last baseline of the container that holds the box places it on the
-    /// container's axes, so the swap applies only where the container is on
-    /// vertical axes as well as the containing block.
-    pub(crate) fn oof_alignment_swapped(&self, node: usize) -> bool {
+    /// A box aligns between its insets on the axes of its containing block,
+    /// whatever the writing mode of the container that holds it, so the swap
+    /// applies wherever the containing block is on vertical axes.
+    pub(crate) fn oof_alignment_swapped(&self) -> bool {
+        self.context.oof_axes_vertical
+    }
+
+    /// Whether `node` is out of flow in a containing block on vertical axes
+    /// and held by a container on vertical axes as well.
+    ///
+    /// The sizing of a box with a preferred aspect ratio or size containment
+    /// between its insets is worked out on horizontal axes, and Chromium keeps
+    /// the size it gives such a box in a container on horizontal axes even
+    /// where its containing block is on vertical axes.
+    pub(crate) fn oof_in_vertical_container(&self, node: usize) -> bool {
         self.context.oof_axes_vertical && self.container_is_vertical(node)
     }
 
@@ -698,7 +709,7 @@ fn static_position_overrides(
                     // axis from `justify-self` and the one along y from
                     // `align-self`, unless the axes are swapped.
                     let (alignment, own): (fn(_) -> _, _) =
-                        if (start == LengthProperty::Left) != tree.oof_alignment_swapped(idx) {
+                        if (start == LengthProperty::Left) != tree.oof_alignment_swapped() {
                             (
                                 OwnedPropertyOverride::justify_self,
                                 style.bridge_justify_self(),

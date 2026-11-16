@@ -90,6 +90,12 @@ pub(crate) enum OverrideKind<'a> {
     FlexShrink(f32),
     AlignSelf(Option<crate::values::AlignSelf>),
     JustifySelf(Option<crate::values::AlignSelf>),
+    /// `align-self` read only for the alignment of an out-of-flow box between
+    /// its insets.
+    OofAlignSelf(Option<crate::values::AlignSelf>),
+    /// `justify-self` read only for the alignment of an out-of-flow box
+    /// between its insets.
+    OofJustifySelf(Option<crate::values::AlignSelf>),
 }
 impl<'a> PropertyOverride<'a> {
     pub(crate) fn as_borrowed(&self) -> PropertyOverride<'_> {
@@ -148,6 +154,16 @@ impl<'a> PropertyOverride<'a> {
     /// Override inline self alignment, including explicit auto.
     pub const fn justify_self(value: Option<crate::values::AlignSelf>) -> Self {
         Self(OverrideKind::JustifySelf(value))
+    }
+    /// Override `align-self` for the alignment of an out-of-flow box between
+    /// its insets only, leaving the alignment of its static position alone.
+    pub const fn oof_align_self(value: Option<crate::values::AlignSelf>) -> Self {
+        Self(OverrideKind::OofAlignSelf(value))
+    }
+    /// Override `justify-self` for the alignment of an out-of-flow box between
+    /// its insets only (see [`Self::oof_align_self`]).
+    pub const fn oof_justify_self(value: Option<crate::values::AlignSelf>) -> Self {
+        Self(OverrideKind::OofJustifySelf(value))
     }
 }
 
@@ -234,7 +250,9 @@ impl OwnedPropertyOverride {
             | (FlexGrow(_), FlexGrow(_))
             | (FlexShrink(_), FlexShrink(_))
             | (AlignSelf(_), AlignSelf(_))
-            | (JustifySelf(_), JustifySelf(_)) => true,
+            | (JustifySelf(_), JustifySelf(_))
+            | (OofAlignSelf(_), OofAlignSelf(_))
+            | (OofJustifySelf(_), OofJustifySelf(_)) => true,
             _ => false,
         }
     }
@@ -340,5 +358,19 @@ impl OwnedPropertyOverride {
         Self(OwnedOverrideKind::Inline(PropertyOverride::justify_self(
             value,
         )))
+    }
+    /// Override `align-self` for the alignment of an out-of-flow box between
+    /// its insets only, leaving the alignment of its static position alone.
+    pub const fn oof_align_self(value: Option<crate::values::AlignSelf>) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::oof_align_self(
+            value,
+        )))
+    }
+    /// Override `justify-self` for the alignment of an out-of-flow box between
+    /// its insets only (see [`Self::oof_align_self`]).
+    pub const fn oof_justify_self(value: Option<crate::values::AlignSelf>) -> Self {
+        Self(OwnedOverrideKind::Inline(
+            PropertyOverride::oof_justify_self(value),
+        ))
     }
 }

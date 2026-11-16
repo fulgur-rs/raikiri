@@ -224,7 +224,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
 
     fn get_oof_item_style(&self, node: taffy::NodeId) -> Self::OofItemStyle<'_> {
         let view = self.query_style(usize::from(node), ReadRole::Oof);
-        let view = if self.oof_alignment_swapped(usize::from(node)) {
+        let view = if self.oof_alignment_swapped() {
             view.with_swapped_oof_alignment()
         } else {
             view

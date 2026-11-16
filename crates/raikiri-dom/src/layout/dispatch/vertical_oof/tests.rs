@@ -1159,29 +1159,45 @@ fn a_last_baseline_container_on_other_axes_than_the_containing_block_leaves_the_
 }
 
 #[test]
-fn a_box_in_a_container_on_other_axes_than_its_containing_block_keeps_the_assumed_axes() {
-    // The container of the box is horizontal inside a vertical containing block:
-    // `align-self` is not read along the horizontal axis there, which is what
-    // the swap would do, but `justify-self` is, as for any horizontal box.
+fn a_box_in_a_container_on_other_axes_than_its_containing_block_aligns_on_the_containing_blocks_axes()
+ {
+    // The container of the box is horizontal inside a vertical containing
+    // block. The box aligns between its insets on the axes of its containing
+    // block, so `align-self` is read along the horizontal axis, the block axis
+    // of `vertical-rl`, whatever the container (Chromium: 0 and 100).
     let rect = rect_in_other_axes(
         "writing-mode:vertical-rl",
         "writing-mode:horizontal-tb",
         "left:0;right:0;align-self:start",
     );
-    assert_eq!(rect.2, 100.0);
+    assert_eq!(rect.2, 0.0);
     let rect = rect_in_other_axes(
         "writing-mode:vertical-rl",
         "writing-mode:horizontal-tb",
         "left:0;right:0;justify-self:start",
     );
-    assert_eq!(rect.2, 0.0);
-    // With the container on the axes of the containing block, the swap applies.
+    assert_eq!(rect.2, 100.0);
+    // With the container on the axes of the containing block, the same holds.
     let rect = rect_in_other_axes(
         "writing-mode:vertical-rl",
         "writing-mode:vertical-rl",
         "left:0;right:0;align-self:start",
     );
     assert_eq!(rect.2, 0.0);
+    // And `justify-self` aligns the vertical axis, the inline axis of the
+    // containing block.
+    let rect = rect_in_other_axes(
+        "writing-mode:vertical-rl",
+        "writing-mode:horizontal-tb",
+        "top:0;bottom:0;justify-self:start",
+    );
+    assert_eq!(rect.3, 0.0);
+    let rect = rect_in_other_axes(
+        "writing-mode:vertical-rl",
+        "writing-mode:horizontal-tb",
+        "top:0;bottom:0;align-self:start",
+    );
+    assert_eq!(rect.3, 100.0);
 }
 
 /// The border box of an absolutely positioned vertical box stretched between
@@ -1238,4 +1254,157 @@ fn a_keyword_block_size_sizes_a_vertical_box_by_its_content_between_its_insets()
         inset_box_holding_a_200px_block("block-size:auto"),
         (0.0, 0.0, 800.0, 110.0)
     );
+}
+
+/// The rect, relative to a 200x100 vertical containing block styled
+/// `containing_css`, of an auto-height absolutely positioned box styled
+/// `child_css` that holds a 20px block, inside a static wrapper styled
+/// `wrapper_css`.
+fn rect_in_a_wrapper(
+    containing_css: &str,
+    wrapper_css: &str,
+    child_css: &str,
+) -> (f32, f32, f32, f32) {
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let containing = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!(
+            "display:block;position:relative;width:200px;height:100px;{containing_css}"
+        )),
+    );
+    let wrapper = doc.append_element(Some(containing), "div", Some(wrapper_css.to_string()));
+    let child = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some(format!("display:block;position:absolute;{child_css}")),
+    );
+    doc.append_element(
+        Some(child),
+        "div",
+        Some("display:block;width:20px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    let (x, y, ..) = absolute_rect(&doc, containing);
+    let (left, top, width, height) = absolute_rect(&doc, child);
+    (left - x, top - y, width, height)
+}
+
+#[test]
+fn a_box_in_a_horizontal_wrapper_aligns_on_the_axes_of_its_vertical_containing_block() {
+    // The vertical axis of `vertical-rl` is its inline axis, which
+    // `justify-self` aligns, whatever the writing mode of the wrapper that
+    // holds the box (Chromium values).
+    let insets = "top:10px;bottom:10px;left:0;width:50px";
+    for wrapper in [
+        "display:block;writing-mode:horizontal-tb",
+        "display:flex;writing-mode:horizontal-tb",
+        "display:grid;writing-mode:horizontal-tb",
+    ] {
+        for (alignment, expected) in [
+            ("justify-self:center", (0.0, 40.0, 50.0, 20.0)),
+            ("justify-self:end", (0.0, 70.0, 50.0, 20.0)),
+            ("align-self:center", (0.0, 10.0, 50.0, 80.0)),
+            ("align-self:end", (0.0, 10.0, 50.0, 80.0)),
+        ] {
+            let rect = rect_in_a_wrapper(
+                "writing-mode:vertical-rl",
+                wrapper,
+                &format!("{insets};{alignment}"),
+            );
+            assert_eq!(rect, expected, "{wrapper} | {alignment}");
+        }
+    }
+    // The horizontal axis is the block axis, which `align-self` aligns.
+    let wrapper = "display:block;writing-mode:horizontal-tb";
+    let insets = "left:10px;right:10px;top:0;height:30px";
+    for (alignment, expected) in [
+        ("align-self:center", (90.0, 0.0, 20.0, 30.0)),
+        ("align-self:end", (10.0, 0.0, 20.0, 30.0)),
+        ("justify-self:center", (10.0, 0.0, 180.0, 30.0)),
+    ] {
+        let rect = rect_in_a_wrapper(
+            "writing-mode:vertical-rl",
+            wrapper,
+            &format!("{insets};{alignment}"),
+        );
+        assert_eq!(rect, expected, "{alignment}");
+    }
+}
+
+#[test]
+fn a_box_borrowing_last_baseline_from_a_horizontal_wrapper_keeps_its_axes() {
+    // A box that borrows `last baseline` from a container on horizontal axes
+    // aligns to the end on the axes of that container, and a box sized by a
+    // preferred aspect ratio between its insets keeps the size it takes there,
+    // although the containing block is `vertical-rl` (Chromium values).
+    let flex = "display:flex;height:100px;align-items:last baseline;writing-mode:horizontal-tb";
+    let grid = "display:grid;justify-items:last baseline;writing-mode:horizontal-tb";
+    let ratio = "top:0;bottom:0;aspect-ratio:1;contain:size;contain-intrinsic-size:200px 200px";
+    for (wrapper, child, expected) in [
+        (flex, "left:0;right:0", (0.0, 80.0, 200.0, 20.0)),
+        (flex, "top:0;bottom:0", (200.0, 0.0, 20.0, 100.0)),
+        (flex, ratio, (200.0, 0.0, 200.0, 200.0)),
+        (
+            flex,
+            "top:0;bottom:0;width:80px;aspect-ratio:1",
+            (200.0, 0.0, 80.0, 80.0),
+        ),
+        (grid, "left:0;right:0", (0.0, 0.0, 200.0, 20.0)),
+        (grid, "top:0;bottom:0", (180.0, 0.0, 20.0, 100.0)),
+        (grid, ratio, (0.0, 0.0, 200.0, 200.0)),
+        (grid, "top:0;bottom:0;height:30px", (180.0, 0.0, 20.0, 30.0)),
+        (
+            grid,
+            "top:0;bottom:0;width:80px;aspect-ratio:1",
+            (120.0, 0.0, 80.0, 80.0),
+        ),
+        (
+            grid,
+            "top:10px;bottom:10px;height:fit-content;margin-top:auto",
+            (180.0, 70.0, 20.0, 20.0),
+        ),
+        (
+            grid,
+            "top:10px;bottom:10px;height:fit-content",
+            (180.0, 10.0, 20.0, 20.0),
+        ),
+        (grid, "inset:0;align-self:center", (90.0, 0.0, 20.0, 100.0)),
+        (
+            grid,
+            "top:0;bottom:0;align-self:center;left:0;width:30px",
+            (0.0, 0.0, 30.0, 100.0),
+        ),
+        (
+            flex,
+            "inset:0;justify-self:center",
+            (0.0, 40.0, 200.0, 20.0),
+        ),
+    ] {
+        let rect = rect_in_a_wrapper("writing-mode:vertical-rl", wrapper, child);
+        assert_eq!(rect, expected, "{wrapper} | {child}");
+    }
+}
+
+#[test]
+fn a_box_borrowing_last_baseline_from_a_vertical_wrapper_aligns_on_its_axes() {
+    // In a horizontal containing block, a box takes the `end` of the block
+    // axis of its vertical wrapper for its static position, and aligns
+    // between its insets by its own `auto` (Chromium values).
+    let flex = "display:flex;writing-mode:vertical-rl;align-items:last baseline";
+    let grid = "display:grid;writing-mode:vertical-lr;justify-items:last baseline";
+    for (wrapper, child, expected) in [
+        (flex, "top:0;bottom:0", (0.0, 0.0, 20.0, 100.0)),
+        (flex, "left:0;right:0", (0.0, 0.0, 200.0, 20.0)),
+        (flex, "top:0;bottom:0;height:30px", (0.0, 0.0, 20.0, 30.0)),
+        (grid, "top:0;bottom:0", (0.0, 0.0, 20.0, 100.0)),
+        (grid, "left:0;right:0", (0.0, -20.0, 200.0, 20.0)),
+        (grid, "top:0;bottom:0;height:30px", (0.0, 0.0, 20.0, 30.0)),
+    ] {
+        let rect = rect_in_a_wrapper("", wrapper, child);
+        assert_eq!(rect, expected, "{wrapper} | {child}");
+    }
 }
