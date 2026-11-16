@@ -472,8 +472,8 @@ fn the_page_end_cuts_the_margin_after_a_generated_box() {
             }
         }
     }
-    // The ::before of a wrapper, before a paragraph of generated text or of
-    // an inline-block, with the wrapper's padding above it too.
+    // The ::before of a wrapper, before a paragraph of text, of generated
+    // text or of an inline-block, with the wrapper's padding above it too.
     for (before, page) in [
         (
             r#"<style>.w::before{content:"";display:block;height:100px}</style><div class="w">"#,
@@ -492,7 +492,7 @@ fn the_page_end_cuts_the_margin_after_a_generated_box() {
             2,
         ),
     ] {
-        for (class, content) in &LINES[1..] {
+        for (class, content) in LINES {
             let body = document(
                 before,
                 "</div>",
@@ -507,6 +507,128 @@ fn the_page_end_cuts_the_margin_after_a_generated_box() {
             );
         }
     }
+}
+
+#[test]
+fn the_page_end_cuts_the_margin_after_a_generated_box_through_the_blocks_it_begins() {
+    // The paragraph begins blocks after the ::before of a wrapper, and its
+    // margin collapses through their tops with theirs: the page end cuts it
+    // all the same.
+    let before =
+        r#"<style>.w::before{content:"";display:block;height:100px}</style><div class="w">"#;
+    for (open, close) in [
+        ("<div>", "</div>"),
+        ("<div><div>", "</div></div>"),
+        (r#"<div style="margin-top:5px">"#, "</div>"),
+        (r#"<div style="margin-top:20px">"#, "</div>"),
+        (
+            r#"<ul style="margin:0;padding:0"><li style="list-style:none">"#,
+            "</li></ul>",
+        ),
+    ] {
+        for (class, content) in LINES {
+            let body = document(
+                &format!("{before}{open}"),
+                &format!("{close}</div>"),
+                class,
+                "margin:10px 0 0;padding-top:40px",
+                content,
+            );
+            assert_eq!(glyph_tops(&body), [(1, 'A', 45), (1, 'Z', 75)], "{body}");
+        }
+    }
+    // A relative offset only paints a box elsewhere: the margin is cut where
+    // the flow puts it.
+    for (open, close, style, top) in [
+        ("", "", "position:relative;top:-30px;", 15),
+        ("<div>", "</div>", "position:relative;top:5px;", 50),
+        (
+            r#"<div style="position:relative;top:5px">"#,
+            "</div>",
+            "",
+            50,
+        ),
+    ] {
+        let body = document(
+            &format!("{before}{open}"),
+            &format!("{close}</div>"),
+            "",
+            &format!("{style}margin:10px 0 0;padding-top:40px"),
+            "A",
+        );
+        assert_eq!(glyph_tops(&body), [(1, 'A', top), (1, 'Z', 75)], "{body}");
+    }
+    // The margin may be the generated box's own, or the sum of a negative
+    // margin of a block the paragraph begins and the paragraph's.
+    for (before, open, style) in [
+        (
+            r#"<style>.w::before{content:"";display:block;height:100px;margin-bottom:10px}</style><div class="w">"#,
+            "",
+            "margin:0",
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:95px;margin-bottom:10px}</style><div class="w">"#,
+            "",
+            "margin:0",
+        ),
+        (
+            before,
+            r#"<div style="margin-top:-5px">"#,
+            "margin:10px 0 0",
+        ),
+    ] {
+        let close = if open.is_empty() {
+            "</div>"
+        } else {
+            "</div></div>"
+        };
+        let body = document(
+            &format!("{before}{open}"),
+            close,
+            "",
+            &format!("{style};padding-top:40px"),
+            "A",
+        );
+        assert_eq!(glyph_tops(&body), [(1, 'A', 45), (1, 'Z', 75)], "{body}");
+    }
+    // A `display: contents` element around the paragraph has no box to hold
+    // the margin.
+    for (open, close) in [
+        (r#"<span style="display:contents">"#, "</span>"),
+        (r#"<span style="display:contents"><div>"#, "</div></span>"),
+    ] {
+        let body = document(
+            &format!("{before}{open}"),
+            &format!("{close}</div>"),
+            "",
+            "margin:10px 0 0;padding-top:40px",
+            "A",
+        );
+        assert_eq!(glyph_tops(&body), [(1, 'A', 45), (1, 'Z', 75)], "{body}");
+    }
+    // A block whose padding, or whose own formatting context, holds the
+    // margin of the paragraph keeps it below the page edge.
+    for (open, top) in [
+        (r#"<div style="padding-top:1px">"#, 56),
+        (r#"<div style="display:flow-root">"#, 55),
+        (r#"<div style="overflow:hidden">"#, 55),
+    ] {
+        let body = document(
+            &format!("{before}{open}"),
+            "</div></div>",
+            "",
+            "margin:10px 0 0;padding-top:40px",
+            "A",
+        );
+        assert_eq!(glyph_tops(&body), [(1, 'A', top), (2, 'Z', 5)], "{body}");
+    }
+    // Text before the paragraph in the block it begins comes between.
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"{before}<div style="margin-top:10px">Q<p style="margin:10px 0 0;width:20px">A</p></div></div><div>Z</div>"#
+        )),
+        [(1, 'A', 45), (1, 'Q', 5), (1, 'Z', 75)],
+    );
 }
 
 #[test]
