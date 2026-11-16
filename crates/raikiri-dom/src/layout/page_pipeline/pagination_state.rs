@@ -2191,7 +2191,9 @@ impl PaginationState {
         // next page, rather than leaving their start on this one: they start
         // the page, and the box lands below the padding, border and margin
         // they keep above it where `begin_box` found room for it there. Else
-        // the blocks that start where the box does move with it.
+        // the blocks that start where the box does move with it, and so do
+        // those that begin a page below the margin they keep inside them
+        // above a box that avoids a break (see `avoided_box_holder`).
         let (holder, holder_lead) = if let Some(owner) = forced_holder {
             (owner.node, owner.lead)
         } else if (overflow.unbreakable
@@ -2205,7 +2207,20 @@ impl PaginationState {
             page_break
                 .holder
                 .filter(|_| overflow.unbreakable || overflow.leading_column_replaced)
-                .unwrap_or_else(|| leading_holder(document, cascade, body_id, node_id, false))
+                .unwrap_or_else(|| {
+                    if !overflow.moved_for_avoided_break || overflow.unbreakable {
+                        return leading_holder(document, cascade, body_id, node_id, false);
+                    }
+                    // The kept margin goes along even where the box then
+                    // breaks inside on the next page, as in Chromium.
+                    super::avoided_box_holder(
+                        document,
+                        cascade,
+                        body_id,
+                        node_id,
+                        page_origins.origin(fit_page),
+                    )
+                })
         } else {
             (node_id, 0.0)
         };
