@@ -640,6 +640,12 @@ impl PaginationState {
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
+        // A clip around the lines that keeps its place hides the text that
+        // pagination moved down past its end, as a forced break inside the
+        // clipping box does: that part reaches no page.
+        if let Some(room) = clip_room_below(document, env, candidate, text.effective_y) {
+            text.height = text.height.min(room.max(0.0));
+        }
         text.effective_y += relative_offset;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
@@ -3793,6 +3799,9 @@ impl PaginationState {
                 self.page_names.current = candidate.page_name.clone();
             } else if let Some(natural_page) =
                 page_origins.page_index_in_flow(text.effective_y - relative_offset)
+                // Text that a clip hides whole starts no page.
+                && clip_room_below(document, env, candidate, text.effective_y - relative_offset)
+                    .is_none_or(|room| room > 0.0)
             {
                 reach_page(control, natural_page)?;
                 // The text of a box outside the flow falls on the page its
@@ -4052,6 +4061,31 @@ fn is_block_flow_box(
     !candidate.context.is_flex_item()
         && !candidate.context.is_grid_item()
         && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
+}
+
+/// How much of the text of `candidate` starting at `effective_y`, in the
+/// coordinates of the candidates, the nearest clip in the flow around its
+/// lines leaves visible, when one does. The clip ends where the clipping box
+/// does, not where pagination moved the lines inside it.
+fn clip_room_below(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    candidate: &PageCandidate,
+    effective_y: f32,
+) -> Option<f32> {
+    let owner = *candidate
+        .ifc_root
+        .and_then(|(root, _)| env.clip_edges.get(&root))?
+        .owners
+        .first()?;
+    let clip_end = super::moved_clip_end(
+        document,
+        env.cascade,
+        env.body_id,
+        owner,
+        env.root_flow_offset,
+    );
+    Some(clip_end - effective_y)
 }
 
 /// The lines of `all_line_metrics`, relative to the text at `effective_y`,
