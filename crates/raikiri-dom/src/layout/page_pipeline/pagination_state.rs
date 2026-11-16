@@ -1380,7 +1380,9 @@ impl PaginationState {
         // the cut stops where the block reaches its min-height now.
         let (min_height, _) = border_box_height_bounds(document, node_id);
         let room = (document.nodes[node_id].layout.size.height - min_height).max(0.0);
-        let delta = (edge - end).max(-room);
+        let delta = (edge - end)
+            .max(-room)
+            .max(edges_break.margin_kept - edges_break.margin_above);
         if delta >= -0.001 {
             return Ok(end);
         }

@@ -4564,3 +4564,45 @@ fn a_paragraph_keeps_the_space_below_its_lines() {
     });
     assert!(page_flow_y(&doc, after) < 100.0);
 }
+
+#[test]
+fn a_float_that_a_block_holds_keeps_the_margin_above_the_edges_down_to_it() {
+    // The page edge truncates the margin, but the content box of a block
+    // formatting context still holds the float, as in Chromium.
+    for (parent_css, float_height, expected) in [
+        ("display:flow-root;padding-bottom:10px", 150.0, 160.0),
+        ("display:flow-root;padding-bottom:10px", 300.0, 310.0),
+        // A float that sticks out of its block keeps nothing.
+        ("padding-bottom:10px", 150.0, 110.0),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, &format!("display:block;{parent_css}"));
+            block(
+                doc,
+                parent,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            page_flow_y(&doc, after),
+            expected,
+            "{parent_css} {float_height}"
+        );
+    }
+}
+
+#[test]
+fn a_min_height_past_the_first_page_edge_keeps_the_cut_at_that_edge() {
+    // The margin is cut at the first page edge inside it, and min-height
+    // then holds the block below that edge, as in Chromium.
+    assert_eq!(
+        after_margin_above_edges(
+            "padding-bottom:10px;min-height:150px",
+            &["height:90px;margin-bottom:200px"]
+        ),
+        (160.0, 2)
+    );
+}

@@ -9349,28 +9349,27 @@ fn min_height_left_behind(document: &super::context::LayoutSession<'_>, node_id:
 /// that box, collapsed with those of the last boxes in its own flow that do
 /// not close with edges of their own. A page edge inside it truncates it
 /// (CSS Fragmentation 3 §5.2), and the edges begin the next page. Zero for a
-/// paragraph, whose lines end its content, and for a block of set `height`;
-/// no more than what keeps the block at its `min-height`. A block that
-/// `max-height` holds has no edges that break apart from its content (see
-/// [`content_bottom_edges`]).
+/// paragraph, whose lines end its content, and for a block of set `height`.
+/// A block that `max-height` holds has no edges that break apart from its
+/// content (see [`content_bottom_edges`]). Paired with the block size of the
+/// top of that margin that a float the block holds keeps.
 fn margin_above_edges(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-) -> f32 {
+) -> (f32, f32) {
     let node = &document.nodes[node_id];
     if node.is_ifc_root()
         || !document.block_axis(node_id).height().is_auto()
         || node.size_containment.height
         || in_flex_or_grid(document, node_id, body_id)
     {
-        return 0.0;
+        return (0.0, 0.0);
     }
-    let (min_height, _) = border_box_height_bounds(document, node_id);
     let layout = &node.layout;
     let Some(last) = last_flow_box(document, cascade, node_id) else {
-        return 0.0;
+        return (0.0, 0.0);
     };
     let content_end = layout.size.height - layout.padding.bottom - layout.border.bottom;
     // A box inside a `display: contents` child is laid out by `node_id`, so
@@ -9379,8 +9378,7 @@ fn margin_above_edges(
         + document.nodes[last].layout.size.height
         - layout_relative_offset_y(document, cascade, body_id, last);
     // The space below the last box holds no more than the largest margin
-    // that collapses there; a float that a block formatting context grows
-    // to hold takes the rest.
+    // that collapses there.
     let mut margin = 0.0_f32;
     let mut current = Some(last);
     while let Some(id) = current {
@@ -9388,7 +9386,7 @@ fn margin_above_edges(
         // The margins of an empty box collapse through it, and Chromium keeps
         // them whole below the box before it.
         if child.layout.size.height <= 0.0 {
-            return 0.0;
+            return (0.0, 0.0);
         }
         margin = margin.max(child.layout.margin.bottom);
         if child.layout.padding.bottom + child.layout.border.bottom > 0.0
@@ -9399,10 +9397,31 @@ fn margin_above_edges(
         }
         current = last_flow_box(document, cascade, id);
     }
-    (content_end - last_bottom)
-        .min(margin)
-        .min(layout.size.height - min_height)
-        .max(0.0)
+    // A float that a block formatting context grows to hold keeps the
+    // content box down to its bottom. The floats in a box that does not hold
+    // them stand out of it and keep nothing.
+    let float_bottom = if holds_floats(document, cascade, node_id) {
+        let top = current_abs_y(document, node_id);
+        document
+            .preorder(node_id)
+            .skip(1)
+            .filter(|&id| is_floating_box_for_pagination(document, cascade, id))
+            .map(|float| float_extent(document, float).1 - top)
+            .fold(last_bottom, f32::max)
+    } else {
+        last_bottom
+    };
+    // Content below the margin, such as a float that sticks out past it,
+    // leaves no margin above the edges.
+    let gap = (content_end - last_bottom).max(0.0);
+    if gap > margin + 0.001 {
+        return (0.0, 0.0);
+    }
+    let margin_above = gap.min(margin);
+    (
+        margin_above,
+        (float_bottom - last_bottom).clamp(0.0, margin_above),
+    )
 }
 
 /// The last box in the flow of the block `node_id`: its last flow child (see
@@ -9435,8 +9454,13 @@ fn truncatable_margin_rooms(
 ) -> HashMap<usize, f32> {
     let mut rooms: HashMap<usize, f32> = edges_breaks
         .iter()
-        .filter(|found| found.margin_above > 0.0)
-        .map(|found| (found.node_id, found.margin_above))
+        .map(|found| {
+            let (min_height, _) = border_box_height_bounds(document, found.node_id);
+            let room = (found.margin_above - found.margin_kept)
+                .min(document.nodes[found.node_id].layout.size.height - min_height);
+            (found.node_id, room)
+        })
+        .filter(|&(_, room)| room > 0.0)
         .collect();
     let order: Vec<_> = document.preorder(body_id).collect();
     // Whether each box lies in a flex or grid container, found top down.
