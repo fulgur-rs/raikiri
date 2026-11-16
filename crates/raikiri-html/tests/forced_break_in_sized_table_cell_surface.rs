@@ -248,3 +248,47 @@ fn a_cell_tall_enough_for_the_moved_content_does_not_grow() {
         [(0, 'A', 0), (1, 'B', 0), (2, 'X', 50)]
     );
 }
+
+#[test]
+fn a_row_grows_once_for_several_breaks() {
+    const TWO_BREAKS: &str = r#"<div style="height:20px">A</div><div style="height:70px;break-before:page">B</div><div style="height:20px;break-before:page">C</div>"#;
+    // Two breaks in one cell: its content ends at 220px.
+    let expected = [(0, 'A', 0), (1, 'B', 0), (2, 'C', 0), (2, 'X', 20)];
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<table><tr><td style="height:100px">{TWO_BREAKS}</td></tr></table><div>X</div>"#
+        )),
+        expected
+    );
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<div style="display:table-cell;height:100px">{TWO_BREAKS}</div><div>X</div>"#
+        )),
+        expected
+    );
+    // Breaks in two cells of a row: the row grows as far as the cell that
+    // grows most.
+    let second = r#"<td style="height:150px"><div style="height:20px">D</div><div style="height:60px;break-before:page">E</div></td>"#;
+    let expected = [
+        (0, 'A', 0),
+        (0, 'D', 0),
+        (1, 'B', 0),
+        (1, 'E', 0),
+        (1, 'X', 70),
+    ];
+    assert_eq!(
+        glyph_tops(&format!(
+            "<table><tr>{}{second}</tr></table><div>X</div>",
+            broken_cell(150, 70)
+        )),
+        expected
+    );
+    assert_eq!(
+        glyph_tops(&format!(
+            "<table><tr>{}{}</tr></table><div>X</div>",
+            broken_cell(150, 70).replace(r#" style="height:150px""#, ""),
+            second.replace(r#" style="height:150px""#, "")
+        )),
+        expected
+    );
+}

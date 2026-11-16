@@ -12676,6 +12676,9 @@ struct SubtreeShifts {
     /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
     /// down below a float grown inside another float.
     reached_moved_box: bool,
+    /// Table rows, or cells outside a table, that forced breaks in their
+    /// cells grew, with how far.
+    grown_rows: Vec<(usize, f32)>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -12701,6 +12704,22 @@ struct BesideGrowth {
 }
 
 impl SubtreeShifts {
+    /// Records that a cell of `row` needs it `growth` taller than it was
+    /// laid out, and returns how much more that is than it grew already.
+    fn grow_row(&mut self, row: usize, growth: f32) -> f32 {
+        match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
+            Some((_, grown)) => {
+                let added = (growth - *grown).max(0.0);
+                *grown = grown.max(growth);
+                added
+            }
+            None => {
+                self.grown_rows.push((row, growth));
+                growth
+            }
+        }
+    }
+
     /// A box that moves down by `delta` takes the floats inside it along. A
     /// float there that already went down on its own keeps its place: it
     /// gives back as much of its own move as the box adds, so it does not
@@ -16625,15 +16644,19 @@ fn shift_block_flow_after(
                     f32::INFINITY,
                 );
                 bounded = true;
-                let Some((row, end, table)) = cell_row_end(document, parent) else {
+                let row_end = cell_row_end(document, parent);
+                // A row grows as far as its cell that grows most, and an
+                // earlier break in it may have grown it already: only the
+                // rest of the growth moves what follows.
+                let holder = row_end.map_or(parent, |(row, _, _)| row);
+                let added = shifts.grow_row(holder, passed);
+                let Some((row, end, table)) = row_end else {
                     // A cell outside a table sits in an anonymous table of its
                     // own (CSS 2.1 §17.2.1), which grows with it.
-                    if passed < flow_delta - 0.001 {
-                        shifts
-                            .bounded
-                            .push((parent, flow_delta - passed, flow_page));
+                    if added < flow_delta - 0.001 {
+                        shifts.bounded.push((parent, flow_delta - added, flow_page));
                     }
-                    flow_delta = passed;
+                    flow_delta = added;
                     child = parent;
                     if flow_delta <= 0.001 {
                         break;
@@ -16641,13 +16664,13 @@ fn shift_block_flow_after(
                     continue;
                 };
                 shifts.bounded.push((parent, flow_delta, flow_page));
-                if passed <= 0.001 {
+                if added <= 0.001 {
                     break;
                 }
-                shifts.from_box.push((row, end, passed));
+                shifts.from_box.push((row, end, added));
                 // The table grows with the row: its ancestors take the growth
                 // on as they take a moved box's.
-                flow_delta = passed;
+                flow_delta = added;
                 child = table;
                 walk = AncestorCursor::new(document.parent_of(table), ParentRelation::Source);
                 continue;
