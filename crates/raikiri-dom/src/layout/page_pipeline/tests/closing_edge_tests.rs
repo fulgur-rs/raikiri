@@ -4740,6 +4740,21 @@ fn after_split_edges(css: &str, inner_css: Option<&str>, after_css: &str) -> f32
 }
 
 #[test]
+fn the_edges_of_an_item_inside_a_box_without_a_box_of_its_own_count_too() {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let container = block(doc, body, "display:flex");
+        let contents = block(doc, container, "display:contents");
+        let item = block(doc, contents, "display:block;padding-bottom:120px");
+        block(doc, item, "display:block;height:30px");
+        block(doc, container, "position:absolute;width:10px;height:10px");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    // As in Chromium, the margin after the item's split padding is dropped.
+    assert_eq!(page_flow_y(&doc, after), 220.0);
+}
+
+#[test]
 fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
     // The padding moves to the second page and runs on to the third; the
     // box after it follows its end there without the margin, as in Chromium.
@@ -4764,14 +4779,44 @@ fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
         ),
         220.0
     );
-    // The last box of a flex container need not end its flow.
+    // So do the edges of a flex or grid item that ends the content of its
+    // container, whether the items lie side by side or not.
+    for container in [
+        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:grid",
+    ] {
+        assert_eq!(
+            after_split_edges(container, Some("padding-bottom:120px"), "margin-top:15px"),
+            220.0,
+            "{container}"
+        );
+    }
     assert_eq!(
         after_split_edges(
             "display:flex",
             Some("padding-bottom:120px"),
+            "margin-top:5px"
+        ),
+        220.0
+    );
+    // Edges of the outer box that begin on the page after the split are
+    // content there, so the margin after them stays.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:5px",
+            Some("padding-bottom:120px"),
             "margin-top:15px"
         ),
-        235.0
+        240.0
+    );
+    assert_eq!(
+        after_split_edges(
+            "display:flex;padding-bottom:5px",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        240.0
     );
     // A page edge between the edges of two boxes splits neither.
     assert_eq!(
