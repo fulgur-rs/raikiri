@@ -684,6 +684,8 @@ impl PaginationState {
             env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
+            // A text node forces no break after it, so no clip holds one.
+            || false,
         );
 
         Ok(())
@@ -1299,6 +1301,7 @@ impl PaginationState {
             env.body_id,
             node_id,
             candidate.context.deferred_named_break_after(),
+            || super::clip_holds_breaks(document, env, node_id, false, effective_y + height),
         );
 
         Ok(())
@@ -1798,7 +1801,8 @@ impl PaginationState {
             raw_y + self.flow_shift
         };
         materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
+            && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
         let margins_collapse_through = collapses_through(document, cascade, node_id, height);

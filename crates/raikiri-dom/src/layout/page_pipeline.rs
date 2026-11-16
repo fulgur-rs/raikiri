@@ -477,6 +477,108 @@ fn moved_clip_end(
     end
 }
 
+/// Whether a forced break at the start (`before`) or end of `node_id`, at
+/// `at` in candidate coordinates, falls inside a box that clips its
+/// overflow, has a height its content cannot grow (`height`, `max-height` or
+/// size containment; a `min-height` alone lets it grow) and whose border box
+/// ends on the page of the break. Both are judged where the normal flow puts
+/// them, without relative offsets. Chromium prints the rest of such a box
+/// in one piece: the forced breaks in it break nothing. A box that runs past
+/// the end of the page breaks there as any other; a clip margin past its
+/// border box does not count. A break at the first or last box of a box is a
+/// break before or after that box, so it is not inside it. The clips above
+/// an absolutely positioned or fixed box do not hold it.
+fn clip_holds_breaks(
+    document: &super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    before: bool,
+    at: f32,
+) -> bool {
+    let FlowEnv {
+        cascade,
+        body_id,
+        page_origins,
+        root_flow_offset,
+        ..
+    } = *env;
+    let positioned = |id: usize| {
+        matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    };
+    let mut edge = node_id;
+    while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
+        && !document.nodes[parent].has_before_or_after_content
+        && ordered_edge_child(document, cascade, parent, before)
+            .is_some_and(|child| is_descendant_or_self(document, child, edge))
+    {
+        edge = parent;
+    }
+    let at = at - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+    let page = if before {
+        page_origins.page_index_for_y(at)
+    } else {
+        page_origins.page_index_for_end(at)
+    };
+    let page_end = page_origins.origin(page) + page_origins.step_at(page);
+    let mut next = document.parent_of(edge).filter(|_| !positioned(edge));
+    while let Some(id) = next.filter(|&id| id != body_id) {
+        if element_clips_overflow(document, cascade, id)
+            && height_is_capped(document, id)
+            && current_abs_y(document, id) + root_flow_offset
+                - accumulated_relative_offset_y(document, cascade, body_id, id)
+                + document.nodes[id].layout.size.height
+                <= page_end + 0.001
+        {
+            return true;
+        }
+        next = document.parent_of(id).filter(|_| !positioned(id));
+    }
+    false
+}
+
+/// The first (`before`) or last box of `parent` in the order pagination
+/// visits its children: a flex or grid container visits its items in
+/// `order`-modified order, a block container in source order (see
+/// [`page_edge_child`]).
+fn ordered_edge_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    before: bool,
+) -> Option<usize> {
+    if !matches!(
+        document.nodes[parent].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    ) {
+        return page_edge_child(document, cascade, parent, before, 0)
+            .ok()
+            .flatten();
+    }
+    let order = super::page::pagination_child_order_borrowed(document, cascade, parent);
+    let is_item = |&child: &usize| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && match &node.data {
+                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                _ => true,
+            }
+    };
+    if before {
+        order.iter().copied().find(is_item)
+    } else {
+        order.iter().rev().copied().find(is_item)
+    }
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///
@@ -8185,13 +8287,17 @@ impl PendingBreak {
         body_id: usize,
         node_id: usize,
         deferred_named_break_after: bool,
+        held: impl FnOnce() -> bool,
     ) {
-        let breaks_after = box_forces_break_after(
+        // A forced break held by a clip box around the node breaks nothing;
+        // a change of page name after it still applies.
+        let breaks_after = (box_forces_break_after(
             document,
             cascade,
             node_id,
             cascade.computed[node_id].break_after,
-        ) || deferred_named_break_after;
+        ) && !held())
+            || deferred_named_break_after;
         let source_is_ancestor = self
             .source
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
@@ -15374,6 +15480,16 @@ fn height_follows_content(document: &super::context::LayoutSession<'_>, block: u
         && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
         && block_axis.max_height().is_auto()
         && !node.size_containment.height
+}
+
+/// Whether the content of `block` cannot grow its height: a definite
+/// `height` or a `max-height` that resolves sets it, or size containment
+/// ignores the content. A percentage of a containing block whose height is
+/// not definite caps nothing.
+fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    definite_content_height(document, block).is_some()
+        || border_box_height_bounds(document, block).1.is_finite()
+        || document.nodes[block].size_containment.height
 }
 
 /// Whether `parent` is a block container whose later children follow a

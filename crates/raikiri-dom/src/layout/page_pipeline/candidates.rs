@@ -1830,7 +1830,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || (column_replaced_piece.is_some() && !direct_body_child)
                     || (first_grid_row.is_some() && !direct_body_child);
                 // A forced break and a page name change the pages wherever the
-                // box sits, even past the edge of a clipping ancestor.
+                // box sits, even past the edge of a clipping ancestor. Whether
+                // a clip box around it holds the break depends on where
+                // pagination puts that box, so it is judged there (see
+                // `clip_holds_breaks`).
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
                     || page_break_is_forced(document, node_id, computed.break_before)
