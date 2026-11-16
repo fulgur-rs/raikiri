@@ -4662,3 +4662,38 @@ fn a_min_height_bounds_the_margins_its_pages_leave_out() {
         assert_eq!(pages.len(), 3, "{body_css}");
     }
 }
+
+#[test]
+fn edges_that_begin_a_page_reach_it_past_margins_that_stay_whole() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // No page edge falls inside the margins, so none is truncated, and the
+    // bottom padding alone begins the third page, as in Chromium, even when
+    // the body clips its overflow.
+    for children in [
+        ["height:40px", "height:150px;margin-top:10px"],
+        ["height:90px;margin-bottom:10px", "height:100px"],
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some("display:block;margin:0;width:100px;overflow:hidden"),
+        );
+        let parent =
+            doc.append_element(Some(body), "div", Some("display:block;padding-bottom:10px"));
+        for child in children {
+            doc.append_element(Some(parent), "div", Some(&format!("display:block;{child}")));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+        assert_eq!(pages.len(), 3, "{children:?}");
+    }
+}

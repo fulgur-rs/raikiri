@@ -1341,6 +1341,15 @@ impl PaginationState {
             && gap > 0.001
             && edges_break.edges > gap + 0.001)
         {
+            // The pages of a block leave out the margins in it that a page
+            // edge may truncate, so edges that stay where they are reach
+            // their pages here, such as a page that they begin.
+            if self.margin_rooms.contains_key(&node_id) {
+                let visible = self.visible_edges(edges_break, 0.0);
+                if visible > 0.001 {
+                    self.record_pages(control, page_origins.end_page(end, visible), true)?;
+                }
+            }
             return Ok(());
         }
         let next_page = page.saturating_add(1);
