@@ -11,13 +11,13 @@ use super::{
     PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_after_last_line,
-    block_effective_y, block_fits_page_step, box_avoids_page_break_inside, box_changes_page_name,
-    box_occupies_column, box_sets_page_name, break_margins, closing_edges_line_move,
-    closing_edges_move, collapsed_start_margin_gain, collapsed_start_margin_gain_in_flow,
-    collapses_through, collapses_with_previous_block, content_overflow, current_abs_y,
-    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
-    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
+    block_effective_y, block_fits_page_step, border_box_height_bounds,
+    box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
+    break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
+    collapsed_start_margin_gain_in_flow, collapses_through, collapses_with_previous_block,
+    content_overflow, current_abs_y, first_box_ancestor_at_start, first_line_judged_height,
+    first_owned_line_height, fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down,
+    flow_raw_y, follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
     grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
@@ -1354,9 +1354,10 @@ impl PaginationState {
     /// `edges_break` and its edges, which end the content at `end` in the
     /// flow, when a page edge falls inside it (CSS Fragmentation 3 §5.2):
     /// the edges begin the page at that edge, as a box after the margin
-    /// would. The block shrinks by the part of the margin below the edge, and
-    /// the flow after it moves up, and the flow is on the page the edges
-    /// begin. Returns where the content now ends.
+    /// would. The block shrinks by the part of the margin below the edge, as
+    /// far as its min-height lets it, and the flow after it moves up, and
+    /// the flow is on the page the edges begin. Returns where the content
+    /// now ends.
     fn truncate_margin_above_edges(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1374,9 +1375,22 @@ impl PaginationState {
         if end <= edge + 0.001 {
             return Ok(end);
         }
-        reach_page(env.control, edge_page)?;
-        let delta = edge - end;
         let node_id = edges_break.node_id;
+        // Cuts at the edges of blocks inside this one shrank it already, so
+        // the cut stops where the block reaches its min-height now.
+        let (min_height, _) = border_box_height_bounds(document, node_id);
+        let room = (document.nodes[node_id].layout.size.height - min_height).max(0.0);
+        let delta = (edge - end).max(-room);
+        if delta >= -0.001 {
+            return Ok(end);
+        }
+        let new_end = end + delta;
+        let start_page = if new_end <= edge + 0.001 {
+            edge_page
+        } else {
+            page_origins.page_index_for_y(new_end)
+        };
+        reach_page(env.control, start_page)?;
         document.nodes[node_id].layout.size.height += delta;
         document.mark_pagination_extent_dirty(node_id);
         let held = shrink_ancestors_after_content_change(
@@ -1395,12 +1409,12 @@ impl PaginationState {
         // the flow after it where it was.
         self.subtree_shifts.bounded.extend(
             held.into_iter()
-                .map(|(ancestor, held)| (ancestor, held, edge_page)),
+                .map(|(ancestor, held)| (ancestor, held, start_page)),
         );
-        self.current_page = self.current_page.max(edge_page);
-        let edges_end = page_origins.end_page(edge, edges_break.edges);
+        self.current_page = self.current_page.max(start_page);
+        let edges_end = page_origins.end_page(new_end, edges_break.edges);
         self.record_pages(env.control, edges_end, true)?;
-        Ok(edge)
+        Ok(new_end)
     }
 
     /// The block size of the edges that a clip leaves visible once they begin

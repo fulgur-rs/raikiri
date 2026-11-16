@@ -4429,6 +4429,31 @@ fn a_min_height_left_behind_lets_the_margin_above_the_edges_be_truncated() {
 }
 
 #[test]
+fn a_cut_inside_a_block_counts_against_its_min_height() {
+    // The inner block's margin is cut at the first page edge, which takes
+    // most of what the outer block's min-height leaves; the outer cut then
+    // stops at the min-height, as in Chromium.
+    for (min_height, expected) in [(250.0, 260.0), (230.0, 240.0), (150.0, 210.0)] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let outer = block(
+                doc,
+                body,
+                &format!("display:block;min-height:{min_height}px;padding-bottom:10px"),
+            );
+            let inner = block(
+                doc,
+                outer,
+                "display:block;padding-bottom:10px;margin-bottom:150px",
+            );
+            block(doc, inner, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{min_height}");
+    }
+}
+
+#[test]
 fn a_block_whose_height_does_not_follow_its_content_keeps_the_margin() {
     let child = ["height:90px;margin-bottom:20px"];
     assert_eq!(
