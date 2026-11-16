@@ -862,3 +862,110 @@ fn a_block_level_box_follows_the_text_before_it_in_visual_order() {
         ],
     );
 }
+
+#[test]
+fn an_out_of_flow_box_before_the_first_block_child_sits_where_that_block_starts() {
+    // A vertical root whose lines run from the bottom does not lay a
+    // generated block out as a box, so its margins are left out of the
+    // cases with margins in those modes.
+    check(
+        "generated_block_box_block",
+        Setup {
+            sheet: r#"#cb::before{content:"BB";display:block}"#,
+            root_css: "",
+        },
+        &[Child::Box(""), Child::Block("AA", "")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "generated_block_two_boxes_block",
+        Setup {
+            sheet: r#"#cb::before{content:"BB";display:block}"#,
+            root_css: "",
+        },
+        &[Child::Box(""), Child::Box(""), Child::Block("AA", "")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "generated_block_margins_box_block",
+        Setup {
+            sheet: r#"#cb::before{content:"BB";display:block;margin-block-end:6px}"#,
+            root_css: "",
+        },
+        &[Child::Box(""), Child::Block("AA", "margin-block-start:4px")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 16.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 16.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (154.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (16.0, 0.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (16.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "empty_generated_block_margins_box_block",
+        Setup {
+            sheet: r#"#cb::before{content:"";display:block;height:10px;margin-block-end:6px}"#,
+            root_css: "",
+        },
+        &[Child::Box(""), Child::Block("AA", "margin-block-start:4px")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 16.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 16.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "generated_blocks_around_box",
+        Setup {
+            sheet: r#"#cb::before{content:"BB";display:block;margin-block-end:6px}#cb::after{content:"CC";display:block;margin-block-start:3px}"#,
+            root_css: "",
+        },
+        &[Child::Box("")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 16.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 16.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (154.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (16.0, 0.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (16.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "box_block_text",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[
+            Child::Box(""),
+            Child::Block("AA", "margin-block-start:4px"),
+            Child::Text("AA"),
+        ],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+}

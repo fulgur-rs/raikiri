@@ -213,6 +213,12 @@ pub(crate) struct IfcLines {
     /// order, with the number of block children laid out before it and the
     /// index of its first line. A fragmenting layout records none.
     pub(crate) generated_block_starts: Vec<(usize, usize)>,
+    /// Where the first block child or block-level `::after` of the root
+    /// starts: the index of the first line after it and the block offset,
+    /// from the content-box block-start edge, below the lines and the
+    /// margins above it, before its own margins. `None` when the root has
+    /// neither. A fragmenting layout records none.
+    pub(crate) first_block_start: Option<(usize, f32)>,
     /// Each block child of the root with the index of the first line after it
     /// and the block offset, from the content-box block-start edge, where the
     /// content after it starts: below its border box and the margins that

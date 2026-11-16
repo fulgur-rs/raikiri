@@ -335,6 +335,7 @@ pub(crate) fn place_lines(
         leading_block_margin: None,
         block_line_starts: Vec::new(),
         generated_block_starts: Vec::new(),
+        first_block_start: None,
         block_ends: Vec::new(),
         shifts: super::root::LineShifts::default(),
         fragment_box_placements: Vec::new(),

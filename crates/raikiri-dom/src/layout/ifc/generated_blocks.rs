@@ -127,6 +127,15 @@ fn on_axes<T>(sides: Sides<T>, block_start_right: bool) -> Sides<T> {
 }
 
 impl GeneratedBlock {
+    /// Whether the box is an `::after`, which follows all the other content
+    /// of its element, rather than a `::before`.
+    pub(crate) fn is_after(&self) -> bool {
+        usize::try_from(self.start)
+            .ok()
+            .and_then(crate::generated_content::generated_origin)
+            .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::After)
+    }
+
     /// The geometry of the generated box styled by `cv`, marked by the tokens
     /// `start` and `end`, whose lines are set by the line options and raw
     /// `text-indent` in `lines`; `orthogonal` says its writing mode is
