@@ -19465,6 +19465,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
         effective_y: 95.0,
         height: 10.0,
         first_line_shift: 0.0,
+        clip_end: f32::INFINITY,
     };
     let push = |doc: &mut Document,
                 state: &mut PaginationState,
@@ -19583,6 +19584,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
                 effective_y: spacer_height,
                 height: candidate.height,
                 first_line_shift: 0.0,
+                clip_end: f32::INFINITY,
             };
             let kept = state.keep_lines_together(
                 &mut session,
@@ -19719,6 +19721,7 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
             effective_y,
             height: 10.0,
             first_line_shift: 0.0,
+            clip_end: f32::INFINITY,
         };
         let stepped = state.step_text_page(&mut session, &env, candidate, entry, &mut position);
         (stepped, position.effective_y)

@@ -126,7 +126,60 @@ fn the_clip_of_a_box_around_the_paragraph_hides_the_lines_it_moved() {
 }
 
 #[test]
-fn a_box_whose_height_follows_its_lines_still_takes_their_pages() {
+fn relative_offsets_move_the_clip_and_the_lines_it_hides() {
+    let lines = "abcdefgh";
+    for (style, expected) in [
+        (
+            "position:relative;top:30px;height:150px;overflow:hidden",
+            vec![(0, 'A', 35), (1, 'X', 55), (1, 'a', 35), (1, 'b', 65)],
+        ),
+        (
+            "position:relative;top:-30px;height:150px;overflow:hidden",
+            vec![(0, 'a', 75), (1, 'X', 55), (1, 'b', 5)],
+        ),
+    ] {
+        let body = clipped(style, lines);
+        assert_eq!(pages_and_tops(&body, "AXab"), (2, expected), "{body}");
+    }
+    let shifted_paragraph = "<div style='height:150px;overflow:hidden'>\
+                             <div style='height:20px'>A</div>\
+                             <div style='break-before:page;position:relative;top:60px'>\
+                             a<br>b<br>c<br>d<br>e<br>f<br>g<br>h</div></div><div>X</div>";
+    assert_eq!(
+        pages_and_tops(shifted_paragraph, "AX"),
+        (2, vec![(0, 'A', 5), (1, 'X', 55)])
+    );
+    let shifted_span = "<div style='height:150px;overflow:hidden'>\
+                        <div style='height:20px'>A</div><div style='break-before:page'>\
+                        a<br><span style='position:relative;top:-30px'>b<br>c<br>d</span>\
+                        <br>e<br>f<br>g</div></div><div>X</div>";
+    assert_eq!(
+        pages_and_tops(shifted_span, "AXabc"),
+        (
+            2,
+            vec![
+                (0, 'A', 5),
+                (1, 'X', 55),
+                (1, 'a', 5),
+                (1, 'b', 5),
+                (1, 'c', 35)
+            ]
+        )
+    );
+}
+
+#[test]
+fn a_clipping_box_whose_height_follows_its_lines_takes_their_pages() {
+    let body = clipped("overflow:hidden", "abcdefgh");
+    assert_eq!(
+        pages_and_tops(&body, "Xgh"),
+        (4, vec![(3, 'X', 65), (3, 'g', 5), (3, 'h', 35)]),
+        "{body}"
+    );
+}
+
+#[test]
+fn lines_past_a_box_that_does_not_clip_take_their_pages() {
     let body = clipped("height:150px", "abcdefgh");
     let (pages, _) = pages_and_tops(&body, "");
     assert_eq!(pages, 4, "{body}");
