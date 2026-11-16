@@ -9237,17 +9237,63 @@ fn last_flow_child(document: &Document, cascade: &CascadeResult, node_id: usize)
         .iter()
         .rev()
         .copied()
-        .find(|&child| {
-            let node = &document.nodes[child];
-            node.is_in_document()
-                && !node.is_display_none()
-                && node.kind() == NodeKind::Element
-                && matches!(
-                    node.position(),
-                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                )
-                && !super::page::is_floating_box_for_pagination(document, cascade, child)
-        })
+        .find(|&child| takes_part_in_flow(document, cascade, child))
+}
+
+/// Whether `node_id` is an element that takes part in the flow of its
+/// parent: neither floated nor absolutely positioned.
+fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.is_in_document()
+        && !node.is_display_none()
+        && node.kind() == NodeKind::Element
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
+        && !super::page::is_floating_box_for_pagination(document, cascade, node_id)
+}
+
+/// The box before the empty boxes that end at `node_id`, and how far above
+/// the top of the first of them it ends: boxes with no block size let the
+/// margins around them collapse through.
+fn before_empty_boxes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> (usize, f32) {
+    let mut current = node_id;
+    let mut lift = 0.0_f32;
+    loop {
+        let Some(parent) = document
+            .parent_of(current)
+            .filter(|_| document.nodes[current].layout.size.height.abs() <= 0.001)
+        else {
+            return (current, lift);
+        };
+        let siblings = &document.nodes[parent].children;
+        let Some(before) = siblings
+            .iter()
+            .position(|&child| child == current)
+            .and_then(|index| {
+                siblings[..index]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&child| takes_part_in_flow(document, cascade, child))
+            })
+        else {
+            return (current, lift);
+        };
+        let gap = current_abs_y(document, current)
+            - current_abs_y(document, before)
+            - document.nodes[before].layout.size.height;
+        if !gap.is_finite() || gap < -0.001 {
+            return (current, lift);
+        }
+        lift += gap;
+        current = before;
+    }
 }
 
 /// Whether the paragraph `node_id` is a block container in one column whose
@@ -9495,39 +9541,47 @@ pub(super) fn last_flow_box(
     Some(last)
 }
 
-/// Whether a page edge falls inside the block-end padding and borders of
-/// `previous`, which ends at `bottom`, or inside those of a box that ends with
-/// it: its last in-flow box when that ends where its content ends, and so on
-/// down. An edge between the edges of two boxes splits neither.
-fn follows_split_edges(
+/// Where the box `previous`, which ends at `bottom`, ends its block-end
+/// padding and borders, when a page edge falls inside them or inside those
+/// of a box that ends with it: the last in-flow box of a block that stacks
+/// its boxes in block flow and whose height follows them, when no margin
+/// separates the two, and so on down. An edge between the edges of two boxes
+/// splits neither. Empty boxes at the end of the flow are passed over to the
+/// box before them.
+fn split_edges_end(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     page_origins: &PageOrigins,
     previous: usize,
     bottom: f32,
-) -> bool {
-    let mut end = bottom;
-    let mut current = previous;
+) -> Option<f32> {
+    let (mut current, lift) = before_empty_boxes(document, cascade, previous);
+    let split_end = bottom - lift;
+    // Far down a long flow the edges are only as exact as `f32` keeps them.
+    let tolerance = 0.001_f32.max(bottom.abs() * 4.0 * f32::EPSILON);
+    let mut end = split_end;
     loop {
-        let layout = &document.nodes[current].layout;
-        let own = layout.padding.bottom + layout.border.bottom;
-        if own > 0.001 {
+        let node = &document.nodes[current];
+        let own = node.layout.padding.bottom + node.layout.border.bottom;
+        if own > tolerance {
             let edge = page_origins.origin(page_origins.page_index_for_end(end));
-            if edge > end - own + 0.001 && edge < end - 0.001 {
-                return true;
+            if edge > end - own + tolerance && edge < end - tolerance {
+                return Some(split_end);
             }
         }
         end -= own;
-        if document.nodes[current].is_ifc_root() {
-            return false;
+        if node.is_ifc_root()
+            || node.multicol.is_some()
+            || node.used_writing_mode.is_vertical()
+            || is_flex_or_grid(document, current)
+            || !(height_follows_content(document, current)
+                || min_height_left_behind(document, current))
+        {
+            return None;
         }
-        let Some(last) = last_flow_box(document, cascade, current) else {
-            return false;
-        };
-        let content_end = current_abs_y(document, current) + layout.size.height - own;
-        let last_bottom = current_abs_y(document, last) + document.nodes[last].layout.size.height;
-        if (content_end - last_bottom).abs() > 0.001 {
-            return false;
+        let last = last_flow_box(document, cascade, current)?;
+        if document.nodes[last].layout.margin.bottom.abs() > tolerance {
+            return None;
         }
         current = last;
     }
@@ -12125,12 +12179,13 @@ impl SiblingMargins {
         // Chromium drops the margin after a box whose block-end edges run
         // over a page edge, so the box after it follows the last fragment
         // of the edges directly.
-        if !forced_before
-            && follows_split_edges(document, cascade, page_origins, previous, effective_y - gap)
-            && self.adjacency.adjoins(document, cascade, node_id, previous)
+        if let Some(end) = (!forced_before)
+            .then(|| split_edges_end(document, cascade, page_origins, previous, effective_y - gap))
+            .flatten()
+            .filter(|_| self.adjacency.adjoins(document, cascade, node_id, previous))
         {
             return Some(MarginTruncation {
-                delta: -gap,
+                delta: end - effective_y,
                 underflow: None,
             });
         }

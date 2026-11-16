@@ -4756,6 +4756,23 @@ fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
         after_split_edges("", Some("padding-bottom:120px"), "margin-top:15px"),
         220.0
     );
+    assert_eq!(
+        after_split_edges(
+            "min-height:20px",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        220.0
+    );
+    // The last box of a flex container need not end its flow.
+    assert_eq!(
+        after_split_edges(
+            "display:flex",
+            Some("padding-bottom:120px"),
+            "margin-top:15px"
+        ),
+        235.0
+    );
     // A page edge between the edges of two boxes splits neither.
     assert_eq!(
         after_split_edges(
@@ -4779,4 +4796,29 @@ fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
         ),
         315.0
     );
+}
+
+#[test]
+fn an_empty_box_after_split_edges_leaves_the_margin_after_it_dropped() {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:120px");
+        block(doc, parent, "display:block;height:30px");
+        block(doc, body, "display:block");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 220.0);
+    // The margins around the empty box are dropped with it, as in Chromium.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(
+            doc,
+            body,
+            "display:block;padding-bottom:120px;margin-bottom:5px",
+        );
+        block(doc, parent, "display:block;height:30px");
+        block(doc, body, "display:block");
+        after = block(doc, body, "display:block;height:10px;margin-top:15px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 220.0);
 }
