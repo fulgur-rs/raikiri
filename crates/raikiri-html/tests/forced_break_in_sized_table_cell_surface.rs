@@ -230,3 +230,21 @@ fn the_moved_box_keeps_its_bottom_margin_in_a_formatting_context_root() {
         }
     }
 }
+
+#[test]
+fn a_cell_tall_enough_for_the_moved_content_does_not_grow() {
+    // The moved box ends at 170px, inside the cell's 250px.
+    assert_eq!(
+        glyph_tops(&format!(
+            "<table><tr>{}<td>C</td></tr></table><div>X</div>",
+            broken_cell(250, 70)
+        )),
+        [(0, 'A', 0), (0, 'C', 0), (1, 'B', 0), (2, 'X', 50)]
+    );
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:table-cell;height:250px"><div style="height:20px">A</div><div style="height:70px;break-before:page">B</div></div><div>X</div>"#
+        ),
+        [(0, 'A', 0), (1, 'B', 0), (2, 'X', 50)]
+    );
+}
