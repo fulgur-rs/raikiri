@@ -599,6 +599,30 @@ fn the_content_of_a_box_inside_a_positioned_inline_element_breaks_with_the_colum
             ("d", (8.0, 28.0, 30.0, 60.0)),
         ],
     );
+    // Columns that fill in turn under an auto height grow with their content.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;column-fill:auto">{}</div>"#,
+            paragraph("xxx")
+        ),
+        &[
+            ("m", (8.0, 8.0, 60.0, 50.0)),
+            ("a", (8.0, 28.0, 30.0, 10.0)),
+            ("d", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    // Below a spanner, the columns that fill in turn start under it.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;height:60px;column-fill:auto"><div id=s style="column-span:all;height:10px"></div>{}</div>"#,
+            paragraph(six)
+        ),
+        &[
+            ("p", (8.0, 18.0, 30.0, 50.0)),
+            ("a", (8.0, 18.0, 60.0, 50.0)),
+            ("d", (8.0, 18.0, 60.0, 50.0)),
+        ],
+    );
 }
 
 /// A box against the paragraph breaks with it too, and one with borders and

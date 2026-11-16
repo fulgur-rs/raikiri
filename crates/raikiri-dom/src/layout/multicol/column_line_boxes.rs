@@ -109,7 +109,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                     let container = tree
                         .inclusive_ancestors(paragraph)
                         .find(|&id| tree.nodes[id].multicol.is_some())?;
-                    Some((container, Columns::of(tree, cascade, container)?))
+                    Some((container, Columns::of(tree, container)?))
                 })
                 .as_ref()
                 .filter(|(container, _)| {
@@ -261,23 +261,22 @@ impl Columns {
     /// not count the positioned boxes, so those stay whole there. Only the
     /// last row of columns, after any spanner, is filled one column after
     /// the other.
-    fn of(tree: &Document, cascade: &CascadeResult, container: usize) -> Option<Self> {
+    fn of(tree: &Document, container: usize) -> Option<Self> {
         let style = tree.nodes[container]
             .multicol
             .filter(|style| style.horizontal && style.column_fill == ColumnFillValue::Auto)?;
         let records = &tree.fragment_tree;
-        let [record] = records
+        let mut live = records
             .records_of(container)
             .iter()
             .copied()
-            .filter(|&index| !records.is_retired(index))
-            .collect::<Vec<_>>()[..]
-        else {
-            return None;
-        };
+            .filter(|&index| !records.is_retired(index));
+        let record = live.next()?;
+        live.next().is_none().then_some(())?;
         let origin = record_origin(tree, record)?;
         // The rows that the strategy kept, each in the container's border
-        // box, with the block size its columns had to fill.
+        // box, with the block size its columns had to fill. Layouts with a
+        // spanner always keep them.
         if let Some(row) = tree.nodes[container].multicol_groups.last() {
             let height = row.context.available_height.unwrap_or(row.height);
             return (height > 0.0).then_some(Self {
@@ -291,7 +290,7 @@ impl Columns {
         }
         // Else the container is one row of columns as tall as its content
         // box.
-        if !style.height_definite || holds_spanner(tree, cascade, container) {
+        if !style.height_definite {
             return None;
         }
         let border_box = records.fragments[record].rect;
@@ -387,23 +386,6 @@ impl Columns {
         let step = context.column_width + context.column_gap;
         ((advance + lineless::EPSILON) / step).floor().max(0.0) as usize
     }
-}
-
-/// Whether a box in the flow of the columns of `container` spans them, which
-/// makes rows of columns above and below it.
-fn holds_spanner(tree: &Document, cascade: &CascadeResult, container: usize) -> bool {
-    let mut pending = tree.nodes[container].children.clone();
-    while let Some(id) = pending.pop() {
-        let node = &tree.nodes[id];
-        if !node.is_in_document() || node.is_display_none() || node.multicol.is_some() {
-            continue;
-        }
-        if spanning::is_spanner_in(tree, cascade, id) {
-            return true;
-        }
-        pending.extend(node.children.iter().copied());
-    }
-    false
 }
 
 /// Where the record `index` places the origin of its box in the layout: a
