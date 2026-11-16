@@ -274,3 +274,61 @@ fn floats_on_both_sides_share_the_top_of_the_column() {
         ],
     );
 }
+
+/// A box that clearance puts at the end of its column is cut at the end of
+/// the next one, and one taller than its columns goes on in overflow columns
+/// past a definite height.
+#[test]
+fn a_cleared_box_taller_than_its_columns_breaks_in_each_one() {
+    check_containers(
+        "<div id=f style=\"float:left;width:20px;height:30px\"></div><div id=b style=\"clear:both;height:60px\"></div><p id=p style=\"margin:0\">A</p>",
+        &["height:30px;column-fill:auto"],
+        &[
+            ("b", (68.0, 8.0, 100.0, 30.0)),
+            ("p", (188.0, 8.0, 40.0, 20.0)),
+        ],
+    );
+    let tall = "<div id=f style=\"float:left;width:20px;height:10px\"></div><div id=b style=\"clear:both;height:100px\"></div>";
+    check_containers(
+        tall,
+        &["height:30px;column-fill:auto"],
+        &[("b", (8.0, 8.0, 220.0, 30.0))],
+    );
+    // Balanced columns of an auto height hold it in two, the last one taking
+    // what is left.
+    check_containers(
+        tall,
+        &[""],
+        &[
+            ("m", (8.0, 8.0, 100.0, 55.0)),
+            ("b", (8.0, 8.0, 100.0, 55.0)),
+        ],
+    );
+}
+
+/// Boxes that avoid breaks inside them and need more than the container's
+/// height to balance fill it, and the last goes on in an overflow column.
+#[test]
+fn balanced_columns_that_need_more_than_the_height_fill_it() {
+    let boxes = "<div id=f style=\"float:left;width:20px;height:10px\"></div>\
+        <div id=b style=\"clear:both;height:30px;break-inside:avoid\"></div>\
+        <div id=c style=\"height:30px;break-inside:avoid\"></div>\
+        <div id=d style=\"height:30px;break-inside:avoid\"></div>";
+    check_containers(
+        boxes,
+        &["height:50px;column-fill:balance"],
+        &[
+            ("b", (8.0, 18.0, 40.0, 30.0)),
+            ("c", (68.0, 8.0, 40.0, 30.0)),
+            ("d", (128.0, 8.0, 40.0, 30.0)),
+        ],
+    );
+    check_containers(
+        boxes,
+        &[""],
+        &[
+            ("m", (8.0, 8.0, 100.0, 60.0)),
+            ("d", (68.0, 38.0, 40.0, 30.0)),
+        ],
+    );
+}
