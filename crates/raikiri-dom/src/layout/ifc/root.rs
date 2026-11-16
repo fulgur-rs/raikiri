@@ -285,6 +285,11 @@ impl LineShifts {
         self.entries.iter()
     }
 
+    /// Whether no entry moves any line.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// The sum of every delta.
     pub(crate) fn total(&self) -> f32 {
         self.totals[self.totals.len() - 1]

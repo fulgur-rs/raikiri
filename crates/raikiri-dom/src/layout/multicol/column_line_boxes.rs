@@ -10,8 +10,10 @@
 //! A box positioned against the container or a box outside it is laid out
 //! outside that context and stays whole.
 
+use super::column_lines;
 use super::*;
 use crate::fragment::{FragmentRect, FragmentationContext, LayoutFragment};
+use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::IfcBoxKind;
 use crate::layout::ifc::root::IfcRoot;
 use crate::node::MulticolTextFragment;
@@ -24,10 +26,11 @@ use raikiri_layout_geometry::Point;
 /// A box that its containing block puts in the columns and that reaches past
 /// the end of its column gets a record in each column it reaches.
 pub(crate) fn record_out_of_flow_boxes_on_column_lines(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) {
     let mut placed = Vec::new();
+    let mut line_moves = Vec::new();
     let mut over_budget = false;
     for paragraph in 0..tree.nodes.len() {
         let Some(root) = tree.nodes[paragraph]
@@ -122,15 +125,32 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 .limit
                 .saturating_sub(records.fragments.len() + placed.len());
             let split = columns.map_or(Split::Whole, |(_, columns)| {
-                columns.pieces(
-                    &tree.nodes[node].layout,
+                let top = piece_origin.y + rect.y;
+                let layout = tree.nodes[node].layout;
+                // The lines that a column end crosses start the next column,
+                // when the columns break the box.
+                let moves = column_lines::line_moves(
+                    tree,
+                    node,
+                    top - columns.origin.y,
+                    columns.height,
+                    None,
+                );
+                let moved = moves.as_ref().map_or(layout, |moves| moves.moved(layout));
+                let split = columns.pieces(
+                    &moved,
                     FragmentRect {
                         x: piece_origin.x + rect.x,
-                        y: piece_origin.y + rect.y,
+                        y: top,
+                        height: moved.size.height,
                         ..rect
                     },
                     budget,
-                )
+                );
+                if let (Split::Pieces(_), Some(moves)) = (&split, moves) {
+                    line_moves.push((node, moves));
+                }
+                split
             });
             match split {
                 Split::Pieces(split) => {
@@ -183,6 +203,9 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
     // the cap after this.
     if over_budget {
         tree.fragment_tree.limit_exceeded = true;
+    }
+    for (node, moves) in &line_moves {
+        column_lines::apply(tree, *node, moves);
     }
     for record in placed {
         let _ = tree.fragment_tree.try_push(record);
