@@ -15,18 +15,18 @@ use super::{
     box_avoids_page_break_inside, box_changes_page_name, box_occupies_column, box_sets_page_name,
     break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
     collapsed_start_margin_gain_in_flow, collapses_through, collapses_with_previous_block,
-    content_overflow, current_abs_y, first_box_ancestor_at_start, first_line_judged_height,
-    first_owned_line_height, fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down,
-    flow_raw_y, follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
-    forced_target_page, generated_content_runs_past, grow_ancestors_below,
-    grow_ancestors_for_shift, grow_container_beside_item, has_explicit_positioned_block_ancestor,
-    has_fixed_height, has_footnote_ancestor, is_floating_box_for_pagination,
-    is_unfixed_absolute_box, item_bottom_in, item_of, lead_below_ancestor, lead_below_edges,
-    leading_edges_move, leading_holder, line_block_parent, line_run_among_blocks,
-    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
-    make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    content_end_above, content_overflow, current_abs_y, first_box_ancestor_at_start,
+    first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
+    floats_put_first_line_down, flow_raw_y, follows_box_on_page, follows_flow_content,
+    forced_line_breaks, forced_line_moves, forced_target_page, generated_content_runs_past,
+    grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
+    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
+    line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
+    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
+    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
     move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
     paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
@@ -511,9 +511,15 @@ impl PaginationState {
             self.column_contexts
                 .occupy(Some(context), self.current_page, document, env.cascade);
         }
+        // Content that places no box of the flow, as generated content, an
+        // empty box or a phantom line, comes before the first box too, so a
+        // page type the box names opens a page after it.
+        let content_before = self.saw_child
+            || (name_participates_in_flow
+                && follows_box_on_page(document, env.cascade, env.body_id, node_id, 0.0));
         let (name_context_seen, comparison_page_name) = self.page_names.comparison(
             candidate,
-            self.saw_child,
+            content_before,
             &mut self.column_contexts,
             document,
             env.cascade,
@@ -742,6 +748,31 @@ impl PaginationState {
         );
         self.note_line_block_move(text, holder, delta, consumed, next);
         Ok(())
+    }
+
+    /// Whether in-flow content ends above the box `candidate` whose
+    /// block-start margin edge, at `margin_edge` in the flow, lies on the
+    /// page the flow starts on, not at its end (see [`content_end_above`]).
+    /// The box is in the normal flow: one out of it or floated has no forced
+    /// break of the flow.
+    fn follows_content_at_flow_start(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        margin_edge: f32,
+    ) -> bool {
+        let first_page = env.page_origins.page_index_in_flow(0.0).unwrap_or(0);
+        margin_edge < env.page_origins.origin(first_page.saturating_add(1)) - 0.001
+            && in_flow_box(document, env.cascade, candidate)
+            && content_end_above(
+                document,
+                env.cascade,
+                env.body_id,
+                candidate.node_id,
+                margin_edge,
+            )
+            .is_some()
     }
 
     /// The last page the flow has reached before the box `node_id` at
@@ -1552,9 +1583,10 @@ impl PaginationState {
     }
 
     /// Starts the box `candidate` on a page: the first box of the flow starts
-    /// on the first page, and a later one opens the page its transition asks
-    /// for, or starts on the page its position falls on. Returns whether the
-    /// box met a page transition.
+    /// on the first page, unless a forced break before it follows content
+    /// that places no box of the flow, and a later one opens the page its
+    /// transition asks for, or starts on the page its position falls on.
+    /// Returns whether the box met a page transition.
     pub(super) fn start_box_page(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1565,6 +1597,24 @@ impl PaginationState {
         position: &mut BoxPosition,
     ) -> Result<bool, Halt> {
         let node_id = candidate.node_id;
+        let margin_edge =
+            position.effective_y - page_break.relative_offset - page_break.margin_top.max(0.0);
+        if !self.saw_child
+            && page_break.forced_transition
+            && let Some(end) = in_flow_box(document, env.cascade, candidate)
+                .then(|| {
+                    content_end_above(document, env.cascade, env.body_id, node_id, margin_edge)
+                })
+                .flatten()
+        {
+            // Content that places no box of the flow on a page, as generated
+            // content, an empty box or the phantom line of an empty inline
+            // element, still comes before the box, so a forced break before
+            // it opens the page after the one that content ends on, as
+            // Chromium breaks there.
+            self.saw_child = true;
+            self.current_page = env.page_origins.page_index_for_end(end);
+        }
         let mut page_transition = self.saw_child && page_break.is_page_transition();
         if self.saw_child {
             // A break-after on the preceding box and a break-before (or named
@@ -1590,8 +1640,8 @@ impl PaginationState {
                 candidate.context.is_direct_body_element(),
             );
         } else {
-            // A forced break before the first class-A box does not manufacture
-            // a leading blank page. The box starts on the page its top falls
+            // A forced break before the first class-A box with nothing above
+            // it does not manufacture a leading blank page. The box starts on the page its top falls
             // on, which is the second when the schedule opens with a short
             // page that ends where the flow begins, as the one a relayout
             // after delivered pages starts with: a forced break after the box
@@ -1960,7 +2010,18 @@ impl PaginationState {
         // The child reaching a natural edge does not put its holder there.
         // The source-order check also keeps an empty preceding sibling from
         // sharing a boundary merely because its geometry has zero height.
+        // The start of the flow is no page boundary: content above a box
+        // there, even content of no height, as an empty box, generated
+        // content or the phantom line of an empty inline element, stays on
+        // the first page, so a forced break after it opens the next page, as
+        // Chromium breaks there.
         let forced_break_at_page_start = forced_before
+            && !self.follows_content_at_flow_start(
+                document,
+                env,
+                candidate,
+                effective_y - relative_offset - margin_top.max(0.0),
+            )
             && if let Some(owner) = potential_forced_holder {
                 let owner_margin_box_y = current_abs_y(document, owner.node)
                     - accumulated_relative_offset_y(document, cascade, body_id, owner.node)
@@ -3803,6 +3864,18 @@ fn holds_block_flow_paragraph(
         stack.extend_from_slice(&document.nodes[node].children);
     }
     float_paragraph && !other_lines
+}
+
+/// Whether the box `candidate` lies in the normal flow of its block
+/// container: not a flex or grid item, floated or out of flow.
+fn in_flow_box(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+) -> bool {
+    is_block_flow_box(document, cascade, candidate)
+        && !candidate.context.is_float_descendant()
+        && !candidate.context.is_out_of_flow_descendant()
 }
 
 /// Whether `candidate` is a box of ordinary block flow: not a flex or grid

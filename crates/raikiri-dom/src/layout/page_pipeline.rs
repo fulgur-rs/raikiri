@@ -11102,12 +11102,51 @@ pub(super) fn follows_box_on_page(
     node_id: usize,
     page_start: f32,
 ) -> bool {
+    content_lies_before(document, cascade, body_id, node_id, &|top, bottom| {
+        top >= page_start - 0.001 || bottom > page_start + 0.001
+    })
+}
+
+/// The lowest end, in the flow, of the in-flow content before the box
+/// `node_id` (see [`follows_box_on_page`]) that ends at or above `y`, the
+/// block-start margin edge of the box: content beside the box, as an earlier
+/// flex item, grid item or table cell, ends below it. `None` when no such
+/// content comes before the box.
+pub(super) fn content_end_above(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Option<f32> {
+    let end = std::cell::Cell::new(None::<f32>);
+    content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        if bottom <= y + 0.001 {
+            end.set(Some(end.get().map_or(bottom, |end| end.max(bottom))));
+        }
+        false
+    });
+    end.get()
+}
+
+/// Whether `accept` takes the top and bottom in the flow, without relative
+/// offsets, of some in-flow content before the box `node_id`: a box before it
+/// or before an ancestor of it that is not the body (see
+/// [`any_level_before`]), empty or not, or the lines of text there, or the
+/// generated `::before` box of an ancestor of it, the body too, where the line
+/// loop of the ancestor's paragraph placed it.
+fn content_lies_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    accept: &dyn Fn(f32, f32) -> bool,
+) -> bool {
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
-    let pseudo_on_page = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
-        generated_box_lies(document, &flow_y, parent, element, pseudo, &on_page)
+    let pseudo_lies = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
+        generated_box_lies(document, &flow_y, parent, element, pseudo, accept)
     };
     any_level_before(
         document,
@@ -11125,9 +11164,12 @@ pub(super) fn follows_box_on_page(
                 parent,
                 node,
                 &|child, pseudo| {
-                    renders_pseudo(cascade, child, pseudo) && pseudo_on_page(parent, child, pseudo)
+                    renders_pseudo(cascade, child, pseudo) && pseudo_lies(parent, child, pseudo)
                 },
-                &|id| flow_y(id) >= page_start - 0.001,
+                &|id| {
+                    let top = flow_y(id);
+                    accept(top, top)
+                },
             ) || boxes.iter().any(|&id| {
                 if document.nodes[id].kind() != NodeKind::Element {
                     // Text has no box of its own: its lines tell where it lies.
@@ -11139,14 +11181,14 @@ pub(super) fn follows_box_on_page(
                             let origin = flow_y(owned.root) + root.border.top + root.padding.top;
                             let (first, _) = *bounds.first()?;
                             let (_, last) = *bounds.last()?;
-                            Some(on_page(origin + first, origin + last))
+                            Some(accept(origin + first, origin + last))
                         })
                         .unwrap_or(false);
                 }
                 let top = flow_y(id);
-                on_page(top, top + document.nodes[id].layout.size.height)
+                accept(top, top + document.nodes[id].layout.size.height)
             }) || (renders_before_pseudo(cascade, parent)
-                && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
+                && pseudo_lies(parent, parent, raikiri_style::PseudoElem::Before))
         },
     )
 }

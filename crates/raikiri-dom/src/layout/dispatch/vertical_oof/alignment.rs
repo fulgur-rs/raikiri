@@ -436,8 +436,8 @@ fn align_children(
                 style.inset(),
                 style.margin(),
                 style.direction(),
-                style.bridge_align_self(),
-                style.bridge_justify_self(),
+                style.inset_align_self(),
+                style.inset_justify_self(),
             )
         };
         let safe_static_positions = tree.context.safe_static_positions.get(&child).copied();

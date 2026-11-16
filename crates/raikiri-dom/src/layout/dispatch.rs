@@ -3474,9 +3474,9 @@ pub(crate) enum ContainedOof {
 
 /// How the size-contained out-of-flow box `idx` relates its sizes through
 /// its ratio, if it keeps one (see [`ContainedOof`]). A box laid out in the
-/// transposed axes of a vertical block, or whose alignment axes are swapped,
-/// keeps the sizes the out-of-flow algorithm gives it when both insets are
-/// set.
+/// transposed axes of a vertical block, or held by a container on vertical
+/// axes in a containing block on vertical axes, keeps the sizes the
+/// out-of-flow algorithm gives it when both insets are set.
 pub(crate) fn contained_oof(tree: &LayoutSession<'_>, idx: usize) -> Option<ContainedOof> {
     if !contained_ratio_item(tree, idx) {
         return None;
@@ -3486,7 +3486,7 @@ pub(crate) fn contained_oof(tree: &LayoutSession<'_>, idx: usize) -> Option<Cont
         return Some(ContainedOof::HeightFromWidth);
     }
     (tree.nodes[idx].layout_position() == Position::Absolute
-        && !tree.oof_alignment_swapped(idx)
+        && !tree.oof_in_vertical_container(idx)
         && tree.transposed_child_view(idx).is_none())
     .then_some(ContainedOof::WidthFromInsets)
 }

@@ -21,6 +21,10 @@ pub(super) struct Settled {
     pub(super) align_self: Option<AlignItems>,
     /// The `justify-self` of the box, `None` for `auto`.
     pub(super) justify_self: Option<AlignItems>,
+    /// Whether the `justify-self` the box borrows from its container stays
+    /// off the alignment between its insets, which then reads it as `auto`
+    /// (see `inherited_last_baseline`).
+    pub(super) inset_auto_justify: bool,
 }
 
 impl Settled {
@@ -31,6 +35,7 @@ impl Settled {
             has_aspect_ratio: false,
             align_self: own_alignment(cv, cv.align_self),
             justify_self: own_alignment(cv, cv.justify_self),
+            inset_auto_justify: false,
         }
     }
 }
@@ -156,19 +161,16 @@ fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
 /// container's plain baseline. With an inset specified, `auto` behaves as
 /// `normal` and the box stays at the start.
 ///
-/// Layout reads `align-self` along the physical vertical axis and
-/// `justify-self` along the horizontal one, except for a box in a container on
-/// vertical axes whose containing block is on vertical axes as well: it reads
-/// them the other way round there, so `align-self` is the block axis of the
-/// container, the physical horizontal one. `containing_block_vertical` says
-/// whether the containing block is on vertical axes, and is only asked for when
-/// the container is and an alignment would be replaced.
+/// The static position is on the axes of the container: `align-self` is its
+/// block axis, the physical horizontal one in a container on vertical axes
+/// (`parent_vertical`). The alignment between the insets is on the axes of the
+/// containing block, so the caller keeps the replaced alignments off it where
+/// the containing block is on other axes than the container.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 pub(super) fn inherited_last_baseline(
     cv: &ComputedValues,
     parent: &ComputedValues,
     parent_vertical: bool,
-    containing_block_vertical: impl FnOnce() -> bool,
 ) -> (Option<AlignItems>, Option<AlignItems>) {
     let mut overrides = (None, None);
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
@@ -192,8 +194,7 @@ pub(super) fn inherited_last_baseline(
         auto(&cv.top) && auto(&cv.bottom),
         auto(&cv.left) && auto(&cv.right),
     );
-    let (block_insets_auto, inline_insets_auto) = if parent_vertical && containing_block_vertical()
-    {
+    let (block_insets_auto, inline_insets_auto) = if parent_vertical {
         (horizontal_insets_auto, vertical_insets_auto)
     } else {
         (vertical_insets_auto, horizontal_insets_auto)
@@ -471,14 +472,11 @@ pub(super) fn keyword_height_insets(
         matches!(margin, ComputedLengthPercentageOrAuto::Auto)
     };
     if auto(&values.margin.top) || auto(&values.margin.bottom) {
-        // Taffy swaps the two alignments only where the container that holds
-        // the box is on vertical axes as well (`get_oof_item_style`), which is
+        // Taffy reads the vertical axis of a box in a containing block on
+        // vertical axes from `justify-self` (`get_oof_item_style`), which is
         // the property that stretches the box here.
         return Some(KeywordHeightInsets::FitContent {
-            justify: vertical_axis_is_inline
-                && doc
-                    .taffy_parent_of(idx)
-                    .is_some_and(|parent| uses_vertical_axes(cascade, parent)),
+            justify: vertical_axis_is_inline,
         });
     }
     let alignment = if vertical_axis_is_inline {
