@@ -11401,14 +11401,16 @@ pub(super) fn generated_content_runs_past(
 }
 
 /// The top and the end, in the flow, of the generated content right before
-/// the box `node_id` among the children of its parent, the lowest of it, when
-/// it ends at or above `y`, the block-start margin edge of the box, and no
-/// other in-flow content before the box ends below it (see
-/// [`content_lies_before`]).
-/// That is the `::before` of the parent, or the generated content of an
+/// the box `node_id`, the lowest of it, when it ends at or above `y`, a
+/// position in the flow above the box, and no other in-flow content before
+/// the box ends below it (see [`content_lies_before`]).
+/// That is the `::before` of its parent, or the generated content of an
 /// element before the box that has no box of its own (see
-/// [`boxless_content_before`]). The margin of the box then adjoins it, as
-/// one between sibling blocks does.
+/// [`boxless_content_before`]); or, when the box begins its parent and its
+/// margin collapses through the parent's top (see
+/// [`starts_with_child_margin`]), such content before the parent, and so on
+/// up. The margin of the box then adjoins it, as one between sibling blocks
+/// does.
 pub(super) fn generated_content_end_above(
     document: &Document,
     cascade: &CascadeResult,
@@ -11430,37 +11432,42 @@ pub(super) fn generated_content_end_above(
     // ancestor's own edges or margin, unless the box begins the ancestor and
     // its margin collapses through the ancestor's top (see
     // [`starts_with_child_margin`]): the walk goes up only from such a level.
-    any_level_before(document, cascade, body_id, node_id, |parent, node, boxes| {
-        let lies_before = boxless_content_before(
-            document,
-            cascade,
-            parent,
-            node,
-            &|child, pseudo| {
-                renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(
-                        document, cascade, &flow_y, parent, child, pseudo, &record,
-                    )
-            },
-            &|_| false,
-        ) || !boxes.is_empty();
-        if renders_before_pseudo(cascade, parent) {
-            generated_box_lies(
+    any_level_before(
+        document,
+        cascade,
+        body_id,
+        node_id,
+        |parent, node, boxes| {
+            let lies_before = boxless_content_before(
                 document,
                 cascade,
-                &flow_y,
                 parent,
-                parent,
-                raikiri_style::PseudoElem::Before,
-                &record,
-            );
-            return true;
-        }
-        lies_before
-            || last.get().is_some()
-            || parent == body_id
-            || !starts_with_child_margin(document, cascade, parent, node)
-    });
+                node,
+                &|child, pseudo| {
+                    renders_pseudo(cascade, child, pseudo)
+                        && generated_box_lies(
+                            document, cascade, &flow_y, parent, child, pseudo, &record,
+                        )
+                },
+                &|_| false,
+            ) || !boxes.is_empty();
+            if renders_before_pseudo(cascade, parent) {
+                generated_box_lies(
+                    document,
+                    cascade,
+                    &flow_y,
+                    parent,
+                    parent,
+                    raikiri_style::PseudoElem::Before,
+                    &record,
+                );
+                return true;
+            }
+            lies_before
+                || last.get().is_some()
+                || !starts_with_child_margin(document, cascade, body_id, parent, node)
+        },
+    );
     let (top, end) = last.get()?;
     // Any other in-flow content that ends below it comes between: a box
     // after it whose negative margin pulls the box above that box's end too.
@@ -11471,25 +11478,36 @@ pub(super) fn generated_content_end_above(
 }
 
 /// Whether the margin of `child`, the first of the in-flow content of
-/// `parent`, collapses through the top of `parent`: `parent` is a plain block
-/// of the normal flow with no padding or border above, and `child` starts
-/// where it starts, as it does only when the margin is not held inside
-/// `parent`.
+/// `parent`, collapses through the top of `parent`: `parent` is a
+/// `display: contents` element, which has no box, or a plain block of the
+/// normal flow with no padding or border above, where the first box of
+/// `child` starts in the flow, as it does only when the margin is not held
+/// inside `parent`.
 fn starts_with_child_margin(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     parent: usize,
     child: usize,
 ) -> bool {
     let node = &document.nodes[parent];
-    let edges = node.layout.border.top + node.layout.padding.top;
+    if node.display() == DisplayValue::Contents {
+        return true;
+    }
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let child_box = if document.nodes[child].display() == DisplayValue::Contents {
+        first_box_in(document, child)
+    } else {
+        Some(child)
+    };
     matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
         && is_plain_block_box(document, parent)
         && !node.is_multicol_container()
         && !is_floating_box_for_pagination(document, cascade, parent)
-        && edges <= 0.001
-        && document.nodes[child].display() != DisplayValue::Contents
-        && (current_abs_y(document, child) - current_abs_y(document, parent)).abs() <= 0.001
+        && node.layout.border.top + node.layout.padding.top <= 0.001
+        && child_box.is_some_and(|child| (flow_y(child) - flow_y(parent)).abs() <= 0.001)
 }
 
 /// Whether `accept` takes the top and bottom in the flow of some generated
@@ -12272,7 +12290,6 @@ fn truncation_after_generated_content(
     at: &MarginBreak,
 ) -> Option<MarginTruncation> {
     let page_top = page_origins.origin(at.natural_page);
-    let margin_edge = at.effective_y - at.margin_top.max(0.0);
     // A box that may have clearance keeps its gap, as between siblings; and
     // only a page edge in the margin above the box cuts it.
     if !at.collapses_with_previous_block
@@ -12283,18 +12300,17 @@ fn truncation_after_generated_content(
                 raikiri_style::property::ClearValue::None
             )
         || at.natural_page == 0
-        || margin_edge > page_top + 0.001
         || at.effective_y <= page_top + 0.001
     {
         return None;
     }
-    // The generated content ends at or above the margin edge, so the page
-    // edge falls in the margin between them.
+    // Nothing but margins lies between the generated content and the box:
+    // those of both, collapsed, which the page edge must fall in. Generated
+    // content at the top of the page, as a table of no height there, starts
+    // the page: the margin after it is not at a break.
     let (content_top, previous_bottom) =
-        generated_content_end_above(document, cascade, body_id, at.node_id, margin_edge)?;
-    // Generated content at the top of the page, as a table of no height
-    // there, starts the page: the margin after it is not at a break.
-    if content_top >= page_top - 0.001 {
+        generated_content_end_above(document, cascade, body_id, at.node_id, at.effective_y)?;
+    if previous_bottom > page_top + 0.001 || content_top >= page_top - 0.001 {
         return None;
     }
     let (target_top, target_y) = page_origins.truncated_margin_target(

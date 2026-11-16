@@ -1809,8 +1809,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && frame.closing_edges > 0.0;
                 // A nested block after a block of its parent's flow, or
                 // first in it after generated content that has no candidate
-                // of its own, with a margin between the two: a page edge in
-                // that margin cuts it.
+                // of its own (see `generated_content_end_above`), with a
+                // margin between the two: a page edge in that margin cuts it.
+                // Only margins lie between such content and the block, so
+                // any gap there is one.
                 let margin_shape = in_flow_block_level
                     && !direct_body_child
                     && !node.used_writing_mode.is_vertical()
@@ -1819,17 +1821,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
                         }
-                        None => {
-                            node.layout.margin.top > 0.0
-                                && super::generated_content_end_above(
-                                    document,
-                                    cascade,
-                                    body_id,
-                                    node_id,
-                                    candidate_raw_y - node.layout.margin.top,
-                                )
-                                .is_some()
+                        None if !cascade.pseudo.is_empty() => {
+                            let flow_top = candidate_raw_y
+                                - accumulated_relative_offset_y(
+                                    document, cascade, body_id, node_id,
+                                );
+                            super::generated_content_end_above(
+                                document, cascade, body_id, node_id, flow_top,
+                            )
+                            .is_some_and(|(_, end)| end < flow_top - 0.001)
                         }
+                        None => false,
                     };
                 let needs_ancestor_constraints = margin_shape
                     || (nested_candidate_base
