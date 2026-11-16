@@ -539,6 +539,27 @@ fn the_margin_after_a_generated_box_stays_where_no_break_cuts_it() {
             "{before}"
         );
     }
+    // At a page edge that no forced break makes, a generated table of no
+    // height starts the page and keeps the margin after it, while an empty
+    // generated block lets the margin collapse through it to the edge.
+    for (before, tops) in [
+        (
+            r#"<style>.r::before{content:" ";display:table}</style>"#,
+            [(1, 'A', 25), (1, 'Z', 55)],
+        ),
+        (
+            r#"<style>.r::before{content:"";display:block}</style>"#,
+            [(1, 'A', 5), (1, 'Z', 35)],
+        ),
+    ] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"<div style="height:100px"></div>{before}<div class="r"><p style="margin:20px 0 0;width:20px">A</p></div><div>Z</div>"#
+            )),
+            tops,
+            "{before}"
+        );
+    }
 }
 
 #[test]

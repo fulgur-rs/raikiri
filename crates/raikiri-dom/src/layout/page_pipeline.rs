@@ -10987,8 +10987,8 @@ pub(super) fn generated_content_runs_past(
     })
 }
 
-/// The top and the end, in the flow, of the generated content right before
-/// the box `node_id` among the children of its parent, the lowest of it, when
+/// The end, in the flow, of the generated content right before the box
+/// `node_id` among the children of its parent, the lowest of it, when
 /// it is the last in-flow content above `y`, the block-start margin edge of
 /// the box: no box or line ends below it there (see [`content_end_above`]).
 /// That is the `::before` of the parent, or the generated content of an
@@ -11001,14 +11001,14 @@ pub(super) fn generated_content_end_above(
     body_id: usize,
     node_id: usize,
     y: f32,
-) -> Option<(f32, f32)> {
+) -> Option<f32> {
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let last = std::cell::Cell::new(None::<(f32, f32)>);
-    let record = |top: f32, bottom: f32| {
-        if bottom <= y + 0.001 && last.get().is_none_or(|(_, end)| bottom > end) {
-            last.set(Some((top, bottom)));
+    let last = std::cell::Cell::new(None::<f32>);
+    let record = |_: f32, bottom: f32| {
+        if bottom <= y + 0.001 && last.get().is_none_or(|end| bottom > end) {
+            last.set(Some(bottom));
         }
         false
     };
@@ -11038,10 +11038,10 @@ pub(super) fn generated_content_end_above(
         }
         true
     });
-    let (top, end) = last.get()?;
+    let end = last.get()?;
     content_end_above(document, cascade, body_id, node_id, y)
         .is_some_and(|content| content <= end + 0.001)
-        .then_some((top, end))
+        .then_some(end)
 }
 
 /// Whether `accept` takes the top and bottom in the flow of some generated
@@ -11839,21 +11839,12 @@ fn truncation_after_generated_content(
     {
         return None;
     }
-    let (content_top, previous_bottom) =
+    // The generated content ends at or above the margin edge, so the page
+    // edge falls in the margin between them.
+    let previous_bottom =
         generated_content_end_above(document, cascade, body_id, at.node_id, margin_edge)?;
     // Generated content of no height at the top of the page, as after a
     // forced break, starts the page: the margin after it is not at a break.
-    if content_top >= page_top - 0.001
-        || !page_edge_falls_in_margin(
-            at.natural_page,
-            page_top,
-            previous_bottom,
-            at.effective_y,
-            false,
-        )
-    {
-        return None;
-    }
     let (target_top, target_y) = page_origins.truncated_margin_target(
         at.natural_page,
         at.forced_before,
