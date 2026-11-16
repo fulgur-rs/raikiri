@@ -3728,6 +3728,26 @@ fn a_ratio_gives_the_grid_box_of_a_table_item_the_height_its_width_transfers() {
                 ("z", [0.0, 65.0, 800.0, 10.0]),
             ],
         ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:flex;align-items:start'><table id=t style='width:100px;aspect-ratio:2;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 60.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [100.0, 20.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 80.0, 800.0, 10.0]),
+            ],
+        ),
+        (
+            "<div id=pad style='height:20px'></div><div id=c style='display:grid'><table id=t style='width:100px;aspect-ratio:2;box-sizing:content-box;border-spacing:0'><caption id=cap style='height:10px'></caption><tr id=r><td style='padding:0'>x</td></tr></table><div id=d style='width:20px'>d</div></div><div id=z>z</div>",
+            &[
+                ("c", [0.0, 20.0, 800.0, 70.0]),
+                ("cap", [0.0, 20.0, 100.0, 10.0]),
+                ("d", [0.0, 80.0, 20.0, 10.0]),
+                ("r", [0.0, 30.0, 100.0, 50.0]),
+                ("z", [0.0, 90.0, 800.0, 10.0]),
+            ],
+        ),
     ]);
 }
 
