@@ -165,3 +165,18 @@ fn a_relative_offset_does_not_move_the_clip_box_past_the_page() {
         assert_eq!(pages(body).1.first(), Some(&Some(70)), "{body}");
     }
 }
+
+#[test]
+fn the_edge_items_of_a_clip_box_follow_the_order_property() {
+    // The second item comes first, so the break before it falls before the
+    // box; the break after the first item falls after the box.
+    let body = "<div style='height:20px'>P</div>\
+         <div style='height:60px;overflow:hidden;display:flex;flex-direction:column'>\
+         <div style='height:20px'>A</div>\
+         <div id=x style='height:20px;order:-1;break-before:page'>B</div></div>";
+    assert_eq!(pages(body), (2, vec![None, Some(0)]));
+    let body = "<div style='height:60px;overflow:hidden;display:flex;flex-direction:column'>\
+         <div style='height:20px;break-after:page'>A</div>\
+         <div style='height:20px;order:-1'>B</div></div><div id=x>X</div>";
+    assert_eq!(pages(body), (2, vec![None, Some(0)]));
+}

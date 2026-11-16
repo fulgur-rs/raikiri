@@ -511,9 +511,8 @@ fn clip_holds_breaks(
     let mut edge = node_id;
     while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
         && !document.nodes[parent].has_before_or_after_content
-        && page_edge_child(document, cascade, parent, before, 0).is_ok_and(|child| {
-            child.is_some_and(|child| is_descendant_or_self(document, child, edge))
-        })
+        && ordered_edge_child(document, cascade, parent, before)
+            .is_some_and(|child| is_descendant_or_self(document, child, edge))
     {
         edge = parent;
     }
@@ -538,6 +537,46 @@ fn clip_holds_breaks(
         next = document.parent_of(id).filter(|_| !positioned(id));
     }
     false
+}
+
+/// The first (`before`) or last box of `parent` in the order pagination
+/// visits its children: a flex or grid container visits its items in
+/// `order`-modified order, a block container in source order (see
+/// [`page_edge_child`]).
+fn ordered_edge_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    before: bool,
+) -> Option<usize> {
+    if !matches!(
+        document.nodes[parent].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    ) {
+        return page_edge_child(document, cascade, parent, before, 0)
+            .ok()
+            .flatten();
+    }
+    let order = super::page::pagination_child_order_borrowed(document, cascade, parent);
+    let is_item = |&child: &usize| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && match &node.data {
+                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                _ => true,
+            }
+    };
+    if before {
+        order.iter().copied().find(is_item)
+    } else {
+        order.iter().rev().copied().find(is_item)
+    }
 }
 
 /// The lowest edge painted by the fragments under `roots`, placed at the
