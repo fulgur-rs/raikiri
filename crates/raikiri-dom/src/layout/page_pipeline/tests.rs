@@ -16216,16 +16216,18 @@ fn a_margin_collapsed_from_a_first_child_breaks_at_the_first_page_edge() {
 }
 
 #[test]
-fn a_bordered_wrapper_keeps_its_last_childs_margin_inside() {
-    // The border separates the child's margin from the wrapper's, so the gap
-    // after the wrapper holds no margin to truncate.
+fn a_bordered_wrapper_truncates_its_last_childs_margin_at_the_page_edge() {
+    // The border keeps the child's margin inside the wrapper, where the first
+    // page edge in it truncates it: the border begins the second page, and
+    // the box after the wrapper follows it there. The rest of the margin
+    // reaches no page.
     assert_eq!(
         nested_margin_layout(
             "border-bottom:1px solid",
             "height:20px",
             [Some("margin-bottom:1000px"), None]
         ),
-        (1021.0, 11)
+        (101.0, 2)
     );
 }
 

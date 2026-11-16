@@ -4296,3 +4296,175 @@ fn moved_rows_check_their_table_for_spanning_cells_once() {
     let last_row = ids[ids.len() - 2];
     assert_eq!(page_flow_y(&doc, last_row), 360.0);
 }
+
+/// `body > [div(parent_css) > children, div(10px)]` on 100px pages, each
+/// child a block styled by its entry. Returns the page-flow y of the block
+/// after the parent and the number of pages.
+fn after_margin_above_edges(parent_css: &str, children: &[&str]) -> (f32, usize) {
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{parent_css}"));
+        for css in children {
+            block(doc, parent, &format!("display:block;{css}"));
+        }
+        after = block(doc, body, "display:block;height:10px");
+    });
+    (page_flow_y(&doc, after), pages)
+}
+
+#[test]
+fn a_page_edge_in_the_margin_above_the_edges_truncates_it() {
+    // CSS Fragmentation 3 §5.2: the last box's margin crosses the page end,
+    // where the page breaks. The padding begins the second page, and the
+    // block after the parent follows it there, as in Chromium.
+    for child in [
+        "height:90px;margin-bottom:20px",
+        "height:100px;margin-bottom:20px",
+        "height:60px;padding-bottom:30px;margin-bottom:20px",
+        "height:90px;margin-bottom:5px",
+    ] {
+        assert_eq!(
+            after_margin_above_edges("padding-bottom:10px", &[child]),
+            (110.0, 2),
+            "{child}"
+        );
+    }
+}
+
+#[test]
+fn a_margin_above_the_edges_crossing_more_than_a_page_ends_at_the_first_edge() {
+    // The rest of the margin is truncated with the pages it would fill.
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px", &["height:90px;margin-bottom:150px"]),
+        (110.0, 2)
+    );
+    // So it is in a block that ends with the parent, whose own padding
+    // follows the parent's.
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let outer = block(doc, body, "display:block;padding-bottom:5px");
+        let parent = block(doc, outer, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!((page_flow_y(&doc, after), pages), (115.0, 2));
+}
+
+#[test]
+fn a_truncated_margin_between_the_children_of_a_block_reaches_no_page() {
+    // The margin above the second box is truncated at the first page edge.
+    // The wrapper around both is as tall as the margin was before that, but
+    // the rest of the margin does not add the pages it would have filled.
+    let (mut second, mut after) = (0, 0);
+    let (doc, pages) = paged_body(|doc, body| {
+        let wrapper = block(doc, body, "display:block;border-bottom:1px solid");
+        block(doc, wrapper, "display:block;height:20px");
+        second = block(doc, wrapper, "display:block;height:20px;margin-top:1000px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, second), page_flow_y(&doc, after), pages),
+        (100.0, 121.0, 2)
+    );
+}
+
+#[test]
+fn a_margin_collapsed_out_of_the_last_box_is_truncated_above_the_edges() {
+    // The inner block has no edges of its own, so the margin of its child
+    // collapses through its end, and through a `display: contents` element
+    // that has no box.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:10px");
+        let inner = block(doc, parent, "display:block");
+        block(doc, inner, "display:block;height:90px;margin-bottom:20px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 110.0);
+    for (inner_css, expected) in [("height:90px", 110.0), ("height:30px", 60.0)] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:10px");
+            let contents = block(doc, parent, "display:contents");
+            block(
+                doc,
+                contents,
+                &format!("display:block;{inner_css};margin-bottom:20px"),
+            );
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{inner_css}");
+    }
+}
+
+#[test]
+fn a_margin_above_the_edges_that_ends_on_its_page_stays() {
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px", &["height:60px;margin-bottom:20px"]),
+        (90.0, 1)
+    );
+    // The margins of an empty last box collapse through it.
+    assert_eq!(
+        after_margin_above_edges(
+            "padding-bottom:10px",
+            &["height:30px", "height:0;margin-bottom:20px"]
+        ),
+        (60.0, 1)
+    );
+}
+
+#[test]
+fn a_min_height_left_behind_lets_the_margin_above_the_edges_be_truncated() {
+    let child = ["height:90px;margin-bottom:20px"];
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;min-height:50px", &child),
+        (110.0, 2)
+    );
+    // A `min-height` past the content keeps the block, and its padding,
+    // where they are.
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;min-height:150px", &child),
+        (160.0, 2)
+    );
+}
+
+#[test]
+fn a_block_whose_height_does_not_follow_its_content_keeps_the_margin() {
+    let child = ["height:90px;margin-bottom:20px"];
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;height:120px", &child),
+        (130.0, 2)
+    );
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;max-height:40px", &child),
+        (50.0, 1)
+    );
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;contain:size", &child),
+        (10.0, 1)
+    );
+}
+
+#[test]
+fn a_grid_item_keeps_the_margin_above_its_edges() {
+    // Chromium leaves the margin inside the item whole.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let grid = block(doc, body, "display:grid");
+        let parent = block(doc, grid, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:90px;margin-bottom:20px");
+        after = block(doc, grid, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 120.0);
+}
+
+#[test]
+fn a_paragraph_keeps_the_space_below_its_lines() {
+    let mut after = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let paragraph = block(doc, body, "display:block;padding-bottom:10px");
+        doc.append_text(paragraph, "aaa");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert!(page_flow_y(&doc, after) < 100.0);
+}

@@ -31,7 +31,8 @@ use super::{
     place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
     reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
     run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
+    text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -337,6 +338,14 @@ pub(super) struct PaginationState {
     /// Box growth used to paint closing edges across a page break, excluded
     /// from the height against which outer absolute children are positioned.
     edge_growth: HashMap<usize, f32>,
+    /// How much of the margin above the edges of each block a page edge
+    /// truncated (see [`Self::truncate_margin_above_edges`]): the block ends
+    /// that much above the margin box of its last child.
+    pub(super) margin_cuts: HashMap<usize, f32>,
+    /// For each block, the block size of the margins inside it that a page
+    /// edge may truncate (see [`truncatable_margin_rooms`]), which the pages
+    /// its run-on reaches leave out.
+    pub(super) margin_rooms: HashMap<usize, f32>,
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
     pub(super) sibling_margins: SiblingMargins,
@@ -386,6 +395,8 @@ impl PaginationState {
             reach: PageReach::default(),
             edge_pushes: HashMap::new(),
             edge_growth: HashMap::new(),
+            margin_cuts: HashMap::new(),
+            margin_rooms: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
             sibling_margins: SiblingMargins::default(),
@@ -1151,8 +1162,11 @@ impl PaginationState {
                     height,
                 )
         };
+        // A truncated margin inside the box reaches no page of its own: the
+        // content and the edges around it reach the pages the box runs on to.
+        let reach_height = height - self.margin_rooms.get(&node_id).copied().unwrap_or(0.0);
         let end_page = page_origins
-            .end_page(effective_y, height)
+            .end_page(effective_y, reach_height)
             .filter(|_| !monolithic_paper_fit());
         let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
@@ -1191,7 +1205,9 @@ impl PaginationState {
     /// that they begin the next page instead of running on from the content
     /// across the page edge: browsers do not split edges that way, and one
     /// that cannot fit a page still starts at the top of one. The block grows
-    /// by the room left on the page, and the flow after it follows.
+    /// by the room left on the page, and the flow after it follows. A page
+    /// edge inside the margin above the edges truncates that margin first
+    /// (see [`Self::truncate_margin_above_edges`]).
     pub(super) fn break_before_edges(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1235,7 +1251,12 @@ impl PaginationState {
             self.current_page = page;
         }
         self.subtree_shifts.take_left_later_item();
-        let end = edges_break.raw_y + self.flow_shift;
+        let end = self.truncate_margin_above_edges(
+            document,
+            env,
+            edges_break,
+            edges_break.raw_y + self.flow_shift,
+        );
         let page = page_origins.page_index_for_end(end);
         let page_end = page_origins.origin(page) + page_origins.step_at(page);
         // The content must end below the top of its page, and the edges must
@@ -1327,6 +1348,54 @@ impl PaginationState {
             self.record_pages(control, page_origins.end_page(page_end, visible), true)?;
         }
         Ok(())
+    }
+
+    /// Truncates the margin between the last box of the block of
+    /// `edges_break` and its edges, which end the content at `end` in the
+    /// flow, when a page edge falls inside it (CSS Fragmentation 3 §5.2):
+    /// the edges begin the page at that edge, as a box after the margin
+    /// would. The block shrinks by the part of the margin below the edge, and
+    /// the flow after it moves up. Returns where the content now ends.
+    fn truncate_margin_above_edges(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        edges_break: &EdgesBreak,
+        end: f32,
+    ) -> f32 {
+        if edges_break.margin_above <= 0.001 {
+            return end;
+        }
+        let page_origins = env.page_origins;
+        let margin_start = end - edges_break.margin_above;
+        let edge_page = page_origins.page_index_for_y(margin_start - 0.001) + 1;
+        let edge = page_origins.origin(edge_page);
+        if end <= edge + 0.001 {
+            return end;
+        }
+        let delta = edge - end;
+        let node_id = edges_break.node_id;
+        document.nodes[node_id].layout.size.height += delta;
+        document.mark_pagination_extent_dirty(node_id);
+        let held = shrink_ancestors_after_content_change(
+            document,
+            env.cascade,
+            node_id,
+            delta,
+            delta,
+            env.body_id,
+            &IfcBoxShifts::default(),
+            None,
+        );
+        self.flow_shift += delta;
+        *self.margin_cuts.entry(node_id).or_default() -= delta;
+        // An ancestor whose height does not shrink with its content keeps
+        // the flow after it where it was.
+        self.subtree_shifts.bounded.extend(
+            held.into_iter()
+                .map(|(ancestor, held)| (ancestor, held, edge_page)),
+        );
+        edge
     }
 
     /// The block size of the edges that a clip leaves visible once they begin

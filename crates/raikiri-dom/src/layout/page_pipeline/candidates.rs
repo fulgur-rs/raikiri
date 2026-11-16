@@ -16,9 +16,9 @@ use super::{
     is_block_level_flow_box, is_floating_box_for_pagination, is_flow_table_caption,
     is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
     is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
-    lone_box_with_floats, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    normal_flow_y, page_applies_to_box, page_break_is_forced, page_edge_constraint,
-    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    lone_box_with_floats, margin_above_edges, moves_later_siblings, nested_run_units,
+    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line,
@@ -920,6 +920,9 @@ pub(super) struct EdgesBreak {
     pub(super) raw_y: f32,
     /// The block size of the bottom padding and border.
     pub(super) edges: f32,
+    /// The block size of the margin between the last box in the flow of the
+    /// block and the edges (see [`margin_above_edges`]).
+    pub(super) margin_above: f32,
     /// The end of the clip around the block, in the coordinates of the
     /// candidates, when that clip keeps its place as the edges are pushed
     /// down, and infinity when none does. It names the clip.
@@ -2486,6 +2489,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         before: self.out.len(),
                         raw_y: bottom - edges - offset,
                         edges,
+                        margin_above: margin_above_edges(document, cascade, body_id, node_id),
                         clip_end,
                         clip_room,
                         beside,

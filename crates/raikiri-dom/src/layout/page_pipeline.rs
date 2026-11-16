@@ -4331,7 +4331,7 @@ fn paginate_flow(
     // Keep the scheduled inline size identical to the first layout pass.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
-    let unpaginated_overflow =
+    let mut unpaginated_overflow =
         unpaginated_content_overflow(document, cascade, body_id, content_height);
     let positioned_owner_heights = positioned_flow::owner_heights(document);
     let fixed_page_step = fixed_page_step(content_height, page_box.height);
@@ -4519,6 +4519,7 @@ fn paginate_flow(
     );
     state.track_outer_owners(&positioned_owner_heights);
     state.sibling_margins.preceding_bottoms = preceding_bottoms;
+    state.margin_rooms = truncatable_margin_rooms(document, cascade, body_id, &edges_breaks);
     let env = FlowEnv {
         cascade,
         body_id,
@@ -4574,6 +4575,12 @@ fn paginate_flow(
     })();
     document.finish_normal_block_shifts();
     candidate_result?;
+    // A block whose margin above its edges a page edge truncated ends that
+    // much above the margin box of its last child, as content overflowing it
+    // would.
+    for (&node_id, &cut) in &state.margin_cuts {
+        *unpaginated_overflow.entry(node_id).or_default() += cut;
+    }
     if !positioned_owner_heights.is_empty() {
         // Resolve ancestor-dependent positions from normal-flow growth before
         // positioned fragmentation and the table-box geometry finalizers.
@@ -9318,8 +9325,201 @@ fn content_bottom_edges(
         && node.multicol.is_none()
         && (node.is_ifc_root() || moves_later_siblings(document, node_id))
         && (height_follows_content(document, node_id)
+            || min_height_left_behind(document, node_id)
             || content_ends_above_edges(document, cascade, body_id, node_id)))
     .then_some(edges)
+}
+
+/// Whether the block `node_id` of auto `height` and `max-height` has grown
+/// past its `min-height` with its content, so that its height follows that
+/// content as if it had none.
+fn min_height_left_behind(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    let block_axis = document.block_axis(node_id);
+    let (min_height, _) = border_box_height_bounds(document, node_id);
+    block_axis.height().is_auto()
+        && block_axis.max_height().is_auto()
+        && !document.nodes[node_id].size_containment.height
+        && document.nodes[node_id].layout.size.height > min_height + 0.001
+}
+
+/// The block size of the margin between the last box in the flow of the
+/// block `node_id` and its bottom padding and border: the bottom margin of
+/// that box, collapsed with those of the last boxes in its own flow that do
+/// not close with edges of their own. A page edge inside it truncates it
+/// (CSS Fragmentation 3 §5.2), and the edges begin the next page. Zero for a
+/// paragraph, whose lines end its content, for a block of set `height`, and
+/// for one that `max-height` holds; no more than what keeps the block at its
+/// `min-height`.
+fn margin_above_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let node = &document.nodes[node_id];
+    if node.is_ifc_root()
+        || !document.block_axis(node_id).height().is_auto()
+        || node.size_containment.height
+        || in_flex_or_grid(document, node_id, body_id)
+    {
+        return 0.0;
+    }
+    let Some(last) = last_flow_box(document, cascade, node_id) else {
+        return 0.0;
+    };
+    let layout = &node.layout;
+    let content_end = layout.size.height - layout.padding.bottom - layout.border.bottom;
+    // A box inside a `display: contents` child is laid out by `node_id`, so
+    // the box is located from the origins of the two.
+    let last_bottom = current_abs_y(document, last) - current_abs_y(document, node_id)
+        + document.nodes[last].layout.size.height
+        - layout_relative_offset_y(document, cascade, body_id, last);
+    // The space below the last box holds no more than the largest margin
+    // that collapses there; a float that a block formatting context grows
+    // to hold takes the rest.
+    let mut margin = 0.0_f32;
+    let mut current = Some(last);
+    while let Some(id) = current {
+        let child = &document.nodes[id];
+        // The margins of an empty box collapse through it, and Chromium keeps
+        // them whole below the box before it.
+        if child.layout.size.height <= 0.0 {
+            return 0.0;
+        }
+        margin = margin.max(child.layout.margin.bottom);
+        if child.layout.padding.bottom + child.layout.border.bottom > 0.0
+            || child.is_ifc_root()
+            || !height_follows_content(document, id)
+        {
+            break;
+        }
+        current = last_flow_box(document, cascade, id);
+    }
+    // A `max-height` that holds the block ends its content box above where
+    // its content would.
+    let (min_height, max_height) = border_box_height_bounds(document, node_id);
+    if layout.size.height >= max_height - 0.001 {
+        return 0.0;
+    }
+    (content_end - last_bottom)
+        .min(margin)
+        .min(layout.size.height - min_height)
+        .max(0.0)
+}
+
+/// The last box in the flow of the block `node_id`: its last flow child (see
+/// [`last_flow_child`]), or the last box inside it when that child is a
+/// `display: contents` element without a box of its own.
+fn last_flow_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let mut last = last_flow_child(document, cascade, node_id)?;
+    while document.nodes[last].display() == DisplayValue::Contents {
+        last = last_flow_child(document, cascade, last)?;
+    }
+    Some(last)
+}
+
+/// For each block below `body_id`, the block size of the margins inside it
+/// that a page edge may truncate (CSS Fragmentation 3 §5.2): those between
+/// its in-flow children, and the margin above the edges of a block whose
+/// last box ends with one (see [`margin_above_edges`]), its own and those of
+/// the blocks inside it. A truncated margin reaches no page of its own: the
+/// content on either side of it reaches the pages the block runs on to.
+fn truncatable_margin_rooms(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    edges_breaks: &[candidates::EdgesBreak],
+) -> HashMap<usize, f32> {
+    let mut rooms: HashMap<usize, f32> = edges_breaks
+        .iter()
+        .filter(|found| found.margin_above > 0.0)
+        .map(|found| (found.node_id, found.margin_above))
+        .collect();
+    let order: Vec<_> = document.preorder(body_id).collect();
+    for &node_id in order.iter().rev() {
+        if node_id == body_id {
+            continue;
+        }
+        let gaps = margins_between_children(document, cascade, body_id, node_id);
+        let room = rooms.get(&node_id).copied().unwrap_or(0.0) + gaps;
+        if room <= 0.0 {
+            continue;
+        }
+        rooms.insert(node_id, room);
+        if let Some(parent) = document
+            .parent_of(node_id)
+            .filter(|&parent| parent != body_id)
+        {
+            *rooms.entry(parent).or_default() += room;
+        }
+    }
+    rooms
+}
+
+/// The block size of the margins between the in-flow children of the block
+/// container `node_id`: between the border boxes of each child and the one
+/// after it, no more than the larger of the margins that meet there.
+fn margins_between_children(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let node = &document.nodes[node_id];
+    if node.kind() != NodeKind::Element
+        || node.formatting_context != FormattingContext::Block
+        || !moves_later_siblings(document, node_id)
+    {
+        return 0.0;
+    }
+    let mut total = 0.0;
+    let mut previous: Option<(f32, f32)> = None;
+    for &child in &node.children {
+        let child_node = &document.nodes[child];
+        if !child_node.is_in_document()
+            || child_node.is_display_none()
+            || child_node.kind() != NodeKind::Element
+            || child_node.display() == DisplayValue::Contents
+            || !matches!(
+                child_node.position(),
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            )
+            || super::page::is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        let layout = &child_node.layout;
+        let top = layout.location.y - layout_relative_offset_y(document, cascade, body_id, child);
+        if let Some((bottom, margin_bottom)) = previous {
+            let margin = margin_bottom.max(layout.margin.top);
+            total += (top - bottom).min(margin).max(0.0);
+        }
+        previous = Some((top + layout.size.height, layout.margin.bottom));
+    }
+    total
+}
+
+/// Whether the block `node_id` lies in an item of a flex or grid container
+/// below `body_id`, whose fragmentation keeps the margins of the item's
+/// content.
+fn in_flex_or_grid(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+    body_id: usize,
+) -> bool {
+    document
+        .ancestors(node_id)
+        .take_while(|&id| id != body_id)
+        .any(|id| {
+            matches!(
+                document.nodes[id].formatting_context,
+                FormattingContext::Flex | FormattingContext::Grid
+            )
+        })
 }
 
 /// Whether the block `node_id`, which a set `height`, `min-height` or
