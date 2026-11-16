@@ -15350,12 +15350,13 @@ fn height_follows_content(document: &super::context::LayoutSession<'_>, block: u
         && !node.size_containment.height
 }
 
-/// Whether the content of `block` cannot grow its height: `height` or
-/// `max-height` sets it, or size containment ignores the content.
+/// Whether the content of `block` cannot grow its height: a definite
+/// `height` or a `max-height` that resolves sets it, or size containment
+/// ignores the content. A percentage of a containing block whose height is
+/// not definite caps nothing.
 fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
-    let block_axis = document.block_axis(block);
-    !block_axis.height().is_auto()
-        || !block_axis.max_height().is_auto()
+    definite_content_height(document, block).is_some()
+        || border_box_height_bounds(document, block).1.is_finite()
         || document.nodes[block].size_containment.height
 }
 

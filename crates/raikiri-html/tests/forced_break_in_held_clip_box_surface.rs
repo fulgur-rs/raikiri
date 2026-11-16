@@ -129,10 +129,25 @@ fn a_clip_margin_past_the_page_does_not_break_the_box() {
 }
 
 #[test]
-fn a_clip_box_with_only_a_min_height_grows_and_breaks() {
-    let body = "<div style='min-height:60px;overflow:hidden'><div style='height:20px'>A</div>\
-         <div id=x style='height:30px;break-before:page'>B</div></div>";
-    assert_eq!(pages(body), (2, vec![None, Some(0)]));
+fn a_clip_box_whose_height_can_grow_breaks() {
+    // A min-height alone, and a percentage of a containing block whose height
+    // is not definite, cap nothing.
+    for clip in ["min-height:60px", "height:100%", "max-height:100%"] {
+        let body = format!(
+            "<div><div style='{clip};overflow:hidden'><div style='height:20px'>A</div>\
+             <div id=x style='height:30px;break-before:page'>B</div></div></div>"
+        );
+        assert_eq!(pages(&body), (2, vec![None, Some(0)]), "{clip}");
+    }
+    // A percentage of a definite height caps the box.
+    for clip in ["height:100%", "max-height:50%"] {
+        let body = format!(
+            "<div style='height:80px'><div style='{clip};overflow:hidden'>\
+             <div style='height:20px'>A</div>\
+             <div id=x style='height:30px;break-before:page'>B</div></div></div>"
+        );
+        assert_eq!(pages(&body), (1, vec![Some(20)]), "{clip}");
+    }
 }
 
 #[test]
