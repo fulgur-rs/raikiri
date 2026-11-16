@@ -59,10 +59,10 @@ impl LayoutStyleView<'_> {
     /// The block-axis alignment of a box in the static-position rectangle of its
     /// block container.
     ///
-    /// An absolutely positioned box that asks for `last baseline` takes no part
-    /// in baseline alignment and aligns to the end of the rectangle even when it
-    /// overflows it, which a zero-height rectangle makes it always do: `safe
-    /// end` would put it at the start instead.
+    /// The same alignment as the box has anywhere else: an absolutely
+    /// positioned box that asks for `last baseline` aligns to the end of the
+    /// rectangle even when it overflows it, which a zero-height rectangle makes
+    /// it always do.
     #[inline]
     pub fn static_position_align_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(false)

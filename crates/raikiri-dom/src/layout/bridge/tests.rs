@@ -1137,7 +1137,7 @@ fn settled_alignment_align_self_value_maps_through_self_alignment() {
 #[test]
 fn settled_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
-    // `last baseline` aligns it to the unsafe `end` on both axes. A box in the
+    // `last baseline` aligns it to the `end` on both axes. A box in the
     // flow keeps aligning to the baseline.
     for (position, expected) in [
         (PositionValue::Absolute, AlignItems::END),
@@ -1183,6 +1183,7 @@ fn settled_alignment_baseline_falls_back_to_safe_start_for_abspos() {
 #[test]
 fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
     let mut parent = ComputedValues::initial();
+    parent.display = DisplayValue::Grid;
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     for (position, expected) in [
@@ -1197,6 +1198,14 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
         assert_eq!(style.align_self, expected, "position: {label}");
         assert_eq!(style.justify_self, expected, "position: {label}");
     }
+    // A block container aligns no items along its block axis, so only its
+    // `justify-items` reaches the box.
+    parent.display = DisplayValue::Block;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    let style = settled_alignments(&cv, &parent);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, Some(AlignItems::END));
 }
 
 #[test]
@@ -1204,6 +1213,7 @@ fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_
     // `auto` borrows the container's `last baseline` only in an axis whose
     // insets are both `auto`; with one specified it behaves as `normal`.
     let mut parent = ComputedValues::initial();
+    parent.display = DisplayValue::Grid;
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     let mut cv = ComputedValues::initial();
@@ -1227,6 +1237,7 @@ fn abspos_auto_alignment_follows_the_axes_of_a_vertical_container() {
     // `align-self` is the block axis, the physical horizontal one on vertical
     // axes, and `justify-self` the inline axis, the physical vertical one.
     let mut parent = ComputedValues::initial();
+    parent.display = DisplayValue::Grid;
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     let mut cv = ComputedValues::initial();
@@ -1251,6 +1262,7 @@ fn abspos_auto_alignment_swaps_the_axes_only_with_a_containing_block_on_vertical
     // the horizontal one, unless the container and the containing block are both
     // on vertical axes.
     let mut parent = ComputedValues::initial();
+    parent.display = DisplayValue::Grid;
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     let mut cv = ComputedValues::initial();

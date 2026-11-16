@@ -562,7 +562,7 @@ fn an_overflowing_box_keeps_the_block_start_edge() {
     // the block-end edge.
     assert_eq!(rect(vertical_rl, "end"), -50.0);
     assert_eq!(rect(vertical_lr, "end"), 0.0);
-    // `last baseline` falls back to `safe self-end`.
+    // `last baseline` aligns as `end`.
     assert_eq!(rect(vertical_rl, "last baseline"), -50.0);
     assert_eq!(rect(vertical_lr, "last baseline"), 0.0);
     // A scroll container may scroll in the direction of the overflow.

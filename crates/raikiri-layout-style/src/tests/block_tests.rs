@@ -35,7 +35,7 @@ fn core_claims_and_block_defaults_stay_distinct() {
 }
 
 #[test]
-fn a_last_baseline_abspos_aligns_to_the_unsafe_end() {
+fn a_last_baseline_abspos_aligns_to_the_end() {
     use raikiri_style::property::PositionValue;
     let alignments = |position, value| {
         let mut cv = ComputedValues::initial();

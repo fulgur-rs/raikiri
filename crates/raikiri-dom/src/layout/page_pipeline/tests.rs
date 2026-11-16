@@ -2240,7 +2240,7 @@ fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_end_edge() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let layout = doc.nodes[child].layout;
-    // `last baseline` aligns as the unsafe `end`, so the box spills past the
+    // `last baseline` aligns as `end`, so the box spills past the
     // start edges (Chromium: -10, -10).
     assert!(
         (layout.location.x - -10.0).abs() < 0.01,

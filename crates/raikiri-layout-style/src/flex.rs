@@ -87,9 +87,9 @@ pub fn line_relative(value: A, rtl: bool) -> A {
 }
 impl LayoutStyleView<'_> {
     /// The self alignment along an axis. An absolutely positioned box takes no
-    /// part in baseline alignment: `last baseline` aligns it to the unsafe
-    /// `end` of its alignment container, even when it overflows, as Chromium
-    /// does, and `baseline` to its `safe start`.
+    /// part in baseline alignment: `last baseline` aligns it to the `end` of
+    /// its alignment container with the default overflow alignment, as
+    /// Chromium does, and `baseline` to its `safe start`.
     pub(crate) fn self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
             OverrideKind::AlignSelf(v) if !inline => Some(v),

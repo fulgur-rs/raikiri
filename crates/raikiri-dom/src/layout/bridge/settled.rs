@@ -40,11 +40,12 @@ impl Settled {
 ///
 /// An absolutely positioned box takes no part in baseline alignment (CSS Box
 /// Alignment 3 §9.1), so `baseline` falls back to `safe start` and `last
-/// baseline` to the end. Chromium aligns `last baseline` as the unsafe `end`
-/// of the alignment container rather than the specified `safe self-end`: the
-/// box keeps the container's end edge even when it overflows or its own
-/// direction differs. Taffy places `baseline` at the start edge already, but
-/// keeps the default overflow alignment.
+/// baseline` to the end. Chromium aligns `last baseline` as `end` of the
+/// alignment container with the default overflow alignment, rather than the
+/// specified `safe self-end`: in its static position the box keeps the
+/// container's end edge even when it overflows or its own direction differs.
+/// Taffy places `baseline` at the start edge already, but keeps the default
+/// overflow alignment.
 fn own_alignment(cv: &ComputedValues, value: AlignSelfValue) -> Option<AlignItems> {
     let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     match value {
@@ -147,9 +148,10 @@ fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
 /// The alignments that replace the `auto` ones of an absolutely positioned
 /// box whose container (`parent`) aligns its items to the last baseline.
 ///
-/// Such a box takes the container's `align-items` / `justify-items` for its
-/// static position, where both insets of the axis are `auto`. When that is
-/// `last baseline`, the box aligns to the unsafe `end` like an explicit
+/// Such a box takes the container's `align-items` (when the container is a
+/// flex or grid container) / `justify-items` for its static position, where
+/// both insets of the axis are `auto`. When that is
+/// `last baseline`, the box aligns to the `end` like an explicit
 /// `last baseline` does ([`own_alignment`]); taffy alone would inherit the
 /// container's plain baseline. With an inset specified, `auto` behaves as
 /// `normal` and the box stays at the start.
@@ -172,8 +174,12 @@ pub(super) fn inherited_last_baseline(
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return overrides;
     }
+    // A block container aligns no items along its block axis, so its
+    // `align-items` gives the box no alignment there: Chromium keeps the box
+    // at the start of its static position, unlike an explicit `align-self`.
     let block = matches!(cv.align_self, AlignSelfValue::Auto)
-        && parent.align_items == SelfAlignmentValue::LastBaseline;
+        && parent.align_items == SelfAlignmentValue::LastBaseline
+        && parent.display.is_flex_or_grid_container();
     let inline = matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline;
     if !(block || inline) {
