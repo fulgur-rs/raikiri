@@ -272,3 +272,36 @@ fn a_box_before_the_paragraph_counts_where_the_flow_puts_it() {
         "{body}"
     );
 }
+
+#[test]
+fn a_generated_box_counts_where_it_ends() {
+    // The generated box starts on the page before the paragraph's, and ends
+    // on the paragraph's page: the paragraph moves whole.
+    for (before, after) in [
+        (
+            r#"<style>body::before{content:"";display:block;height:140px}</style>"#,
+            "",
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:140px}</style><div class="w">"#,
+            "</div>",
+        ),
+        (
+            r#"<style>.s::before{content:"";display:block;height:140px}</style><span class="s"></span>"#,
+            "",
+        ),
+    ] {
+        let body = document(before, after, "", "margin:10px 0 0;padding-top:40px", "A");
+        assert_eq!(glyph_tops(&body), [(2, 'A', 45), (2, 'Z', 75)], "{body}");
+    }
+    for (class, content) in LINES {
+        let body = document(
+            r#"<style>.w::before{content:"";display:block;height:140px}</style><div class="w" style="padding-top:10px">"#,
+            "</div>",
+            class,
+            "margin:10px 0 0;padding-top:40px",
+            content,
+        );
+        assert_eq!(glyph_tops(&body), [(2, 'A', 45), (2, 'Z', 75)], "{body}");
+    }
+}

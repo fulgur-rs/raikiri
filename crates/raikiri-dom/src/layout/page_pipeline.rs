@@ -10822,11 +10822,12 @@ fn any_level_before(
 /// starts at `page_start`: a box before it or before an ancestor of it that
 /// is not the body (see [`any_level_before`]), empty or not, or the lines of
 /// text there, or the generated `::before` box of an ancestor of it, the body
-/// too, that ends below the page start or starts on the page. Only such
-/// content gives the flow a break before `node_id` on the page: below nothing
-/// but margins, or the top padding and border of the boxes it begins, a box
-/// starts the page's content, as Chromium has no break before it there (CSS
-/// Fragmentation 3 §4.4). Positions are those of the flow, without relative offsets.
+/// too, that ends below the page start or starts on the page, where the line
+/// loop of the ancestor's paragraph placed it. Only such content gives the
+/// flow a break before `node_id` on the page: below nothing but margins, or
+/// the top padding and border of the boxes it begins, a box starts the page's
+/// content, as Chromium has no break before it there (CSS Fragmentation 3
+/// §4.4). Positions are those of the flow, without relative offsets.
 pub(super) fn follows_box_on_page(
     document: &Document,
     cascade: &CascadeResult,
@@ -10838,6 +10839,31 @@ pub(super) fn follows_box_on_page(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
+    // A generated box lies in the paragraph of `root`: a block-level one
+    // where the line loop placed it, an inline one on the lines that hold its
+    // text. Whether it is on the page.
+    let pseudo_on_page = |root: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
+        let id = crate::generated_content::generated_node_id(element, pseudo);
+        document.ifc_layout_node(root).is_some_and(|node| {
+            let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
+            node.ifc
+                .as_ref()
+                .and_then(|ifc| ifc.lines.as_ref())
+                .is_some_and(|lines| {
+                    lines.placed_blocks.iter().any(|placed| {
+                        let top = origin + placed.border_box.y;
+                        placed.node == id as u64 && on_page(top, top + placed.border_box.height)
+                    }) || lines.lines.iter().enumerate().any(|(index, line)| {
+                        let top = origin + lines.line_top(index);
+                        super::ifc::text_lines::glyph_owners(line).contains(&id)
+                            && on_page(
+                                top,
+                                top + crate::layout::ifc::outside_marker::fit_height(line),
+                            )
+                    })
+                })
+        })
+    };
     any_level_before(
         document,
         cascade,
@@ -10857,8 +10883,10 @@ pub(super) fn follows_box_on_page(
                             raikiri_style::PseudoElem::After,
                         ]
                         .into_iter()
-                        .any(|pseudo| generates_block_pseudo(cascade, child, pseudo))
-                        && flow_y(child) >= page_start - 0.001
+                        .any(|pseudo| {
+                            generates_block_pseudo(cascade, child, pseudo)
+                                && pseudo_on_page(parent, child, pseudo)
+                        })
                 })
                 || boxes.iter().any(|&id| {
                     if document.nodes[id].kind() != NodeKind::Element {
@@ -10879,7 +10907,8 @@ pub(super) fn follows_box_on_page(
                     let top = flow_y(id);
                     on_page(top, top + document.nodes[id].layout.size.height)
                 })
-                || (renders_before_pseudo(cascade, parent) && flow_y(parent) >= page_start - 0.001)
+                || (renders_before_pseudo(cascade, parent)
+                    && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
         },
     )
 }
