@@ -1085,8 +1085,7 @@ fn settled_alignments_on_axes(
     parent_vertical: bool,
 ) -> Settled {
     let mut settled = Settled::of(cv);
-    let (align_self, justify_self) =
-        settled::inherited_last_baseline(cv, parent, parent_vertical, || parent_vertical);
+    let (align_self, justify_self) = settled::inherited_last_baseline(cv, parent, parent_vertical);
     settled.align_self = align_self.or(settled.align_self);
     settled.justify_self = justify_self.or(settled.justify_self);
     settled
@@ -1257,10 +1256,10 @@ fn abspos_auto_alignment_follows_the_axes_of_a_vertical_container() {
 }
 
 #[test]
-fn abspos_auto_alignment_swaps_the_axes_only_with_a_containing_block_on_vertical_axes_too() {
-    // Layout reads `align-self` along the vertical axis and `justify-self` along
-    // the horizontal one, unless the container and the containing block are both
-    // on vertical axes.
+fn abspos_auto_alignment_follows_the_axes_of_the_container() {
+    // The static position is on the axes of the container, whatever the
+    // writing mode of the containing block: `align-self` is the block axis of
+    // the container, physically horizontal in a container on vertical axes.
     let mut parent = ComputedValues::initial();
     parent.display = DisplayValue::Grid;
     parent.align_items = SelfAlignmentValue::LastBaseline;
@@ -1268,29 +1267,15 @@ fn abspos_auto_alignment_swaps_the_axes_only_with_a_containing_block_on_vertical
     let mut cv = ComputedValues::initial();
     cv.position = PositionValue::Absolute;
     cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
-    for (parent_vertical, containing_block_vertical, expected) in [
-        (true, true, (None, Some(AlignItems::END))),
-        (true, false, (Some(AlignItems::END), None)),
-        (false, true, (Some(AlignItems::END), None)),
-        (false, false, (Some(AlignItems::END), None)),
-    ] {
-        let settled = settled::inherited_last_baseline(&cv, &parent, parent_vertical, || {
-            containing_block_vertical
-        });
-        assert_eq!(
-            settled, expected,
-            "container {parent_vertical}, containing block {containing_block_vertical}"
-        );
-    }
-    // The containing block is only asked for when a vertical container could
-    // have an alignment replaced.
-    let horizontal = settled::inherited_last_baseline(&cv, &parent, false, || {
-        unreachable!("the container is on horizontal axes")
-    });
-    assert_eq!(horizontal, (Some(AlignItems::END), None));
-    let unchanged = settled::inherited_last_baseline(&cv, &ComputedValues::initial(), true, || {
-        unreachable!("the box keeps its alignment")
-    });
+    assert_eq!(
+        settled::inherited_last_baseline(&cv, &parent, true),
+        (None, Some(AlignItems::END))
+    );
+    assert_eq!(
+        settled::inherited_last_baseline(&cv, &parent, false),
+        (Some(AlignItems::END), None)
+    );
+    let unchanged = settled::inherited_last_baseline(&cv, &ComputedValues::initial(), true);
     assert_eq!(unchanged, (None, None));
 }
 

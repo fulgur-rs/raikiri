@@ -455,15 +455,13 @@ fn apply_computed_to_style_in_session_inner(
                 cv,
                 &cascade.computed[container],
                 container_vertical,
-                containing_block_vertical,
             );
             // The borrowed `end` places the box in its static position on the
-            // axes of the container. Where only the containing block is on
-            // vertical axes, the alignment between the insets is on other
-            // axes, and the box aligns there by its own `auto`.
+            // axes of the container. Where the containing block is on other
+            // axes, the alignment between the insets is on those, and the box
+            // aligns there by its own `auto`.
             let off_axes = (align_self.is_some() || justify_self.is_some())
-                && !container_vertical
-                && containing_block_vertical();
+                && container_vertical != containing_block_vertical();
             if let Some(value) = align_self {
                 settled.align_self = Some(value);
                 doc.record_pass_override(

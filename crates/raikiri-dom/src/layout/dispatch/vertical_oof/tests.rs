@@ -1388,3 +1388,23 @@ fn a_box_borrowing_last_baseline_from_a_horizontal_wrapper_keeps_its_axes() {
         assert_eq!(rect, expected, "{wrapper} | {child}");
     }
 }
+
+#[test]
+fn a_box_borrowing_last_baseline_from_a_vertical_wrapper_aligns_on_its_axes() {
+    // In a horizontal containing block, a box takes the `end` of the block
+    // axis of its vertical wrapper for its static position, and aligns
+    // between its insets by its own `auto` (Chromium values).
+    let flex = "display:flex;writing-mode:vertical-rl;align-items:last baseline";
+    let grid = "display:grid;writing-mode:vertical-lr;justify-items:last baseline";
+    for (wrapper, child, expected) in [
+        (flex, "top:0;bottom:0", (0.0, 0.0, 20.0, 100.0)),
+        (flex, "left:0;right:0", (0.0, 0.0, 200.0, 20.0)),
+        (flex, "top:0;bottom:0;height:30px", (0.0, 0.0, 20.0, 30.0)),
+        (grid, "top:0;bottom:0", (0.0, 0.0, 20.0, 100.0)),
+        (grid, "left:0;right:0", (0.0, -20.0, 200.0, 20.0)),
+        (grid, "top:0;bottom:0;height:30px", (0.0, 0.0, 20.0, 30.0)),
+    ] {
+        let rect = rect_in_a_wrapper("", wrapper, child);
+        assert_eq!(rect, expected, "{wrapper} | {child}");
+    }
+}
