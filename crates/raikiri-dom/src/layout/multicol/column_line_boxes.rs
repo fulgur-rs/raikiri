@@ -114,12 +114,13 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                     let container = tree
                         .inclusive_ancestors(paragraph)
                         .find(|&id| tree.nodes[id].multicol.is_some())?;
-                    Some((container, Columns::of(tree, container)?))
+                    Some((container, Columns::of(tree, cascade, container)?))
                 })
                 .as_ref()
                 .filter(|(container, _)| {
-                    block.is_some_and(|block| strictly_inside(tree, block, *container))
+                    in_columns(tree, *container, node)
                         && !is_monolithic(tree, cascade, node)
+                        && !held_whole(tree, cascade, *container, node)
                 });
             let budget = records
                 .limit
@@ -265,6 +266,84 @@ fn containing_block(tree: &Document, node: usize) -> Option<usize> {
     })
 }
 
+/// Whether the positioned box `node` is in the fragmentation context of the
+/// columns of `container`: its containing block is inside the container.
+pub(super) fn in_columns(tree: &Document, container: usize, node: usize) -> bool {
+    containing_block(tree, node).is_some_and(|block| strictly_inside(tree, block, container))
+}
+
+/// Whether the box `node` lies inside monolithic content or a nested column
+/// container below `container`, which keeps it whole: the columns of
+/// `container` do not break it.
+fn held_whole(tree: &Document, cascade: &CascadeResult, container: usize, node: usize) -> bool {
+    tree.inclusive_ancestors(node)
+        .skip(1)
+        .take_while(|&id| id != container)
+        .any(|id| tree.nodes[id].multicol.is_some() || is_monolithic(tree, cascade, id))
+}
+
+/// How far a box of `layout` reaches below its top, with the descendants
+/// that overflow it. The overflow rect is measured from the padding box, so
+/// it is shifted by the border to compare it with the border box.
+pub(super) fn painted_extent(layout: BoxLayout) -> f32 {
+    layout
+        .size
+        .height
+        .max(layout.border.top + layout.scrollable_overflow_rect.bottom)
+}
+
+/// How far the positioned box `node` of `layout` reaches below its top for
+/// the columns that hold it: its border box when it clips its content in the
+/// block direction, which then stays inside it, else its painted extent.
+pub(super) fn out_of_flow_extent(cascade: &CascadeResult, node: usize, layout: BoxLayout) -> f32 {
+    use raikiri_style::property::OverflowValue;
+    if cascade.computed[node].overflow.y == OverflowValue::Visible {
+        painted_extent(layout)
+    } else {
+        layout.size.height
+    }
+}
+
+/// The height of `count` balanced columns `height` tall, or of taller ones,
+/// that a positioned box `extent` tall at the block offset `y` from the top
+/// of column `column` needs. The box breaks at the column ends and ends in
+/// the last column, unless it is monolithic, which stays whole in the column
+/// it starts in. Balancing counts it, as Chromium does. A box that starts
+/// past the last column needs nothing.
+pub(super) fn out_of_flow_need(
+    y: f32,
+    column: usize,
+    extent: f32,
+    monolithic: bool,
+    height: f32,
+    count: usize,
+) -> f32 {
+    if !y.is_finite() || !extent.is_finite() || y < 0.0 {
+        return 0.0;
+    }
+    // Columns with no height yet, with no end, or a single column, which
+    // nothing ends, hold the box in the one it starts in.
+    let skipped = if height.is_finite() && height > 0.0 && count > 1 {
+        (y / height).floor()
+    } else {
+        0.0
+    };
+    let column = column as f32 + skipped;
+    if column >= count as f32 {
+        return 0.0;
+    }
+    let y = if skipped > 0.0 {
+        y - skipped * height
+    } else {
+        y
+    };
+    if monolithic {
+        y + extent
+    } else {
+        (y + extent) / (count as f32 - column)
+    }
+}
+
 /// Whether `id` is a descendant of `ancestor`, and not `ancestor` itself.
 fn strictly_inside(tree: &Document, id: usize, ancestor: usize) -> bool {
     tree.ancestors(id).any(|above| above == ancestor)
@@ -282,15 +361,14 @@ struct Columns {
 
 impl Columns {
     /// The columns of the multicol container `container`, when it has a
-    /// single record, horizontal columns and `column-fill: auto`. Balanced
-    /// columns are as tall as the content in flow makes them, which does
-    /// not count the positioned boxes, so those stay whole there. Only the
-    /// last row of columns, after any spanner, is filled one column after
-    /// the other.
-    fn of(tree: &Document, container: usize) -> Option<Self> {
+    /// single record and horizontal columns. Only the last row of columns,
+    /// after any spanner, holds the boxes. Balanced columns are known only
+    /// from the row the strategy kept, whose height counts the positioned
+    /// boxes in them.
+    fn of(tree: &Document, cascade: &CascadeResult, container: usize) -> Option<Self> {
         let style = tree.nodes[container]
             .multicol
-            .filter(|style| style.horizontal && style.column_fill == ColumnFillValue::Auto)?;
+            .filter(|style| style.horizontal)?;
         let records = &tree.fragment_tree;
         let mut live = records
             .records_of(container)
@@ -300,6 +378,18 @@ impl Columns {
         let record = live.next()?;
         live.next().is_none().then_some(())?;
         let origin = record_origin(tree, record)?;
+        // Balanced columns count the positioned boxes in their height only
+        // in one row of the container's own boxes.
+        let balanced = style.column_fill != ColumnFillValue::Auto;
+        if balanced
+            && (tree.nodes[container].multicol_groups.len() != 1
+                || tree.nodes[container].ifc.is_some()
+                || flow_children(tree, container)
+                    .into_iter()
+                    .any(|child| spanning::is_spanner_in(tree, cascade, child)))
+        {
+            return None;
+        }
         // The rows that the strategy kept, each in the container's border
         // box, with the block size its columns had to fill. Layouts with a
         // spanner always keep them.
@@ -316,7 +406,7 @@ impl Columns {
         }
         // Else the container is one row of columns as tall as its content
         // box, which only a definite height fills one column after another.
-        style.height_definite.then_some(())?;
+        (style.height_definite && style.column_fill == ColumnFillValue::Auto).then_some(())?;
         let border_box = records.fragments[record].rect;
         let layout = &tree.nodes[container].layout;
         let (border, padding) = (layout.border, layout.padding);
@@ -415,7 +505,7 @@ impl Columns {
 /// Whether the box of `node` is monolithic content that a column end never
 /// breaks (CSS Fragmentation 3, `monolithic`): what pagination treats as
 /// monolithic, and a scroll container.
-fn is_monolithic(tree: &Document, cascade: &CascadeResult, node: usize) -> bool {
+pub(super) fn is_monolithic(tree: &Document, cascade: &CascadeResult, node: usize) -> bool {
     use raikiri_style::property::OverflowValue;
     let overflow = &cascade.computed[node].overflow;
     let scrolls = |value| !matches!(value, OverflowValue::Visible | OverflowValue::Clip);

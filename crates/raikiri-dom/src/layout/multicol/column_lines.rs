@@ -34,6 +34,9 @@ pub(super) struct LineMoves {
     grown: Vec<(usize, f32, f32)>,
     /// The same for the box itself.
     own: (f32, f32),
+    /// The least that a column would have to grow for one of the lines or
+    /// boxes that a column end crosses to fit in it.
+    shortage: f32,
 }
 
 impl LineMoves {
@@ -44,6 +47,12 @@ impl LineMoves {
         layout.size.height += growth;
         layout.scrollable_overflow_rect.bottom += moved;
         layout
+    }
+
+    /// The least that the columns would have to grow for one of the lines
+    /// or boxes that their ends cross to stay where it is.
+    pub(super) fn shortage(&self) -> f32 {
+        self.shortage
     }
 }
 
@@ -66,7 +75,10 @@ pub(super) fn line_moves(
         return None;
     }
     let columns = Columns { height, last };
-    let mut moves = LineMoves::default();
+    let mut moves = LineMoves {
+        shortage: f32::INFINITY,
+        ..LineMoves::default()
+    };
     moves.own = plan(tree, node, top, columns, &mut moves, 0)?;
     (!(moves.lines.is_empty() && moves.blocks.is_empty())).then_some(moves)
 }
@@ -101,7 +113,7 @@ fn plan(
     // that reaches lowest does.
     let (moved, reach) = match element.formatting_context {
         FormattingContext::Inline => {
-            let lines = paragraph_moves(tree, node, content_top, columns)?;
+            let lines = paragraph_moves(tree, node, content_top, columns, &mut moves.shortage)?;
             let moved: f32 = lines.iter().map(|&(_, shift)| shift).sum();
             if !lines.is_empty() {
                 moves.lines.push((node, lines));
@@ -126,8 +138,10 @@ fn plan(
                 // of the column that part starts in.
                 if let Some(shift) = leading(tree, child, child_top, columns, depth + 1)
                     .filter(|&(start, size)| {
-                        crossing(start, size, columns).is_some()
-                            && column_of(start, columns) == column_of(child_top, columns)
+                        crossing(start, size, columns).is_some_and(|shift| {
+                            moves.shortage = moves.shortage.min(size - shift);
+                            true
+                        }) && column_of(start, columns) == column_of(child_top, columns)
                     })
                     .map(|_| (column_of(child_top, columns) + 1.0) * columns.height - child_top)
                 {
@@ -323,12 +337,14 @@ fn crossing(start: f32, size: f32, columns: Columns) -> Option<f32> {
 /// Each line of the paragraph `node`, whose content box starts at
 /// `content_top`, that starts a column, with how far it and the lines after
 /// it move down. `None` when its lines already moved, or when they hold
-/// blocks, floats or positioned boxes.
+/// blocks, floats or positioned boxes. `shortage` takes the least that a
+/// column would have to grow for one of those lines to fit in it.
 fn paragraph_moves(
     tree: &LayoutSession<'_>,
     node: usize,
     content_top: f32,
     columns: Columns,
+    shortage: &mut f32,
 ) -> Option<Vec<(usize, f32)>> {
     let root = tree.ifc_layout_node(node)?.ifc.as_ref()?;
     let lines = root.lines.as_ref()?;
@@ -351,6 +367,7 @@ fn paragraph_moves(
     for (index, line) in lines.lines.iter().enumerate() {
         let start = content_top + lines.line_top(index) + moved;
         if let Some(shift) = crossing(start, line.block_size(), columns) {
+            *shortage = shortage.min(line.block_size() - shift);
             moves.push((index, shift));
             moved += shift;
         }

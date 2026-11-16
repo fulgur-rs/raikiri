@@ -4893,7 +4893,7 @@ fn an_absolute_box_starts_where_its_overflow_above_it_starts() {
 }
 
 #[test]
-fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box() {
+fn balanced_columns_grow_to_hold_an_absolute_box() {
     let (doc, _, ids) = absolute_fixture(
         "display:block;width:200px;columns:2;column-gap:0",
         &[(
@@ -4901,13 +4901,15 @@ fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box()
             &["position:absolute;top:0;width:10px;height:300px"],
         )],
     );
-    // The columns balance at 50px; the second, last one grows to hold the
-    // 250px left of the box.
+    // The box in flow alone balances at 50px; the positioned box makes the
+    // columns 150px tall, so that it ends in the last one. The box in flow
+    // ends in the first column, whose piece holds the second piece of the
+    // positioned box, one column to the right.
     assert_eq!(
         fragment_rects(&doc, ids[0].1[0]),
-        vec![(0, 0.0, 0.0, 300.0), (1, 0.0, -50.0, 300.0)]
+        vec![(0, 0.0, 0.0, 300.0), (1, 100.0, -150.0, 300.0)]
     );
-    assert_eq!(fragment_clips(&doc, ids[0].1[0])[1].height, 250.0);
+    assert_eq!(fragment_clips(&doc, ids[0].1[0])[1].height, 150.0);
 }
 
 #[test]
@@ -8962,4 +8964,34 @@ fn a_box_cut_below_a_float_stops_layout_when_its_pieces_reach_the_fragment_limit
         matches!(result, Err(LayoutError::FragmentLimitExceeded { .. })),
         "{result:?}"
     );
+}
+
+#[test]
+fn the_height_a_positioned_box_needs_counts_the_columns_it_has_left() {
+    use super::column_line_boxes::out_of_flow_need;
+    // A box that breaks shares the columns from where it starts.
+    assert_eq!(out_of_flow_need(10.0, 0, 80.0, false, 30.0, 2), 45.0);
+    // One that starts past the end of its column starts the next one.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 30.0, 3), 15.0);
+    // A monolithic box stays whole in the column it starts in.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, true, 30.0, 3), 30.0);
+    // A box past the last column, or with no place, needs nothing.
+    assert_eq!(out_of_flow_need(70.0, 0, 20.0, false, 30.0, 2), 0.0);
+    assert_eq!(out_of_flow_need(-5.0, 0, 20.0, false, 30.0, 2), 0.0);
+    assert_eq!(out_of_flow_need(f32::NAN, 0, 20.0, false, 30.0, 2), 0.0);
+    // A single column, or columns with no height yet, hold the box where it
+    // starts.
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 30.0, 1), 60.0);
+    assert_eq!(out_of_flow_need(40.0, 0, 20.0, false, 0.0, 2), 30.0);
+}
+
+#[test]
+fn the_last_step_of_the_growth_takes_what_a_positioned_box_needs() {
+    use super::{OUT_OF_FLOW_STEPS, out_of_flow_step};
+    let last = OUT_OF_FLOW_STEPS - 1;
+    assert_eq!(out_of_flow_step(0, None, 40.0, 35.0), 35.0);
+    assert_eq!(out_of_flow_step(0, Some(30.0), 40.0, 35.0), 30.0);
+    assert_eq!(out_of_flow_step(last, None, 40.0, 35.0), 40.0);
+    // The last step holds every box, not only the one that needs least.
+    assert_eq!(out_of_flow_step(last, Some(80.0), 40.0, 35.0), 80.0);
 }
