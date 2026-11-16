@@ -398,12 +398,12 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
 /// The least room a column needs to take a piece of a sliced box, and the
 /// least of the box a piece leaves for the next column: one layout unit
 /// (1/64px), the precision browsers lay boxes out at.
-const SLICE_MIN_ROOM: f32 = 1.0 / 64.0;
+pub(super) const SLICE_MIN_ROOM: f32 = 1.0 / 64.0;
 
 /// The most pieces the planner cuts a box with no lines into. A box that
 /// needs more is left to the other strategies, so a tall box in short
 /// columns cannot allocate or loop without end.
-const MAX_SLICED_PIECES: usize = 1024;
+pub(super) const MAX_SLICED_PIECES: usize = 1024;
 
 struct Paragraph {
     extents: Vec<(f32, f32)>,

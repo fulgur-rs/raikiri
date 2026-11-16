@@ -127,8 +127,15 @@ fn supported_with_wrapped_blocks(
 /// rendered inside it and no block margins: a box that a stream of paragraphs
 /// places whole in one column, as it has no lines to break between.
 pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
+    style_of(tree, child).clear() == Clear::None && is_sized_leaf_below_floats(tree, child)
+}
+
+/// [`is_sized_leaf`] for a box that may clear the floats before it, for a
+/// caller that places it below them.
+pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
-    is_plain_block_ignoring_insets(tree, child)
+    layout_node(tree, child).display() == DisplayValue::Block
+        && is_plain_box_but_clearance(tree, child, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
         && block_margins(&style) == Some((0.0, 0.0))
@@ -316,6 +323,13 @@ pub(super) fn is_plain_box_apart_from_display(
     child: usize,
     allow_lines: bool,
 ) -> bool {
+    style_of(tree, child).clear() == Clear::None
+        && is_plain_box_but_clearance(tree, child, allow_lines)
+}
+
+/// [`is_plain_box_apart_from_display`] for a box that may clear floats, for
+/// a caller that places it below them.
+fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_lines: bool) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     // An orthogonal flow is monolithic in the column's block axis.
@@ -325,7 +339,6 @@ pub(super) fn is_plain_box_apart_from_display(
         || node.layout_position() != Position::Relative
             && node.layout_position() != Position::Static
         || style.float().is_floated()
-        || style.clear() != Clear::None
         || style.overflow()
             != (Point {
                 x: TaffyOverflow::Visible,

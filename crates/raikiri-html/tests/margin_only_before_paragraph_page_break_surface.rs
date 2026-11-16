@@ -400,3 +400,39 @@ fn generated_text_inside_a_contents_sibling_lets_the_paragraph_move_whole() {
         );
     }
 }
+
+#[test]
+fn a_generated_box_that_runs_onto_the_page_lets_a_one_line_paragraph_move_whole() {
+    // The generated box before the paragraph runs onto the paragraph's page,
+    // where no box of the flow is placed before it: the paragraph is
+    // measured on that page, and moves whole as its line crosses the page
+    // end.
+    for (class, content) in LINES {
+        for (before, after) in [
+            (
+                r#"<style>body::before{content:"";display:block;height:140px}</style>"#,
+                "",
+            ),
+            (
+                r#"<style>.s::after{content:"";display:block;height:140px}</style><span class="s"></span>"#,
+                "",
+            ),
+            (
+                r#"<style>.w{display:contents}.w::before{content:"";display:block;height:140px}</style><div class="w">"#,
+                "</div>",
+            ),
+        ] {
+            for (style, top, z) in [
+                ("margin:10px 0 0;padding-top:40px", 45, (2, 75)),
+                ("margin:10px 0 0;padding-top:60px", 65, (3, 5)),
+            ] {
+                let body = document(before, after, class, style, content);
+                assert_eq!(
+                    glyph_tops(&body),
+                    [(2, 'A', top), (z.0, 'Z', z.1)],
+                    "{body}"
+                );
+            }
+        }
+    }
+}

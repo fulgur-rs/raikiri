@@ -88,10 +88,30 @@ fn balanced_stack_height_ends_where_the_heights_have_no_float_between_them() {
             top: 0.0,
             bottom: total,
             lines,
+            sliced: false,
         },
     ];
     let height = balanced_stack_height(&children, 2, total, (1, 1));
     assert_eq!(height, 20020.0);
+}
+
+#[test]
+fn balanced_stack_height_ends_for_a_cut_box_far_taller_than_the_stack() {
+    // A box cut at column ends, 10,000,000px tall, then a negative margin
+    // that brings the stack back to 1px: the columns tried are far shorter
+    // than the box, and past 2^23 adding one to an `f32` offset no longer
+    // moves it, so the search has to stop at the last column.
+    let children = [
+        StackedChild::sliced(0.0, 10_000_000.0),
+        StackedChild::atomic(1.0, 1.0),
+    ];
+    assert_eq!(
+        fill_stacked_columns(&children, 2, 0.5, (1, 1)),
+        (false, 0.5)
+    );
+    assert!(!fill_stacked_columns(&children, usize::MAX, 0.5, (1, 1)).0);
+    let height = balanced_stack_height(&children, 2, 1.0, (1, 1));
+    assert_eq!(height, 1.0);
 }
 
 #[test]
@@ -8896,4 +8916,50 @@ fn a_positioned_box_with_more_column_pieces_than_the_budget_fails_the_layout() {
         layout_single_page(&mut doc, &cascade, page),
         Err(LayoutError::FragmentLimitExceeded { limit: reported }) if reported == limit
     ));
+}
+
+#[test]
+fn a_box_cut_below_a_float_stops_layout_when_its_pieces_reach_the_fragment_limit() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let build = |limit: Option<usize>| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:300px;height:50px;columns:3;column-gap:0;column-fill:auto"),
+        );
+        doc.append_element(
+            Some(container),
+            "div",
+            Some("display:block;float:left;width:20px;height:10px"),
+        );
+        doc.append_element(
+            Some(container),
+            "div",
+            Some("display:block;clear:both;height:400px;background:green"),
+        );
+        if let Some(limit) = limit {
+            doc.fragment_tree.limit = limit;
+        }
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 400.0;
+        page.height = 300.0;
+        let result = layout_single_page(&mut doc, &cascade, page).map(|_| ());
+        (doc, result)
+    };
+    let (whole, result) = build(None);
+    assert!(result.is_ok(), "{result:?}");
+    let needed = whole.fragment_tree.fragments.len();
+    // The box's pieces are among the last fragments the layout records.
+    let result = build(Some(needed - 1)).1;
+    assert!(
+        matches!(result, Err(LayoutError::FragmentLimitExceeded { .. })),
+        "{result:?}"
+    );
 }
