@@ -327,3 +327,36 @@ fn generated_text_of_a_contents_element_before_the_paragraph_lets_it_move_whole(
         }
     }
 }
+
+#[test]
+fn generated_content_of_a_contents_ancestor_before_the_paragraph_lets_it_move_whole() {
+    for (class, content) in LINES {
+        for (before, after) in [
+            (
+                r#"<style>.w{display:contents}.w::before{content:"x"}</style><div class="w">"#,
+                "</div>",
+            ),
+            (
+                r#"<style>.w{display:contents}.w::before{content:"x";display:block}</style><div class="w"><div style="display:contents">"#,
+                "</div></div>",
+            ),
+            (
+                r#"<style>.s::before{content:"x"}</style><div style="display:contents"><span class="s" style="display:contents"></span>"#,
+                "</div>",
+            ),
+        ] {
+            let body = document(
+                before,
+                after,
+                class,
+                "margin:10px 0 0;padding-top:40px",
+                content,
+            );
+            assert_eq!(
+                glyph_tops(&body),
+                [(0, 'x', 5), (1, 'A', 45), (1, 'Z', 75)],
+                "{body}"
+            );
+        }
+    }
+}

@@ -10839,10 +10839,19 @@ pub(super) fn follows_box_on_page(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let on_page = |top: f32, bottom: f32| top >= page_start - 0.001 || bottom > page_start + 0.001;
-    // A generated box lies in the paragraph of `root`: a block-level one
-    // where the line loop placed it, an inline one on the lines that hold its
-    // text. Whether it is on the page.
-    let pseudo_on_page = |root: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
+    // A generated box of `element` lies in the paragraph of `parent`: a
+    // block-level one where the line loop placed it, an inline one on the
+    // lines that hold its text. Whether it is on the page.
+    let pseudo_on_page = |parent: usize, element: usize, pseudo: raikiri_style::PseudoElem| {
+        // A `display: contents` element has no box: its content, generated
+        // content too, lies in the paragraph of the box around it.
+        let mut root = parent;
+        while document.nodes[root].kind() == NodeKind::Element
+            && document.nodes[root].display() == DisplayValue::Contents
+            && let Some(up) = document.parent_of(root)
+        {
+            root = up;
+        }
         let id = crate::generated_content::generated_node_id(element, pseudo);
         document.ifc_layout_node(root).is_some_and(|node| {
             let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
