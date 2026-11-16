@@ -4433,7 +4433,13 @@ fn a_cut_inside_a_block_counts_against_its_min_height() {
     // The inner block's margin is cut at the first page edge, which takes
     // most of what the outer block's min-height leaves; the outer cut then
     // stops at the min-height, as in Chromium.
-    for (min_height, expected) in [(250.0, 260.0), (230.0, 240.0), (150.0, 210.0)] {
+    for (min_height, expected) in [
+        (250.0, 260.0),
+        (230.0, 240.0),
+        (150.0, 210.0),
+        (260.0, 270.0),
+        (280.0, 290.0),
+    ] {
         let mut after = 0;
         let (doc, _) = paged_body(|doc, body| {
             let outer = block(
