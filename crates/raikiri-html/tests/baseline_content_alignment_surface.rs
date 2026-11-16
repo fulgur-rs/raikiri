@@ -1,9 +1,10 @@
 //! `align-content: baseline` (and `first baseline`) on a block container
 //! takes its fallback alignment `start` (CSS Box Alignment 3 §5.1), and, not
 //! being `normal`, makes the block a formatting context root, so the top
-//! margin of its first child stays inside it. `last baseline` is not accepted
-//! for `align-content`, as in Chromium, and leaves the `normal` layout. The
-//! positions are the ones Chromium gives for the same documents.
+//! margin of its first child stays inside it. Chromium does not accept `last
+//! baseline` for `align-content`, though the grammar allows it, so the
+//! declaration is dropped and the `normal` layout stays. The positions are the
+//! ones Chromium 153 gives for the same documents.
 
 use raikiri_html::{
     LayoutOptions, LayoutStatus, RenderResources, layout, parse_html_with_resources,

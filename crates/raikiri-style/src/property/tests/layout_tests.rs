@@ -1278,7 +1278,7 @@ fn justify_content_parse_content_distribution_and_position() {
 }
 
 #[test]
-fn align_content_parse_same_grammar_as_justify_content() {
+fn align_content_parses_the_content_distributions_justify_content_does() {
     assert_eq!(
         parse("stretch", "align-content"),
         Some(PropertyValue::AlignContent(ContentAlignmentValue::Stretch))
@@ -1312,6 +1312,7 @@ fn align_content_accepts_a_first_baseline_that_justify_content_rejects() {
         );
     }
     assert_eq!(ContentAlignmentValue::Baseline.as_css_str(), "baseline");
+    // Chromium takes `first` only before `baseline`, and no position after it.
     for css in ["baseline first", "first", "first baseline center"] {
         assert_eq!(content_alignments(css), [None; 2], "{css:?}");
     }

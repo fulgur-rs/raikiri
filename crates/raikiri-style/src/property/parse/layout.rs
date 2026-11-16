@@ -290,7 +290,8 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     })
 }
 
-/// Shared parser for `justify-content` and `align-content`:
+/// Parser for `justify-content`, and for `align-content` after
+/// [`parse_align_content`] has tried its baseline values:
 /// `normal | <content-distribution> | <overflow-position>? <content-position>`;
 /// see the scope carving in the [`ContentAlignmentValue`] docs. An
 /// `<overflow-position>` qualifies a position only, so `safe space-between`,

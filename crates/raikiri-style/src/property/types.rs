@@ -4349,18 +4349,17 @@ pub struct ContainIntrinsicSizeShorthand {
 /// <https://www.w3.org/TR/css-align-3/#propdef-place-content>: value
 /// grammar `<'align-content'> <'justify-content'>?`; "Initial: normal",
 /// "Inherited: no". When the second component is omitted, it copies the
-/// first component's value. The exception to this spec rule ("unless that value is a `<baseline-position>` in which
-/// case it is defaulted to `start`") is unreachable in this crate because
-/// [`ContentAlignmentValue`] has no `<baseline-position>` variant (see the
-/// [`ContentAlignmentValue`] doc's scope-carving section). Thus the "copy from
-/// first value" branch always applies.
+/// first component's value, "unless that value is a `<baseline-position>` in
+/// which case it is defaulted to `start`": a lone
+/// [`ContentAlignmentValue::Baseline`] gives `justify` the value
+/// [`ContentAlignmentValue::Start`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PlaceContentShorthand {
     /// The `align-content` component.
     pub align: ContentAlignmentValue,
-    /// The `justify-content` component — equals `align` when omitted
-    /// (see [`parse_place_content_shorthand`] and the exception noted in the [`Self`] doc).
+    /// The `justify-content` component — equals `align` when omitted, or
+    /// `start` when that is a baseline (see [`parse_place_content_shorthand`]).
     pub justify: ContentAlignmentValue,
 }
 
