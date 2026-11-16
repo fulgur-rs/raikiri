@@ -8988,6 +8988,10 @@ fn the_height_a_positioned_box_needs_counts_the_columns_it_has_left() {
 #[test]
 fn the_last_step_of_the_growth_takes_what_a_positioned_box_needs() {
     use super::{OUT_OF_FLOW_STEPS, out_of_flow_step};
-    assert_eq!(out_of_flow_step(0, 40.0, 35.0), 35.0);
-    assert_eq!(out_of_flow_step(OUT_OF_FLOW_STEPS - 1, 40.0, 35.0), 40.0);
+    let last = OUT_OF_FLOW_STEPS - 1;
+    assert_eq!(out_of_flow_step(0, None, 40.0, 35.0), 35.0);
+    assert_eq!(out_of_flow_step(0, Some(30.0), 40.0, 35.0), 30.0);
+    assert_eq!(out_of_flow_step(last, None, 40.0, 35.0), 40.0);
+    // The last step holds every box, not only the one that needs least.
+    assert_eq!(out_of_flow_step(last, Some(80.0), 40.0, 35.0), 80.0);
 }

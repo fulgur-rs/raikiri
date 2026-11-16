@@ -3034,6 +3034,13 @@ fn out_of_flow_boxes(
         let (Some(top), Some(origin)) = (top, tree.layout_origin_of(child)) else {
             continue;
         };
+        // Boxes inside monolithic content or a nested column container stay
+        // in it, whether that content is the child or lies deeper.
+        if tree.nodes[child].multicol.is_some()
+            || column_line_boxes::is_monolithic(tree, cascade, child)
+        {
+            continue;
+        }
         let mut pending = tree.nodes[child].children.clone();
         while let Some(node) = pending.pop() {
             let element = &tree.nodes[node];
@@ -3074,7 +3081,7 @@ fn out_of_flow_floor(
 ) -> f32 {
     let mut height = in_flow;
     for step in 0..OUT_OF_FLOW_STEPS {
-        let mut needed = f32::INFINITY;
+        let mut needed = None;
         for &(node, y, monolithic) in boxes {
             let mut layout = tree.nodes[node].layout;
             let mut shortage = f32::INFINITY;
@@ -3093,12 +3100,10 @@ fn out_of_flow_floor(
                 count,
             );
             if need > height + LINE_EPSILON {
-                needed = needed.min(out_of_flow_step(step, need, height + shortage));
+                needed = Some(out_of_flow_step(step, needed, need, height + shortage));
             }
         }
-        if !needed.is_finite() {
-            break;
-        }
+        let Some(needed) = needed else { break };
         height = needed;
     }
     height
@@ -3115,14 +3120,23 @@ fn breaks_between_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// How many times the columns grow for the positioned boxes in them.
 pub(super) const OUT_OF_FLOW_STEPS: usize = 16;
 
-/// The height the columns grow to at `step`: by the least that keeps a line
-/// in its column, `shortened`, but to what the box `needs` at the last step,
-/// so that the search ends with the box held.
-pub(super) fn out_of_flow_step(step: usize, needs: f32, shortened: f32) -> f32 {
+/// The height the columns grow to at `step`, given the height `needed` for
+/// the boxes seen so far and a box that `needs` more than the columns have:
+/// by the least that keeps a line in its column, `shortened`, and to the
+/// least any box needs, but at the last step to what every box needs, so
+/// that the search ends with all of them held.
+pub(super) fn out_of_flow_step(
+    step: usize,
+    needed: Option<f32>,
+    needs: f32,
+    shortened: f32,
+) -> f32 {
     if step + 1 == OUT_OF_FLOW_STEPS {
-        needs
+        needed.map_or(needs, |needed| needed.max(needs))
     } else {
-        needs.min(shortened)
+        needed
+            .map_or(needs, |needed| needed.min(needs))
+            .min(shortened)
     }
 }
 

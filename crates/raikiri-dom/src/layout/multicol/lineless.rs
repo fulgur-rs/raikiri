@@ -936,7 +936,10 @@ fn out_of_flow_height(
             }
             // Only a child that is the containing block of its boxes puts
             // them in the columns.
-            if tree.nodes[child].claims_absolute_oof {
+            // Boxes inside monolithic content stay in it.
+            if tree.nodes[child].claims_absolute_oof
+                && !column_line_boxes::is_monolithic(tree, cascade, child)
+            {
                 absolute_children(tree, child)
             } else {
                 Vec::new()
@@ -957,7 +960,7 @@ fn out_of_flow_height(
         let Some((pieces, _)) = pieces else { break };
         // The least height past this one that one of the boxes that do not
         // fit needs.
-        let mut needed = f32::INFINITY;
+        let mut needed = None;
         let firsts = pieces.iter().zip(&boxes);
         for (first, boxes) in firsts.filter_map(|(pieces, boxes)| Some((pieces.first()?, boxes))) {
             let top = if height > 0.0 {
@@ -986,13 +989,16 @@ fn out_of_flow_height(
                     column_count,
                 );
                 if need > height + EPSILON {
-                    needed = needed.min(super::out_of_flow_step(step, need, height + shortage));
+                    needed = Some(super::out_of_flow_step(
+                        step,
+                        needed,
+                        need,
+                        height + shortage,
+                    ));
                 }
             }
         }
-        if !needed.is_finite() {
-            break;
-        }
+        let Some(needed) = needed else { break };
         height = needed;
     }
     height

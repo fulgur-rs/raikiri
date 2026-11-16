@@ -118,7 +118,9 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 })
                 .as_ref()
                 .filter(|(container, _)| {
-                    in_columns(tree, *container, node) && !is_monolithic(tree, cascade, node)
+                    in_columns(tree, *container, node)
+                        && !is_monolithic(tree, cascade, node)
+                        && !held_whole(tree, cascade, *container, node)
                 });
             let budget = records
                 .limit
@@ -268,6 +270,16 @@ fn containing_block(tree: &Document, node: usize) -> Option<usize> {
 /// columns of `container`: its containing block is inside the container.
 pub(super) fn in_columns(tree: &Document, container: usize, node: usize) -> bool {
     containing_block(tree, node).is_some_and(|block| strictly_inside(tree, block, container))
+}
+
+/// Whether the box `node` lies inside monolithic content or a nested column
+/// container below `container`, which keeps it whole: the columns of
+/// `container` do not break it.
+fn held_whole(tree: &Document, cascade: &CascadeResult, container: usize, node: usize) -> bool {
+    tree.inclusive_ancestors(node)
+        .skip(1)
+        .take_while(|&id| id != container)
+        .any(|id| tree.nodes[id].multicol.is_some() || is_monolithic(tree, cascade, id))
 }
 
 /// How far a box of `layout` reaches below its top, with the descendants

@@ -558,3 +558,27 @@ fn one_column_that_nothing_ends_holds_a_positioned_box_whole() {
         ],
     );
 }
+
+/// A positioned box inside monolithic content, here a paragraph that clips
+/// its overflow, stays in that content: it does not grow the columns.
+#[test]
+fn a_monolithic_child_keeps_its_positioned_boxes() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative;height:60px;overflow:hidden">X X X X X X<span style="position:absolute;width:30px;height:800px;top:0"></span></div></div>"#,
+        &[("m", (8.0, 8.0, 60.0, 60.0)), ("r", (8.0, 8.0, 30.0, 60.0))],
+    );
+}
+
+/// However many positioned boxes need the columns to grow, they all end in
+/// the last column.
+#[test]
+fn every_positioned_box_ends_in_the_last_column() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative;height:20px"><div style="position:absolute;width:30px;height:40px;top:0"></div><div style="position:absolute;width:30px;height:42px;top:0"></div><div style="position:absolute;width:30px;height:44px;top:0"></div><div style="position:absolute;width:30px;height:46px;top:0"></div><div style="position:absolute;width:30px;height:48px;top:0"></div><div style="position:absolute;width:30px;height:50px;top:0"></div><div style="position:absolute;width:30px;height:52px;top:0"></div><div style="position:absolute;width:30px;height:54px;top:0"></div><div style="position:absolute;width:30px;height:56px;top:0"></div><div style="position:absolute;width:30px;height:58px;top:0"></div><div style="position:absolute;width:30px;height:60px;top:0"></div><div style="position:absolute;width:30px;height:62px;top:0"></div><div style="position:absolute;width:30px;height:64px;top:0"></div><div style="position:absolute;width:30px;height:66px;top:0"></div><div style="position:absolute;width:30px;height:68px;top:0"></div><div style="position:absolute;width:30px;height:70px;top:0"></div><div style="position:absolute;width:30px;height:72px;top:0"></div><div style="position:absolute;width:30px;height:74px;top:0"></div><div style="position:absolute;width:30px;height:76px;top:0"></div><div style="position:absolute;width:30px;height:78px;top:0"></div><div style="position:absolute;width:30px;height:80px;top:0"></div></div></div>"#,
+        &[("m", (8.0, 8.0, 60.0, 40.0)), ("r", (8.0, 8.0, 30.0, 20.0))],
+    );
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative">X X<span style="position:absolute;width:30px;height:40px;top:0"></span><span style="position:absolute;width:30px;height:42px;top:0"></span><span style="position:absolute;width:30px;height:44px;top:0"></span><span style="position:absolute;width:30px;height:46px;top:0"></span><span style="position:absolute;width:30px;height:48px;top:0"></span><span style="position:absolute;width:30px;height:50px;top:0"></span><span style="position:absolute;width:30px;height:52px;top:0"></span><span style="position:absolute;width:30px;height:54px;top:0"></span><span style="position:absolute;width:30px;height:56px;top:0"></span><span style="position:absolute;width:30px;height:58px;top:0"></span><span style="position:absolute;width:30px;height:60px;top:0"></span><span style="position:absolute;width:30px;height:62px;top:0"></span><span style="position:absolute;width:30px;height:64px;top:0"></span><span style="position:absolute;width:30px;height:66px;top:0"></span><span style="position:absolute;width:30px;height:68px;top:0"></span><span style="position:absolute;width:30px;height:70px;top:0"></span><span style="position:absolute;width:30px;height:72px;top:0"></span><span style="position:absolute;width:30px;height:74px;top:0"></span><span style="position:absolute;width:30px;height:76px;top:0"></span><span style="position:absolute;width:30px;height:78px;top:0"></span><span style="position:absolute;width:30px;height:80px;top:0"></span></div></div>"#,
+        &[("m", (8.0, 8.0, 60.0, 40.0)), ("r", (8.0, 8.0, 30.0, 10.0))],
+    );
+}
