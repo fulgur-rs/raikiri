@@ -4836,6 +4836,22 @@ fn an_empty_box_after_split_edges_leaves_the_margin_after_it_dropped() {
         });
         assert_eq!(page_flow_y(&doc, after), 220.0, "{offset}");
     }
+    // An empty box that holds its own formatting context, or that forces a
+    // break, keeps the margin after it, as in Chromium.
+    for (empty_css, expected) in [
+        ("display:flow-root", 235.0),
+        ("display:block;overflow:hidden", 235.0),
+        ("display:block;break-before:page", 315.0),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:120px");
+            block(doc, parent, "display:block;height:30px");
+            block(doc, body, empty_css);
+            after = block(doc, body, "display:block;height:10px;margin-top:15px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{empty_css}");
+    }
 }
 
 #[test]

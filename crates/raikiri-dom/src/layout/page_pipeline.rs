@@ -9255,10 +9255,11 @@ fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usi
 }
 
 /// The box before the empty boxes that end at `node_id`, and how far above
-/// the top of the first of them it ends: boxes with no block size let the
-/// margins around them collapse through.
+/// the top of the first of them it ends: empty boxes that establish no
+/// formatting context of their own let the margins around them collapse
+/// through.
 fn before_empty_boxes(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
@@ -9270,10 +9271,10 @@ fn before_empty_boxes(
     let mut current = node_id;
     let mut lift = 0.0_f32;
     loop {
-        let Some(parent) = document
-            .parent_of(current)
-            .filter(|_| document.nodes[current].layout.size.height.abs() <= 0.001)
-        else {
+        let Some(parent) = document.parent_of(current).filter(|_| {
+            let height = document.nodes[current].layout.size.height;
+            height.abs() <= 0.001 && collapses_through(document, cascade, current, 0.0)
+        }) else {
             return (current, lift);
         };
         let siblings = &document.nodes[parent].children;
@@ -12193,7 +12194,7 @@ impl SiblingMargins {
         // Chromium drops the margin after a box whose block-end edges run
         // over a page edge, so the box after it follows the last fragment
         // of the edges directly.
-        if let Some(end) = (!forced_before)
+        if let Some(end) = (!forced_before && !follows_forced_break)
             .then(|| split_edges_end(document, cascade, page_origins, previous, effective_y - gap))
             .flatten()
             .filter(|_| self.adjacency.adjoins(document, cascade, node_id, previous))
