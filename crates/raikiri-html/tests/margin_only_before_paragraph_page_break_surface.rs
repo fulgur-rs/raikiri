@@ -793,6 +793,13 @@ fn a_flex_container_after_generated_content_moves_whole_with_its_edges() {
         tops.extend([(1, 'A', 45), (1, 'Z', 75)]);
         assert_eq!(glyph_tops(&body), tops, "{body}");
     }
+    // So does a block whose first piece is a box that no break goes through.
+    let body = r#"<style>.w::before{content:"x";display:block}</style><div class="w"><div style="margin-top:10px;padding-top:40px;width:20px"><div style="height:30px;contain:size">A</div></div></div><div>Z</div>"#;
+    assert_eq!(
+        glyph_tops(body),
+        [(0, 'x', 5), (1, 'A', 45), (1, 'Z', 75)],
+        "{body}"
+    );
 }
 
 #[test]
