@@ -471,14 +471,11 @@ pub(super) fn keyword_height_insets(
         matches!(margin, ComputedLengthPercentageOrAuto::Auto)
     };
     if auto(&values.margin.top) || auto(&values.margin.bottom) {
-        // Taffy swaps the two alignments only where the container that holds
-        // the box is on vertical axes as well (`get_oof_item_style`), which is
+        // Taffy reads the vertical axis of a box in a containing block on
+        // vertical axes from `justify-self` (`get_oof_item_style`), which is
         // the property that stretches the box here.
         return Some(KeywordHeightInsets::FitContent {
-            justify: vertical_axis_is_inline
-                && doc
-                    .taffy_parent_of(idx)
-                    .is_some_and(|parent| uses_vertical_axes(cascade, parent)),
+            justify: vertical_axis_is_inline,
         });
     }
     let alignment = if vertical_axis_is_inline {

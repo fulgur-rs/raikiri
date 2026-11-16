@@ -867,7 +867,7 @@ fn is_plain_ratio_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
 fn oof_height_from_insets(tree: &LayoutSession<'_>, idx: usize) -> Option<InsetHeight> {
     use raikiri_layout_style::values::{AlignItemsKeyword, AlignSelf};
     if !is_oof_box(tree, idx)
-        || tree.oof_alignment_swapped(idx)
+        || tree.oof_alignment_swapped()
         || tree.transposed_child_view(idx).is_some()
     {
         return None;

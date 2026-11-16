@@ -3486,7 +3486,7 @@ pub(crate) fn contained_oof(tree: &LayoutSession<'_>, idx: usize) -> Option<Cont
         return Some(ContainedOof::HeightFromWidth);
     }
     (tree.nodes[idx].layout_position() == Position::Absolute
-        && !tree.oof_alignment_swapped(idx)
+        && !tree.oof_alignment_swapped()
         && tree.transposed_child_view(idx).is_none())
     .then_some(ContainedOof::WidthFromInsets)
 }
