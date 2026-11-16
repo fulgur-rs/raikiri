@@ -1718,6 +1718,32 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     frame.previous_box.map_or(direct_body_child, |previous| {
                         !boxes_are_tied(document, cascade, previous, node_id)
                     });
+                // Generated content right before a box with no box before it
+                // in its parent's flow (see `generated_content_end_above`):
+                // where it ends in the flow, and where the box starts there.
+                let generated_before = std::cell::OnceCell::new();
+                let generated_before = || {
+                    *generated_before.get_or_init(|| {
+                        (frame.previous_box.is_none()
+                            && !direct_body_child
+                            && !cascade.pseudo.is_empty())
+                        .then(|| {
+                            let flow_top = candidate_raw_y
+                                - accumulated_relative_offset_y(
+                                    document, cascade, body_id, node_id,
+                                );
+                            super::generated_content_end_above(
+                                document, cascade, body_id, node_id, flow_top,
+                            )
+                            .map(|(_, end)| (end, flow_top))
+                        })
+                        .flatten()
+                    })
+                };
+                // Such content gives the flow a break before the box, as a
+                // box there would: edges that would be left alone at the page
+                // end after it may move on with what they hold.
+                let breaks_before_box = free_to_break_before || generated_before().is_some();
                 let column_break_before = (node.display() == DisplayValue::Contents
                     || !matches!(
                         computed.break_before,
@@ -1745,19 +1771,22 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // row that does not fit after them; the line of a flex
                 // container may do so on the page it moves to (see
                 // `grid_rows`).
-                let first_grid_row = (in_flow_container && !is_body && free_to_break_before)
+                let first_grid_row = (in_flow_container && !is_body && breaks_before_box)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
-                // A flex container whose padding or border above its items
-                // would be left alone at the foot of a page, because the first
-                // piece of its content does not fit after them, moves to the
-                // next page whole. So does a grid whose rows cannot be read,
-                // when its first item cannot be split from them either.
+                // A row flex container whose padding or border above its
+                // items would be left alone at the foot of a page, because
+                // the first piece of its content does not fit after them,
+                // moves to the next page whole. So does a grid whose rows
+                // cannot be read, when its first item cannot be split from
+                // them either. A column flex container breaks between those
+                // edges and its first item, as Chromium does, even when the
+                // item is monolithic.
                 let display = document.nodes[node_id].display();
                 let leading_piece = (in_flow_container
                     && !is_body
-                    && free_to_break_before
-                    && (display == DisplayValue::Flex
+                    && breaks_before_box
+                    && (display == DisplayValue::Flex && !column_flex
                         || display == DisplayValue::Grid
                             && first_grid_row.is_none()
                             && super::grid_rows::first_item_is_unbreakable(
@@ -1776,7 +1805,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_float
                     && has_block_leading_content(document, node_id)
                     && !is_body
-                    && (free_to_break_before
+                    && (breaks_before_box
                         || is_float
                         || node.display() == DisplayValue::InlineBlock)
                     && !document.context.pagination_on_transposed_axes)
@@ -1821,17 +1850,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
                         }
-                        None if !cascade.pseudo.is_empty() => {
-                            let flow_top = candidate_raw_y
-                                - accumulated_relative_offset_y(
-                                    document, cascade, body_id, node_id,
-                                );
-                            super::generated_content_end_above(
-                                document, cascade, body_id, node_id, flow_top,
-                            )
-                            .is_some_and(|(_, end)| end < flow_top - 0.001)
+                        None => {
+                            generated_before().is_some_and(|(end, flow_top)| end < flow_top - 0.001)
                         }
-                        None => false,
                     };
                 let needs_ancestor_constraints = margin_shape
                     || (nested_candidate_base
