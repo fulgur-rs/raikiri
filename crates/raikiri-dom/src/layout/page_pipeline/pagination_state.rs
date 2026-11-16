@@ -3141,7 +3141,7 @@ impl PaginationState {
                             lines_can_move
                         })
                     {
-                        self.move_lines(
+                        let moved = self.move_lines(
                             document,
                             env,
                             candidate,
@@ -3152,7 +3152,8 @@ impl PaginationState {
                             moves
                                 .into_iter()
                                 .map(|(line, shift, page)| (line + 1, shift, page)),
-                        )?;
+                        );
+                        moved?;
                     }
                     break;
                 }
@@ -4161,33 +4162,32 @@ fn empty_box_before_lies_past(
     node_id: usize,
     past_end: impl Fn(usize) -> bool,
 ) -> bool {
-    let Some(parent) = document.parent_of(node_id) else {
-        return false;
-    };
-    let children = &document.nodes[parent].children;
-    let before = children
-        .iter()
-        .position(|&child| child == node_id)
-        .unwrap_or(children.len());
-    let mut boxes = Vec::new();
-    for &child in children[..before].iter().rev() {
-        boxes.clear();
-        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
-        for &empty in &boxes {
-            if !collapses_through(
-                document,
-                cascade,
-                empty,
-                document.nodes[empty].layout.size.height,
-            ) {
-                return false;
-            }
-            if past_end(empty) {
-                return true;
+    document.parent_of(node_id).is_some_and(|parent| {
+        let children = &document.nodes[parent].children;
+        let before = children
+            .iter()
+            .position(|&child| child == node_id)
+            .unwrap_or(children.len());
+        let mut boxes = Vec::new();
+        for &child in children[..before].iter().rev() {
+            boxes.clear();
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            for &empty in &boxes {
+                if !collapses_through(
+                    document,
+                    cascade,
+                    empty,
+                    document.nodes[empty].layout.size.height,
+                ) {
+                    return false;
+                }
+                if past_end(empty) {
+                    return true;
+                }
             }
         }
-    }
-    false
+        false
+    })
 }
 
 /// Whether the block `node_id` and every block around it inside the body run
