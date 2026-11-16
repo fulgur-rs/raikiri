@@ -4722,3 +4722,61 @@ fn edges_that_begin_a_page_reach_it_past_margins_that_stay_whole() {
         assert_eq!(pages.len(), 3, "{children:?}");
     }
 }
+
+/// Where a block with `after_css` lands after a block with `css` holding a
+/// 30px block.
+fn after_split_edges(css: &str, inner_css: Option<&str>, after_css: &str) -> f32 {
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{css}"));
+        let holder = match inner_css {
+            Some(inner) => block(doc, parent, &format!("display:block;{inner}")),
+            None => parent,
+        };
+        block(doc, holder, "display:block;height:30px");
+        after = block(doc, body, &format!("display:block;height:10px;{after_css}"));
+    });
+    page_flow_y(&doc, after)
+}
+
+#[test]
+fn the_margin_after_edges_that_run_over_a_page_edge_is_dropped() {
+    // The padding moves to the second page and runs on to the third; the
+    // box after it follows its end there without the margin, as in Chromium.
+    assert_eq!(
+        after_split_edges("padding-bottom:120px", None, "margin-top:15px"),
+        220.0
+    );
+    assert_eq!(
+        after_split_edges("border-bottom:120px solid", None, "margin-top:15px"),
+        220.0
+    );
+    // Edges that end with a box inside the previous one count too.
+    assert_eq!(
+        after_split_edges("", Some("padding-bottom:120px"), "margin-top:15px"),
+        220.0
+    );
+    // A page edge between the edges of two boxes splits neither.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:30px",
+            Some("padding-bottom:100px"),
+            "margin-top:15px"
+        ),
+        245.0
+    );
+    // Edges that end on the page they begin keep the margin after them.
+    assert_eq!(
+        after_split_edges("padding-bottom:80px", None, "margin-top:5px"),
+        185.0
+    );
+    // A forced break keeps the margin after it.
+    assert_eq!(
+        after_split_edges(
+            "padding-bottom:120px",
+            None,
+            "margin-top:15px;break-before:page"
+        ),
+        315.0
+    );
+}

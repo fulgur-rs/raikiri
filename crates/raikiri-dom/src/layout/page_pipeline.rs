@@ -9495,6 +9495,44 @@ pub(super) fn last_flow_box(
     Some(last)
 }
 
+/// Whether a page edge falls inside the block-end padding and borders of
+/// `previous`, which ends at `bottom`, or inside those of a box that ends with
+/// it: its last in-flow box when that ends where its content ends, and so on
+/// down. An edge between the edges of two boxes splits neither.
+fn follows_split_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_origins: &PageOrigins,
+    previous: usize,
+    bottom: f32,
+) -> bool {
+    let mut end = bottom;
+    let mut current = previous;
+    loop {
+        let layout = &document.nodes[current].layout;
+        let own = layout.padding.bottom + layout.border.bottom;
+        if own > 0.001 {
+            let edge = page_origins.origin(page_origins.page_index_for_end(end));
+            if edge > end - own + 0.001 && edge < end - 0.001 {
+                return true;
+            }
+        }
+        end -= own;
+        if document.nodes[current].is_ifc_root() {
+            return false;
+        }
+        let Some(last) = last_flow_box(document, cascade, current) else {
+            return false;
+        };
+        let content_end = current_abs_y(document, current) + layout.size.height - own;
+        let last_bottom = current_abs_y(document, last) + document.nodes[last].layout.size.height;
+        if (content_end - last_bottom).abs() > 0.001 {
+            return false;
+        }
+        current = last;
+    }
+}
+
 /// For each block below `body_id` whose height follows its content, the
 /// block size of the margins inside it that a page edge may truncate (CSS
 /// Fragmentation 3 §5.2): those between its in-flow children, the margin
@@ -12084,6 +12122,18 @@ impl SiblingMargins {
             return None;
         }
         let effective_y = at.effective_y - pulled;
+        // Chromium drops the margin after a box whose block-end edges run
+        // over a page edge, so the box after it follows the last fragment
+        // of the edges directly.
+        if !forced_before
+            && follows_split_edges(document, cascade, page_origins, previous, effective_y - gap)
+            && self.adjacency.adjoins(document, cascade, node_id, previous)
+        {
+            return Some(MarginTruncation {
+                delta: -gap,
+                underflow: None,
+            });
+        }
         let natural_page = run_end.map_or(at.natural_page, |end| {
             page_origins.start_page(effective_y, end.height)
         });
