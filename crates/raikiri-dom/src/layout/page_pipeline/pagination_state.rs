@@ -2014,7 +2014,7 @@ impl PaginationState {
         );
         // The only item of a grid that stacks it as block flow breaks between
         // the lines of its paragraphs as a block does, and does not move whole.
-        if overflow.grid_item {
+        if overflow.grid_item && !super::unplaced_item_moves(document, cascade, candidate, &fit) {
             overflow.grid_item = !holds_block_flow_paragraph(document, cascade, body_id, node_id);
         }
         // A trailing item's later content may fragment, but its first piece

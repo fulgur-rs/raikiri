@@ -6143,9 +6143,10 @@ impl AvoidedBreaks {
                         )
                     })
         };
+        let unplaced_item = unplaced_item_moves(document, cascade, candidate, fit);
         let flex_item = candidate.context.is_flex_item()
-            && (item_tail || (!flex_item_is_last && item_kept_whole()));
-        let grid_item = candidate.context.is_grid_item() && item_overflow();
+            && (item_tail || (!flex_item_is_last && item_kept_whole()) || unplaced_item);
+        let grid_item = candidate.context.is_grid_item() && (item_overflow() || unplaced_item);
         // A caption moves to the next page whole unless a break between its
         // lines leaves enough of them on either side (orphans and widows): a
         // break between boxes beats one that leaves too few. It stays when it
@@ -8684,6 +8685,57 @@ fn unplaced_line(
     })
 }
 
+/// How far below the border-box top of the block `node_id` the piece that
+/// its single unplaced line keeps whole ends (see [`unplaced_line`]): the
+/// line with the padding and border that close the block right after it (see
+/// [`unplaced_line_extent`]). No text candidate moves such a line, and no
+/// break falls between it and those edges, so Chromium moves them on
+/// together, as it moves a paragraph of one line of text with its edges.
+/// `None` when the block holds anything besides that line, such as a block
+/// box laid out among or after its lines.
+fn unplaced_line_piece(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<(UnplacedBlockLine, f32)> {
+    let ifc_node = document.ifc_layout_node(node_id)?;
+    let ifc = ifc_node.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    if !ifc.generated_blocks.is_empty()
+        || !lines.placed_blocks.is_empty()
+        || !lines.block_line_starts.is_empty()
+    {
+        return None;
+    }
+    let height = document.nodes[node_id].layout.size.height;
+    unplaced_line(document, cascade, node_id)
+        .map(|line| (line, unplaced_line_extent(document, node_id, line, height)))
+}
+
+/// Whether the flex or grid item `candidate`, placed as `fit` says, moves to
+/// the next page for its single unplaced line (see [`unplaced_line_piece`]):
+/// the item starts on the page below its top, and the line with the edges
+/// that close the item after it runs past the page end. A line of text in
+/// the same place is moved by its text candidate, with those edges; Chromium
+/// moves a line of generated text or atomic inlines alone the same way,
+/// whether or not the item is the last one, and also when the piece is
+/// taller than the next page.
+fn unplaced_item_moves(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    let node_id = candidate.node_id;
+    (candidate.context.is_flex_item() || candidate.context.is_grid_item())
+        && !document.context.pagination_on_transposed_axes
+        // An item that already starts its page gains nothing by moving.
+        && fit.flow_y - fit.margin_top.max(0.0) > fit.page_start + 0.001
+        && unplaced_line_piece(document, cascade, node_id).is_some_and(|(line, piece)| {
+            fit.flow_y + line.start < fit.page_end && fit.flow_y + piece > fit.page_end + 0.001
+        })
+}
+
 /// The deepest box [`first_piece_end`] looks into.
 const FIRST_PIECE_DEPTH: usize = 8;
 
@@ -8708,11 +8760,17 @@ fn first_piece_end(
     // A box in the orthogonal flow of its parent is monolithic, and its
     // block size along the parent's axis is the whole of it.
     let orthogonal_item = depth > 0 && establishes_orthogonal_flow(document, cascade, node_id);
+    // A box inside the one asked about whose content is a single line that
+    // no text places keeps that line and the edges after it together, its
+    // generated text included.
+    let unplaced = (depth > 0 && depth <= FIRST_PIECE_DEPTH && node.kind() == NodeKind::Element)
+        .then(|| unplaced_line_piece(document, cascade, node_id))
+        .flatten();
     if depth > FIRST_PIECE_DEPTH
         || node.kind() != NodeKind::Element
         || (node.used_writing_mode.is_vertical() && !orthogonal_item)
         || node.multicol.is_some()
-        || node.has_before_or_after_content
+        || (node.has_before_or_after_content && unplaced.is_none())
         || !matches!(
             node.position(),
             PositionValue::Static | PositionValue::Relative
@@ -8726,6 +8784,9 @@ fn first_piece_end(
         || is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false)
     {
         return Some(height);
+    }
+    if let Some((_, piece)) = unplaced {
+        return Some(piece);
     }
     if node.is_ifc_root() {
         let ifc_node = document.ifc_layout_node(node_id)?;

@@ -200,17 +200,7 @@ fn unbreakable_piece(
     {
         return Some(node.layout.size.height);
     }
-    let ifc = document.ifc_layout_node(item)?.ifc.as_ref()?;
-    let lines = ifc.lines.as_ref()?;
-    if !ifc.generated_blocks.is_empty()
-        || !lines.placed_blocks.is_empty()
-        || !lines.block_line_starts.is_empty()
-    {
-        return None;
-    }
-    unplaced_line(document, cascade, item)
-        .filter(|line| line.atomic)
-        .map(|line| line.end_within(node.layout.size.height))
+    unplaced_line_piece(document, cascade, item).map(|(_, piece)| piece)
 }
 
 fn plain_block_ancestors(
@@ -252,7 +242,12 @@ fn readable_subtree(document: &Document, cascade: &CascadeResult, grid: usize) -
             node.position(),
             PositionValue::Absolute | PositionValue::Fixed
         ) || node.multicol.is_some()
-            || node.has_before_or_after_content
+            // Generated text on the single line of an item is part of that
+            // line (see `unbreakable_piece`); other generated content is not
+            // read.
+            || (node.has_before_or_after_content
+                && (document.parent_of(id) != Some(grid)
+                    || unplaced_line_piece(document, cascade, id).is_none()))
             || node.size_containment.height
             || node.used_writing_mode.is_vertical()
             || is_floating_box_for_pagination(document, cascade, id)

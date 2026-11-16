@@ -124,3 +124,87 @@ fn a_paragraph_below_the_first_margin_of_the_document_stays() {
         assert_eq!(glyph_tops(&body), [(0, 'A', 15), (2, 'Z', 5)], "{body}");
     }
 }
+
+/// The containers that place the paragraph as an item: a grid of one column,
+/// a row and a column flex container, and a grid of two columns.
+const CONTAINERS: [&str; 4] = [
+    "display:grid",
+    "display:flex",
+    "display:flex;flex-direction:column",
+    "display:grid;grid-template-columns:20px 20px",
+];
+
+#[test]
+fn an_item_after_content_moves_with_its_line_and_edges() {
+    // No break falls between the line and the padding that closes the item,
+    // so the item goes on to the next page, also when the two together are
+    // taller than that page.
+    for container in CONTAINERS {
+        for paragraph in [GENERATED, INLINE_BLOCK] {
+            for (padding, z_page) in [(60, 2), (90, 3)] {
+                let paragraph = paragraph.replace("PB", &padding.to_string());
+                let body = format!(
+                    r#"<div style="height:20px">Y</div><div style="{container}">{paragraph}</div><div>Z</div>"#
+                );
+                assert_eq!(
+                    glyph_tops(&body),
+                    [(0, 'Y', 5), (1, 'A', 5), (z_page, 'Z', 5)],
+                    "{body}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_stacked_item_after_another_item_moves_with_its_line_and_edges() {
+    // The last item of a column flex container moves on as an earlier one
+    // does.
+    for container in [CONTAINERS[0], CONTAINERS[2]] {
+        for paragraph in [GENERATED, INLINE_BLOCK] {
+            let paragraph = paragraph.replace("PB", "60");
+            let body = format!(
+                r#"<div style="{container}"><div style="height:20px">B</div>{paragraph}</div><div>Z</div>"#
+            );
+            assert_eq!(
+                glyph_tops(&body),
+                [(0, 'B', 5), (1, 'A', 5), (2, 'Z', 5)],
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_item_below_the_top_edges_of_a_container_that_starts_the_page() {
+    // A grid or a column flex container breaks between its top edges and the
+    // item; the line of a row flex container stays below them.
+    for container in CONTAINERS {
+        for paragraph in [GENERATED, INLINE_BLOCK] {
+            let paragraph = paragraph.replace("PB", "60");
+            let body = format!(
+                r#"<div style="{container};padding-top:20px;border-top:1px solid">{paragraph}</div><div>Z</div>"#
+            );
+            let a = glyph_tops(&body)
+                .into_iter()
+                .find(|&(_, glyph, _)| glyph == 'A');
+            let expected = if container == "display:flex" {
+                (0, 'A', 26)
+            } else {
+                (1, 'A', 5)
+            };
+            assert_eq!(a, Some(expected), "{body}");
+        }
+    }
+}
+
+#[test]
+fn an_item_that_starts_the_page_stays() {
+    for container in CONTAINERS {
+        for paragraph in [GENERATED, INLINE_BLOCK] {
+            let paragraph = paragraph.replace("PB", "60");
+            let body = format!(r#"<div style="{container}">{paragraph}</div><div>Z</div>"#);
+            assert_eq!(glyph_tops(&body), [(0, 'A', 5), (1, 'Z', 5)], "{body}");
+        }
+    }
+}
