@@ -446,21 +446,37 @@ fn apply_computed_to_style_in_session_inner(
             .ancestors(idx)
             .find(|&ancestor| boxes.display(ancestor) != Some(DisplayValue::Contents));
         if let Some(container) = container {
+            let container_vertical = uses_vertical_axes(cascade, container);
+            let containing_block_vertical = || {
+                let fixed = cv.position == PositionValue::Fixed;
+                uses_vertical_axes(cascade, settled::positioning_container(doc, idx, fixed))
+            };
             let (align_self, justify_self) = settled::inherited_last_baseline(
                 cv,
                 &cascade.computed[container],
-                uses_vertical_axes(cascade, container),
-                || {
-                    let fixed = cv.position == PositionValue::Fixed;
-                    uses_vertical_axes(cascade, settled::positioning_container(doc, idx, fixed))
-                },
+                container_vertical,
+                containing_block_vertical,
             );
+            // The borrowed `end` places the box in its static position on the
+            // axes of the container. Where only the containing block is on
+            // vertical axes, the alignment between the insets is on other
+            // axes, and the box aligns there by its own `auto`.
+            let off_axes = (align_self.is_some() || justify_self.is_some())
+                && !container_vertical
+                && containing_block_vertical();
             if let Some(value) = align_self {
                 settled.align_self = Some(value);
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::align_self(Some(value)),
                 );
+                if off_axes {
+                    settled.oof_auto.0 = true;
+                    doc.record_pass_override(
+                        idx,
+                        raikiri_layout_style::OwnedPropertyOverride::oof_align_self(None),
+                    );
+                }
             }
             if let Some(value) = justify_self {
                 settled.justify_self = Some(value);
@@ -468,6 +484,13 @@ fn apply_computed_to_style_in_session_inner(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(value)),
                 );
+                if off_axes {
+                    settled.oof_auto.1 = true;
+                    doc.record_pass_override(
+                        idx,
+                        raikiri_layout_style::OwnedPropertyOverride::oof_justify_self(None),
+                    );
+                }
             }
             if let Some(value) = settled::line_relative_justify_self(doc, cascade, idx, container) {
                 settled.justify_self = value;
@@ -645,20 +668,32 @@ fn apply_computed_to_style_in_session_inner(
                 );
             }
             Some(settled::KeywordHeightInsets::FitContent { justify }) => {
-                let (alignment, replace) = if justify {
-                    (
-                        &mut settled_styles[idx].justify_self,
-                        raikiri_layout_style::OwnedPropertyOverride::justify_self as fn(_) -> _,
-                    )
+                let oof_auto = settled_styles[idx].oof_auto;
+                if (justify && oof_auto.1) || (!justify && oof_auto.0) {
+                    // The box aligns by its own `auto` between its insets,
+                    // which stretches it there.
+                    let replace = if justify {
+                        raikiri_layout_style::OwnedPropertyOverride::oof_justify_self
+                    } else {
+                        raikiri_layout_style::OwnedPropertyOverride::oof_align_self
+                    };
+                    doc.record_pass_override(idx, replace(Some(AlignItems::START)));
                 } else {
-                    (
-                        &mut settled_styles[idx].align_self,
-                        raikiri_layout_style::OwnedPropertyOverride::align_self as fn(_) -> _,
-                    )
-                };
-                if settled::stretches_between_insets(*alignment) {
-                    *alignment = Some(AlignItems::START);
-                    doc.record_pass_override(idx, replace(*alignment));
+                    let (alignment, replace) = if justify {
+                        (
+                            &mut settled_styles[idx].justify_self,
+                            raikiri_layout_style::OwnedPropertyOverride::justify_self as fn(_) -> _,
+                        )
+                    } else {
+                        (
+                            &mut settled_styles[idx].align_self,
+                            raikiri_layout_style::OwnedPropertyOverride::align_self as fn(_) -> _,
+                        )
+                    };
+                    if settled::stretches_between_insets(*alignment) {
+                        *alignment = Some(AlignItems::START);
+                        doc.record_pass_override(idx, replace(*alignment));
+                    }
                 }
             }
             None => {}

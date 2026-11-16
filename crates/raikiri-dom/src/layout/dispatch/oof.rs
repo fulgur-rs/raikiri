@@ -99,6 +99,17 @@ impl LayoutSession<'_> {
         self.context.oof_axes_vertical
     }
 
+    /// Whether `node` is out of flow in a containing block on vertical axes
+    /// and held by a container on vertical axes as well.
+    ///
+    /// The sizing of a box with a preferred aspect ratio or size containment
+    /// between its insets is worked out on horizontal axes, and Chromium keeps
+    /// the size it gives such a box in a container on horizontal axes even
+    /// where its containing block is on vertical axes.
+    pub(crate) fn oof_in_vertical_container(&self, node: usize) -> bool {
+        self.context.oof_axes_vertical && self.container_is_vertical(node)
+    }
+
     /// The tracks and areas a grid container reported, which the library
     /// positions its out-of-flow children in.
     pub(crate) fn oof_grid_info(&self, node: NodeId) -> &GridInfo {

@@ -74,7 +74,10 @@ impl OwnedPropertyOverride {
     pub fn is_self_alignment(&self) -> bool {
         matches!(
             self.as_borrowed().0,
-            OverrideKind::AlignSelf(_) | OverrideKind::JustifySelf(_)
+            OverrideKind::AlignSelf(_)
+                | OverrideKind::JustifySelf(_)
+                | OverrideKind::OofAlignSelf(_)
+                | OverrideKind::OofJustifySelf(_)
         )
     }
 

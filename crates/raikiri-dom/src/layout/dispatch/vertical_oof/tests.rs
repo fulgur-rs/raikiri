@@ -1334,3 +1334,51 @@ fn a_box_in_a_horizontal_wrapper_aligns_on_the_axes_of_its_vertical_containing_b
         assert_eq!(rect, expected, "{alignment}");
     }
 }
+
+#[test]
+fn a_box_borrowing_last_baseline_from_a_horizontal_wrapper_keeps_its_axes() {
+    // A box that borrows `last baseline` from a container on horizontal axes
+    // aligns to the end on the axes of that container, and a box sized by a
+    // preferred aspect ratio between its insets keeps the size it takes there,
+    // although the containing block is `vertical-rl` (Chromium values).
+    let flex = "display:flex;height:100px;align-items:last baseline;writing-mode:horizontal-tb";
+    let grid = "display:grid;justify-items:last baseline;writing-mode:horizontal-tb";
+    let ratio = "top:0;bottom:0;aspect-ratio:1;contain:size;contain-intrinsic-size:200px 200px";
+    for (wrapper, child, expected) in [
+        (flex, "left:0;right:0", (0.0, 80.0, 200.0, 20.0)),
+        (flex, "top:0;bottom:0", (200.0, 0.0, 20.0, 100.0)),
+        (flex, ratio, (200.0, 0.0, 200.0, 200.0)),
+        (
+            flex,
+            "top:0;bottom:0;width:80px;aspect-ratio:1",
+            (200.0, 0.0, 80.0, 80.0),
+        ),
+        (grid, "left:0;right:0", (0.0, 0.0, 200.0, 20.0)),
+        (grid, "top:0;bottom:0", (180.0, 0.0, 20.0, 100.0)),
+        (grid, ratio, (0.0, 0.0, 200.0, 200.0)),
+        (
+            grid,
+            "top:10px;bottom:10px;height:fit-content;margin-top:auto",
+            (180.0, 70.0, 20.0, 20.0),
+        ),
+        (
+            grid,
+            "top:10px;bottom:10px;height:fit-content",
+            (180.0, 10.0, 20.0, 20.0),
+        ),
+        (grid, "inset:0;align-self:center", (90.0, 0.0, 20.0, 100.0)),
+        (
+            grid,
+            "top:0;bottom:0;align-self:center;left:0;width:30px",
+            (0.0, 0.0, 30.0, 100.0),
+        ),
+        (
+            flex,
+            "inset:0;justify-self:center",
+            (0.0, 40.0, 200.0, 20.0),
+        ),
+    ] {
+        let rect = rect_in_a_wrapper("writing-mode:vertical-rl", wrapper, child);
+        assert_eq!(rect, expected, "{wrapper} | {child}");
+    }
+}

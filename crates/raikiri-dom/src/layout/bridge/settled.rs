@@ -21,6 +21,10 @@ pub(super) struct Settled {
     pub(super) align_self: Option<AlignItems>,
     /// The `justify-self` of the box, `None` for `auto`.
     pub(super) justify_self: Option<AlignItems>,
+    /// Whether the `align-self` and the `justify-self` the box borrows from
+    /// its container stay off the alignment between its insets, which then
+    /// reads them as `auto` (see `inherited_last_baseline`).
+    pub(super) oof_auto: (bool, bool),
 }
 
 impl Settled {
@@ -31,6 +35,7 @@ impl Settled {
             has_aspect_ratio: false,
             align_self: own_alignment(cv, cv.align_self),
             justify_self: own_alignment(cv, cv.justify_self),
+            oof_auto: (false, false),
         }
     }
 }
@@ -156,13 +161,16 @@ fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
 /// container's plain baseline. With an inset specified, `auto` behaves as
 /// `normal` and the box stays at the start.
 ///
-/// Layout reads `align-self` along the physical vertical axis and
-/// `justify-self` along the horizontal one, except for a box in a container on
-/// vertical axes whose containing block is on vertical axes as well: it reads
-/// them the other way round there, so `align-self` is the block axis of the
-/// container, the physical horizontal one. `containing_block_vertical` says
-/// whether the containing block is on vertical axes, and is only asked for when
-/// the container is and an alignment would be replaced.
+/// The static position is on the axes of the container, which reads
+/// `align-self` along the physical vertical axis and `justify-self` along the
+/// horizontal one, except for a box in a container on vertical axes whose
+/// containing block is on vertical axes as well: it reads them the other way
+/// round there, so `align-self` is the block axis of the container, the
+/// physical horizontal one. `containing_block_vertical` says whether the
+/// containing block is on vertical axes, and is only asked for when the
+/// container is and an alignment would be replaced. The caller keeps the
+/// replaced alignments off the alignment between the insets where only the
+/// containing block is on vertical axes.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 pub(super) fn inherited_last_baseline(
     cv: &ComputedValues,

@@ -289,3 +289,49 @@ fn a_measured_table_cannot_infer_its_height_from_the_width() {
         assert_eq!(measured.size().width, plain.size().width);
     }
 }
+
+#[test]
+fn an_alignment_override_for_the_insets_only_leaves_the_static_position_alone() {
+    let mut cv = ComputedValues::initial();
+    cv.position = raikiri_style::property::PositionValue::Absolute;
+    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let pass = [
+        PropertyOverride::align_self(Some(values::AlignSelf::END)),
+        PropertyOverride::oof_align_self(None),
+        PropertyOverride::justify_self(Some(values::AlignSelf::END)),
+        PropertyOverride::oof_justify_self(Some(values::AlignSelf::START)),
+    ];
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &pass, &[]);
+    // The static position keeps the alignment both readers share.
+    assert_eq!(
+        view.static_position_align_self(),
+        Some(values::AlignSelf::END)
+    );
+    assert_eq!(
+        view.static_position_justify_self(),
+        Some(values::AlignSelf::END)
+    );
+    // Between the insets, the override for the insets only takes over.
+    assert_eq!(view.oof_align_self(), None);
+    assert_eq!(view.oof_justify_self(), Some(values::AlignSelf::START));
+    // A scoped entry of either kind takes over from both pass entries.
+    let scoped = [PropertyOverride::align_self(Some(
+        values::AlignSelf::CENTER,
+    ))];
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &pass, &scoped);
+    assert_eq!(view.oof_align_self(), Some(values::AlignSelf::CENTER));
+    // Without an override for the insets only, the shared one applies.
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &pass[..1], &[]);
+    assert_eq!(view.oof_align_self(), Some(values::AlignSelf::END));
+    // Without any override, the computed `auto` applies.
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.oof_justify_self(), None);
+    let owned = [
+        OwnedPropertyOverride::oof_align_self(None),
+        OwnedPropertyOverride::oof_justify_self(None),
+    ];
+    assert!(owned.iter().all(OwnedPropertyOverride::is_self_alignment));
+    let mut entries = owned.to_vec();
+    OwnedPropertyOverride::oof_align_self(Some(values::AlignSelf::START)).install(&mut entries);
+    assert_eq!(entries.len(), 2);
+}

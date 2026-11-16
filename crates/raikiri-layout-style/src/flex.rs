@@ -98,6 +98,19 @@ impl LayoutStyleView<'_> {
         }) {
             return value;
         }
+        self.computed_self_alignment(inline)
+    }
+    /// The self-alignment an out-of-flow box takes between its insets, which
+    /// an override for that alignment only takes over from the one it shares
+    /// with its static position.
+    pub(crate) fn oof_self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
+        match self.oof_alignment_override(inline) {
+            Some(value) => value,
+            None => self.computed_self_alignment(inline),
+        }
+    }
+    /// The self-alignment along one axis that the computed value gives.
+    fn computed_self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
         let c = &*self.prepared.values;
         let value = if inline { c.justify_self } else { c.align_self };
         match value {
