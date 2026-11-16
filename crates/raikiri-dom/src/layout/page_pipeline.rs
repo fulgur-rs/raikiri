@@ -11138,10 +11138,13 @@ pub(super) fn follows_box_on_page(
 /// `node_id` (see [`follows_box_on_page`]) that ends at or above `y`, the
 /// block-start margin edge of the box: content beside the box, as an earlier
 /// flex item, grid item or table cell, ends below it. Content of no height
-/// counts up to `border_top`, the block-start border edge of the box, too:
-/// an empty box whose margins collapse with those of the box lies where the
-/// collapsed margins end (CSS 2.1 §8.3.1), below the margin edge of the box.
-/// `None` when no such content comes before the box.
+/// counts up to `border_top` too: an empty box whose margins collapse with
+/// those of the box lies at the end of the collapsed margins in the flow,
+/// below the margin edge of the box, and Chromium breaks after it all the
+/// same. Callers pass the block-start border edge of the box there only when
+/// its margin can adjoin content before it (see [`margins_adjoin_in_flow`]),
+/// and the margin edge otherwise. `None` when no such content comes before
+/// the box.
 pub(super) fn content_end_above(
     document: &Document,
     cascade: &CascadeResult,
@@ -11247,37 +11250,105 @@ fn generated_box_lies(
         root = up;
     }
     let id = crate::generated_content::generated_node_id(element, pseudo);
-    // An empty `::before` leaves neither a block nor a line: a block-level
-    // one whose margins collapse through it, or an inline one that makes no
-    // line, which may not even make its element hold a paragraph. Its
-    // anonymous block is still a box of no height at the start of the
-    // element's content (CSS 2.1 §9.2.1.1, §9.4.2), as an empty `div` is.
-    let unplaced_before = || {
-        element == root
-            && pseudo == raikiri_style::PseudoElem::Before
-            && crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo)
-    };
     let node = document
         .ifc_layout_node(root)
         .unwrap_or(&document.nodes[root]);
     let origin = flow_y(root) + node.layout.border.top + node.layout.padding.top;
-    let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref()) else {
-        return unplaced_before() && accept(origin, origin);
-    };
-    let mut placed = false;
-    lines.placed_blocks.iter().any(|block| {
-        let top = origin + block.border_box.y;
-        placed |= block.node == id as u64;
-        block.node == id as u64 && accept(top, top + block.border_box.height)
-    }) || lines.lines.iter().enumerate().any(|(index, line)| {
-        let top = origin + lines.line_top(index);
-        let owns = super::ifc::text_lines::glyph_owners(line).contains(&id);
-        placed |= owns;
-        owns && accept(
-            top,
-            top + crate::layout::ifc::outside_marker::fit_height(line),
+    if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref()) {
+        let blocks = lines
+            .placed_blocks
+            .iter()
+            .filter(|block| block.node == id as u64)
+            .map(|block| {
+                let top = origin + block.border_box.y;
+                (top, top + block.border_box.height)
+            });
+        let line_bounds = lines
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| super::ifc::text_lines::glyph_owners(line).contains(&id))
+            .map(|(index, line)| {
+                let top = origin + lines.line_top(index);
+                (
+                    top,
+                    top + crate::layout::ifc::outside_marker::fit_height(line),
+                )
+            });
+        let mut bounds = blocks.chain(line_bounds).peekable();
+        if bounds.peek().is_some() {
+            return bounds.any(|(top, bottom)| accept(top, bottom));
+        }
+    }
+    // An empty `::before` leaves neither a block nor a line: a block-level
+    // one whose margins collapse through it, or an inline one that makes no
+    // line, which may not even make its element hold a paragraph. Its
+    // anonymous block is still a box of no height at the start of the
+    // element's content (CSS 2.1 §9.2.1.1, §9.4.2), as an empty `div` is, and
+    // Chromium breaks after it as after such a box. The content of a
+    // `display: contents` element starts at its first box.
+    element == parent
+        && pseudo == raikiri_style::PseudoElem::Before
+        && holds_block_flow(document.nodes[root].display())
+        && crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo)
+        && if element == root {
+            Some(origin)
+        } else {
+            first_box_in(document, element).map(flow_y)
+        }
+        .is_some_and(|start| accept(start, start))
+}
+
+/// Whether a box of `display` lays its in-flow children out one below
+/// another, in block flow: not a flex or grid container, nor a table or a
+/// part of one that holds rows, columns or cells side by side.
+fn holds_block_flow(display: DisplayValue) -> bool {
+    !display.is_flex_or_grid_container()
+        && !matches!(
+            display,
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableColumnGroup
+                | DisplayValue::TableColumn
         )
-    }) || (!placed && unplaced_before() && accept(origin, origin))
+}
+
+/// The first element among the children of the `display: contents` element
+/// `element`, or of the `display: contents` elements there, that generates
+/// a box.
+fn first_box_in(document: &Document, element: usize) -> Option<usize> {
+    document.nodes[element].children.iter().find_map(|&child| {
+        let node = &document.nodes[child];
+        match node.display() {
+            _ if node.kind() != NodeKind::Element => None,
+            DisplayValue::None => None,
+            DisplayValue::Contents => first_box_in(document, child),
+            _ => Some(child),
+        }
+    })
+}
+
+/// Whether the block-start margin of the box `node_id` can adjoin content
+/// before it in the flow below `body_id`: every ancestor of it below the
+/// body lays its children out in block flow (see [`holds_block_flow`]) and
+/// in one column. In a flex, grid or table container, or a multi-column
+/// one, content before the box may lie beside it instead.
+pub(super) fn margins_adjoin_in_flow(document: &Document, body_id: usize, node_id: usize) -> bool {
+    let mut node = node_id;
+    while let Some(parent) = document.parent_of(node)
+        && parent != body_id
+    {
+        let holder = &document.nodes[parent];
+        if holder.is_multicol_container() || !holds_block_flow(holder.display()) {
+            return false;
+        }
+        node = parent;
+    }
+    true
 }
 
 /// Whether generated content before the box `node_id` in the flow below

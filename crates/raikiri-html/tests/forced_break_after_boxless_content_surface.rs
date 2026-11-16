@@ -242,13 +242,58 @@ fn an_empty_item_before_comes_before_the_item_of_a_column_flex_container() {
             "{before}"
         );
     }
-    // In a row, the empty item is beside the item, not before it.
+    // Behind a `display: contents` wrapper the item is still one of the
+    // container.
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;flex-direction:column"><div></div><section style="display:contents"><div style="break-before:page">A</div></section></div>"#
+        ),
+        [(1, 'A', 5)],
+    );
+    // In a row, or in a later column of a wrapping column, the empty item is
+    // beside the item, not before it, even within the item's margin.
     assert_eq!(
         glyph_tops(&format!(
             r#"<div style="display:flex"><div></div>{item}</div>"#
         )),
         [(0, 'A', 15)],
     );
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;flex-direction:column;flex-wrap:wrap;height:40px"><div></div><div style="height:40px"></div><div style="break-before:page">A</div></div>"#
+        ),
+        [(0, 'A', 5)],
+    );
+    assert_eq!(
+        glyph_tops(
+            r#"<div style="display:flex;align-items:center"><div></div><div><p style="break-before:page;margin:40px 0 0;width:20px">A</p></div></div>"#
+        ),
+        [(0, 'A', 45)],
+    );
+}
+
+#[test]
+fn an_empty_generated_box_of_a_contents_element_comes_before_the_box() {
+    for before in [
+        r#"<style>body::before{content:"";display:contents}</style>"#,
+        r#"<style>body::before{content:" ";display:contents}</style>"#,
+    ] {
+        assert_eq!(
+            glyph_tops(&format!("{before}{BREAK}")),
+            [(1, 'A', 5), (1, 'Z', 35)],
+            "{before}"
+        );
+    }
+    // The `::before` of a `display: contents` wrapper lies at its first box.
+    for display in ["inline", "block"] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"<style>.w::before{{content:"";display:{display}}}</style><div class="w" style="display:contents">{BREAK}</div>"#
+            )),
+            [(1, 'A', 5), (1, 'Z', 35)],
+            "{display}"
+        );
+    }
 }
 
 #[test]
