@@ -10881,62 +10881,54 @@ pub(super) fn follows_box_on_page(
         |parent, node, boxes| {
             // An element that generates no box of its own, an empty or a
             // `display: contents` one, may still hold generated content,
-            // block-level or on the lines of the paragraph, which is content
-            // of the page.
-            document.nodes[parent]
-                .children
-                .iter()
-                .take_while(|&&child| child != node)
-                .any(|&child| {
-                    document.nodes[child].kind() == NodeKind::Element
-                        && [
-                            raikiri_style::PseudoElem::Before,
-                            raikiri_style::PseudoElem::After,
-                        ]
-                        .into_iter()
-                        .any(|pseudo| {
-                            renders_pseudo(cascade, child, pseudo)
-                                && pseudo_on_page(parent, child, pseudo)
+            // block-level or on the lines of the paragraph, or lay out a
+            // phantom line, which is content of the page.
+            boxless_content_before(
+                document,
+                cascade,
+                parent,
+                node,
+                &|child, pseudo| {
+                    renders_pseudo(cascade, child, pseudo) && pseudo_on_page(parent, child, pseudo)
+                },
+                &|id| flow_y(id) >= page_start - 0.001,
+            ) || boxes.iter().any(|&id| {
+                if document.nodes[id].kind() != NodeKind::Element {
+                    // Text has no box of its own: its lines tell where it lies.
+                    return document
+                        .ifc_text_lines(id)
+                        .and_then(|owned| {
+                            let bounds = positioned_owned_text_line_bounds(document, &owned)?;
+                            let root = document.ifc_layout_node(owned.root)?.layout;
+                            let origin = flow_y(owned.root) + root.border.top + root.padding.top;
+                            let (first, _) = *bounds.first()?;
+                            let (_, last) = *bounds.last()?;
+                            Some(on_page(origin + first, origin + last))
                         })
-                })
-                || boxes.iter().any(|&id| {
-                    if document.nodes[id].kind() != NodeKind::Element {
-                        // Text has no box of its own: its lines tell where it lies.
-                        return document
-                            .ifc_text_lines(id)
-                            .and_then(|owned| {
-                                let bounds = positioned_owned_text_line_bounds(document, &owned)?;
-                                let root = document.ifc_layout_node(owned.root)?.layout;
-                                let origin =
-                                    flow_y(owned.root) + root.border.top + root.padding.top;
-                                let (first, _) = *bounds.first()?;
-                                let (_, last) = *bounds.last()?;
-                                Some(on_page(origin + first, origin + last))
-                            })
-                            .unwrap_or(false);
-                    }
-                    let top = flow_y(id);
-                    on_page(top, top + document.nodes[id].layout.size.height)
-                })
-                || (renders_before_pseudo(cascade, parent)
-                    && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
-                || phantom_line_before(document, cascade, parent, node, &|id| {
-                    flow_y(id) >= page_start - 0.001
-                })
+                        .unwrap_or(false);
+                }
+                let top = flow_y(id);
+                on_page(top, top + document.nodes[id].layout.size.height)
+            }) || (renders_before_pseudo(cascade, parent)
+                && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
         },
     )
 }
 
-/// Whether an empty inline element among the children of `parent` before
-/// `node`, or among the children of the `display: contents` elements there,
-/// lays out a phantom line whose top `on_page` accepts: the anonymous block
-/// of that line is a box of no height (CSS 2.1 §9.4.2), as an empty `div` is.
-fn phantom_line_before(
+/// Whether an element among the children of `parent` before `node` that
+/// generates no box of its own, or among the children of the `display:
+/// contents` elements there, holds content: a generated `::before` or
+/// `::after` that `pseudo_on_page` accepts, or a phantom line, the line of an
+/// empty inline element, whose top `phantom_on_page` accepts. The anonymous
+/// block of that line is a box of no height (CSS 2.1 §9.4.2), as an empty
+/// `div` is.
+fn boxless_content_before(
     document: &Document,
     cascade: &CascadeResult,
     parent: usize,
     node: usize,
-    on_page: &dyn Fn(usize) -> bool,
+    pseudo_on_page: &dyn Fn(usize, raikiri_style::PseudoElem) -> bool,
+    phantom_on_page: &dyn Fn(usize) -> bool,
 ) -> bool {
     let mut pending: Vec<usize> = document.nodes[parent]
         .children
@@ -10945,8 +10937,18 @@ fn phantom_line_before(
         .take_while(|&child| child != node)
         .collect();
     while let Some(id) = pending.pop() {
+        if document.nodes[id].kind() == NodeKind::Element
+            && [
+                raikiri_style::PseudoElem::Before,
+                raikiri_style::PseudoElem::After,
+            ]
+            .into_iter()
+            .any(|pseudo| pseudo_on_page(id, pseudo))
+        {
+            return true;
+        }
         match sibling_adjacency::flow_box(document, cascade, id) {
-            sibling_adjacency::FlowBox::Phantom if on_page(id) => return true,
+            sibling_adjacency::FlowBox::Phantom if phantom_on_page(id) => return true,
             sibling_adjacency::FlowBox::Contents => {
                 pending.extend_from_slice(&document.nodes[id].children);
             }
