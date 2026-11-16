@@ -192,6 +192,11 @@ pub(super) struct ElementContext {
     pub(super) is_flex_item: bool,
     pub(super) is_grid_item: bool,
     pub(super) is_named: bool,
+    /// The nearest box around the candidate whose height does not follow its
+    /// content and that clips its overflow (see [`ClipBounds::lines_clip`]).
+    /// Its clip hides what the candidate paints past it, wherever pagination
+    /// moves the candidate inside it.
+    pub(super) clip_box: Option<usize>,
     pub(super) deferred_named_break_after: bool,
     /// The line of a paragraph of one line of generated text or of atomic
     /// inlines that no text places: the box is kept whole by that line.
@@ -319,6 +324,11 @@ impl BoxContext {
     pub(super) fn is_rendered_leaf(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.is_rendered_leaf)
+    }
+
+    pub(super) fn clip_box(self) -> Option<usize> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.clip_box)
     }
 
     pub(super) fn is_direct_body_element(self) -> bool {
@@ -1998,6 +2008,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_flex_item: flex_item_candidate,
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),
+                                clip_box: frame.lines_clip_box,
                                 deferred_named_break_after,
                                 unplaced_line,
                                 unbreakable: unbreakable_box,

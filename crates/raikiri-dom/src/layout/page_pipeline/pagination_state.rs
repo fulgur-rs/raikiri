@@ -1211,6 +1211,7 @@ impl PaginationState {
             page_origins,
             insets,
             page_box,
+            root_flow_offset,
             ..
         } = *env;
         let node_id = candidate.node_id;
@@ -1240,6 +1241,18 @@ impl PaginationState {
         // A truncated margin inside the box reaches no page of its own: the
         // content and the edges around it reach the pages the box runs on to.
         let reach_height = height - self.margin_rooms.get(&node_id).copied().unwrap_or(0.0);
+        // A clip around the box that keeps its place hides what the box
+        // paints past it, also when pagination moved the box down inside it:
+        // that part reaches no page.
+        let reach_height = candidate.context.clip_box().map_or(reach_height, |owner| {
+            let clip_end = super::clip_block_end(
+                document,
+                cascade,
+                owner,
+                current_abs_y(document, owner) + root_flow_offset,
+            );
+            reach_height.min(clip_end - effective_y)
+        });
         let end_page = page_origins
             .end_page(effective_y, reach_height)
             .filter(|_| !monolithic_paper_fit());
