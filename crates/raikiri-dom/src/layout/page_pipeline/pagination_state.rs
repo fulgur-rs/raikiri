@@ -3104,14 +3104,14 @@ impl PaginationState {
                 // before it inside the box it starts, nor before the boxes
                 // that start with that box: when one of them ends on the
                 // page, the page cannot break inside it, so the line
-                // overflows the box and stays, and the lines after it go on
-                // below it, as in Chromium. Only a second line left alone
-                // under `orphans` moves the paragraph, as the break before it
+                // overflows the box and stays, as in Chromium. The lines
+                // after it go on below it and break on the pages after it as
+                // a later fragment does. Only a second line left alone under
+                // `orphans` moves the paragraph, as the break before it
                 // would.
                 if !moved_whole
                     && line_fit.starts_on_page
                     && line_fit.lines_before_break == 0
-                    && first_line_top < page_start + page_step - 0.001
                     && (line_fit.total_lines == 1 || line_fit.orphans <= 1)
                     && starting_box_ends_on_page(
                         document,
@@ -3123,6 +3123,37 @@ impl PaginationState {
                         page_start + page_step,
                     )
                 {
+                    let rest = &line_metrics[1..];
+                    let next = page.saturating_add(1);
+                    let next_start = page_origins.origin(next);
+                    let mut rest_fit = ParagraphLineFit::measure(
+                        rest,
+                        text.effective_y,
+                        next_start,
+                        next_start + page_origins.step_at(next),
+                        cascade.computed[block_id].orphans,
+                        widows,
+                        0.0,
+                    );
+                    rest_fit.first_fragment = false;
+                    if let LineBreakFix::MoveLines(moves) =
+                        rest_fit.fix(rest, text.effective_y, next, page_origins, false, || {
+                            lines_can_move
+                        })
+                    {
+                        self.move_lines(
+                            document,
+                            env,
+                            candidate,
+                            entry,
+                            blocks,
+                            text,
+                            block_id,
+                            moves
+                                .into_iter()
+                                .map(|(line, shift, page)| (line + 1, shift, page)),
+                        )?;
+                    }
                     break;
                 }
                 let fix = line_fit.fix(
@@ -4072,11 +4103,13 @@ fn clipped_line_metrics(
 }
 
 /// Whether the block `block_id`, whose border box the flow puts at
-/// `block_top` now, or one of the boxes that start with it and so have no
-/// break between their top and it, ends by `page_end`: the page cannot break
-/// inside such a box. A box whose height follows its content holds the
-/// block and ends below it; the others keep the height they have and move
-/// with the block, its first box.
+/// `block_top` now, or one of the boxes that start
+/// with it and so have no break between their top and it, ends by
+/// `page_end`: the page cannot break inside such a box. A box whose height
+/// follows its content holds the block and ends below it; the others keep the
+/// height they have and move with the block, their first box. Positions are
+/// those of the flow, without relative offsets, which only paint the boxes
+/// elsewhere.
 fn starting_box_ends_on_page(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -4089,6 +4122,8 @@ fn starting_box_ends_on_page(
     let flow_top = |id: usize| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
+    // How far pagination has moved the block, and the boxes that start with
+    // it, from where their layout put them.
     let shift = block_top - flow_top(block_id);
     let holder = first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start);
     let chain = std::iter::once(block_id)
@@ -4103,46 +4138,56 @@ fn starting_box_ends_on_page(
             move |&id| !std::mem::replace(&mut reached, id == holder)
         })
         .collect::<Vec<_>>();
-    // An empty box before one of them, whose margins collapse through it,
-    // that the flow puts past the page end has taken the break already:
-    // the box after it starts the next page.
+    !chain.iter().any(|&id| {
+        empty_box_before_lies_past(document, cascade, id, |empty| {
+            flow_top(empty) + shift >= page_end - 0.001
+        })
+    }) && chain.into_iter().any(|id| {
+        (id == block_id
+            || (!document.nodes[id].display().is_inline_level()
+                && document.nodes[id].display() != raikiri_style::property::DisplayValue::Contents
+                && !height_follows_content(document, id)))
+            && flow_top(id) + shift + document.nodes[id].layout.size.height <= page_end + 0.001
+    })
+}
+
+/// Whether one of the empty boxes right before `node_id` among its in-flow
+/// siblings, whose margins collapse through them, lies where `past_end` says
+/// the page has ended: the page breaks before that box, so the box after it
+/// starts the next page.
+fn empty_box_before_lies_past(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    past_end: impl Fn(usize) -> bool,
+) -> bool {
+    let Some(parent) = document.parent_of(node_id) else {
+        return false;
+    };
+    let children = &document.nodes[parent].children;
+    let before = children
+        .iter()
+        .position(|&child| child == node_id)
+        .unwrap_or(children.len());
     let mut boxes = Vec::new();
-    let break_taken = chain.iter().any(|&id| {
-        let Some(parent) = document.parent_of(id) else {
-            return false;
-        };
+    for &child in children[..before].iter().rev() {
         boxes.clear();
-        for &child in document.nodes[parent]
-            .children
-            .iter()
-            .take_while(|&&child| child != id)
-        {
-            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        for &empty in &boxes {
+            if !collapses_through(
+                document,
+                cascade,
+                empty,
+                document.nodes[empty].layout.size.height,
+            ) {
+                return false;
+            }
+            if past_end(empty) {
+                return true;
+            }
         }
-        boxes
-            .iter()
-            .rev()
-            .take_while(|&&empty| {
-                collapses_through(
-                    document,
-                    cascade,
-                    empty,
-                    document.nodes[empty].layout.size.height,
-                )
-            })
-            .any(|&empty| flow_top(empty) + shift >= page_end - 0.001)
-    });
-    !break_taken
-        && chain
-            .into_iter()
-            .filter(|&id| {
-                id == block_id
-                    || (!document.nodes[id].display().is_inline_level()
-                        && !height_follows_content(document, id))
-            })
-            .any(|id| {
-                flow_top(id) + shift + document.nodes[id].layout.size.height <= page_end + 0.001
-            })
+    }
+    false
 }
 
 /// Whether the block `node_id` and every block around it inside the body run

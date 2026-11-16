@@ -143,6 +143,27 @@ fn the_lines_after_it_follow_on_unless_orphans_move_the_paragraph() {
         glyph_tops(&body),
         [(0, 'A', 85), (1, 'B', 15), (1, 'C', 45), (1, 'Z', 5)]
     );
+    // The lines after it break at the end of the next page as those of a
+    // later fragment do.
+    let body = paragraph(
+        20,
+        "padding-top:70px;height:80px;orphans:1;widows:1",
+        "A B C D E F G H",
+    );
+    assert_eq!(
+        glyph_tops(&body),
+        [
+            (0, 'A', 95),
+            (1, 'B', 25),
+            (1, 'C', 55),
+            (1, 'Z', 5),
+            (2, 'D', 5),
+            (2, 'E', 35),
+            (2, 'F', 65),
+            (3, 'G', 5),
+            (3, 'H', 35)
+        ]
+    );
     // Two orphans: the break before the second line would leave the first
     // alone, so the page breaks before the paragraph.
     let body = paragraph(20, "padding-top:60px;height:80px", "A B");
