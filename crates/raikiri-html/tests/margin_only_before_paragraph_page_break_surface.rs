@@ -525,6 +525,33 @@ fn the_margin_after_a_generated_box_stays_where_no_break_cuts_it() {
         ),
         [(1, 'A', 35), (1, 'Z', 65)],
     );
+    // An empty box between the generated box and the paragraph that ends
+    // below it, whose negative margin pulls the paragraph's margin above that
+    // end: the page breaks before the paragraph, which keeps its margin.
+    for (before, tops) in [
+        (
+            r#"<style>body::before{content:"";display:block;height:95px}</style><div style="height:10px;margin-bottom:-10px"></div>"#,
+            [(1, 'A', 60), (2, 'Z', 5)],
+        ),
+        (
+            r#"<style>body::before{content:"";display:block;height:95px}</style><div style="height:10px;margin-bottom:-20px"></div>"#,
+            [(1, 'A', 50), (2, 'Z', 5)],
+        ),
+        // Where the page end falls in the margins after that box, they are
+        // cut as after any box.
+        (
+            r#"<style>body::before{content:"";display:block;height:90px}</style><div style="height:5px;margin-bottom:-5px"></div>"#,
+            [(1, 'A', 45), (1, 'Z', 75)],
+        ),
+    ] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"{before}<p style="margin:20px 0 0;padding-top:40px;width:20px">A</p><div>Z</div>"#
+            )),
+            tops,
+            "{before}"
+        );
+    }
     // A generated box of no height that a forced break puts at the top of a
     // page starts it: the margin after it is kept.
     for before in [

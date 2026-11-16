@@ -10989,8 +10989,9 @@ pub(super) fn generated_content_runs_past(
 
 /// The end, in the flow, of the generated content right before the box
 /// `node_id` among the children of its parent, the lowest of it, when
-/// it is the last in-flow content above `y`, the block-start margin edge of
-/// the box: no box or line ends below it there (see [`content_end_above`]).
+/// it ends at or above `y`, the block-start margin edge of the box, and no
+/// other in-flow content before the box ends below it (see
+/// [`content_lies_before`]).
 /// That is the `::before` of the parent, or the generated content of an
 /// element before the box that has no box of its own (see
 /// [`boxless_content_before`]). The margin of the box then adjoins it, as
@@ -11039,9 +11040,12 @@ pub(super) fn generated_content_end_above(
         true
     });
     let end = last.get()?;
-    content_end_above(document, cascade, body_id, node_id, y)
-        .is_some_and(|content| content <= end + 0.001)
-        .then_some(end)
+    // Any other in-flow content that ends below it comes between: a box
+    // after it whose negative margin pulls the box above that box's end too.
+    (!content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > end + 0.001
+    }))
+    .then_some(end)
 }
 
 /// Whether `accept` takes the top and bottom in the flow of some generated
