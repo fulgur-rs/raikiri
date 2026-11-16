@@ -43,7 +43,7 @@ use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
-use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position};
+use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position, ResolveOrZero};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -16535,6 +16535,45 @@ fn shift_block_flow_after(
         }
         let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
         if !paragraph && !stacks_children_in_block_flow(document, parent) {
+            // A table cell's `height` is a minimum: the row grows only as far
+            // as the moved content ends past it (CSS 2.1 §17.5.3), and the
+            // flow after the cell follows that end.
+            if document.nodes[parent].display() == DisplayValue::TableCell {
+                let child_growth = if child == node_id { 0.0 } else { flow_delta };
+                let passed = moved_content_growth(
+                    document,
+                    cascade,
+                    body_id,
+                    parent,
+                    (child, child_growth),
+                    f32::INFINITY,
+                );
+                if passed < flow_delta - 0.001 {
+                    // The row is the cell's parent, or an anonymous box
+                    // around the cells of a table (CSS 2.1 §17.2.1).
+                    let row = document.parent_of(parent).filter(|&row| {
+                        matches!(
+                            document.nodes[row].display(),
+                            DisplayValue::TableRow
+                                | DisplayValue::Table
+                                | DisplayValue::InlineTable
+                        )
+                    });
+                    match row {
+                        // The cells beside it keep their places in the row;
+                        // only what follows the row moves with its growth.
+                        Some(row) => {
+                            shifts.bounded.push((parent, flow_delta, flow_page));
+                            let end = document.nodes[row].children.len();
+                            shifts.from_box.push((row, end, passed));
+                        }
+                        None => shifts
+                            .bounded
+                            .push((parent, flow_delta - passed, flow_page)),
+                    }
+                    bounded = true;
+                }
+            }
             break;
         }
         // The moved box itself already took the lines after it along.
@@ -16606,8 +16645,43 @@ fn forced_break_growth(
     if !holds && old > min + 0.001 && max.is_infinite() {
         return moved;
     }
+    moved_content_growth(
+        document,
+        cascade,
+        body_id,
+        block,
+        (child, child_growth),
+        max,
+    )
+}
+
+/// How far `block`, `old` tall, grows up to `max` to hold its in-flow
+/// content once its child `child` has grown by `child_growth`.
+fn moved_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    max: f32,
+) -> f32 {
+    let old = document.nodes[block].layout.size.height;
     let layout = &document.nodes[block].layout;
-    let edges_below = layout.padding.bottom + layout.border.bottom;
+    // A table cell keeps the room its vertical alignment leaves in its
+    // padding; only its own padding and border lie below its content.
+    let padding_below = if document.nodes[block].display() == DisplayValue::TableCell {
+        let basis = document
+            .parent_of(block)
+            .map(|row| document.nodes[row].layout.size.width);
+        document
+            .pagination_style(block)
+            .padding()
+            .resolve_or_zero(basis)
+            .bottom
+    } else {
+        layout.padding.bottom
+    };
+    let edges_below = padding_below + layout.border.bottom;
     let child_end = if child_growth > 0.0 {
         let node = &document.nodes[child];
         let margin = if edges_below > 0.0 {
