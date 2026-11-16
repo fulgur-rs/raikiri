@@ -477,6 +477,48 @@ fn moved_clip_end(
     end
 }
 
+/// Whether a forced break at the start (`before`) or end of `node_id`, on
+/// `page`, falls inside a box that clips its overflow, keeps its height and
+/// ends on that page. Chromium prints the rest of such a box in one piece:
+/// the forced breaks in it break nothing. A box that runs past the end of
+/// the page breaks there as any other. A break at the first or last box of a box
+/// is a break before or after that box, so it is not inside it. The clips
+/// above an absolutely positioned or fixed box do not hold it.
+fn clip_holds_breaks(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+    page: u32,
+    root_flow_offset: f32,
+    page_origins: &PageOrigins,
+) -> bool {
+    let page_end = page_origins.origin(page) + page_origins.step_at(page);
+    let mut edge = node_id;
+    while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
+        && !document.nodes[parent].has_before_or_after_content
+        && page_edge_child(document, cascade, parent, before, 0) == Ok(Some(edge))
+    {
+        edge = parent;
+    }
+    let mut next = document.parent_of(edge);
+    while let Some(id) = next.filter(|&id| id != body_id) {
+        if element_clips_overflow(document, cascade, id) && !height_follows_content(document, id) {
+            let top = current_abs_y(document, id) + root_flow_offset;
+            if top + document.nodes[id].layout.size.height <= page_end + 0.001 {
+                return true;
+            }
+        }
+        let positioned = matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        );
+        next = document.parent_of(id).filter(|_| !positioned);
+    }
+    false
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///

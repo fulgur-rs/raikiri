@@ -141,7 +141,8 @@ fn the_margin_after_a_forced_break_is_kept_in_a_block() {
 
 /// The empty box lands where a box that holds a line lands, whatever box
 /// holds the two: a column container, a clipping box, or a box of a fixed
-/// height.
+/// height. The clipping box runs past the page: one that ends on it is
+/// printed whole, with no break inside it.
 #[test]
 fn an_empty_box_lands_where_a_box_with_a_line_lands() {
     let a = "<div style='break-after: page'>first</div>";
@@ -153,7 +154,7 @@ fn an_empty_box_lands_where_a_box_with_a_line_lands() {
         ),
         (
             "clip",
-            "<div style='overflow: hidden; height: 100px'>",
+            "<div style='overflow: hidden; height: 250px'>",
             "</div>",
         ),
         ("fixed height", "<div style='height: 150px'>", "</div>"),

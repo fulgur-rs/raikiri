@@ -678,13 +678,24 @@ impl PaginationState {
         if step.consumes_pending_break {
             self.pending_break.clear();
         }
-        self.pending_break.note_after(
+        if !super::clip_holds_breaks(
             document,
             cascade,
             env.body_id,
             node_id,
-            candidate.context.deferred_named_break_after(),
-        );
+            false,
+            page_origins.page_index_for_end(text.effective_y + text.height),
+            env.root_flow_offset,
+            env.page_origins,
+        ) {
+            self.pending_break.note_after(
+                document,
+                cascade,
+                env.body_id,
+                node_id,
+                candidate.context.deferred_named_break_after(),
+            );
+        }
 
         Ok(())
     }
@@ -1269,13 +1280,24 @@ impl PaginationState {
             self.preceding_flex_items
                 .record(context, height, self.current_page);
         }
-        self.pending_break.note_after(
+        if !super::clip_holds_breaks(
             document,
             cascade,
             env.body_id,
             node_id,
-            candidate.context.deferred_named_break_after(),
-        );
+            false,
+            page_origins.page_index_for_end(effective_y + height),
+            env.root_flow_offset,
+            env.page_origins,
+        ) {
+            self.pending_break.note_after(
+                document,
+                cascade,
+                env.body_id,
+                node_id,
+                candidate.context.deferred_named_break_after(),
+            );
+        }
 
         Ok(())
     }
@@ -1762,7 +1784,17 @@ impl PaginationState {
             raw_y + self.flow_shift
         };
         materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
+            && !super::clip_holds_breaks(
+                document,
+                cascade,
+                body_id,
+                node_id,
+                true,
+                page_origins.page_index_for_y(effective_y),
+                env.root_flow_offset,
+                page_origins,
+            );
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
         let margins_collapse_through = collapses_through(document, cascade, node_id, height);
