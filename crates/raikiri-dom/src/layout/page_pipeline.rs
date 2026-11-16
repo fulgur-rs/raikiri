@@ -11276,10 +11276,39 @@ pub(super) fn generated_content_runs_past(
     node_id: usize,
     y: f32,
 ) -> bool {
+    generated_content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > y + 0.001
+    })
+}
+
+/// The end, in the flow, of the generated content right before the box
+/// `node_id` among the children of its parent, the lowest of it, when
+/// it ends at or above `y`, the block-start margin edge of the box, and no
+/// other in-flow content before the box ends below it (see
+/// [`content_lies_before`]).
+/// That is the `::before` of the parent, or the generated content of an
+/// element before the box that has no box of its own (see
+/// [`boxless_content_before`]). The margin of the box then adjoins it, as
+/// one between sibling blocks does.
+pub(super) fn generated_content_end_above(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    y: f32,
+) -> Option<f32> {
     let flow_y = |id| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    let runs_past = |_top: f32, bottom: f32| bottom > y + 0.001;
+    let last = std::cell::Cell::new(None::<f32>);
+    let record = |_: f32, bottom: f32| {
+        if bottom <= y + 0.001 && last.get().is_none_or(|end| bottom > end) {
+            last.set(Some(bottom));
+        }
+        false
+    };
+    // Only the first level: generated content before an ancestor is
+    // separated from the box by the ancestor's own edges or margin.
     any_level_before(document, cascade, body_id, node_id, |parent, node, _| {
         boxless_content_before(
             document,
@@ -11288,7 +11317,55 @@ pub(super) fn generated_content_runs_past(
             node,
             &|child, pseudo| {
                 renders_pseudo(cascade, child, pseudo)
-                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &runs_past)
+                    && generated_box_lies(document, &flow_y, parent, child, pseudo, &record)
+            },
+            &|_| false,
+        );
+        if renders_before_pseudo(cascade, parent) {
+            generated_box_lies(
+                document,
+                &flow_y,
+                parent,
+                parent,
+                raikiri_style::PseudoElem::Before,
+                &record,
+            );
+        }
+        true
+    });
+    let end = last.get()?;
+    // Any other in-flow content that ends below it comes between: a box
+    // after it whose negative margin pulls the box above that box's end too.
+    (!content_lies_before(document, cascade, body_id, node_id, &|_, bottom| {
+        bottom > end + 0.001
+    }))
+    .then_some(end)
+}
+
+/// Whether `accept` takes the top and bottom in the flow of some generated
+/// content before the box `node_id`: the `::before` of an ancestor of it,
+/// the body too, or the generated content of an element before it, or
+/// before an ancestor, that has no box of its own (see
+/// [`boxless_content_before`]).
+fn generated_content_lies_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    accept: &dyn Fn(f32, f32) -> bool,
+) -> bool {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    any_level_before(document, cascade, body_id, node_id, |parent, node, _| {
+        boxless_content_before(
+            document,
+            cascade,
+            parent,
+            node,
+            &|child, pseudo| {
+                renders_pseudo(cascade, child, pseudo)
+                    && generated_box_lies(document, &flow_y, parent, child, pseudo, accept)
             },
             &|_| false,
         ) || (renders_before_pseudo(cascade, parent)
@@ -11298,7 +11375,7 @@ pub(super) fn generated_content_runs_past(
                 parent,
                 parent,
                 raikiri_style::PseudoElem::Before,
-                &runs_past,
+                accept,
             ))
     })
 }
@@ -12029,6 +12106,54 @@ struct MarginRunEnd {
     raw_y: f32,
     /// The block size of the box.
     height: f32,
+}
+
+/// How the top of `at.natural_page` truncates the margin between the box
+/// `at` and generated content right before it, a block-level `::before` or
+/// `::after` that is no candidate of its own (see
+/// [`generated_content_end_above`]), as it truncates one between sibling
+/// blocks: Chromium breaks the margin there too.
+fn truncation_after_generated_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    page_origins: &PageOrigins,
+    at: &MarginBreak,
+) -> Option<MarginTruncation> {
+    let page_top = page_origins.origin(at.natural_page);
+    let margin_edge = at.effective_y - at.margin_top.max(0.0);
+    // A box that may have clearance keeps its gap, as between siblings; and
+    // only a page edge in the margin above the box cuts it.
+    if !at.collapses_with_previous_block
+        || at.run_end.is_some()
+        || !at.clearance_free
+            && !matches!(
+                cascade.computed[at.node_id].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        || at.natural_page == 0
+        || margin_edge > page_top + 0.001
+        || at.effective_y <= page_top + 0.001
+    {
+        return None;
+    }
+    // The generated content ends at or above the margin edge, so the page
+    // edge falls in the margin between them.
+    let previous_bottom =
+        generated_content_end_above(document, cascade, body_id, at.node_id, margin_edge)?;
+    // Generated content of no height at the top of the page, as after a
+    // forced break, starts the page: the margin after it is not at a break.
+    let (target_top, target_y) = page_origins.truncated_margin_target(
+        at.natural_page,
+        at.forced_before,
+        at.margin_top,
+        || previous_bottom,
+        false,
+    );
+    Some(MarginTruncation {
+        delta: target_y - at.effective_y,
+        underflow: (target_y < target_top).then_some(target_top - target_y),
+    })
 }
 
 /// How a page edge truncates the margin above a box.
