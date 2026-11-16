@@ -108,14 +108,6 @@ fn each_forced_break_leaves_the_set_height_in_place() {
 }
 
 #[test]
-fn a_set_height_around_a_growing_box_keeps_its_end() {
-    let body = "<div style='height:150px'><div><div style='height:20px'>A</div>\
-         <div style='height:30px;break-before:page'>B</div></div><div>C</div></div>\
-         <div id=x>X</div>";
-    assert_eq!(extents(body, "x"), [None, Some((50, 70))]);
-}
-
-#[test]
 fn height_bounds_limit_how_far_the_box_grows() {
     // `min-height` holds the moved content until it reaches past it.
     let body = broken_box("min-height:150px", 30);
@@ -126,4 +118,48 @@ fn height_bounds_limit_how_far_the_box_grows() {
     // `max-height` caps the height before the break.
     let body = broken_box("height:120px;max-height:80px", 30);
     assert_eq!(extents(&body, "x"), [Some((80, 100)), None]);
+}
+
+#[test]
+fn a_bounded_box_measures_the_growth_of_the_boxes_inside_it() {
+    // The inner box grows with the moved content; the box around it holds
+    // that growth past its `min-height`.
+    let inner = "<div><div style='height:20px'>A</div>\
+         <div style='height:70px;break-before:page'>B</div></div>";
+    let body = format!("<div style='min-height:120px'>{inner}</div><div id=x>X</div>");
+    assert_eq!(extents(&body, "x"), [None, Some((70, 90))]);
+    let body = format!(
+        "<div style='min-height:120px'>{inner}<div style='height:10px'>C</div></div>\
+         <div id=x>X</div>"
+    );
+    assert_eq!(extents(&body, "x"), [None, Some((80, 100))]);
+    // Bottom padding keeps the inner box's margin inside the outer one.
+    let body = format!(
+        "<div style='min-height:150px;padding-bottom:10px'>\
+         <div style='margin-bottom:15px'>{inner}</div></div><div id=x>X</div>"
+    );
+    assert_eq!(extents(&body, "x"), [None, None, Some((0, 20))]);
+    let body = format!("<div style='max-height:130px'>{inner}</div><div id=x>X</div>");
+    assert_eq!(extents(&body, "x"), [None, Some((30, 50))]);
+    // A set height around a box that grows keeps its end.
+    let body = format!("<div style='height:150px'>{inner}<div>C</div></div><div id=x>X</div>");
+    assert_eq!(extents(&body, "x"), [None, Some((50, 70))]);
+}
+
+#[test]
+fn size_containment_keeps_the_flow_after_the_box_in_place() {
+    let body = broken_box("contain:size;contain-intrinsic-size:auto 150px", 70);
+    assert_eq!(extents(&body, "x"), [None, Some((50, 70))]);
+}
+
+#[test]
+fn a_box_holding_its_floats_grows_past_them() {
+    let float = "<div style='float:left;width:10px;height:90px'></div>";
+    for style in ["display:flow-root", "display:flow-root;min-height:50px"] {
+        let body = format!(
+            "<div style='{style}'>{float}<div style='height:20px'>A</div>\
+             <div style='height:20px;break-before:page'>B</div></div><div id=x>X</div>"
+        );
+        assert_eq!(extents(&body, "x"), [None, Some((20, 40))], "{style}");
+    }
 }
