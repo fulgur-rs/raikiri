@@ -4595,6 +4595,31 @@ fn a_float_that_a_block_holds_keeps_the_margin_above_the_edges_down_to_it() {
 }
 
 #[test]
+fn a_relative_offset_leaves_the_margin_a_float_keeps_where_it_was() {
+    // The float keeps the margin down to its normal-flow bottom, whatever
+    // relative offset paints it or the box around it elsewhere, as in
+    // Chromium.
+    for (wrapper_css, float_css) in [
+        ("position:relative;top:-100px", ""),
+        ("", "position:relative;top:-100px"),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:flow-root;padding-bottom:10px");
+            let wrapper = block(doc, parent, &format!("display:block;{wrapper_css}"));
+            block(
+                doc,
+                wrapper,
+                &format!("float:left;width:10px;height:150px;{float_css}"),
+            );
+            block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), 160.0, "{wrapper_css} {float_css}");
+    }
+}
+
+#[test]
 fn a_float_that_a_break_moves_keeps_the_margin_down_to_where_it_lands() {
     // A float that avoids a break inside moves to the next page, and the
     // margin above the edges is kept down to where it lands, as in Chromium.

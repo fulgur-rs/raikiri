@@ -9432,7 +9432,16 @@ pub(super) fn margin_kept_by_floats(
         - layout_relative_offset_y(document, cascade, body_id, last);
     own_floats(document, cascade, node_id)
         .into_iter()
-        .map(|float| float_extent(document, float).1 - top - last_bottom)
+        .map(|float| {
+            // Relative offsets of the float and of the boxes between it and
+            // the block paint it elsewhere but leave the block's height be.
+            let offset: f32 = document
+                .inclusive_ancestors(float)
+                .take_while(|&id| id != node_id)
+                .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
+                .sum();
+            float_extent(document, float).1 - offset - top - last_bottom
+        })
         .fold(0.0_f32, f32::max)
         .min(margin_above)
 }
