@@ -2963,9 +2963,15 @@ fn fill_stacked_columns(
                 offset = child.top;
             }
             while child.bottom - offset > height + LINE_EPSILON {
+                // Past the last column, or at an offset that a column no
+                // longer moves, the box cannot fit.
+                let next = offset + height;
+                if column + 1 >= count || next <= offset {
+                    return (false, used.max(height));
+                }
                 used = used.max(height);
                 column += 1;
-                offset += height;
+                offset = next;
             }
             used = used.max(child.bottom - offset);
             continue;

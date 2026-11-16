@@ -96,6 +96,25 @@ fn balanced_stack_height_ends_where_the_heights_have_no_float_between_them() {
 }
 
 #[test]
+fn balanced_stack_height_ends_for_a_cut_box_far_taller_than_the_stack() {
+    // A box cut at column ends, 10,000,000px tall, then a negative margin
+    // that brings the stack back to 1px: the columns tried are far shorter
+    // than the box, and past 2^23 adding one to an `f32` offset no longer
+    // moves it, so the search has to stop at the last column.
+    let children = [
+        StackedChild::sliced(0.0, 10_000_000.0),
+        StackedChild::atomic(1.0, 1.0),
+    ];
+    assert_eq!(
+        fill_stacked_columns(&children, 2, 0.5, (1, 1)),
+        (false, 0.5)
+    );
+    assert!(!fill_stacked_columns(&children, usize::MAX, 0.5, (1, 1)).0);
+    let height = balanced_stack_height(&children, 2, 1.0, (1, 1));
+    assert_eq!(height, 1.0);
+}
+
+#[test]
 fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
         rtl: false,
