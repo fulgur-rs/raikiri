@@ -11333,18 +11333,19 @@ fn first_box_in(document: &Document, element: usize) -> Option<usize> {
 }
 
 /// Whether the block-start margin of the box `node_id` can adjoin content
-/// before it in the flow below `body_id`: every ancestor of it below the
-/// body lays its children out in block flow (see [`holds_block_flow`]) and
+/// before it in the flow below `body_id`: every ancestor of it up to the
+/// body, the body too, lays its children out in block flow (see [`holds_block_flow`]) and
 /// in one column. In a flex, grid or table container, or a multi-column
 /// one, content before the box may lie beside it instead.
 pub(super) fn margins_adjoin_in_flow(document: &Document, body_id: usize, node_id: usize) -> bool {
     let mut node = node_id;
-    while let Some(parent) = document.parent_of(node)
-        && parent != body_id
-    {
+    while let Some(parent) = document.parent_of(node) {
         let holder = &document.nodes[parent];
         if holder.is_multicol_container() || !holds_block_flow(holder.display()) {
             return false;
+        }
+        if parent == body_id {
+            break;
         }
         node = parent;
     }

@@ -270,6 +270,12 @@ fn an_empty_item_before_comes_before_the_item_of_a_column_flex_container() {
         ),
         [(0, 'A', 45)],
     );
+    assert_eq!(
+        glyph_tops(
+            r#"<style>body{display:flex;align-items:center}</style><div></div><div><p style="break-before:page;margin:40px 0 0;width:20px">A</p></div>"#
+        ),
+        [(0, 'A', 45)],
+    );
 }
 
 #[test]
