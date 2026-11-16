@@ -733,10 +733,38 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The last page the flow has reached before the box `node_id` at
+    /// `flow_y`: the last page a box of the flow reached, or the page of
+    /// `flow_y` when generated content before the box runs onto it (see
+    /// [`generated_content_runs_past`]), as it places no box there.
+    fn flow_reach(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        flow_y: f32,
+    ) -> u32 {
+        let flow_max = self.reach.flow_max;
+        match env.page_origins.page_index_in_flow(flow_y) {
+            Some(page)
+                if page > flow_max
+                    && generated_content_runs_past(
+                        document,
+                        env.cascade,
+                        env.body_id,
+                        node_id,
+                        env.page_origins.origin(page),
+                    ) =>
+            {
+                page
+            }
+            _ => flow_max,
+        }
+    }
+
     /// The page that the box `node_id` at `flow_y` in the flow fits on: the
-    /// page of that position once the flow has reached it, by a box placed
-    /// there or by generated content that runs onto it (see
-    /// [`generated_content_runs_past`]), and the current page before that.
+    /// page of that position once the flow has reached it (see
+    /// [`Self::flow_reach`]), and the current page before that.
     fn flow_page(
         &self,
         document: &LayoutSession<'_>,
@@ -744,19 +772,10 @@ impl PaginationState {
         node_id: usize,
         flow_y: f32,
     ) -> u32 {
+        let reach = self.flow_reach(document, env, node_id, flow_y);
         env.page_origins
             .page_index_in_flow(flow_y)
-            .filter(|&page| {
-                page > self.current_page
-                    && (self.reach.flow_max >= page
-                        || generated_content_runs_past(
-                            document,
-                            env.cascade,
-                            env.body_id,
-                            node_id,
-                            env.page_origins.origin(page),
-                        ))
-            })
+            .filter(|&page| page > self.current_page && reach >= page)
             .unwrap_or(self.current_page)
     }
 
@@ -1966,15 +1985,16 @@ impl PaginationState {
         // Content kept on its page as monolithic (see `monolithic_paper_fit`)
         // has not opened a later page.
         // The page the box falls on is the one its place in the flow is on.
+        let natural_y = if forced_holder.is_some() {
+            landing_y
+        } else {
+            position.effective_y - relative_offset
+        };
         let natural_page = page_origins.transition_natural_page(
-            if forced_holder.is_some() {
-                landing_y
-            } else {
-                position.effective_y - relative_offset
-            },
+            natural_y,
             margin_top,
             self.current_page,
-            self.reach.flow_max,
+            self.flow_reach(document, env, node_id, natural_y),
             forced_transition,
         );
         let mut target_page = forced_target_page(self.current_page, natural_page);
