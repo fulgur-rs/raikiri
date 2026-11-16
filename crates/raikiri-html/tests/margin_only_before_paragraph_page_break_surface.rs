@@ -360,3 +360,25 @@ fn generated_content_of_a_contents_ancestor_before_the_paragraph_lets_it_move_wh
         }
     }
 }
+
+#[test]
+fn a_phantom_line_before_the_paragraph_lets_it_move_whole() {
+    // An empty inline element lays out a line whose anonymous block is a box
+    // of no height, as an empty `div` is.
+    for (class, content) in LINES {
+        for (before, after) in [
+            ("<span></span>", ""),
+            (r#"<div style="padding-top:10px"><span></span>"#, "</div>"),
+            (r#"<div style="display:contents"><b></b></div>"#, ""),
+        ] {
+            let body = document(
+                before,
+                after,
+                class,
+                "margin:20px 0 0;padding-top:60px",
+                content,
+            );
+            assert_eq!(glyph_tops(&body), [(1, 'A', 65), (2, 'Z', 5)], "{body}");
+        }
+    }
+}

@@ -10920,8 +10920,40 @@ pub(super) fn follows_box_on_page(
                 })
                 || (renders_before_pseudo(cascade, parent)
                     && pseudo_on_page(parent, parent, raikiri_style::PseudoElem::Before))
+                || phantom_line_before(document, cascade, parent, node, &|id| {
+                    flow_y(id) >= page_start - 0.001
+                })
         },
     )
+}
+
+/// Whether an empty inline element among the children of `parent` before
+/// `node`, or among the children of the `display: contents` elements there,
+/// lays out a phantom line whose top `on_page` accepts: the anonymous block
+/// of that line is a box of no height (CSS 2.1 §9.4.2), as an empty `div` is.
+fn phantom_line_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    node: usize,
+    on_page: &dyn Fn(usize) -> bool,
+) -> bool {
+    let mut pending: Vec<usize> = document.nodes[parent]
+        .children
+        .iter()
+        .copied()
+        .take_while(|&child| child != node)
+        .collect();
+    while let Some(id) = pending.pop() {
+        match sibling_adjacency::flow_box(document, cascade, id) {
+            sibling_adjacency::FlowBox::Phantom if on_page(id) => return true,
+            sibling_adjacency::FlowBox::Contents => {
+                pending.extend_from_slice(&document.nodes[id].children);
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the element `node_id` has a `pseudo` box of the flow: generated
