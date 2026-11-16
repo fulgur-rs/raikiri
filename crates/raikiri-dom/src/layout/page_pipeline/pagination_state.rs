@@ -343,7 +343,7 @@ pub(super) struct PaginationState {
     /// that much above the margin box of its last child.
     pub(super) margin_cuts: HashMap<usize, f32>,
     /// For each block, the block size of the margins inside it that a page
-    /// edge may truncate (see [`truncatable_margin_rooms`]), which the pages
+    /// edge may truncate (see [`super::truncatable_margin_rooms`]), which the pages
     /// its run-on reaches leave out.
     pub(super) margin_rooms: HashMap<usize, f32>,
     pub(super) page_names: PageNames,
