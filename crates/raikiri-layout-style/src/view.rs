@@ -314,26 +314,31 @@ impl<'a> LayoutStyleView<'a> {
         if !self.has_overrides {
             return None;
         }
-        let pick = |kind: OverrideKind<'_>, oof_only: bool| match kind {
-            OverrideKind::AlignSelf(value) if !inline && !oof_only => Some(value),
-            OverrideKind::JustifySelf(value) if inline && !oof_only => Some(value),
-            OverrideKind::OofAlignSelf(value) if !inline => Some(value),
-            OverrideKind::OofJustifySelf(value) if inline => Some(value),
+        // `Some((value, insets_only))` for an entry of this axis.
+        let pick = |kind: OverrideKind<'_>| match kind {
+            OverrideKind::AlignSelf(value) if !inline => Some((value, false)),
+            OverrideKind::JustifySelf(value) if inline => Some((value, false)),
+            OverrideKind::OofAlignSelf(value) if !inline => Some((value, true)),
+            OverrideKind::OofJustifySelf(value) if inline => Some((value, true)),
             _ => None,
         };
-        (0..self.scoped.len())
+        if let Some((value, _)) = (0..self.scoped.len())
             .rev()
-            .find_map(|index| pick(self.scoped.get(index).0, false))
-            .or_else(|| {
-                (0..self.pass.len())
-                    .rev()
-                    .find_map(|index| pick(self.pass.get(index).0, true))
-            })
-            .or_else(|| {
-                (0..self.pass.len())
-                    .rev()
-                    .find_map(|index| pick(self.pass.get(index).0, false))
-            })
+            .find_map(|index| pick(self.scoped.get(index).0))
+        {
+            return Some(value);
+        }
+        let mut shared = None;
+        for index in (0..self.pass.len()).rev() {
+            match pick(self.pass.get(index).0) {
+                Some((value, true)) => return Some(value),
+                Some((value, false)) => {
+                    shared.get_or_insert(value);
+                }
+                None => {}
+            }
+        }
+        shared
     }
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
         self.has_overrides

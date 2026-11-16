@@ -21,10 +21,10 @@ pub(super) struct Settled {
     pub(super) align_self: Option<AlignItems>,
     /// The `justify-self` of the box, `None` for `auto`.
     pub(super) justify_self: Option<AlignItems>,
-    /// Whether the `align-self` and the `justify-self` the box borrows from
-    /// its container stay off the alignment between its insets, which then
-    /// reads them as `auto` (see `inherited_last_baseline`).
-    pub(super) oof_auto: (bool, bool),
+    /// Whether the `justify-self` the box borrows from its container stays
+    /// off the alignment between its insets, which then reads it as `auto`
+    /// (see `inherited_last_baseline`).
+    pub(super) inset_auto_justify: bool,
 }
 
 impl Settled {
@@ -35,7 +35,7 @@ impl Settled {
             has_aspect_ratio: false,
             align_self: own_alignment(cv, cv.align_self),
             justify_self: own_alignment(cv, cv.justify_self),
-            oof_auto: (false, false),
+            inset_auto_justify: false,
         }
     }
 }

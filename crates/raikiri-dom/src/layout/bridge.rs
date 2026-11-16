@@ -471,7 +471,6 @@ fn apply_computed_to_style_in_session_inner(
                     raikiri_layout_style::OwnedPropertyOverride::align_self(Some(value)),
                 );
                 if off_axes {
-                    settled.oof_auto.0 = true;
                     doc.record_pass_override(
                         idx,
                         raikiri_layout_style::OwnedPropertyOverride::oof_align_self(None),
@@ -485,7 +484,7 @@ fn apply_computed_to_style_in_session_inner(
                     raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(value)),
                 );
                 if off_axes {
-                    settled.oof_auto.1 = true;
+                    settled.inset_auto_justify = true;
                     doc.record_pass_override(
                         idx,
                         raikiri_layout_style::OwnedPropertyOverride::oof_justify_self(None),
@@ -668,16 +667,16 @@ fn apply_computed_to_style_in_session_inner(
                 );
             }
             Some(settled::KeywordHeightInsets::FitContent { justify }) => {
-                let oof_auto = settled_styles[idx].oof_auto;
-                if (justify && oof_auto.1) || (!justify && oof_auto.0) {
+                if justify && settled_styles[idx].inset_auto_justify {
                     // The box aligns by its own `auto` between its insets,
-                    // which stretches it there.
-                    let replace = if justify {
-                        raikiri_layout_style::OwnedPropertyOverride::oof_justify_self
-                    } else {
-                        raikiri_layout_style::OwnedPropertyOverride::oof_align_self
-                    };
-                    doc.record_pass_override(idx, replace(Some(AlignItems::START)));
+                    // which stretches it there. Only `justify-self` can be
+                    // borrowed with both vertical insets set.
+                    doc.record_pass_override(
+                        idx,
+                        raikiri_layout_style::OwnedPropertyOverride::oof_justify_self(Some(
+                            AlignItems::START,
+                        )),
+                    );
                 } else {
                     let (alignment, replace) = if justify {
                         (

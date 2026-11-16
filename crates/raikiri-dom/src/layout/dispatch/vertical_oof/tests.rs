@@ -1356,6 +1356,12 @@ fn a_box_borrowing_last_baseline_from_a_horizontal_wrapper_keeps_its_axes() {
         (grid, "left:0;right:0", (0.0, 0.0, 200.0, 20.0)),
         (grid, "top:0;bottom:0", (180.0, 0.0, 20.0, 100.0)),
         (grid, ratio, (0.0, 0.0, 200.0, 200.0)),
+        (grid, "top:0;bottom:0;height:30px", (180.0, 0.0, 20.0, 30.0)),
+        (
+            grid,
+            "top:0;bottom:0;width:80px;aspect-ratio:1",
+            (120.0, 0.0, 80.0, 80.0),
+        ),
         (
             grid,
             "top:10px;bottom:10px;height:fit-content;margin-top:auto",

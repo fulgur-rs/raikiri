@@ -73,6 +73,19 @@ impl LayoutStyleView<'_> {
     pub fn static_position_justify_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(true)
     }
+    /// The alignment of an out-of-flow box between its block-axis insets,
+    /// which an override for the insets only takes over from the alignment it
+    /// shares with its static position.
+    #[inline]
+    pub fn inset_align_self(&self) -> Option<values::AlignSelf> {
+        self.oof_self_alignment(false)
+    }
+    /// The alignment of an out-of-flow box between its inline-axis insets
+    /// (see [`Self::inset_align_self`]).
+    #[inline]
+    pub fn inset_justify_self(&self) -> Option<values::AlignSelf> {
+        self.oof_self_alignment(true)
+    }
     /// The alignment of an out-of-flow box along the physical vertical axis
     /// (see [`Self::with_swapped_oof_alignment`]).
     #[inline]
