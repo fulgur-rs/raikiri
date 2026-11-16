@@ -104,6 +104,8 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
             }
             // A box positioned against the container itself, or against a
             // box outside it, is laid out outside the columns.
+            // Monolithic content, a replaced element or a scroll container
+            // among them, is never broken: it stays whole in its column.
             let columns = columns
                 .get_or_insert_with(|| {
                     let container = tree
@@ -114,6 +116,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 .as_ref()
                 .filter(|(container, _)| {
                     block.is_some_and(|block| strictly_inside(tree, block, *container))
+                        && !is_monolithic(tree, cascade, node)
                 });
             let budget = records
                 .limit
@@ -384,6 +387,20 @@ impl Columns {
         let step = context.column_width + context.column_gap;
         ((advance + lineless::EPSILON) / step).floor().max(0.0) as usize
     }
+}
+
+/// Whether the box of `node` is monolithic content that a column end never
+/// breaks (CSS Fragmentation 3, `monolithic`): what pagination treats as
+/// monolithic, and a scroll container.
+fn is_monolithic(tree: &Document, cascade: &CascadeResult, node: usize) -> bool {
+    use raikiri_style::property::OverflowValue;
+    let overflow = &cascade.computed[node].overflow;
+    let scrolls = |value| !matches!(value, OverflowValue::Visible | OverflowValue::Clip);
+    scrolls(overflow.x)
+        || scrolls(overflow.y)
+        || crate::layout::page::is_monolithic_for_pagination_with_transposed_axes(
+            tree, cascade, node, false,
+        )
 }
 
 /// Where the record `index` places the origin of its box in the layout: a

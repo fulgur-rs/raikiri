@@ -599,6 +599,18 @@ fn the_content_of_a_box_inside_a_positioned_inline_element_breaks_with_the_colum
             ("d", (8.0, 28.0, 30.0, 60.0)),
         ],
     );
+    // Monolithic boxes, replaced or scrolling, stay whole in their column.
+    for positioned in [
+        r#"<canvas id=a width=30 height=30 style="position:absolute;left:0;top:0"></canvas>"#,
+        r#"<span id=a style="position:absolute;width:30px;height:30px;left:0;top:0;overflow:auto"><div>xxx xxx xxx xxx</div></span>"#,
+    ] {
+        check_painted(
+            &format!(
+                r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r style="position:relative">y{positioned}</span> x x x x</div></div>"#
+            ),
+            &[("a", (8.0, 28.0, 30.0, 30.0))],
+        );
+    }
     // Columns that fill in turn under an auto height grow with their content.
     check_painted(
         &format!(
