@@ -6,7 +6,10 @@
 //! holds for a box whose containing block is the container, one outside it,
 //! and one inside a positioned inline element of the line, for a paragraph
 //! that is a child of the container, inside a plain block of it, or the
-//! container itself.
+//! container itself. A box whose containing block lies inside the columns
+//! is broken between them like the content in flow: the part past the end of
+//! its column goes on at the top of the next one, overflow columns included
+//! (CSS Fragmentation 3, 4.1).
 //!
 //! The expected rectangles are the ones Chromium gives the same markup in an
 //! 800px by 600px viewport with a body margin of 8px, `div` boxes sized by
@@ -14,6 +17,7 @@
 //! the left, top, width and height of the border box of an element with an
 //! `id`; the one of a box in several columns is the union of its pieces.
 
+use raikiri_dom::PaintEvent;
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
@@ -25,8 +29,8 @@ type Rect = (f32, f32, f32, f32);
 
 const AHEM: &[u8] = include_bytes!("data/text-autospace/Ahem.ttf");
 
-/// The union of the pieces of each element with an `id` on the first page.
-fn rects_of(body: &str) -> Vec<(String, Rect)> {
+/// Lay `body` out on 800px by 600px pages.
+fn first_page(body: &str) -> raikiri_html::DocumentLayout {
     let html = format!(
         "<!DOCTYPE html><html><head><style>@page{{size:800px 600px;margin:0}}\
          body{{margin:8px;font:10px/10px Ahem}}div{{box-sizing:border-box}}</style>\
@@ -48,6 +52,25 @@ fn rects_of(body: &str) -> Vec<(String, Rect)> {
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
+    result
+}
+
+/// Add `rect` to the union kept for `id` in `rects`.
+fn unite(rects: &mut Vec<(String, Rect)>, id: &str, rect: Rect) {
+    let (right, bottom) = (rect.0 + rect.2, rect.1 + rect.3);
+    match rects.iter_mut().find(|(seen, _)| seen == id) {
+        Some((_, own)) => {
+            let (x0, y0) = (own.0.min(rect.0), own.1.min(rect.1));
+            let (x1, y1) = ((own.0 + own.2).max(right), (own.1 + own.3).max(bottom));
+            *own = (x0, y0, x1 - x0, y1 - y0);
+        }
+        None => rects.push((id.to_owned(), rect)),
+    }
+}
+
+/// The union of the pieces of each element with an `id` on the first page.
+fn rects_of(body: &str) -> Vec<(String, Rect)> {
+    let result = first_page(body);
     let page = result.pages().next().expect("a page");
     let dom = page.dom();
     let mut rects: Vec<(String, Rect)> = Vec::new();
@@ -56,14 +79,56 @@ fn rects_of(body: &str) -> Vec<(String, Rect)> {
             continue;
         };
         let rect = fragment.rect();
-        let (right, bottom) = (rect.x + rect.width, rect.y + rect.height);
-        match rects.iter_mut().find(|(seen, _)| seen == id) {
-            Some((_, own)) => {
-                let (x0, y0) = (own.0.min(rect.x), own.1.min(rect.y));
-                let (x1, y1) = ((own.0 + own.2).max(right), (own.1 + own.3).max(bottom));
-                *own = (x0, y0, x1 - x0, y1 - y0);
+        unite(&mut rects, id, (rect.x, rect.y, rect.width, rect.height));
+    }
+    rects
+}
+
+/// The union of what the painter shows of the box of each element with an
+/// `id` on the first page: each piece is cut by the clips around it, as the
+/// piece of a box broken between columns paints the whole box clipped to its
+/// column.
+fn painted_rects_of(body: &str) -> Vec<(String, Rect)> {
+    let result = first_page(body);
+    let page = result.pages().next().expect("a page");
+    let dom = page.dom();
+    let (document, cascade, _, _) = page.paint_inputs();
+    let mut clips: Vec<(f32, f32, f32, f32)> = Vec::new();
+    let mut rects: Vec<(String, Rect)> = Vec::new();
+    for event in document.page_paint_order(cascade, page.index(), page.name()) {
+        match event {
+            PaintEvent::PushClip(clip, _) => {
+                let r = clip.rect;
+                let (x0, x1) = if clip.clip_x {
+                    (r.x, r.x + r.width)
+                } else {
+                    (f32::NEG_INFINITY, f32::INFINITY)
+                };
+                let (y0, y1) = if clip.clip_y {
+                    (r.y, r.y + r.height)
+                } else {
+                    (f32::NEG_INFINITY, f32::INFINITY)
+                };
+                clips.push((x0, y0, x1, y1));
             }
-            None => rects.push((id.to_owned(), (rect.x, rect.y, rect.width, rect.height))),
+            PaintEvent::PopClip => {
+                clips.pop();
+            }
+            PaintEvent::Box(fragment) => {
+                let Some(id) = dom.attr(fragment.node(), "id") else {
+                    continue;
+                };
+                let r = fragment.rect();
+                let (mut x0, mut y0, mut x1, mut y1) = (r.x, r.y, r.x + r.width, r.y + r.height);
+                for clip in &clips {
+                    (x0, y0) = (x0.max(clip.0), y0.max(clip.1));
+                    (x1, y1) = (x1.min(clip.2), y1.min(clip.3));
+                }
+                if x1 > x0 && y1 > y0 {
+                    unite(&mut rects, id, (x0, y0, x1 - x0, y1 - y0));
+                }
+            }
+            _ => {}
         }
     }
     rects
@@ -72,7 +137,18 @@ fn rects_of(body: &str) -> Vec<(String, Rect)> {
 /// Lay out `body` and compare the box of each `id` with `expected`, to within
 /// the 1/64px that Chromium rounds its column widths to.
 fn check(body: &str, expected: &[(&str, Rect)]) {
-    let rects = rects_of(body);
+    compare(body, &rects_of(body), expected);
+}
+
+/// Lay out `body` and compare what the painter shows of the box of each `id`
+/// with `expected`.
+fn check_painted(body: &str, expected: &[(&str, Rect)]) {
+    compare(body, &painted_rects_of(body), expected);
+}
+
+/// Compare the box of each `id` in `rects` with `expected`, to within the
+/// 1/64px that Chromium rounds its column widths to.
+fn compare(body: &str, rects: &[(String, Rect)], expected: &[(&str, Rect)]) {
     for &(id, want) in expected {
         let got = rects
             .iter()
@@ -455,21 +531,167 @@ fn a_positioned_paragraph_places_its_boxes_where_the_columns_put_their_lines() {
     }
 }
 
-/// The content of a box positioned against an inline element stays in one
-/// piece at the element. Chromium breaks it between the columns, which these
-/// columns do not do yet: they keep it whole.
+/// The content of a box positioned against an inline element is broken
+/// between the columns with the line it sits on: what reaches past the end of
+/// the column goes on at the top of the next one, in the overflow columns
+/// past the last, and a box positioned against the container stays whole.
 #[test]
-fn the_content_of_a_box_inside_a_positioned_inline_element_stays_whole() {
-    for container in ["", "height:40px;column-fill:auto;"] {
-        check(
+fn the_content_of_a_box_inside_a_positioned_inline_element_breaks_with_the_columns() {
+    let paragraph = |content: &str| {
+        format!(
+            r#"<div id=p>x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;left:0;top:0"><div id=d>{content}</div></span></span> x x x x</div>"#
+        )
+    };
+    let six = "xxx xxx xxx xxx xxx xxx";
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto">{}</div>"#,
+            paragraph(six)
+        ),
+        &[
+            ("r", (8.0, 28.0, 10.0, 10.0)),
+            ("a", (8.0, 8.0, 60.0, 40.0)),
+            ("d", (8.0, 8.0, 60.0, 40.0)),
+        ],
+    );
+    // Ten lines fill the second column and go on in an overflow column.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto">{}</div>"#,
+            paragraph("xxx xxx xxx xxx xxx xxx xxx xxx xxx xxx")
+        ),
+        &[("a", (8.0, 8.0, 90.0, 40.0)), ("d", (8.0, 8.0, 90.0, 40.0))],
+    );
+    // In a plain block of the container, with gaps, and from the right.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:10px;width:70px;height:40px;column-fill:auto"><div id=w>{}</div></div>"#,
+            paragraph(six)
+        ),
+        &[("a", (8.0, 8.0, 70.0, 40.0)), ("d", (8.0, 8.0, 70.0, 40.0))],
+    );
+    check_painted(
+        &format!(
+            r#"<div id=m style="direction:rtl;columns:2;column-gap:10px;width:70px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;right:0;top:0"><div id=d>{six}</div></span></span> x x x x</div></div>"#
+        ),
+        &[
+            ("a", (-12.0, 8.0, 70.0, 40.0)),
+            ("d", (-12.0, 8.0, 70.0, 40.0)),
+        ],
+    );
+    // A box that ends in its column of balanced columns stays in it.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px">{}</div>"#,
+            paragraph("xxx")
+        ),
+        &[
+            ("m", (8.0, 8.0, 60.0, 30.0)),
+            ("a", (8.0, 28.0, 30.0, 10.0)),
+            ("d", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    // A box against the container is laid out outside the columns.
+    check_painted(
+        r#"<div id=m style="position:relative;columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r>y<span id=a style="position:absolute;width:30px;left:0;top:20px"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#,
+        &[
+            ("a", (8.0, 28.0, 30.0, 60.0)),
+            ("d", (8.0, 28.0, 30.0, 60.0)),
+        ],
+    );
+    // Monolithic boxes, replaced or scrolling, stay whole in their column.
+    for positioned in [
+        r#"<canvas id=a width=30 height=30 style="position:absolute;left:0;top:0"></canvas>"#,
+        r#"<span id=a style="position:absolute;width:30px;height:30px;left:0;top:0;overflow:auto"><div>xxx xxx xxx xxx</div></span>"#,
+    ] {
+        check_painted(
             &format!(
-                r#"<div id=m style="columns:2;column-gap:0;width:60px;{container}"><div id=p>x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;left:0;top:0"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#
+                r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r style="position:relative">y{positioned}</span> x x x x</div></div>"#
+            ),
+            &[("a", (8.0, 28.0, 30.0, 30.0))],
+        );
+    }
+    // Columns that fill in turn under an auto height grow with their content.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;column-fill:auto">{}</div>"#,
+            paragraph("xxx")
+        ),
+        &[
+            ("m", (8.0, 8.0, 60.0, 50.0)),
+            ("a", (8.0, 28.0, 30.0, 10.0)),
+            ("d", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    // Below a spanner, the columns that fill in turn start under it.
+    check_painted(
+        &format!(
+            r#"<div id=m style="columns:2;column-gap:0;width:60px;height:60px;column-fill:auto"><div id=s style="column-span:all;height:10px"></div>{}</div>"#,
+            paragraph(six)
+        ),
+        &[
+            ("p", (8.0, 18.0, 30.0, 50.0)),
+            ("a", (8.0, 18.0, 60.0, 50.0)),
+            ("d", (8.0, 18.0, 60.0, 50.0)),
+        ],
+    );
+}
+
+/// A box against the paragraph breaks with it too, and one with borders and
+/// padding is cut where its column ends.
+#[test]
+fn a_box_inside_a_positioned_paragraph_breaks_with_the_columns() {
+    for (insets, left) in [("", 18.0), ("left:0;top:20px;", 8.0)] {
+        check_painted(
+            &format!(
+                r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p style="position:relative">x x x x <span id=r>y<span id=a style="position:absolute;width:30px;{insets}"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#
             ),
             &[
-                ("r", (8.0, 28.0, 10.0, 10.0)),
-                ("a", (8.0, 28.0, 30.0, 60.0)),
-                ("d", (8.0, 28.0, 30.0, 60.0)),
+                ("a", (left, 8.0, 60.0, 40.0)),
+                ("d", (left, 8.0, 60.0, 40.0)),
             ],
         );
     }
+    check_painted(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div id=p>x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;left:0;top:0;border:2px solid;padding:3px"><div id=d>xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#,
+        &[("a", (8.0, 8.0, 70.0, 40.0))],
+    );
+}
+
+/// A box on a line that the columns put in a later column of a container
+/// with a definite height goes to the top of that column with the line,
+/// whatever its containing block.
+#[test]
+fn a_box_on_a_line_of_a_later_column_goes_up_with_the_line() {
+    let paragraph = |inline: &str, positioned: &str| {
+        format!(
+            r#"<div id=p{positioned}>x x x x x x x x <span id=r{inline}>y<span id=a style="position:absolute;width:30px"><div id=d>xxx</div></span></span> x x</div>"#
+        )
+    };
+    let relative = r#" style="position:relative""#;
+    for (container, inner) in [
+        ("", paragraph(relative, "")),
+        ("", paragraph("", "")),
+        ("position:relative;", paragraph("", "")),
+        ("", paragraph("", relative)),
+        ("", format!("<div id=w>{}</div>", paragraph("", ""))),
+    ] {
+        check(
+            &format!(
+                r#"<div id=m style="{container}columns:2;column-gap:0;width:60px;height:40px;column-fill:auto">{inner}</div>"#
+            ),
+            &[
+                ("r", (38.0, 8.0, 10.0, 10.0)),
+                ("a", (48.0, 8.0, 30.0, 10.0)),
+            ],
+        );
+    }
+    // With an inset against the inline element, and broken in turn.
+    check_painted(
+        r#"<div id=m style="columns:3;column-gap:0;width:90px;height:40px;column-fill:auto"><div id=p>x x x x x x x x <span id=r style="position:relative">y<span id=a style="position:absolute;width:30px;left:0;top:0"><div id=d>xxx xxx xxx xxx xxx xxx</div></span></span> x x x x</div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 60.0, 40.0)),
+            ("d", (38.0, 8.0, 60.0, 40.0)),
+        ],
+    );
 }

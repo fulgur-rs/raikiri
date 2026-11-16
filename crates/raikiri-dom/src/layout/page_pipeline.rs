@@ -1605,7 +1605,7 @@ fn layout_single_page_with_table_projection(
     // `enforce_layout_invariants` documentation. Events enter the session's
     // warning buffer along with Steps 1 and 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
-    super::multicol::record_out_of_flow_boxes_on_column_lines(document);
+    super::multicol::record_out_of_flow_boxes_on_column_lines(document, cascade);
     take_layout_failure(document)?;
     super::sticky::resolve_offsets(document, cascade);
     document.fragment_tree.finalize();
@@ -7977,7 +7977,7 @@ fn push_in_flow_boxes_rev(
     boxes: &mut Vec<usize>,
 ) {
     match sibling_adjacency::flow_box(document, cascade, node_id) {
-        sibling_adjacency::FlowBox::Skip => {}
+        sibling_adjacency::FlowBox::Skip | sibling_adjacency::FlowBox::Phantom => {}
         sibling_adjacency::FlowBox::Contents => {
             for &id in document.nodes[node_id].children.iter().rev() {
                 push_in_flow_boxes_rev(document, cascade, id, boxes);
