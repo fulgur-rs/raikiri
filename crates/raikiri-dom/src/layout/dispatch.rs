@@ -2270,6 +2270,9 @@ fn compute_ifc_root(
     }
     output.oof_candidates.append(&mut nested_oof_candidates);
     if inputs.run_mode == RunMode::PerformLayout {
+        if !vertical_paragraph && !multicol {
+            align_ifc_content(tree, idx, &style, measure.insets, &mut output);
+        }
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
     }
     // When `min-height` gives the used height, the last child's bottom margin
@@ -2318,6 +2321,71 @@ fn compute_ifc_root(
         }
     }
     output
+}
+
+/// Move the content of the horizontal paragraph box `idx` along its block
+/// axis by the `align-content` it states, as block flow does for block
+/// children (CSS Box Alignment 3 §5.1): its lines, the boxes on and between
+/// them, and the out-of-flow candidates and baseline they carry. The box's
+/// own out-of-flow children are placed afterwards from the moved lines.
+fn align_ifc_content(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    style: &Style,
+    insets: Edges<f32>,
+    output: &mut LayoutOutput,
+) {
+    use raikiri_layout_style::values::{AlignContent, AlignmentSafety};
+    if style.align_content.keyword == AlignContentKeyword::Normal {
+        return;
+    }
+    let Some(content) = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .map(|lines| lines.shifted_height())
+    else {
+        return;
+    };
+    let free = output.size.height - insets.top - insets.bottom - content;
+    // As in block flow, overflowing content stays at the start edge unless
+    // the alignment is `unsafe`.
+    let align_content = AlignContent {
+        safety: match style.align_content.safety {
+            AlignmentSafety::Default => AlignmentSafety::Safe,
+            safety => safety,
+        },
+        ..style.align_content
+    };
+    let offset = crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset(
+        align_content,
+        free,
+    );
+    if offset == 0.0 {
+        return;
+    }
+    let boxes: Vec<usize> = tree.nodes[idx]
+        .ifc
+        .as_mut()
+        .map(|root| {
+            if let Some(lines) = root.lines.as_mut() {
+                lines.shifts.push(0, offset);
+            }
+            root.boxes
+                .iter()
+                .filter(|b| b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+                .map(|b| b.node)
+                .collect()
+        })
+        .unwrap_or_default();
+    for node in boxes {
+        let mut layout = tree.nodes[node].layout;
+        layout.location.y += offset;
+        tree.set_unrounded_layout(NodeId::from(node), &layout);
+    }
+    output.baselines.first = output.baselines.first.map(|baseline| baseline + offset);
+    output.baselines.last = output.baselines.last.map(|baseline| baseline + offset);
+    output.oof_candidates.translate(Point { x: 0.0, y: offset });
 }
 
 /// The min-content width of the border box of the paragraph box `node_id`,
