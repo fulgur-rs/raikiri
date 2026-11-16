@@ -14421,7 +14421,14 @@ fn move_box_for_transition(
         owner.direct_body
     });
     let nested_block = !direct_body && moves_in_flow_down;
-    if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
+    if page_overflow && nested_block && in_table_cell_flow(document, holder) {
+        // A box moved out of a page in a table cell takes the content after
+        // it along, and its row grows to hold it, as for a forced break
+        // there; the cells beside it stay.
+        moved_in_bounded_ancestor = shift_block_flow_after(
+            document, cascade, holder, body_id, node_delta, shifts, flow_page,
+        );
+    } else if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
@@ -17139,6 +17146,26 @@ fn shift_rows_after(
         }
         up = parent;
     }
+}
+
+/// Whether `node_id` stands in the block flow of a table cell: the nearest
+/// table box above it is a cell, not a row, a row group, a caption or the
+/// table itself.
+fn in_table_cell_flow(document: &Document, node_id: usize) -> bool {
+    document
+        .ancestors(node_id)
+        .find_map(|ancestor| match document.nodes[ancestor].display() {
+            DisplayValue::TableCell => Some(true),
+            DisplayValue::Table
+            | DisplayValue::InlineTable
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+            | DisplayValue::TableCaption => Some(false),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it
