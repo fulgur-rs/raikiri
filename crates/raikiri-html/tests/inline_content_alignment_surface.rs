@@ -164,6 +164,18 @@ fn an_absolutely_positioned_box_after_the_lines_follows_the_aligned_content() {
         )),
         (0.0, 100.0, 10.0)
     );
+    // More than one such box is placed from an index of the paragraph.
+    for content in ["", "X<br>"] {
+        assert_eq!(
+            placed(&format!(
+                "<div id=r style='height:100px;align-content:end;position:relative'>\
+                 {content}{positioned}\
+                 <div style='position:absolute;width:10px;height:10px'></div></div>"
+            )),
+            (0.0, 100.0, 10.0),
+            "{content:?}"
+        );
+    }
 }
 
 #[test]
