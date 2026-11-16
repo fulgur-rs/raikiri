@@ -748,3 +748,88 @@ fn a_box_that_avoids_a_break_after_generated_content_moves_whole() {
         [(0, 'A', 55), (1, 'B', 5), (1, 'Z', 35)],
     );
 }
+
+#[test]
+fn a_flex_container_after_generated_content_moves_whole_with_its_edges() {
+    // The ::before of the body or of a wrapper, of a line or of a box,
+    // before a row flex container whose padding would be left alone at the
+    // page end: the page breaks before the container, as after a box.
+    let flex = r#"<div style="display:flex;margin-top:10px;padding-top:40px;width:20px"><div>A</div></div><div>Z</div>"#;
+    for (before, after, x) in [
+        (
+            r#"<style>body::before{content:"x";display:block}</style>"#,
+            "",
+            Some(5),
+        ),
+        (r#"<style>body::before{content:"x"}</style>"#, "", Some(5)),
+        (
+            r#"<style>.w::before{content:"x";display:block}</style><div class="w">"#,
+            "</div>",
+            Some(5),
+        ),
+        (
+            r#"<style>.w::before{content:"x"}</style><div class="w">"#,
+            "</div>",
+            Some(5),
+        ),
+        (
+            r#"<style>.w::before{content:"";display:block;height:40px}</style><div class="w">"#,
+            "</div>",
+            None,
+        ),
+        (
+            r#"<style>.w::before{content:"x";display:block}</style><div class="w" style="padding-top:5px">"#,
+            "</div>",
+            Some(10),
+        ),
+        (
+            r#"<style>.w::before{content:"x";display:block}</style><div class="w"><div>"#,
+            "</div></div>",
+            Some(5),
+        ),
+    ] {
+        let body = format!("{before}{flex}{after}");
+        let mut tops: Vec<_> = x.map(|top| (0, 'x', top)).into_iter().collect();
+        tops.extend([(1, 'A', 45), (1, 'Z', 75)]);
+        assert_eq!(glyph_tops(&body), tops, "{body}");
+    }
+}
+
+#[test]
+fn a_column_flex_container_breaks_between_its_edges_and_its_first_item() {
+    // Chromium leaves the padding of a column flex container at the page end
+    // and starts the next page with its first item, after a box or generated
+    // content, whatever the item holds and however the items flow.
+    let column = |direction: &str, item: &str| {
+        format!(
+            r#"<div style="display:flex;flex-direction:{direction};margin-top:10px;padding-top:40px;width:20px">{item}</div><div>Z</div>"#
+        )
+    };
+    for (before, after) in [
+        ("<div>x</div>", ""),
+        (
+            r#"<style>.w::before{content:"x";display:block}</style><div class="w">"#,
+            "</div>",
+        ),
+    ] {
+        for (direction, item) in [
+            ("column", "<div>A</div>"),
+            ("column-reverse", "<div>A</div>"),
+            ("column;flex-wrap:wrap", "<div>A</div>"),
+            ("column", r#"<div style="height:30px;contain:size">A</div>"#),
+        ] {
+            let body = format!("{before}{}{after}", column(direction, item));
+            assert_eq!(
+                glyph_tops(&body),
+                [(0, 'x', 5), (1, 'A', 5), (1, 'Z', 35)],
+                "{body}"
+            );
+        }
+    }
+    let body = format!("<div>x</div>{}", column("column", "<div>A<br>B</div>"));
+    assert_eq!(
+        glyph_tops(&body),
+        [(0, 'x', 5), (1, 'A', 5), (1, 'B', 35), (1, 'Z', 65)],
+        "{body}"
+    );
+}

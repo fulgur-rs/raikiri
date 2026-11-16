@@ -1748,16 +1748,37 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let first_grid_row = (in_flow_container && !is_body && free_to_break_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
-                // A flex container whose padding or border above its items
-                // would be left alone at the foot of a page, because the first
-                // piece of its content does not fit after them, moves to the
-                // next page whole. So does a grid whose rows cannot be read,
-                // when its first item cannot be split from them either.
+                // A row flex container whose padding or border above its
+                // items would be left alone at the foot of a page, because
+                // the first piece of its content does not fit after them,
+                // moves to the next page whole. So does a grid whose rows
+                // cannot be read, when its first item cannot be split from
+                // them either. A column flex container breaks between those
+                // edges and its first item, as Chromium does, even when the
+                // item is monolithic.
                 let display = document.nodes[node_id].display();
+                // Generated content right before a box with no box before it
+                // gives the flow a break before the box too, as a box there
+                // would (see `generated_content_end_above`).
+                let breaks_after_generated_content = || {
+                    frame.previous_box.is_none()
+                        && !direct_body_child
+                        && !cascade.pseudo.is_empty()
+                        && {
+                            let flow_top = candidate_raw_y
+                                - accumulated_relative_offset_y(
+                                    document, cascade, body_id, node_id,
+                                );
+                            super::generated_content_end_above(
+                                document, cascade, body_id, node_id, flow_top,
+                            )
+                            .is_some()
+                        }
+                };
                 let leading_piece = (in_flow_container
                     && !is_body
-                    && free_to_break_before
-                    && (display == DisplayValue::Flex
+                    && (free_to_break_before || breaks_after_generated_content())
+                    && (display == DisplayValue::Flex && !column_flex
                         || display == DisplayValue::Grid
                             && first_grid_row.is_none()
                             && super::grid_rows::first_item_is_unbreakable(
