@@ -227,7 +227,7 @@ fn a_safe_static_position_in_vertical_rl_mirrors_vertical_lr() {
     }
 }
 
-/// A `last baseline` alignment, which falls back to `safe self-end`, keeps an
+/// A `last baseline` alignment, which aligns as `end`, keeps an
 /// overflowing box at the end edge of its grid area in a vertical grid, as the
 /// web-platform-tests expect, where an explicit `safe end` falls back to the
 /// start edge.
@@ -245,6 +245,58 @@ fn a_last_baseline_static_position_keeps_the_end_edge_when_it_overflows() {
         item_rect(grid, &format!("{child};align-self:safe end")),
         end
     );
+}
+
+/// An absolutely positioned box that asks for `last baseline` in a grid or a
+/// flex container aligns as `end` of the container, as Chromium
+/// does: it keeps the end edge when it overflows its static-position area,
+/// where `safe end` falls back to the start, and its own direction does not
+/// turn the end around.
+#[test]
+fn a_last_baseline_abspos_in_a_grid_or_flex_aligns_to_the_end() {
+    let container = "position:relative;width:100px;height:100px";
+    let grid = format!("display:grid;{container}");
+    let flex = format!("display:flex;{container}");
+    let child = "position:absolute;width:50px;height:50px";
+    for (container, item, x, y) in [
+        (&grid, "justify-self:last baseline;width:150px", -50.0, 0.0),
+        (&grid, "align-self:last baseline;height:150px", 0.0, -50.0),
+        (&flex, "align-self:last baseline;height:150px", 0.0, -50.0),
+        (&grid, "justify-self:last baseline;direction:rtl", 50.0, 0.0),
+        (&grid, "justify-self:safe end;width:150px", 0.0, 0.0),
+        (&flex, "align-self:safe end;height:150px", 0.0, 0.0),
+    ] {
+        let (left, top, _, _) = item_rect(container, &format!("{child};{item}"));
+        assert_eq!((left, top), (x, y), "{container} | {item}");
+    }
+    // The container's `last baseline` reaches an `auto` box the same way.
+    let (left, top, _, _) = item_rect(
+        &format!("{grid};align-items:last baseline;justify-items:last baseline"),
+        "position:absolute;width:150px;height:150px",
+    );
+    assert_eq!((left, top), (-50.0, -50.0));
+}
+
+/// A block container aligns no items along its block axis, so its `align-items:
+/// last baseline` leaves an `auto` absolutely positioned child at the start of
+/// its static position, as Chromium does; an explicit `align-self` and the
+/// container's `justify-items` still align it to the end.
+#[test]
+fn a_block_containers_last_baseline_align_items_leaves_the_static_position_alone() {
+    let block = "display:block;position:relative;width:100px;height:100px;padding:4px";
+    let child = "position:absolute;width:50px;height:50px;left:0;right:0";
+    let (_, top, _, _) = item_rect(&format!("{block};align-items:last baseline"), child);
+    assert_eq!(top, 4.0);
+    // An explicit `last baseline` puts the bottom edge at the end of the
+    // zero-height static-position rectangle.
+    let (_, top, _, _) = item_rect(block, &format!("{child};align-self:last baseline"));
+    assert_eq!(top, -46.0);
+    let vertical = format!("{block};writing-mode:vertical-rl;align-items:last baseline");
+    let (left, _, _, _) = item_rect(
+        &vertical,
+        "position:absolute;width:50px;height:50px;top:0;bottom:0",
+    );
+    assert_eq!(left, 54.0);
 }
 
 /// The last-baseline exception applies to the axis that aligns to the last
