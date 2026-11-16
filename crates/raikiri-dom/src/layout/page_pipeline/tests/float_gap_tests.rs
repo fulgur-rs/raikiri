@@ -107,7 +107,6 @@ fn keep_after_a_float(
         effective_y: 95.0,
         height: 10.0,
         first_line_shift: 0.0,
-        clip_end: f32::INFINITY,
     };
     let kept = state.keep_lines_together(
         &mut session,
