@@ -22,18 +22,18 @@ use super::{
     grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
-    lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder, line_block_parent,
-    line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
+    last_flow_box, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
+    line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    materialize_y, move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
-    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
-    text_changes_page_name, text_sets_page_name,
+    margin_kept_by_floats, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
+    positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
+    shift_paragraph_lines, shift_text_candidate, shrink_ancestors_after_content_change,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -1454,9 +1454,19 @@ impl PaginationState {
         // the cut stops where the block reaches its min-height now.
         let (min_height, _) = border_box_height_bounds(document, node_id);
         let room = (document.nodes[node_id].layout.size.height - min_height).max(0.0);
-        let delta = (edge - end)
-            .max(-room)
-            .max(edges_break.margin_kept - edges_break.margin_above);
+        // The floats it holds keep the margin down to where they lie now,
+        // after the breaks before moved them.
+        let kept = last_flow_box(document, env.cascade, node_id).map_or(0.0, |last| {
+            margin_kept_by_floats(
+                document,
+                env.cascade,
+                env.body_id,
+                node_id,
+                last,
+                edges_break.margin_above,
+            )
+        });
+        let delta = (edge - end).max(-room).max(kept - edges_break.margin_above);
         if delta >= -0.001 {
             return Ok(end);
         }

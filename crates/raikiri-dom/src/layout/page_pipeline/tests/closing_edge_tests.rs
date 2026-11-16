@@ -4595,6 +4595,28 @@ fn a_float_that_a_block_holds_keeps_the_margin_above_the_edges_down_to_it() {
 }
 
 #[test]
+fn a_float_that_a_break_moves_keeps_the_margin_down_to_where_it_lands() {
+    // A float that avoids a break inside moves to the next page, and the
+    // margin above the edges is kept down to where it lands, as in Chromium.
+    for (float_height, expected) in [(90.0, 200.0), (60.0, 170.0)] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            let parent = block(doc, body, "display:flow-root;padding-bottom:10px");
+            block(
+                doc,
+                parent,
+                &format!("float:left;width:10px;height:{float_height}px;break-inside:avoid"),
+            );
+            block(doc, parent, "display:block;height:10px");
+            block(doc, parent, "display:block;height:10px;margin-bottom:200px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{float_height}");
+    }
+}
+
+#[test]
 fn a_min_height_past_the_first_page_edge_keeps_the_cut_at_that_edge() {
     // The margin is cut at the first page edge inside it, and min-height
     // then holds the block below that edge, as in Chromium.

@@ -9397,18 +9397,6 @@ fn margin_above_edges(
         }
         current = last_flow_box(document, cascade, id);
     }
-    // A float that a block formatting context grows to hold keeps the
-    // content box down to its bottom. The floats in a box that does not hold
-    // them stand out of it and keep nothing.
-    let float_bottom = if holds_floats(document, cascade, node_id) {
-        let top = current_abs_y(document, node_id);
-        own_floats(document, cascade, node_id)
-            .into_iter()
-            .map(|float| float_extent(document, float).1 - top)
-            .fold(last_bottom, f32::max)
-    } else {
-        last_bottom
-    };
     // Content below the margin, such as a float that sticks out past it,
     // leaves no margin above the edges.
     let gap = (content_end - last_bottom).max(0.0);
@@ -9418,8 +9406,35 @@ fn margin_above_edges(
     let margin_above = gap.min(margin);
     (
         margin_above,
-        (float_bottom - last_bottom).clamp(0.0, margin_above),
+        margin_kept_by_floats(document, cascade, body_id, node_id, last, margin_above),
     )
+}
+
+/// The block size of the top of the margin above the edges of the block
+/// `node_id`, `margin_above` tall below its last in-flow box `last`, that
+/// the floats the block holds keep from a cut, where they lie now. A float
+/// that a block formatting context grows to hold keeps the content box down
+/// to its bottom. The floats in a box that does not hold them stand out of
+/// it and keep nothing.
+pub(super) fn margin_kept_by_floats(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    last: usize,
+    margin_above: f32,
+) -> f32 {
+    if !holds_floats(document, cascade, node_id) {
+        return 0.0;
+    }
+    let top = current_abs_y(document, node_id);
+    let last_bottom = current_abs_y(document, last) - top + document.nodes[last].layout.size.height
+        - layout_relative_offset_y(document, cascade, body_id, last);
+    own_floats(document, cascade, node_id)
+        .into_iter()
+        .map(|float| float_extent(document, float).1 - top - last_bottom)
+        .fold(0.0_f32, f32::max)
+        .min(margin_above)
 }
 
 /// The floats that the block formatting context of `node_id` holds: those
@@ -9456,7 +9471,7 @@ fn own_floats(
 /// The last box in the flow of the block `node_id`: its last flow child (see
 /// [`last_flow_child`]), or the last box inside it when that child is a
 /// `display: contents` element without a box of its own.
-fn last_flow_box(
+pub(super) fn last_flow_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
