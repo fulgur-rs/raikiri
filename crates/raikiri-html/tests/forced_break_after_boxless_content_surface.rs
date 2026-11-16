@@ -294,6 +294,14 @@ fn an_empty_generated_box_of_a_contents_element_comes_before_the_box() {
             "{display}"
         );
     }
+    // Its first box may lie behind an element that generates none and
+    // inside a nested `display: contents` element.
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<style>.w::before{{content:""}}</style><div class="w" style="display:contents"><div style="display:none">q</div><div style="display:contents">{BREAK}</div></div>"#
+        )),
+        [(1, 'A', 5), (1, 'Z', 35)],
+    );
 }
 
 #[test]
