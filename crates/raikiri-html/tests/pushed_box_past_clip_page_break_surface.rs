@@ -85,3 +85,13 @@ fn without_a_clip_the_pushed_box_still_reaches_its_pages() {
          <div id=x style='height:300px;contain:size'>B</div></div>";
     assert_eq!(pages(body), (4, vec![None, Some(0), Some(0), Some(0)]));
 }
+
+#[test]
+fn the_nearest_clip_that_ends_first_cuts_the_pushed_box() {
+    // The inner clip ends past the box, the outer one 50px down the second
+    // page: the outer one hides the rest, and the flow after it follows.
+    let body = "<div style='height:150px;overflow:hidden'>\
+         <div style='height:400px;overflow:hidden'><div style='height:20px'>A</div>\
+         <div style='height:300px;contain:size'>B</div></div></div><div id=x>X</div>";
+    assert_eq!(pages(body), (2, vec![None, Some(50)]));
+}

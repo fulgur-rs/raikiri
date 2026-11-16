@@ -447,6 +447,37 @@ fn clip_block_end(
     y + layout.size.height + geometry.block_end_outset()
 }
 
+/// Where the clips of `owner` and of the boxes around it that keep their
+/// height hide the content inside them now, in the coordinates of placed
+/// candidates: the nearest of their block-end clip edges at the places
+/// pagination has moved them to. A box whose height follows its content
+/// grows with what is pushed down inside it, so its clip ends nothing here.
+/// The clips above an absolutely positioned or fixed box do not cut it.
+fn moved_clip_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    owner: usize,
+    root_flow_offset: f32,
+) -> f32 {
+    let mut end = f32::INFINITY;
+    let mut next = Some(owner);
+    while let Some(id) = next.filter(|&id| id != body_id) {
+        if element_clips_overflow(document, cascade, id) && !height_follows_content(document, id) {
+            let top = current_abs_y(document, id) + root_flow_offset;
+            end = end.min(clip_block_end(document, cascade, id, top));
+        }
+        if matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) {
+            break;
+        }
+        next = document.parent_of(id);
+    }
+    end
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///

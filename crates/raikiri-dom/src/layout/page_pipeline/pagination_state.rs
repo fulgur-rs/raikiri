@@ -1245,12 +1245,8 @@ impl PaginationState {
         // paints past it, also when pagination moved the box down inside it:
         // that part reaches no page.
         let reach_height = candidate.context.clip_box().map_or(reach_height, |owner| {
-            let clip_end = super::clip_block_end(
-                document,
-                cascade,
-                owner,
-                current_abs_y(document, owner) + root_flow_offset,
-            );
+            let clip_end =
+                super::moved_clip_end(document, cascade, env.body_id, owner, root_flow_offset);
             reach_height.min(clip_end - effective_y)
         });
         let end_page = page_origins

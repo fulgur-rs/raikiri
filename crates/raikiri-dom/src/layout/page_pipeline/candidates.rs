@@ -2008,7 +2008,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_flex_item: flex_item_candidate,
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),
-                                clip_box: frame.lines_clip_box,
+                                // The clips between an absolutely positioned
+                                // or fixed box and its containing block do
+                                // not cut it.
+                                clip_box: frame.lines_clip_box.filter(|_| {
+                                    !matches!(
+                                        node.position(),
+                                        PositionValue::Absolute | PositionValue::Fixed
+                                    )
+                                }),
                                 deferred_named_break_after,
                                 unplaced_line,
                                 unbreakable: unbreakable_box,
