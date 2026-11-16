@@ -16,7 +16,9 @@ pub(crate) fn content(value: C) -> values::AlignContent {
         C::SpaceEvenly => values::AlignContent::SPACE_EVENLY,
         C::SpaceAround => values::AlignContent::SPACE_AROUND,
         C::Center => values::AlignContent::CENTER,
-        C::Start => values::AlignContent::START,
+        // Content alignment shares no baseline, so `baseline` takes its
+        // fallback alignment.
+        C::Start | C::Baseline => values::AlignContent::START,
         C::End => values::AlignContent::END,
         C::FlexStart => values::AlignContent::FLEX_START,
         C::FlexEnd => values::AlignContent::FLEX_END,

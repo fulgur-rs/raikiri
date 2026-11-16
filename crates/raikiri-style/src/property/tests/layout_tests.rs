@@ -1278,7 +1278,7 @@ fn justify_content_parse_content_distribution_and_position() {
 }
 
 #[test]
-fn align_content_parse_same_grammar_as_justify_content() {
+fn align_content_parses_the_content_distributions_justify_content_does() {
     assert_eq!(
         parse("stretch", "align-content"),
         Some(PropertyValue::AlignContent(ContentAlignmentValue::Stretch))
@@ -1292,13 +1292,30 @@ fn align_content_parse_same_grammar_as_justify_content() {
 }
 
 #[test]
-fn content_alignment_rejects_left_right_and_baseline() {
+fn content_alignment_rejects_left_right_and_last_baseline() {
     // scope carving: `left`/`right` (justify-content-specific extension)
-    // and `<baseline-position>` lack corresponding taffy variants, so they remain unsupported
-    // (see the `ContentAlignmentValue` doc).
+    // lack corresponding taffy variants, and `last baseline` is not accepted
+    // by Chromium either, so they remain unsupported (see the
+    // `ContentAlignmentValue` doc).
     assert_eq!(parse("left", "justify-content"), None);
     assert_eq!(parse("right", "justify-content"), None);
-    assert_eq!(parse("baseline", "align-content"), None);
+    assert_eq!(parse("last baseline", "align-content"), None);
+}
+
+#[test]
+fn align_content_accepts_a_first_baseline_that_justify_content_rejects() {
+    for css in ["baseline", "first baseline", "FIRST BASELINE"] {
+        assert_eq!(
+            content_alignments(css),
+            [None, Some(ContentAlignmentValue::Baseline)],
+            "{css:?}"
+        );
+    }
+    assert_eq!(ContentAlignmentValue::Baseline.as_css_str(), "baseline");
+    // Chromium takes `first` only before `baseline`, and no position after it.
+    for css in ["baseline first", "first", "first baseline center"] {
+        assert_eq!(content_alignments(css), [None; 2], "{css:?}");
+    }
 }
 
 /// `justify-content` and `align-content` parsed from the same text.
@@ -2007,6 +2024,29 @@ fn place_content_shorthand_keeps_the_overflow_position_of_each_value() {
     );
     assert_eq!(place("safe center safe"), None);
     assert_eq!(place("safe space-between"), None);
+}
+
+#[test]
+fn place_content_shorthand_gives_justify_start_for_a_baseline() {
+    let place = |css| match parse_entire(css, "place-content") {
+        Some(PropertyValue::PlaceContent(shorthand)) => Some((shorthand.align, shorthand.justify)),
+        _ => None,
+    };
+    let baseline = ContentAlignmentValue::Baseline;
+    assert_eq!(
+        place("baseline"),
+        Some((baseline, ContentAlignmentValue::Start))
+    );
+    assert_eq!(
+        place("first baseline"),
+        Some((baseline, ContentAlignmentValue::Start))
+    );
+    assert_eq!(
+        place("baseline center"),
+        Some((baseline, ContentAlignmentValue::Center))
+    );
+    assert_eq!(place("center baseline"), None);
+    assert_eq!(place("last baseline"), None);
 }
 
 // ── key() discriminant integrity (mirrors `height_key_maps_to_height_property_key`) ─

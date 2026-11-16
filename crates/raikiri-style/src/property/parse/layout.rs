@@ -290,7 +290,8 @@ pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     })
 }
 
-/// Shared parser for `justify-content` and `align-content`:
+/// Parser for `justify-content`, and for `align-content` after
+/// [`parse_align_content`] has tried its baseline values:
 /// `normal | <content-distribution> | <overflow-position>? <content-position>`;
 /// see the scope carving in the [`ContentAlignmentValue`] docs. An
 /// `<overflow-position>` qualifies a position only, so `safe space-between`,
@@ -308,6 +309,20 @@ pub(super) fn parse_content_alignment(input: &mut Parser<'_, '_>) -> Option<Cont
     } else {
         ContentAlignmentValue::Unsafe(position)
     })
+}
+
+/// Parser for `align-content`, which also accepts `baseline` and
+/// `first baseline` ([`ContentAlignmentValue::Baseline`]). Chromium does not
+/// accept `last baseline`, so neither does this parser.
+pub(super) fn parse_align_content(input: &mut Parser<'_, '_>) -> Option<ContentAlignmentValue> {
+    let baseline = input.try_parse(|input| {
+        let _ = input.try_parse(|input| input.expect_ident_matching("first"));
+        input.expect_ident_matching("baseline")
+    });
+    if baseline.is_ok() {
+        return Some(ContentAlignmentValue::Baseline);
+    }
+    parse_content_alignment(input)
 }
 
 /// The `Result` form of [`parse_content_alignment`], following the wrapper
@@ -542,15 +557,18 @@ pub(crate) fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShort
 /// (CSS Box Alignment Module Level 3 §5.2
 /// <https://www.w3.org/TR/css-align-3/#propdef-place-content>). When the second
 /// component is omitted, the first is copied unchanged, as the spec requires;
-/// see the [`PlaceContentShorthand`] docs. The `<baseline-position>` exception
-/// cannot arise in this crate because [`ContentAlignmentValue`] has no such variant.
+/// see the [`PlaceContentShorthand`] docs, except that a `<baseline-position>`,
+/// which `justify-content` does not accept, gives it `start`.
 pub(crate) fn parse_place_content_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<PlaceContentShorthand> {
-    let align = parse_content_alignment(input)?;
+    let align = parse_align_content(input)?;
     let justify = input
         .try_parse(parse_content_alignment_res)
-        .unwrap_or(align);
+        .unwrap_or(match align {
+            ContentAlignmentValue::Baseline => ContentAlignmentValue::Start,
+            other => other,
+        });
     Some(PlaceContentShorthand { align, justify })
 }
 
