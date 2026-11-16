@@ -467,13 +467,12 @@ fn moved_clip_end(
             let top = current_abs_y(document, id) + root_flow_offset;
             end = end.min(clip_block_end(document, cascade, id, top));
         }
-        if matches!(
+        // The walk stops after an absolutely positioned or fixed box.
+        let positioned = matches!(
             document.nodes[id].position(),
             PositionValue::Absolute | PositionValue::Fixed
-        ) {
-            break;
-        }
-        next = document.parent_of(id);
+        );
+        next = document.parent_of(id).filter(|_| !positioned);
     }
     end
 }

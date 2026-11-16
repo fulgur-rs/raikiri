@@ -95,3 +95,14 @@ fn the_nearest_clip_that_ends_first_cuts_the_pushed_box() {
          <div style='height:300px;contain:size'>B</div></div></div><div id=x>X</div>";
     assert_eq!(pages(body), (2, vec![None, Some(50)]));
 }
+
+#[test]
+fn a_clip_outside_an_absolutely_positioned_box_does_not_cut_it() {
+    // The outer clip does not hide the absolutely positioned box, so only the
+    // inner clip, 400px tall, cuts the pushed box: it reaches the fourth page.
+    let body = "<div style='height:150px;overflow:hidden'>\
+         <div style='position:absolute;top:0;width:100px'>\
+         <div style='height:400px;overflow:hidden'><div style='height:20px'>A</div>\
+         <div id=x style='height:300px;contain:size'>B</div></div></div></div>";
+    assert_eq!(pages(body), (4, vec![None, Some(0), Some(0), Some(0)]));
+}
