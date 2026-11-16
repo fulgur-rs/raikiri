@@ -2566,9 +2566,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             min_height_edges: min_height_edges
                                 .filter(|_| last_in_flow == Some(index)),
                             capped_edges_block: (child_closing_edges > 0.0
-                                && at_chain_start.is_none()
-                                && !height_follows_content(document, node_id))
-                            .then_some(node_id),
+                                && at_chain_start.is_none())
+                            .then(|| {
+                                if height_follows_content(document, node_id) {
+                                    frame.capped_edges_block.filter(|_| inherited_edges > 0.0)
+                                } else {
+                                    Some(node_id)
+                                }
+                            })
+                            .flatten(),
                             previous_box: child_previous_box,
                             column_break_before: child_column_break,
                             lone_in_edges: (!child_box_before || child_tied_to_start)

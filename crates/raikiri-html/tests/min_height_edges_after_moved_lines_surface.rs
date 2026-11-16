@@ -128,3 +128,30 @@ fn edges_of_a_box_of_set_height_stay_above_a_last_block_moved_past_them() {
         assert!(tops.contains(&(1, 'Z', 70)), "{body}: {tops:?}");
     }
 }
+
+#[test]
+fn a_max_height_lets_the_edges_follow_only_as_far_as_it_grows() {
+    let last_line = |style: &str| {
+        glyph_tops(&paragraph(15, style, 5, ""))
+            .into_iter()
+            .filter(|&(_, glyph, _)| glyph == 'X')
+            .last()
+            .unwrap()
+    };
+    // The moved lines grow the paragraph to its `max-height` or short of it:
+    // the edges follow the last line to the next page.
+    assert_eq!(
+        last_line("min-height:170px;max-height:175px;padding-bottom:30px"),
+        (2, 'X', 5)
+    );
+    assert_eq!(
+        last_line("min-height:170px;max-height:180px;padding-bottom:30px"),
+        (2, 'X', 5)
+    );
+    // They would grow it past its `max-height`: the edges stay at its end,
+    // which fits the page, and the last line stays.
+    assert_eq!(
+        last_line("min-height:155px;max-height:160px;padding-bottom:15px"),
+        (1, 'X', 65)
+    );
+}

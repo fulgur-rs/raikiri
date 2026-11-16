@@ -2946,10 +2946,13 @@ impl PaginationState {
                 0.0
             };
             // A paragraph whose `min-height` leaves room below its last line:
-            // that room, and the padding and border below it. Once the
-            // lines move down by as much, the paragraph grows with them, and
-            // the edges follow the last line, as in Chromium.
+            // where its content box ends below its top, and the padding and
+            // border below it. Once the lines move down past that end, the
+            // paragraph grows with them, and the edges follow the last line,
+            // as in Chromium, while a `max-height` lets the paragraph grow
+            // that far; past it, the edges stay at the paragraph's end.
             let min_height_room = (blocks.paragraph_root == Some(block_id)
+                && !block_follows_run
                 && own_closing_edges <= 0.0
                 && lines_can_move
                 && lines_move_grows_box(document, block_id)
@@ -2958,12 +2961,10 @@ impl PaginationState {
             .then(|| {
                 let layout = &document.nodes[block_id].layout;
                 let edges = layout.padding.bottom + layout.border.bottom;
-                let content =
-                    block_height - edges - layout.padding.top - layout.border.top - float_lead;
-                let lines = line_metrics[line_metrics.len() - 1].1 - line_metrics[0].0;
-                (content - lines, edges)
+                let max_end = super::border_box_height_bounds(document, block_id).1 - edges;
+                (block_height - edges, max_end, edges)
             })
-            .filter(|&(room, edges)| room > 0.5 && edges > 0.0);
+            .filter(|&(_, _, edges)| edges > 0.0);
             // A box that keeps its height ends where it ends, wherever its
             // lines go: its edges follow the lines only while they all fit
             // the page, before any of them moves.
@@ -3208,12 +3209,18 @@ impl PaginationState {
                 );
                 // Moves that take the last line down past the room that
                 // `min-height` left below it grow the paragraph: its edges then
-                // follow that line, which the moves must keep with them.
-                if let (Some((room, edges)), LineBreakFix::MoveLines(moves)) =
+                // follow that line, which the moves must keep with them. The
+                // room is measured from where the block and its lines are now.
+                // A break between the lines leaves no edge overflow to
+                // remeasure: only the moves read the edges.
+                if let (Some((content_end, max_end, edges)), LineBreakFix::MoveLines(moves)) =
                     (min_height_room, &fix)
                     && line_fit.total_lines > 1
-                    && line_fit.tail_edges <= 0.0
-                    && moves.iter().map(|&(_, delta, _)| delta).sum::<f32>() >= room - 0.5
+                    && let moved_end = text.effective_y
+                        + line_metrics[line_metrics.len() - 1].1
+                        + moves.iter().map(|&(_, delta, _)| delta).sum::<f32>()
+                    && moved_end >= block_effective_y + content_end - 0.5
+                    && moved_end <= block_effective_y + max_end + 0.5
                 {
                     line_fit.tail_edges = edges;
                     fix = line_fit.fix(
