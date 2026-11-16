@@ -14421,7 +14421,7 @@ fn move_box_for_transition(
         owner.direct_body
     });
     let nested_block = !direct_body && moves_in_flow_down;
-    if page_overflow && nested_block && in_table_cell_flow(document, holder) {
+    if page_overflow && nested_block && moves_reach_cell_row(document, holder) {
         // A box moved out of a page in a table cell takes the content after
         // it along, and its row grows to hold it, as for a forced break
         // there; the cells beside it stay.
@@ -16973,7 +16973,9 @@ fn collapses_with_previous_block(
 
 /// Moves the boxes after `node_id` in block flow down by `flow_delta`, up to
 /// the first ancestor below `body_id` that does not stack its children in
-/// block order, for a forced break before `node_id`. Returns whether an
+/// block order, for a forced break before `node_id` or for `node_id` moved
+/// out of a page in a table cell (see [`moves_reach_cell_row`]). Returns
+/// whether an
 /// ancestor's height kept it from holding the moved content.
 ///
 /// A `display: contents` ancestor has no box; its parent lays the moved box
@@ -17148,24 +17150,31 @@ fn shift_rows_after(
     }
 }
 
-/// Whether `node_id` stands in the block flow of a table cell: the nearest
-/// table box above it is a cell, not a row, a row group, a caption or the
-/// table itself.
-fn in_table_cell_flow(document: &Document, node_id: usize) -> bool {
-    document
-        .ancestors(node_id)
-        .find_map(|ancestor| match document.nodes[ancestor].display() {
-            DisplayValue::TableCell => Some(true),
-            DisplayValue::Table
-            | DisplayValue::InlineTable
-            | DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-            | DisplayValue::TableRow
-            | DisplayValue::TableCaption => Some(false),
-            _ => None,
-        })
-        .unwrap_or(false)
+/// Whether a box moved down from `node_id` reaches the row of a table cell
+/// along the walk of [`shift_block_flow_after`]: every box between them
+/// stacks its children in block flow, and the cell itself holds neither
+/// columns nor lines, so its row can grow to hold the moved content.
+fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    let mut child = node_id;
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    while let Some(parent) = walk.current() {
+        walk.advance(document);
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        if ifc_paragraph_of_block(document, child) != Some(parent)
+            && !stacks_children_in_block_flow(document, parent)
+        {
+            return document.anonymous_cell_of(child).is_some()
+                || document.nodes[parent].display() == DisplayValue::TableCell
+                    && document.nodes[parent].multicol.is_none()
+                    && document
+                        .ifc_layout_node(parent)
+                        .is_none_or(|node| node.ifc.is_none());
+        }
+        child = parent;
+    }
+    false
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it

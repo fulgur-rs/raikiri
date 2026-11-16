@@ -203,3 +203,41 @@ fn a_block_taller_than_the_page_still_moves_to_its_top() {
         [(0, 'A', 0), (0, 'C', 0), (1, 'B', 0), (2, 'X', 70)]
     );
 }
+
+#[test]
+fn a_one_column_grid_or_an_anonymous_cell_moves_it_too() {
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<table><tr><td><div style="display:grid">{AVOIDING_PAIR}</div></td><td>C</td></tr></table><div>X</div>"#
+        )),
+        [(0, 'A', 0), (0, 'C', 0), (1, 'B', 0), (1, 'X', 70)]
+    );
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<div style="display:table-row">{AVOIDING_PAIR}</div><div>X</div>"#
+        )),
+        [(0, 'A', 0), (1, 'B', 0), (1, 'X', 70)]
+    );
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<div style="display:table-row"><div>{AVOIDING_PAIR}<div>D</div></div></div><div>X</div>"#
+        )),
+        [(0, 'A', 0), (1, 'B', 0), (1, 'D', 70), (2, 'X', 0)]
+    );
+}
+
+#[test]
+fn boxes_side_by_side_in_the_cell_keep_it_in_place() {
+    // Chromium leaves the block in its column or grid track.
+    for container in [
+        "display:grid;grid-template-columns:1fr 1fr",
+        "columns:2;column-gap:0",
+    ] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"<table><tr><td><div style="{container}">{AVOIDING_PAIR}</div></td><td>C</td></tr></table><div>X</div>"#
+            )),
+            [(0, 'A', 0), (0, 'B', 0), (0, 'C', 0), (0, 'X', 70)]
+        );
+    }
+}

@@ -13,10 +13,10 @@ use super::{
     closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
     first_named_item_start_page, first_owned_text_line_top, has_block_leading_content,
     has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
-    in_table_cell_flow, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
-    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
-    lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
+    is_block_level_flow_box, is_floating_box_for_pagination, is_flow_table_caption,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
+    lone_box_with_floats, margin_above_edges, moves_later_siblings, moves_reach_cell_row,
     nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
@@ -1582,11 +1582,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && [FloatValue::Left, FloatValue::Right]
                         .into_iter()
                         .any(|side| clears_float_side(computed.clear, side));
-                let nested_candidate_base = participates_in_flow
+                let nested_flow_base = participates_in_flow
                     && !direct_body_child
-                    && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
+                let nested_candidate_base = nested_flow_base && !inside_table;
+                // A block in the flow of a table cell avoids a break inside
+                // it as in any block flow: Chromium moves it to the next
+                // page, and its row grows to hold it.
+                let cell_avoid_base = nested_flow_base
+                    && inside_table
+                    && avoids_by_property
+                    && moves_reach_cell_row(document, node_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1865,6 +1872,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && ((!inline_level && is_block_flow_box && avoids_break)
                             || is_float
                             || clears_float))
+                    || (cell_avoid_base && !inline_level && is_block_flow_box)
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -1905,16 +1913,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         (false, false)
                     };
                 let can_move_nested = !side_by_side_ancestor && !bounded_clipping_ancestor;
-                // A block in the flow of a table cell avoids a break inside
-                // it as in any block flow: Chromium moves it to the next
-                // page, and its row grows to hold it.
-                let cell_avoid_base = participates_in_flow
-                    && !direct_body_child
-                    && inside_table
-                    && !inside_flex
-                    && !out_of_flow_subtree
-                    && avoids_by_property
-                    && in_table_cell_flow(document, node_id);
                 let nested_avoid_candidate = (nested_candidate_base || cell_avoid_base)
                     && !inline_level
                     && is_block_flow_box
