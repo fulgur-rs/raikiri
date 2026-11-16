@@ -14734,9 +14734,15 @@ fn collapsed_end_margin(
         let margin = layout.margin.bottom;
         positive = positive.max(margin);
         negative = negative.min(margin);
+        // A `min-height` or `max-height` that sets the used height keeps the
+        // margin inside the box too.
+        let (min, max) = border_box_height_bounds(document, id);
+        let height = layout.size.height;
+        let content_sized = (min <= 0.0 || height > min + 0.001) && height < max - 0.001;
         let passes_through = layout.padding.bottom + layout.border.bottom <= 0.0
             && !holds_floats(document, cascade, id)
-            && definite_content_height(document, id).is_none();
+            && definite_content_height(document, id).is_none()
+            && content_sized;
         if !passes_through {
             break;
         }

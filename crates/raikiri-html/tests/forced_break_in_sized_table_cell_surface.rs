@@ -359,3 +359,26 @@ fn a_nested_table_passes_on_all_its_growth() {
         );
     }
 }
+
+#[test]
+fn a_wrapper_sized_by_its_height_limits_keeps_the_margin_inside() {
+    let moved = |limit: &str| {
+        format!(
+            r#"<table><tr><td style="height:150px"><div style="height:20px">A</div><div style="{limit};break-before:page"><div style="height:50px;margin-bottom:20px">B</div></div></td></tr></table><div>X</div>"#
+        )
+    };
+    // The wrapper's `min-height` or `max-height` sets where it ends.
+    assert_eq!(
+        glyph_tops(&moved("min-height:60px")),
+        [(0, 'A', 0), (1, 'B', 0), (1, 'X', 60)]
+    );
+    assert_eq!(
+        glyph_tops(&moved("max-height:40px")),
+        [(0, 'A', 0), (1, 'B', 0), (1, 'X', 50)]
+    );
+    // A `min-height` below the content leaves the margin to collapse.
+    assert_eq!(
+        glyph_tops(&moved("min-height:10px")),
+        [(0, 'A', 0), (1, 'B', 0), (1, 'X', 70)]
+    );
+}
