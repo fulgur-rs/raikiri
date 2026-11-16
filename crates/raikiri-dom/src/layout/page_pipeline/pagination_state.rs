@@ -21,17 +21,18 @@ use super::{
     forced_line_breaks, forced_line_moves, forced_target_page, generated_content_runs_past,
     grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
-    last_flow_box, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
-    line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
-    move_box_for_transition, move_flex_line_siblings, move_line_block, move_paragraph_lines,
-    page_break_is_forced, page_type_leaves_local_flow, paragraph_line_bounds,
+    height_follows_content, is_floating_box_for_pagination, is_unfixed_absolute_box,
+    item_bottom_in, item_of, last_flow_box, lead_below_ancestor, lead_below_edges,
+    leading_edges_move, leading_holder, line_block_parent, line_run_among_blocks,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
+    make_room_for_table_header, margin_box_starts_page, margin_kept_by_floats,
+    margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
     participates_in_margin_adjacency, place_first_table_header, place_table_footer,
-    place_text_candidate, positioned_line_moves, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
+    place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
     run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
     shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
     text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
@@ -3111,6 +3112,51 @@ impl PaginationState {
                     moved_whole = true;
                     continue;
                 }
+                // A first line that crosses the end of the page has no break
+                // before it inside the box it starts, nor before the boxes
+                // that start with that box: when one of them ends on the
+                // page, the page cannot break inside it, so the line
+                // overflows the box and stays, as in Chromium. The lines
+                // after it go on below it and break on the pages after it as
+                // a later fragment does. Only a second line left alone under
+                // `orphans` moves the paragraph, as the break before it
+                // would.
+                if !moved_whole
+                    && line_fit.starts_on_page
+                    && line_fit.lines_before_break == 0
+                    && (line_fit.total_lines == 1 || line_fit.orphans <= 1)
+                    && starting_box_ends_on_page(
+                        document,
+                        cascade,
+                        body_id,
+                        block_id,
+                        block_effective_y,
+                        page_start,
+                        page_start + page_step,
+                    )
+                {
+                    // The pieces of the lines start at the first, which no
+                    // move takes: every later line that crosses a page end
+                    // starts the page after it.
+                    line_fit.first_fragment = false;
+                    line_fit.tail_edges = 0.0;
+                    let moves = if lines_can_move {
+                        paragraph_line_moves(
+                            &line_metrics,
+                            text.effective_y,
+                            page,
+                            &line_fit,
+                            page_origins,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    let moved = self.move_lines(
+                        document, env, candidate, entry, blocks, text, block_id, moves,
+                    );
+                    moved?;
+                    break;
+                }
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
@@ -4055,6 +4101,93 @@ fn clipped_line_metrics(
         }
     }
     (line_metrics, widows)
+}
+
+/// Whether the block `block_id`, whose border box the flow puts at
+/// `block_top` now, or one of the boxes that start
+/// with it and so have no break between their top and it, ends by
+/// `page_end`: the page cannot break inside such a box. A box whose height
+/// follows its content holds the block and ends below it; the others keep the
+/// height they have and move with the block, their first box. Positions are
+/// those of the flow, without relative offsets, which only paint the boxes
+/// elsewhere.
+fn starting_box_ends_on_page(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block_id: usize,
+    block_top: f32,
+    page_start: f32,
+    page_end: f32,
+) -> bool {
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    // How far pagination has moved the block, and the boxes that start with
+    // it, from where their layout put them.
+    let shift = block_top - flow_top(block_id);
+    let holder = first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start);
+    let chain = std::iter::once(block_id)
+        .chain(
+            document
+                .layout_ancestors(block_id)
+                .take_while(|&id| id != body_id),
+        )
+        // Up to the holder, the outermost box that starts with the block.
+        .take_while({
+            let mut reached = false;
+            move |&id| !std::mem::replace(&mut reached, id == holder)
+        })
+        .collect::<Vec<_>>();
+    !chain.iter().any(|&id| {
+        empty_box_before_lies_past(document, cascade, id, |empty| {
+            flow_top(empty) + shift >= page_end - 0.001
+        })
+    }) && chain.into_iter().any(|id| {
+        (id == block_id
+            || (!document.nodes[id].display().is_inline_level()
+                && document.nodes[id].display() != raikiri_style::property::DisplayValue::Contents
+                && !height_follows_content(document, id)))
+            && flow_top(id) + shift + document.nodes[id].layout.size.height <= page_end + 0.001
+    })
+}
+
+/// Whether one of the empty boxes right before `node_id` among its in-flow
+/// siblings, whose margins collapse through them, lies where `past_end` says
+/// the page has ended: the page breaks before that box, so the box after it
+/// starts the next page.
+fn empty_box_before_lies_past(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    past_end: impl Fn(usize) -> bool,
+) -> bool {
+    document.parent_of(node_id).is_some_and(|parent| {
+        let children = &document.nodes[parent].children;
+        let before = children
+            .iter()
+            .position(|&child| child == node_id)
+            .unwrap_or(children.len());
+        let mut boxes = Vec::new();
+        for &child in children[..before].iter().rev() {
+            boxes.clear();
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            for &empty in &boxes {
+                if !collapses_through(
+                    document,
+                    cascade,
+                    empty,
+                    document.nodes[empty].layout.size.height,
+                ) {
+                    return false;
+                }
+                if past_end(empty) {
+                    return true;
+                }
+            }
+        }
+        false
+    })
 }
 
 /// Whether the block `node_id` and every block around it inside the body run
