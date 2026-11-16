@@ -86,17 +86,11 @@ pub fn line_relative(value: A, rtl: bool) -> A {
     }
 }
 impl LayoutStyleView<'_> {
+    /// The self alignment along an axis. An absolutely positioned box takes no
+    /// part in baseline alignment: `last baseline` aligns it to the unsafe
+    /// `end` of its alignment container, even when it overflows, as Chromium
+    /// does, and `baseline` to its `safe start`.
     pub(crate) fn self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
-        self.self_alignment_or(inline, values::AlignItems::SAFE_SELF_END)
-    }
-    /// The self alignment along an axis, where an absolutely positioned box that
-    /// asks for `last baseline` aligns as `last_baseline` instead of falling
-    /// back to `safe self-end`.
-    pub(crate) fn self_alignment_or(
-        &self,
-        inline: bool,
-        last_baseline: values::AlignSelf,
-    ) -> Option<values::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
             OverrideKind::AlignSelf(v) if !inline => Some(v),
             OverrideKind::JustifySelf(v) if inline => Some(v),
@@ -110,7 +104,7 @@ impl LayoutStyleView<'_> {
             AlignSelfValue::Value(A::LastBaseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>
             {
-                Some(last_baseline)
+                Some(values::AlignItems::END)
             }
             AlignSelfValue::Value(A::Baseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>

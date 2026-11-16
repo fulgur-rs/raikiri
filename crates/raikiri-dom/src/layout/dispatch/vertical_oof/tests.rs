@@ -480,17 +480,16 @@ fn over_constrained_insets_drop_the_block_end_inset() {
 }
 
 #[test]
-fn last_baseline_falls_back_to_the_self_end_edge_of_the_box() {
+fn last_baseline_aligns_to_the_end_edge_of_the_containing_block() {
     // An absolutely positioned box takes no part in baseline alignment: `last
-    // baseline` falls back to `safe self-end`. A box in the writing mode of
-    // its containing block ends at the left edge of `vertical-rl`.
+    // baseline` aligns it to the end of the containing block, the left edge of
+    // `vertical-rl`.
     let rect = |child_css: &str| aligned_rect("writing-mode:vertical-rl", child_css).0;
     assert_eq!(rect("left:0;right:0;align-self:last baseline"), 0.0);
-    // A horizontal box ends at its right edge, the block start of the
-    // containing block.
+    // A horizontal box takes the same end, not its own (Chromium: 0).
     assert_eq!(
         rect("writing-mode:horizontal-tb;left:0;right:0;align-self:last baseline"),
-        50.0
+        0.0
     );
 }
 

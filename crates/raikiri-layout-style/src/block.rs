@@ -65,13 +65,13 @@ impl LayoutStyleView<'_> {
     /// end` would put it at the start instead.
     #[inline]
     pub fn static_position_align_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment_or(false, values::AlignSelf::END)
+        self.self_alignment(false)
     }
     /// The inline-axis alignment of a box in the static-position rectangle of
     /// its block container (see [`Self::static_position_align_self`]).
     #[inline]
     pub fn static_position_justify_self(&self) -> Option<values::AlignSelf> {
-        self.self_alignment_or(true, values::AlignSelf::END)
+        self.self_alignment(true)
     }
     /// The alignment of an out-of-flow box along the physical vertical axis
     /// (see [`Self::with_swapped_oof_alignment`]).

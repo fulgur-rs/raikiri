@@ -20,8 +20,7 @@ use crate::node::FormattingContext;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
 use raikiri_layout_style::values::{
-    AlignItems, AlignmentSafety, BaselineSet, ContainingBlockClaims, Direction, ExpandedDimension,
-    ResolveOrZero,
+    AlignItems, AlignmentSafety, ContainingBlockClaims, Direction, ExpandedDimension, ResolveOrZero,
 };
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
@@ -761,38 +760,9 @@ fn record_safe_static_positions(
     let safe = |axis: AxisStaticPosition| axis.align.safety == StaticAlignSafety::Safe;
     for candidate in candidates.iter() {
         let node = usize::from(candidate.node);
-        let position = without_last_baseline_safety(tree, node, candidate.static_position);
+        let position = candidate.static_position;
         if (safe(position.x) || safe(position.y)) && hoisted.contains(&candidate.node) {
             tree.context.safe_static_positions.insert(node, position);
         }
     }
-}
-
-/// `position`, the static position of `node`, without the overflow position of
-/// the axes in which it aligns to the last baseline. The `safe self-end`
-/// fallback of such an alignment keeps the box at the end edge when it
-/// overflows in the web-platform-tests
-/// (`grid-abspos-staticpos-align-self-vertWM-last-baseline-*`), which Taffy's
-/// fallback to the left or top edge matches.
-fn without_last_baseline_safety(
-    tree: &LayoutSession<'_>,
-    node: usize,
-    position: Point<AxisStaticPosition>,
-) -> Point<AxisStaticPosition> {
-    tree.taffy_parent_of(node).map_or(position, |parent| {
-        let (style, parent_style) = (tree.physical_style(node), tree.physical_style(parent));
-        // The parent aligns the box along its block axis by `align-self`, which
-        // is the physical horizontal axis of a vertical parent.
-        let parent_vertical = super::block_right_to_left(tree, parent).is_some();
-        let last_baseline =
-            |justify| style.self_baseline_set(&parent_style, justify) == Some(BaselineSet::Last);
-        let mut position = position;
-        if last_baseline(!parent_vertical) {
-            position.x.align.safety = StaticAlignSafety::Default;
-        }
-        if last_baseline(parent_vertical) {
-            position.y.align.safety = StaticAlignSafety::Default;
-        }
-        position
-    })
 }

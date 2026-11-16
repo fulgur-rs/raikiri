@@ -1137,11 +1137,11 @@ fn settled_alignment_align_self_value_maps_through_self_alignment() {
 #[test]
 fn settled_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
-    // `last baseline` falls back to `safe self-end` on both axes. A box in the
+    // `last baseline` aligns it to the unsafe `end` on both axes. A box in the
     // flow keeps aligning to the baseline.
     for (position, expected) in [
-        (PositionValue::Absolute, AlignItems::SAFE_SELF_END),
-        (PositionValue::Fixed, AlignItems::SAFE_SELF_END),
+        (PositionValue::Absolute, AlignItems::END),
+        (PositionValue::Fixed, AlignItems::END),
         (PositionValue::Static, AlignItems::BASELINE),
     ] {
         let label = format!("{position:?}");
@@ -1186,8 +1186,8 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     for (position, expected) in [
-        (PositionValue::Absolute, Some(AlignItems::SAFE_SELF_END)),
-        (PositionValue::Fixed, Some(AlignItems::SAFE_SELF_END)),
+        (PositionValue::Absolute, Some(AlignItems::END)),
+        (PositionValue::Fixed, Some(AlignItems::END)),
         (PositionValue::Static, None),
     ] {
         let label = format!("{position:?}");
@@ -1219,7 +1219,7 @@ fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_
     cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
     let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, None);
-    assert_eq!(style.justify_self, Some(AlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, Some(AlignItems::END));
 }
 
 #[test]
@@ -1241,7 +1241,7 @@ fn abspos_auto_alignment_follows_the_axes_of_a_vertical_container() {
     cv.bottom = ComputedLengthPercentageOrAuto::Auto;
     cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
     let style = settled_alignments_on_axes(&cv, &parent, true);
-    assert_eq!(style.align_self, Some(AlignItems::SAFE_SELF_END));
+    assert_eq!(style.align_self, Some(AlignItems::END));
     assert_eq!(style.justify_self, None);
 }
 
@@ -1257,10 +1257,10 @@ fn abspos_auto_alignment_swaps_the_axes_only_with_a_containing_block_on_vertical
     cv.position = PositionValue::Absolute;
     cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
     for (parent_vertical, containing_block_vertical, expected) in [
-        (true, true, (None, Some(AlignItems::SAFE_SELF_END))),
-        (true, false, (Some(AlignItems::SAFE_SELF_END), None)),
-        (false, true, (Some(AlignItems::SAFE_SELF_END), None)),
-        (false, false, (Some(AlignItems::SAFE_SELF_END), None)),
+        (true, true, (None, Some(AlignItems::END))),
+        (true, false, (Some(AlignItems::END), None)),
+        (false, true, (Some(AlignItems::END), None)),
+        (false, false, (Some(AlignItems::END), None)),
     ] {
         let settled = settled::inherited_last_baseline(&cv, &parent, parent_vertical, || {
             containing_block_vertical
@@ -1275,7 +1275,7 @@ fn abspos_auto_alignment_swaps_the_axes_only_with_a_containing_block_on_vertical
     let horizontal = settled::inherited_last_baseline(&cv, &parent, false, || {
         unreachable!("the container is on horizontal axes")
     });
-    assert_eq!(horizontal, (Some(AlignItems::SAFE_SELF_END), None));
+    assert_eq!(horizontal, (Some(AlignItems::END), None));
     let unchanged = settled::inherited_last_baseline(&cv, &ComputedValues::initial(), true, || {
         unreachable!("the box keeps its alignment")
     });
@@ -1315,8 +1315,10 @@ fn abspos_takes_last_baseline_from_a_display_contents_document_element() {
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     let style = &bridged_style(&mut doc, &cr, child);
-    assert_eq!(style.align_self, Some(AlignItems::SAFE_SELF_END));
-    assert_eq!(style.justify_self, Some(AlignItems::SAFE_SELF_END));
+    // A block container aligns no items along its block axis, so only
+    // `justify-items` reaches the box.
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, Some(AlignItems::END));
 }
 
 #[test]

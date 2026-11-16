@@ -455,7 +455,17 @@ fn apply_computed_to_style_in_session_inner(
                     uses_vertical_axes(cascade, settled::positioning_container(doc, idx, fixed))
                 },
             );
-            if let Some(value) = align_self {
+            // A block container aligns no items along its block axis, so its
+            // `align-items` gives an absolutely positioned child no
+            // alignment there: Chromium keeps such a box at the start of its
+            // static position, unlike an explicit `align-self`.
+            let aligns_items = container < doc.nodes.len()
+                && matches!(
+                    doc.nodes[container].layout_display(),
+                    raikiri_layout_style::values::Display::Flex
+                        | raikiri_layout_style::values::Display::Grid
+                );
+            if let Some(value) = align_self.filter(|_| aligns_items) {
                 settled.align_self = Some(value);
                 doc.record_pass_override(
                     idx,
