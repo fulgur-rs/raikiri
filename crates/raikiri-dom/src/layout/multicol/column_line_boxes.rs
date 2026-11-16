@@ -114,7 +114,7 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                     let container = tree
                         .inclusive_ancestors(paragraph)
                         .find(|&id| tree.nodes[id].multicol.is_some())?;
-                    Some((container, Columns::of(tree, container)?))
+                    Some((container, Columns::of(tree, cascade, container)?))
                 })
                 .as_ref()
                 .filter(|(container, _)| {
@@ -294,11 +294,12 @@ pub(super) fn out_of_flow_need(
     height: f32,
     count: usize,
 ) -> f32 {
-    if height.is_nan() || height <= 0.0 || !y.is_finite() || !extent.is_finite() || y < 0.0 {
+    if !y.is_finite() || !extent.is_finite() || y < 0.0 {
         return 0.0;
     }
-    // Columns of no end hold the box in the one it starts in.
-    let skipped = if height.is_finite() {
+    // Columns with no height yet, with no end, or a single column, which
+    // nothing ends, hold the box in the one it starts in.
+    let skipped = if height.is_finite() && height > 0.0 && count > 1 {
         (y / height).floor()
     } else {
         0.0
@@ -340,7 +341,7 @@ impl Columns {
     /// after any spanner, holds the boxes. Balanced columns are known only
     /// from the row the strategy kept, whose height counts the positioned
     /// boxes in them.
-    fn of(tree: &Document, container: usize) -> Option<Self> {
+    fn of(tree: &Document, cascade: &CascadeResult, container: usize) -> Option<Self> {
         let style = tree.nodes[container]
             .multicol
             .filter(|style| style.horizontal)?;
@@ -353,6 +354,18 @@ impl Columns {
         let record = live.next()?;
         live.next().is_none().then_some(())?;
         let origin = record_origin(tree, record)?;
+        // Balanced columns count the positioned boxes in their height only
+        // in one row of the container's own boxes.
+        let balanced = style.column_fill != ColumnFillValue::Auto;
+        if balanced
+            && (tree.nodes[container].multicol_groups.len() != 1
+                || tree.nodes[container].ifc.is_some()
+                || flow_children(tree, container)
+                    .into_iter()
+                    .any(|child| spanning::is_spanner_in(tree, cascade, child)))
+        {
+            return None;
+        }
         // The rows that the strategy kept, each in the container's border
         // box, with the block size its columns had to fill. Layouts with a
         // spanner always keep them.

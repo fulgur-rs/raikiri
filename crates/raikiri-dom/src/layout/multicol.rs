@@ -3019,7 +3019,9 @@ fn fill_stacked_columns(
 
 /// The absolutely positioned boxes inside `children` that the columns of
 /// `container` hold, each child at its offset in `tops` in one column: for
-/// each box, its offset in that column and whether it is monolithic.
+/// each box, its offset in that column and whether it is monolithic. The
+/// boxes inside a box that is not rendered, inside monolithic content or
+/// inside a column container of their own are not broken by these columns.
 fn out_of_flow_boxes(
     tree: &LayoutSession<'_>,
     container: usize,
@@ -3034,9 +3036,16 @@ fn out_of_flow_boxes(
         };
         let mut pending = tree.nodes[child].children.clone();
         while let Some(node) = pending.pop() {
-            pending.extend_from_slice(&tree.nodes[node].children);
-            if tree.nodes[node].kind() != NodeKind::Element
-                || tree.nodes[node].layout_position() != Position::Absolute
+            let element = &tree.nodes[node];
+            if element.kind() != NodeKind::Element || element.is_display_none() {
+                continue;
+            }
+            let monolithic = column_line_boxes::is_monolithic(tree, cascade, node);
+            if !monolithic && element.multicol.is_none() {
+                pending.extend_from_slice(&element.children);
+            }
+            if element.layout_position() != Position::Absolute
+                || element.fixed_position
                 || !column_line_boxes::in_columns(tree, container, node)
             {
                 continue;
@@ -3044,7 +3053,6 @@ fn out_of_flow_boxes(
             let Some(at) = tree.layout_origin_of(node) else {
                 continue;
             };
-            let monolithic = column_line_boxes::is_monolithic(tree, cascade, node);
             boxes.push((node, top + at.y - origin.y, monolithic));
         }
     }
@@ -3054,11 +3062,11 @@ fn out_of_flow_boxes(
 /// The height of `count` balanced columns that hold the positioned `boxes`
 /// (see [`out_of_flow_boxes`]) as well as content in flow that needs
 /// `in_flow`. A box that breaks is taken to continue the flow of the column
-/// it starts in, and a monolithic one to start a column where the content
-/// in flow alone would put it. Each step grows the columns to the height a
-/// box that does not fit needs, or by the least that keeps one of the lines
-/// a column end crosses in its column, as Chromium's balancer does with the
-/// shortage of space; the search stops after a few steps.
+/// it starts in, and a monolithic one to start a column where the columns of
+/// each step put it. Each step grows the columns to the height a box that
+/// does not fit needs, or by the least that keeps one of the lines a column
+/// end crosses in its column, as Chromium's balancer does with the shortage
+/// of space; the last of a few steps takes the height the box needs.
 fn out_of_flow_floor(
     tree: &LayoutSession<'_>,
     boxes: &[(usize, f32, bool)],
@@ -3066,7 +3074,7 @@ fn out_of_flow_floor(
     count: usize,
 ) -> f32 {
     let mut height = in_flow;
-    for _ in 0..16 {
+    for step in 0..OUT_OF_FLOW_STEPS {
         let mut needed = f32::INFINITY;
         for &(node, y, monolithic) in boxes {
             let mut layout = tree.nodes[node].layout;
@@ -3082,11 +3090,11 @@ fn out_of_flow_floor(
                 0,
                 column_line_boxes::painted_extent(layout),
                 monolithic,
-                if monolithic { in_flow } else { f32::INFINITY },
+                if monolithic { height } else { f32::INFINITY },
                 count,
             );
             if need > height + LINE_EPSILON {
-                needed = needed.min(need.min(height + shortage));
+                needed = needed.min(out_of_flow_step(step, need, height + shortage));
             }
         }
         if !needed.is_finite() {
@@ -3095,6 +3103,28 @@ fn out_of_flow_floor(
         height = needed;
     }
     height
+}
+
+/// Whether the box in flow `child` breaks between its lines in balanced
+/// columns: a plain paragraph, not a float and not monolithic content.
+fn breaks_between_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
+    can_balance_atomic_paragraph(tree, child, BlockEdges::Refused)
+        && !is_floated(tree, child)
+        && !column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
+}
+
+/// How many times the columns grow for the positioned boxes in them.
+pub(super) const OUT_OF_FLOW_STEPS: usize = 16;
+
+/// The height the columns grow to at `step`: by the least that keeps a line
+/// in its column, `shortened`, but to what the box `needs` at the last step,
+/// so that the search ends with the box held.
+pub(super) fn out_of_flow_step(step: usize, needs: f32, shortened: f32) -> f32 {
+    if step + 1 == OUT_OF_FLOW_STEPS {
+        needs
+    } else {
+        needs.min(shortened)
+    }
 }
 
 /// The height of `count` balanced columns holding `children`, which take
@@ -3324,7 +3354,11 @@ fn layout_column_group(
                         .iter()
                         .zip(&stacked_children)
                         .map(|(entry, &child)| match tops[child] {
-                            Some(top) if entry.lines.is_empty() && !entry.sliced => {
+                            Some(top)
+                                if entry.lines.is_empty()
+                                    && !entry.sliced
+                                    && breaks_between_lines(tree, children[child]) =>
+                            {
                                 StackedChild::of(
                                     tree,
                                     children[child],

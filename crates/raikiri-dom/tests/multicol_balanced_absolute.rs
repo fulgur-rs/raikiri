@@ -236,6 +236,15 @@ fn a_box_in_flow_with_no_lines_makes_room_for_its_positioned_box() {
             ("a", (38.0, 8.0, 30.0, 500.0)),
         ],
     );
+    // An empty containing block puts the box at the top of the columns.
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative"><div id=a style="position:absolute;width:30px;height:80px;top:0"></div></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 40.0)),
+            ("a", (8.0, 8.0, 30.0, 40.0)),
+            ("a", (38.0, 8.0, 30.0, 40.0)),
+        ],
+    );
 }
 
 /// A box that fits leaves the columns as they are; a minimum height leaves
@@ -487,6 +496,23 @@ fn one_column_that_nothing_ends_holds_a_positioned_box_whole() {
             ("s", (8.0, 18.0, 30.0, 10.0)),
             ("a", (8.0, 18.0, 30.0, 80.0)),
             ("q", (8.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    // A box below the content in flow, monolithic or not.
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;column-fill:auto"><div id=r style="position:relative;height:20px"><div id=a style="position:absolute;width:30px;height:50px;top:30px"></div></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 80.0)),
+            ("r", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (8.0, 38.0, 30.0, 50.0)),
+        ],
+    );
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;column-fill:auto"><div id=r style="position:relative;height:20px"><div id=a style="position:absolute;width:30px;height:50px;top:30px;overflow:hidden"></div></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 80.0)),
+            ("r", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (8.0, 38.0, 30.0, 50.0)),
         ],
     );
 }

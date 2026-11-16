@@ -926,13 +926,37 @@ fn out_of_flow_height(
     column_count: usize,
     balanced: f32,
 ) -> f32 {
+    let cascade = tree.style_views.cascade();
+    // The positioned boxes the columns hold, for each child.
+    let boxes: Vec<Vec<usize>> = stream
+        .children
+        .iter()
+        .zip(stream.sliced_flex)
+        .map(|(&child, &flex)| {
+            if flex {
+                return Vec::new();
+            }
+            // Only a child that is the containing block of its boxes puts
+            // them in the columns.
+            if tree.nodes[child].claims_absolute_oof {
+                absolute_children(tree, child)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    if boxes.iter().all(Vec::is_empty) {
+        return balanced;
+    }
     let mut height = balanced;
-    for _ in 0..16 {
+    for step in 0..super::OUT_OF_FLOW_STEPS {
+        // Columns with no height yet lay the stream out in one column.
+        let place_height = if height > 0.0 { height } else { f32::INFINITY };
         let Some((pieces, _)) =
-            place(stream.items, height, usize::MAX)
+            place(stream.items, place_height, usize::MAX)
                 .ok()
                 .and_then(|placement| {
-                    pieces_of_children(stream.spans, stream.wrapped, &placement, height)
+                    pieces_of_children(stream.spans, stream.wrapped, &placement, place_height)
                 })
         else {
             break;
@@ -940,13 +964,16 @@ fn out_of_flow_height(
         // The least height past this one that one of the boxes that do not
         // fit needs.
         let mut needed = f32::INFINITY;
-        for ((&child, &flex), pieces) in stream.children.iter().zip(stream.sliced_flex).zip(&pieces)
-        {
-            let Some(first) = pieces.first().filter(|_| !flex) else {
+        for (pieces, boxes) in pieces.iter().zip(&boxes) {
+            let Some(first) = pieces.first() else {
                 continue;
             };
-            let top = first.column as f32 * height + first.top;
-            for node in absolute_children(tree, child) {
+            let top = if height > 0.0 {
+                first.column as f32 * height + first.top
+            } else {
+                first.top
+            };
+            for &node in boxes {
                 let mut layout = tree.nodes[node].layout;
                 let start = top + layout.location.y;
                 // Lines that a column end crosses start the next column, and
@@ -962,12 +989,12 @@ fn out_of_flow_height(
                     first.top + layout.location.y,
                     first.column,
                     column_line_boxes::painted_extent(layout),
-                    column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), node),
+                    column_line_boxes::is_monolithic(tree, cascade, node),
                     height,
                     column_count,
                 );
                 if need > height + EPSILON {
-                    needed = needed.min(need.min(height + shortage));
+                    needed = needed.min(super::out_of_flow_step(step, need, height + shortage));
                 }
             }
         }
@@ -1033,13 +1060,8 @@ fn absolute_pieces(
                 layout = moves.moved(layout);
                 line_moves.push((node, moves));
             }
-            // Descendants that overflow the box are cut with it. The overflow
-            // rect is measured from the padding box, so shift it by the
-            // border to compare it with the border box.
-            let extent = layout
-                .size
-                .height
-                .max(layout.border.top + layout.scrollable_overflow_rect.bottom);
+            // Descendants that overflow the box are cut with it.
+            let extent = column_line_boxes::painted_extent(layout);
             // Descendants that overflow above the box start its pieces in an
             // earlier column.
             let painted_start =
@@ -2418,6 +2440,13 @@ pub(super) fn layout(
         .limit
         .saturating_sub(tree.fragment_tree.fragments.len())
         .saturating_sub(1);
+    let stream = Stream {
+        children,
+        sliced_flex: &sliced_flex,
+        items: &items,
+        spans: &spans,
+        wrapped: &wrapped,
+    };
     let column_height = match definite_height {
         // Columns that balance are as tall as their content needs, up to the
         // height of the container (CSS Multi-column 1, 8.1); the container
@@ -2426,13 +2455,7 @@ pub(super) fn layout(
         Some(height) if context.column_fill != ColumnFillValue::Auto => balanced_below(
             out_of_flow_height(
                 tree,
-                Stream {
-                    children,
-                    sliced_flex: &sliced_flex,
-                    items: &items,
-                    spans: &spans,
-                    wrapped: &wrapped,
-                },
+                stream,
                 context.column_count,
                 balanced_height(&items, context.column_count, max_pieces),
             ),
@@ -2448,28 +2471,11 @@ pub(super) fn layout(
                 return None;
             };
             // The one column holds the positioned boxes too.
-            out_of_flow_height(
-                tree,
-                Stream {
-                    children,
-                    sliced_flex: &sliced_flex,
-                    items: &items,
-                    spans: &spans,
-                    wrapped: &wrapped,
-                },
-                1,
-                height,
-            )
+            out_of_flow_height(tree, stream, 1, height)
         }
         None => out_of_flow_height(
             tree,
-            Stream {
-                children,
-                sliced_flex: &sliced_flex,
-                items: &items,
-                spans: &spans,
-                wrapped: &wrapped,
-            },
+            stream,
             context.column_count,
             balanced_height(&items, context.column_count, max_pieces),
         ),
