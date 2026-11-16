@@ -318,3 +318,25 @@ fn each_anonymous_row_grows_on_its_own() {
         ]
     );
 }
+
+#[test]
+fn text_after_the_moved_box_keeps_its_margin_in_the_wrapper() {
+    // The margin sits between B and the text, inside the wrapper, and
+    // counts once: the wrapper ends at 190px.
+    for trailing in ["T", "<span>T</span>"] {
+        assert_eq!(
+            glyph_tops(&format!(
+                r#"<table><tr><td style="height:150px"><div style="height:20px">A</div><div><div style="height:50px;break-before:page;margin-bottom:20px">B</div>{trailing}</div></td></tr></table><div>X</div>"#
+            )),
+            [(0, 'A', 0), (1, 'B', 0), (1, 'T', 70), (2, 'X', 0)],
+            "{trailing}"
+        );
+    }
+    // A moved box after the text still ends the wrapper with its margin.
+    assert_eq!(
+        glyph_tops(
+            r#"<table><tr><td style="height:150px"><div style="height:20px">A</div><div>T<div style="height:50px;break-before:page;margin-bottom:20px">B</div></div></td></tr></table><div>X</div>"#
+        ),
+        [(0, 'A', 0), (0, 'T', 20), (1, 'B', 0), (1, 'X', 70)]
+    );
+}

@@ -14715,18 +14715,14 @@ fn collapsed_end_margin(
         if !passes_through {
             break;
         }
-        let last = laid_out_children(document, id)
-            .into_iter()
-            .rev()
-            .find(|&child| {
-                let node = &document.nodes[child];
-                node.kind() == NodeKind::Element
-                    && node.display() != DisplayValue::None
-                    && !matches!(
-                        node.position(),
-                        PositionValue::Absolute | PositionValue::Fixed
-                    )
-                    && !is_floating_box_for_pagination(document, cascade, child)
+        // Text or an inline box after the last block keeps that block's
+        // margin inside the box.
+        let last = page_edge_child(document, cascade, id, false, 0)
+            .ok()
+            .flatten()
+            .filter(|&child| {
+                document.nodes[child].kind() == NodeKind::Element
+                    && is_block_level_flow_box(document.nodes[child].display())
             });
         match last {
             Some(child) => id = child,
