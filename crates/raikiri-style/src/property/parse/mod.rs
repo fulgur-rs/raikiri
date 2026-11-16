@@ -1156,7 +1156,7 @@ pub(crate) fn parse_property_grammar(
         "justify-content" => parse_content_alignment(input).map(PropertyValue::JustifyContent),
         // CSS Box Alignment Module Level 3 §5.1
         // <https://www.w3.org/TR/css-align-3/#propdef-align-content>.
-        "align-content" => parse_content_alignment(input).map(PropertyValue::AlignContent),
+        "align-content" => parse_align_content(input).map(PropertyValue::AlignContent),
         // CSS Box Alignment Module Level 3 §7.2
         // <https://www.w3.org/TR/css-align-3/#propdef-align-items>.
         "align-items" => parse_self_alignment(input).map(PropertyValue::AlignItems),

@@ -3945,11 +3945,10 @@ pub struct FlexFlow {
 ///
 /// # Scope carving
 ///
-/// - **(b) unsupported**: `<baseline-position>` (optional `first`/`last` plus
-///   `baseline`, a grammar branch only for `align-content`) is not implemented.
-///   Taffy 0.12's `AlignContent`/`JustifyContent` (both based on
-///   `alignment::AlignContentKeyword`) have no `Baseline` variant, so taffy
-///   cannot represent it.
+/// - **(b) unsupported**: `last baseline` of `<baseline-position>` (a grammar
+///   branch only for `align-content`) is not implemented, and Chromium does
+///   not accept it either. `baseline` and `first baseline` are
+///   [`Self::Baseline`].
 /// - **(a) spec-invalid for this pair**: `justify-content`'s separate
 ///   `left`/`right` extension (`<content-position> | left | right`, keywords
 ///   relative to writing mode) is not implemented; taffy has no matching variant.
@@ -3994,6 +3993,13 @@ pub enum ContentAlignmentValue {
     /// `unsafe <content-position>`: the content is aligned as asked whatever it
     /// overflows.
     Unsafe(ContentPosition),
+    /// `baseline` or `first baseline`, which only `align-content` accepts
+    /// (CSS Box Alignment 3 §4.2 `<baseline-position>`). Content alignment
+    /// shares no baseline here, so the content is laid out at its fallback
+    /// alignment, `start`, as Chromium does. Like any value other than
+    /// `normal`, it makes a block container establish a block formatting
+    /// context.
+    Baseline,
 }
 
 impl ContentAlignmentValue {
@@ -4021,6 +4027,7 @@ impl ContentAlignmentValue {
             Self::Unsafe(ContentPosition::End) => "unsafe end",
             Self::Unsafe(ContentPosition::FlexStart) => "unsafe flex-start",
             Self::Unsafe(ContentPosition::FlexEnd) => "unsafe flex-end",
+            Self::Baseline => "baseline",
         }
     }
 

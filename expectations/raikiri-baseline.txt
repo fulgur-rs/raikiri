@@ -1940,6 +1940,8 @@ css/compositing/svg/mix-blend-mode-svg-rectangle.html
 css/css-align/abspos/align-self-static-position-002.html
 css/css-align/abspos/align-self-stretch-auto-size.tentative.html
 css/css-align/baseline-rules/inline-table-inline-block-baseline.html
+css/css-align/blocks/align-content-block-001.html
+css/css-align/blocks/align-content-block-overflow-000.html
 css/css-align/blocks/justify-self-block-in-inline-002.html
 css/css-align/content-distribution/place-content-shorthand-007.html
 css/css-align/distribution-values/space-evenly-001.html
