@@ -983,7 +983,7 @@ fn out_of_flow_height(
                 let need = column_line_boxes::out_of_flow_need(
                     first.top + layout.location.y,
                     first.column,
-                    column_line_boxes::painted_extent(layout),
+                    column_line_boxes::out_of_flow_extent(cascade, node, layout),
                     column_line_boxes::is_monolithic(tree, cascade, node),
                     height,
                     column_count,

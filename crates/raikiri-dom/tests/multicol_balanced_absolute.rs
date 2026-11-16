@@ -582,3 +582,35 @@ fn every_positioned_box_ends_in_the_last_column() {
         &[("m", (8.0, 8.0, 60.0, 40.0)), ("r", (8.0, 8.0, 30.0, 10.0))],
     );
 }
+
+/// A positioned box that clips its content in the block direction holds
+/// that content: the columns grow for its border box, not for what it clips.
+#[test]
+fn a_positioned_box_that_clips_its_content_needs_only_its_own_height() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;height:80px;top:0;overflow:hidden"><div style="height:800px"></div></div></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 80.0)),
+            ("r", (8.0, 8.0, 30.0, 60.0)),
+            ("a", (8.0, 8.0, 30.0, 80.0)),
+        ],
+    );
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;height:80px;top:0;overflow:clip"><div style="height:800px"></div></div></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 40.0)),
+            ("r", (8.0, 8.0, 30.0, 40.0)),
+            ("r", (38.0, 8.0, 30.0, 20.0)),
+            ("a", (8.0, 8.0, 30.0, 40.0)),
+            ("a", (38.0, 8.0, 30.0, 40.0)),
+        ],
+    );
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px"><div id=r style="position:relative">X X X X<span id=a style="position:absolute;width:30px;height:80px;top:0;overflow:hidden"><span style="display:block;height:800px"></span></span></div></div>"#,
+        &[
+            ("m", (8.0, 8.0, 60.0, 80.0)),
+            ("r", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (38.0, 8.0, 30.0, 80.0)),
+        ],
+    );
+}

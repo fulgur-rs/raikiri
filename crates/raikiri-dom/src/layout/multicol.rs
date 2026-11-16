@@ -3094,7 +3094,7 @@ fn out_of_flow_floor(
             let need = column_line_boxes::out_of_flow_need(
                 y,
                 0,
-                column_line_boxes::painted_extent(layout),
+                column_line_boxes::out_of_flow_extent(tree.style_views.cascade(), node, layout),
                 monolithic,
                 if monolithic { height } else { f32::INFINITY },
                 count,

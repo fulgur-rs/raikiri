@@ -292,6 +292,18 @@ pub(super) fn painted_extent(layout: BoxLayout) -> f32 {
         .max(layout.border.top + layout.scrollable_overflow_rect.bottom)
 }
 
+/// How far the positioned box `node` of `layout` reaches below its top for
+/// the columns that hold it: its border box when it clips its content in the
+/// block direction, which then stays inside it, else its painted extent.
+pub(super) fn out_of_flow_extent(cascade: &CascadeResult, node: usize, layout: BoxLayout) -> f32 {
+    use raikiri_style::property::OverflowValue;
+    if cascade.computed[node].overflow.y == OverflowValue::Visible {
+        painted_extent(layout)
+    } else {
+        layout.size.height
+    }
+}
+
 /// The height of `count` balanced columns `height` tall, or of taller ones,
 /// that a positioned box `extent` tall at the block offset `y` from the top
 /// of column `column` needs. The box breaks at the column ends and ends in
