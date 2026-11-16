@@ -2308,7 +2308,21 @@ impl PaginationState {
             .sibling_margins
             .truncation_at_break(document, cascade, page_origins, &at)
             .or_else(|| {
-                truncation_after_generated_content(document, cascade, body_id, page_origins, &at)
+                // A float that took a forced break holds the margin after it
+                // on its page (see `truncation_at_break`).
+                self.sibling_margins
+                    .break_taken_by_float
+                    .is_none()
+                    .then(|| {
+                        truncation_after_generated_content(
+                            document,
+                            cascade,
+                            body_id,
+                            page_origins,
+                            &at,
+                        )
+                    })
+                    .flatten()
             });
         if let Some(MarginTruncation { delta, underflow }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
