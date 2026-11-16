@@ -383,12 +383,13 @@ pub(crate) fn last_baseline(lines: &IfcLines) -> Option<f32> {
 }
 
 /// The `kind` baseline of the first line, measured along the block axis from
-/// the block-start edge of the content box.
+/// the block-start edge of the content box, where the content alignment of
+/// the paragraph box put it.
 pub(crate) fn first_baseline_of(lines: &IfcLines, kind: BaselineKind) -> Option<f32> {
     lines
         .lines
         .first()
-        .map(|line| line.block_offset() + line.baseline(kind))
+        .map(|line| line.block_offset() + line.baseline(kind) + lines.shifts.aligned())
 }
 
 /// The `kind` baseline of the last line, measured like [`first_baseline_of`].
@@ -398,7 +399,7 @@ pub(crate) fn last_baseline_of(lines: &IfcLines, kind: BaselineKind) -> Option<f
     lines
         .lines
         .last()
-        .map(|line| line.block_offset() + line.baseline(kind))
+        .map(|line| line.block_offset() + line.baseline(kind) + lines.shifts.aligned())
 }
 
 /// Break every ifc root again at a page-specific width: the content width of

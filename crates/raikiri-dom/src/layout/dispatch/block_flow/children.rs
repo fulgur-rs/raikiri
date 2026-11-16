@@ -1253,9 +1253,11 @@ pub(super) fn layout(
     flow
 }
 
-pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow, free: f32) {
+/// How far the `align-content` of the block container `style` moves its
+/// content down when `free` is the room the content leaves in its content box.
+pub(crate) fn content_alignment_offset(style: &Style, free: f32) -> f32 {
     if style.align_content.keyword == AlignContentKeyword::Normal {
-        return;
+        return 0.0;
     }
     // Without an overflow-position keyword, a block container keeps overflowing
     // content at its start edge, as `safe` does: content pushed past the start
@@ -1267,7 +1269,11 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
         },
         ..style.align_content
     };
-    let offset = compute_block_align_content_offset(align_content, free);
+    compute_block_align_content_offset(align_content, free)
+}
+
+pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow, free: f32) {
+    let offset = content_alignment_offset(style, free);
     if offset == 0.0 {
         return;
     }

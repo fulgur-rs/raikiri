@@ -5041,55 +5041,59 @@ fn static_block_offset(
                 tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
             })
             .find(|&&(id, ..)| id == block)
-            .map_or(lines.height, |&(_, next_line, end)| {
-                // A line holding nothing but the box is dropped, so the box
-                // has no anchor and the lines after the block are all before
-                // it: it follows the last of them, up to the next block or the
-                // `::after` block, whose lines come after the box.
-                let next_block = block_after
-                    .and_then(|id| {
-                        lines
-                            .block_line_starts
-                            .iter()
-                            .inspect(|_| {
-                                #[cfg(test)]
-                                tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
-                            })
-                            .find(|&&(b, _)| b == id)
-                    })
-                    .map(|&(_, first)| first);
-                let blocks_before = lines
-                    .block_line_starts
-                    .iter()
-                    .inspect(|_| {
-                        #[cfg(test)]
-                        tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
-                    })
-                    .position(|&(id, _)| id == block)
-                    .map_or(0, |index| index + 1);
-                let generated_block = lines
-                    .generated_block_starts
-                    .iter()
-                    .inspect(|_| {
-                        #[cfg(test)]
-                        tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
-                    })
-                    .find(|&&(count, _)| count >= blocks_before)
-                    .map(|&(_, first)| first);
-                let lines_end = next_block
-                    .into_iter()
-                    .chain(generated_block)
-                    .min()
-                    .unwrap_or(lines.lines.len());
-                match lines_end.checked_sub(1).filter(|&last| last >= next_line) {
-                    Some(last) => lines.line_top(last) + lines.lines[last].block_size(),
-                    None => end + lines.shift_of(next_line),
-                }
-            }),
+            .map_or(
+                lines.height + lines.shifts.aligned(),
+                |&(_, next_line, end)| {
+                    // A line holding nothing but the box is dropped, so the box
+                    // has no anchor and the lines after the block are all before
+                    // it: it follows the last of them, up to the next block or the
+                    // `::after` block, whose lines come after the box.
+                    let next_block = block_after
+                        .and_then(|id| {
+                            lines
+                                .block_line_starts
+                                .iter()
+                                .inspect(|_| {
+                                    #[cfg(test)]
+                                    tests::OOF_METADATA_VISITS
+                                        .with(|count| count.set(count.get() + 1));
+                                })
+                                .find(|&&(b, _)| b == id)
+                        })
+                        .map(|&(_, first)| first);
+                    let blocks_before = lines
+                        .block_line_starts
+                        .iter()
+                        .inspect(|_| {
+                            #[cfg(test)]
+                            tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+                        })
+                        .position(|&(id, _)| id == block)
+                        .map_or(0, |index| index + 1);
+                    let generated_block = lines
+                        .generated_block_starts
+                        .iter()
+                        .inspect(|_| {
+                            #[cfg(test)]
+                            tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+                        })
+                        .find(|&&(count, _)| count >= blocks_before)
+                        .map(|&(_, first)| first);
+                    let lines_end = next_block
+                        .into_iter()
+                        .chain(generated_block)
+                        .min()
+                        .unwrap_or(lines.lines.len());
+                    match lines_end.checked_sub(1).filter(|&last| last >= next_line) {
+                        Some(last) => lines.line_top(last) + lines.lines[last].block_size(),
+                        None => end + lines.shift_of(next_line),
+                    }
+                },
+            ),
         // Nothing comes before the box, but for lines and blocks generated by
         // `::before`, which are not among the boxes.
-        None if lines.lines.is_empty() && lines.placed_blocks.is_empty() => 0.0,
-        None => lines.height,
+        None if lines.lines.is_empty() && lines.placed_blocks.is_empty() => lines.shifts.aligned(),
+        None => lines.height + lines.shifts.aligned(),
     }
 }
 

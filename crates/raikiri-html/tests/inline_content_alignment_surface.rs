@@ -139,11 +139,56 @@ fn the_boxes_on_and_between_the_lines_move_with_them() {
 }
 
 #[test]
+fn a_float_taller_than_the_lines_is_part_of_the_aligned_content() {
+    assert_eq!(
+        placed(
+            "<div id=r style='height:100px;align-content:end'>\
+             <div id=t style='float:left;width:10px;height:80px'></div>X</div>"
+        ),
+        (0.0, 20.0, 80.0)
+    );
+}
+
+#[test]
+fn an_absolutely_positioned_box_after_the_lines_follows_the_aligned_content() {
+    let positioned = "<div id=t style='position:absolute;width:10px;height:10px'></div>";
+    assert_eq!(
+        placed(&format!(
+            "<div id=r style='height:100px;align-content:end;position:relative'>X<br>{positioned}</div>"
+        )),
+        (0.0, 100.0, 10.0)
+    );
+    assert_eq!(
+        placed(&format!(
+            "<div id=r style='height:100px;align-content:end;position:relative'>{positioned}</div>"
+        )),
+        (0.0, 100.0, 10.0)
+    );
+}
+
+#[test]
 fn the_baseline_of_the_block_moves_with_its_lines() {
     assert_eq!(
         placed(
             "<div style='display:flex;align-items:baseline'>\
              <div id=r style='height:60px;align-content:end'>X</div><span id=t>Y</span></div>"
+        ),
+        (20.0, 40.0, 20.0)
+    );
+    // A grid measures the baseline of its items before it lays them out.
+    assert_eq!(
+        placed(
+            "<div style='display:grid;grid-template-columns:20px auto;align-items:baseline'>\
+             <div id=r style='height:60px;align-content:end'>X</div><span id=t>Y</span></div>"
+        )
+        .1,
+        40.0
+    );
+    // An inline-block takes the baseline of the last line inside it.
+    assert_eq!(
+        placed(
+            "<div><span id=r style='display:inline-block'>\
+             <div style='height:60px;align-content:end'>X</div></span><span id=t>Y</span></div>"
         ),
         (20.0, 40.0, 20.0)
     );
