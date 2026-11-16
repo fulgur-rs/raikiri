@@ -340,3 +340,22 @@ fn text_after_the_moved_box_keeps_its_margin_in_the_wrapper() {
         [(0, 'A', 0), (0, 'T', 20), (1, 'B', 0), (1, 'X', 70)]
     );
 }
+
+#[test]
+fn a_nested_table_passes_on_all_its_growth() {
+    // The inner cell's content ends at 220px after two breaks, and the
+    // outer cell, row or anonymous table grows with all of it.
+    const INNER: &str = r#"<table><tr><td style="height:150px"><div style="height:20px">A</div><div style="height:70px;break-before:page">B</div><div style="height:20px;break-before:page">C</div></td></tr></table>"#;
+    let expected = [(0, 'A', 0), (1, 'B', 0), (2, 'C', 0), (2, 'X', 20)];
+    for outer in [
+        "<table><tr><td>{}</td></tr></table>",
+        r#"<table><tr><td style="height:120px">{}</td></tr></table>"#,
+        r#"<div style="display:table-cell;height:120px">{}</div>"#,
+    ] {
+        assert_eq!(
+            glyph_tops(&format!("{}<div>X</div>", outer.replace("{}", INNER))),
+            expected,
+            "{outer}"
+        );
+    }
+}
