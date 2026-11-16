@@ -907,6 +907,18 @@ fn compute_table_layout_checked(
         // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
         // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
+        // The ratio of a table item with a caption, whose height the table
+        // owns (see `item_owns_height`), is the table's to apply as well: the
+        // layout library would apply it to the whole wrapper box, where
+        // Chromium applies it to the grid box with the caption on top.
+        let height_owner = item_height_owner(doc, table_idx);
+        let owns_height = height_owner.is_some();
+        let caption_ratio = (!absolute_table && height_owner == Some(HeightOwner::Caption))
+            .then(|| doc.table_style(table_idx).aspect_ratio())
+            .flatten();
+        // The size the table states, before the measure of a flex row item
+        // sets its width aside and before its ratio gives it a height.
+        let authored_size = doc.table_style(table_idx).size();
         let table_size = {
             let size = doc.table_style(table_idx).size();
             // The size of the content of a flex row item (the measure behind
@@ -928,6 +940,58 @@ fn compute_table_layout_checked(
             } else {
                 size
             }
+        };
+        // Such a table that states no height has the one its ratio transfers
+        // from the width it is given or states.
+        //
+        // A grid does not stretch an item with a ratio whose alignment is
+        // `normal`: it aligns it to the start of its area (CSS Grid 1 §6.2),
+        // so the height it is given is not the one the table takes. The
+        // library cannot tell, as it does not read the ratio.
+        let normal_grid_ratio_item = caption_ratio.is_some()
+            && doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+                doc.nodes[parent].formatting_context == FormattingContext::Grid
+                    && doc
+                        .physical_style(table_idx)
+                        .bridge_align_self()
+                        .unwrap_or_else(|| doc.physical_style(parent).align_items())
+                        .keyword
+                        == raikiri_layout_style::values::AlignItemsKeyword::Normal
+            });
+        let table_size = match caption_ratio.filter(|_| {
+            table_size.height.is_auto()
+                && (inputs.known_dimensions.height.is_none() || normal_grid_ratio_item)
+        }) {
+            Some(ratio) => {
+                let style = doc.table_style(table_idx);
+                let lift_w = if style.box_sizing() == BoxSizing::ContentBox {
+                    pad.left + pad.right + collapsed.outer_left + collapsed.outer_right
+                } else {
+                    0.0
+                };
+                // A width the table states is held within its limits, which
+                // apply to the same box (CSS Sizing 3 §5.2).
+                let outer_width = inputs.known_dimensions.width.or_else(|| {
+                    let basis = inputs.parent_size.width;
+                    let width = resolve_dimension(authored_size.width, basis)?;
+                    let limit = |limit: raikiri_layout_style::values::LengthPercentageAuto| {
+                        resolve_dimension(limit.into(), basis)
+                    };
+                    let width =
+                        limit(style.max_size().width).map_or(width, |maximum| width.min(maximum));
+                    let width =
+                        limit(style.min_size().width).map_or(width, |minimum| width.max(minimum));
+                    Some(width + lift_w)
+                });
+                let height = outer_width
+                    .map(|width| (width - lift_w).max(0.0) / ratio)
+                    .filter(|height| height.is_finite());
+                Size {
+                    height: height.map_or(table_size.height, Dimension::length),
+                    ..table_size
+                }
+            }
+            None => table_size,
         };
         let resolves_item_width = !table_size.width.is_auto() && item_owns_width(doc, table_idx);
 
@@ -975,16 +1039,12 @@ fn compute_table_layout_checked(
             height: inputs
                 .known_dimensions
                 .height
-                .filter(|_| {
-                    !(states_height
-                        && !table_size.height.is_auto()
-                        && item_owns_height(doc, table_idx))
-                })
+                .filter(|_| !(states_height && !table_size.height.is_auto() && owns_height))
                 .or_else(|| {
                     states_height
                         .then(|| resolve_dimension(table_size.height, inputs.parent_size.height))
                         .flatten()
-                        .or(stretch_room.filter(|_| item_owns_height(doc, table_idx)))
+                        .or(stretch_room.filter(|_| owns_height))
                 }),
         };
 
@@ -1050,10 +1110,13 @@ fn compute_table_layout_checked(
         // using the preferred grid height before intrinsic content floors.
         // Keep numeric-height ratio transfer out of min-content probes;
         // otherwise it would incorrectly raise the tracks' and caption's floor.
-        let owned_height_ratio_width = if absolute_table && table_size.width.is_auto() {
+        let owned_height_ratio_width = if (absolute_table || caption_ratio.is_some())
+            && table_size.width.is_auto()
+            && authored_size.width.is_auto()
+        {
             stretch_room
                 .or_else(|| {
-                    (wrapper_measured_by_library
+                    ((wrapper_measured_by_library || caption_ratio.is_some())
                         && !matches!(inputs.available_space.width, AvailableSpace::MinContent))
                     .then(|| specified_height.map(|height| height + lift_h))
                     .flatten()
@@ -1074,43 +1137,56 @@ fn compute_table_layout_checked(
         // the authored width into the same border-box domain and apply its
         // limits before distributing it among the fixed columns. Stretch
         // already names border-box room rather than a content-box width.
+        // A grid stretches the item to its area, but the width the ratio
+        // transfers from a height the table states is the one it keeps, as
+        // the layout library would keep it for a table without a caption.
+        let grid_parent = parent_is_flex_or_grid && flex_main_axis_vertical.is_none();
+        let ratio_keeps_width = grid_parent
+            && caption_ratio.is_some()
+            && !authored_size.height.is_auto()
+            && owned_height_ratio_width.is_some();
         let effective_known = Size {
-            width: effective_known.width.or_else(|| {
-                let stated = if resolves_item_width
-                    && matches!(table_size.width.expand(), ExpandedDimension::Stretch)
-                {
-                    inputs
-                        .parent_size
-                        .width
-                        .or(match inputs.available_space.width {
-                            AvailableSpace::Definite(room) => Some(room),
-                            _ => None,
-                        })
-                        .map(|room| {
-                            crate::layout::dispatch::content_limits::stretch_fit_width(
-                                doc, table_idx, &inputs, room,
-                            )
-                        })
-                } else {
-                    stated_table_width(table_size.width, &inputs)
-                };
-                stated.or(owned_height_ratio_width).map(|width| {
-                    // Vertical tables resolve physical width separately from
-                    // inline tracks, retaining their existing width basis.
-                    if vertical_writing && !resolves_item_width {
-                        return width;
-                    }
-                    let width = if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
-                        width
+            width: effective_known
+                .width
+                .filter(|_| !ratio_keeps_width)
+                .or_else(|| {
+                    let stated = if resolves_item_width
+                        && matches!(table_size.width.expand(), ExpandedDimension::Stretch)
+                    {
+                        inputs
+                            .parent_size
+                            .width
+                            .or(match inputs.available_space.width {
+                                AvailableSpace::Definite(room) => Some(room),
+                                _ => None,
+                            })
+                            .map(|room| {
+                                crate::layout::dispatch::content_limits::stretch_fit_width(
+                                    doc, table_idx, &inputs, room,
+                                )
+                            })
                     } else {
-                        width + lift_w
+                        stated_table_width(table_size.width, &inputs)
                     };
-                    let maximum = max_w_outer
-                        .filter(|maximum| min_w_outer.is_none_or(|minimum| minimum <= *maximum));
-                    apply_wrapper_width_bounds(width, min_w_outer, maximum)
-                        .max(padding_border_size.width)
-                })
-            }),
+                    stated.or(owned_height_ratio_width).map(|width| {
+                        // Vertical tables resolve physical width separately from
+                        // inline tracks, retaining their existing width basis.
+                        if vertical_writing && !resolves_item_width {
+                            return width;
+                        }
+                        let width =
+                            if matches!(table_size.width.expand(), ExpandedDimension::Stretch) {
+                                width
+                            } else {
+                                width + lift_w
+                            };
+                        let maximum = max_w_outer.filter(|maximum| {
+                            min_w_outer.is_none_or(|minimum| minimum <= *maximum)
+                        });
+                        apply_wrapper_width_bounds(width, min_w_outer, maximum)
+                            .max(padding_border_size.width)
+                    })
+                }),
             ..effective_known
         };
         // A flex column gives the item the height it states (see above) while
@@ -1164,8 +1240,7 @@ fn compute_table_layout_checked(
         // would have reported it in the outer box-sizing domain and within the
         // limits (the minimum wins), and the grid below does not shrink to a
         // maximum that is under the height it is given.
-        let resolves_item_height =
-            states_height && specified_height.is_some() && item_owns_height(doc, table_idx);
+        let resolves_item_height = states_height && specified_height.is_some() && owns_height;
         let effective_known =
             if (wrapper_measured_by_library && !known_is_wrapper_height) || resolves_item_height {
                 Size {
@@ -1190,14 +1265,20 @@ fn compute_table_layout_checked(
             // or, without one, the stated length plus the padding and border
             // that a content-box table keeps outside it (a `stretch` room is
             // outer already). A `max-width` that took the resolved width below
-            // the padding and border does not take the table below them.
+            // the padding and border does not take the table below them. A
+            // grid does not stretch the width a stated height transfers
+            // through the ratio, as for a table with rows above.
             let stated_w = specified_w.map(|stated| {
                 let is_length = resolve_dimension(table_size.width, inputs.parent_size.width)
                     .is_some()
                     || owned_height_ratio_width.is_some();
                 let outer = if is_length { stated + lift_w } else { stated };
                 f32_max_compat(
-                    inputs.known_dimensions.width.unwrap_or(outer),
+                    inputs
+                        .known_dimensions
+                        .width
+                        .filter(|_| !ratio_keeps_width)
+                        .unwrap_or(outer),
                     padding_border_size.width,
                 )
             });
@@ -1961,7 +2042,7 @@ fn compute_table_layout_checked(
                     // A grid or flex row that stretches the item cannot clamp
                     // it by a `max-height` it does not read (see
                     // `item_owns_height`), so the grid box keeps to it here.
-                    match max_h_outer.filter(|_| item_owns_height(doc, table_idx)) {
+                    match max_h_outer.filter(|_| owns_height) {
                         Some(maximum) => grid_height.min(maximum.max(padding_border_size.height)),
                         None => grid_height,
                     }
@@ -2126,8 +2207,7 @@ fn compute_table_layout_checked(
         // grid item gives up the collapsed rows' share of its cross size.
         let collapse_shrinks_table = collapsed_rows_share
             && target_room.is_some()
-            && (item_owns_height(doc, table_idx)
-                || (!parent_is_flex_or_grid && assigned_grid_height.is_none()));
+            && (owns_height || (!parent_is_flex_or_grid && assigned_grid_height.is_none()));
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
@@ -2403,10 +2483,21 @@ fn item_height_owner(doc: &LayoutSession<'_>, table: usize) -> Option<HeightOwne
     if table_has_collapsed_rows(doc, table) {
         return Some(HeightOwner::CollapsedRows);
     }
-    // The layout library applies a ratio to the whole wrapper box, which it
-    // can do only from the size it reads.
-    (caption_in_flow(doc, table) && doc.table_style(table).aspect_ratio().is_none())
-        .then_some(HeightOwner::Caption)
+    // A table with a ratio is left to the layout library where Chromium
+    // matches what the library does with it: in a flex row when the table
+    // states no size, the ratio gives the width from the height of the whole
+    // wrapper box. The table applies the ratio itself only along the physical
+    // axes of a horizontal parent.
+    let style = doc.table_style(table);
+    if style.aspect_ratio().is_some()
+        && (super::dispatch::used_writing_mode(doc, parent).is_vertical()
+            || doc.nodes[parent].formatting_context == FormattingContext::Flex
+                && style.size().width.is_auto()
+                && style.size().height.is_auto())
+    {
+        return None;
+    }
+    caption_in_flow(doc, table).then_some(HeightOwner::Caption)
 }
 
 pub(super) fn item_owns_width(doc: &LayoutSession<'_>, table: usize) -> bool {

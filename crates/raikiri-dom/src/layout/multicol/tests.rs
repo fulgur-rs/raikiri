@@ -8852,3 +8852,48 @@ fn widows_that_cloned_edges_leave_no_room_for_yield() {
     let (ranges, _) = paragraph_pieces(&doc, paragraph);
     assert_eq!(ranges, [(0, 3, 0), (3, 6, 1), (6, 9, 2)]);
 }
+
+#[test]
+fn a_positioned_box_with_more_column_pieces_than_the_budget_fails_the_layout() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:10px/10px sans-serif"),
+    );
+    let mc = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:60px;height:40px;column-count:2;column-gap:0;column-fill:auto"),
+    );
+    let paragraph = doc.append_element(Some(mc), "div", Some("display:block"));
+    doc.append_text(paragraph, "x x x x ");
+    let inline = doc.append_element(
+        Some(paragraph),
+        "span",
+        Some("display:inline;position:relative"),
+    );
+    doc.append_text(inline, "y");
+    // Each 40px column holds one piece of the box, so it needs more pieces
+    // than the cap of records allows.
+    doc.append_element(
+        Some(inline),
+        "span",
+        Some("display:block;position:absolute;left:0;top:0;width:30px;height:4000000px"),
+    );
+    doc.append_text(paragraph, " x x x x x x x x");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    let limit = doc.fragment_tree.limit;
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, page),
+        Err(LayoutError::FragmentLimitExceeded { limit: reported }) if reported == limit
+    ));
+}

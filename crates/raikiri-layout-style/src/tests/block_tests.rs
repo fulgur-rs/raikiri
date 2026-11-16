@@ -35,7 +35,7 @@ fn core_claims_and_block_defaults_stay_distinct() {
 }
 
 #[test]
-fn a_last_baseline_static_position_aligns_to_the_end_not_safe_self_end() {
+fn a_last_baseline_abspos_aligns_to_the_end() {
     use raikiri_style::property::PositionValue;
     let alignments = |position, value| {
         let mut cv = ComputedValues::initial();
@@ -54,8 +54,8 @@ fn a_last_baseline_static_position_aligns_to_the_end_not_safe_self_end() {
     let last = SelfAlignmentValue::LastBaseline;
     for position in [PositionValue::Absolute, PositionValue::Fixed] {
         let [align, justify, static_align, static_justify] = alignments(position, last);
-        assert_eq!(align, Some(values::AlignSelf::SAFE_SELF_END));
-        assert_eq!(justify, Some(values::AlignSelf::SAFE_SELF_END));
+        assert_eq!(align, Some(values::AlignSelf::END));
+        assert_eq!(justify, Some(values::AlignSelf::END));
         assert_eq!(static_align, Some(values::AlignSelf::END));
         assert_eq!(static_justify, Some(values::AlignSelf::END));
     }

@@ -191,7 +191,7 @@ fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
         (
             "display:grid;align-items:last baseline",
             "position:absolute;align-self:auto",
-            Some(AlignItems::SAFE_SELF_END),
+            Some(AlignItems::END),
             None,
             None,
         ),

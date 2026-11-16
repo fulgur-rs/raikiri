@@ -4205,8 +4205,9 @@ pub enum SelfAlignmentValue {
     Baseline,
     /// `last baseline` — `<baseline-position>`. Taffy has no last-baseline
     /// alignment, so layout treats it as `baseline` except where the box does
-    /// not take part in baseline alignment: its fallback alignment is then
-    /// `safe self-end` (CSS Box Alignment 3 §9.1) rather than `safe start`.
+    /// not take part in baseline alignment: it then aligns to the end (CSS Box
+    /// Alignment 3 §9.1) rather than the start, as `end`, which Chromium uses
+    /// in place of `safe self-end`.
     LastBaseline,
 }
 

@@ -4,7 +4,7 @@
 use super::sibling_adjacency::{FlowBox, flow_box};
 use super::{
     CascadeResult, DisplayValue, Document, NodeKind, current_abs_y, has_unusual_coordinates,
-    is_floating_box_for_pagination, is_plain_block_box,
+    is_floating_box_for_pagination, is_plain_block_box, layout_relative_offset_y,
 };
 use std::collections::HashMap;
 
@@ -44,21 +44,7 @@ impl ChildPositions {
                 let first = self.forced_first_children.entry(parent).or_insert_with(|| {
                     // Generated before content is not an arena child. Even a
                     // zero-height generated box precedes the forced boundary.
-                    let before = cascade.pseudo.get(&(
-                        raikiri_style::StyleNodeId::new(parent as u64),
-                        raikiri_style::PseudoElem::Before,
-                    ));
-                    if before.is_some_and(|style| {
-                        style.display != DisplayValue::None
-                            && !matches!(
-                                style.position,
-                                super::PositionValue::Absolute | super::PositionValue::Fixed
-                            )
-                            && !style.content.is_empty()
-                            && !style.content.iter().any(|part| {
-                                matches!(part, raikiri_style::property::ContentComponent::None)
-                            })
-                    }) {
+                    if super::renders_before_pseudo(cascade, parent) {
                         return None;
                     }
                     // An IFC keeps its block tokens outside the box child
@@ -197,12 +183,17 @@ enum Before {
 /// What the children of `parent` render before `child` on the page that starts
 /// at `page_start`. White space, boxes that generate nothing, out-of-flow
 /// boxes, and floats that start the page or lie on an earlier one are not
-/// content. With `past_empty_starts`, neither are block boxes of no height at
-/// the page start and elements without a box that hold nothing, when the
-/// child itself starts at the page start. The nearest of the others decides.
+/// content, and a `display: contents` element counts as its children. (Its
+/// generated text is inline content of the parent, which then holds its
+/// blocks in boxes it does not list.) An empty inline box lays out a phantom
+/// line (CSS 2.1 §9.4.2), whose anonymous block is a box of no height. With
+/// `past_empty_starts`, neither are boxes of no height at the page start,
+/// when the child itself starts at the page start. The nearest of the others
+/// decides.
 fn before_child(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     parent: usize,
     page_start: f32,
     child_index: Option<usize>,
@@ -219,11 +210,24 @@ fn before_child(
     // truncate.
     let skip_empty = past_empty_starts
         && (current_abs_y(document, siblings[index]) - page_start).abs() <= EDGE_TOLERANCE;
-    for &sibling in siblings[..index].iter().rev() {
+    // The siblings, last first, with `display: contents` elements replaced
+    // by their children: a stack of reverse iterators, as they can nest
+    // without limit, which reads no further back than the nearest box that
+    // decides.
+    let mut levels = vec![siblings[..index].iter().rev()];
+    // The top of the nearest phantom line: its anonymous block is a box of
+    // no height, unless inline content before it shares the line.
+    let mut phantom_top = None;
+    while let Some(level) = levels.last_mut() {
+        let Some(&sibling) = level.next() else {
+            levels.pop();
+            continue;
+        };
+        let node = &document.nodes[sibling];
         // Only boxes have a position to read.
         let span = || {
             let top = current_abs_y(document, sibling);
-            (top, top + document.nodes[sibling].layout.size.height)
+            (top, top + node.layout.size.height)
         };
         match flow_box(document, cascade, sibling) {
             FlowBox::Skip => {
@@ -236,35 +240,37 @@ fn before_child(
                     }
                 }
             }
-            // An element without a box that holds nothing that renders is
-            // as empty as a box of no height.
-            FlowBox::Contents
-                if skip_empty
-                    && document.nodes[sibling]
-                        .children
-                        .iter()
-                        .all(|&child| !super::sibling_renders(document, child)) => {}
-            FlowBox::Contents => return Before::Other,
+            FlowBox::Phantom => {
+                // A relative offset moves the inline box but not its line.
+                let top = current_abs_y(document, sibling)
+                    - layout_relative_offset_y(document, cascade, body_id, sibling);
+                if !(skip_empty && (top - page_start).abs() <= EDGE_TOLERANCE) {
+                    phantom_top = phantom_top.or(Some(top));
+                }
+            }
+            FlowBox::Contents => levels.push(node.children.iter().rev()),
             FlowBox::Box => {
-                let block_box = document.nodes[sibling].kind() == NodeKind::Element
-                    && !document.nodes[sibling].display().is_inline_level()
+                let block_box = node.kind() == NodeKind::Element
+                    && !node.display().is_inline_level()
                     && !has_unusual_coordinates(document, sibling);
-                return if block_box {
-                    let (top, bottom) = span();
-                    if skip_empty
-                        && (top - page_start).abs() <= EDGE_TOLERANCE
-                        && (bottom - page_start).abs() <= EDGE_TOLERANCE
-                    {
-                        continue;
-                    }
-                    Before::Ends { top, bottom }
-                } else {
-                    Before::Other
-                };
+                if !block_box {
+                    return Before::Other;
+                }
+                if let Some(top) = phantom_top {
+                    return Before::Ends { top, bottom: top };
+                }
+                let (top, bottom) = span();
+                if skip_empty
+                    && (top - page_start).abs() <= EDGE_TOLERANCE
+                    && (bottom - page_start).abs() <= EDGE_TOLERANCE
+                {
+                    continue;
+                }
+                return Before::Ends { top, bottom };
             }
         }
     }
-    Before::Nothing
+    phantom_top.map_or(Before::Nothing, |top| Before::Ends { top, bottom: top })
 }
 
 /// Whether a page does not break between the start of `parent` and its first
@@ -328,6 +334,7 @@ fn begins_page_with_positions(
                 let verdict = match before_child(
                     document,
                     cascade,
+                    body_id,
                     parent,
                     page_start,
                     child_position(parent, child),

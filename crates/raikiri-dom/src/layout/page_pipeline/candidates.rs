@@ -170,7 +170,7 @@ pub(super) struct CandidateFlowContext {
 fn column_child_has_flow_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     use super::sibling_adjacency::{FlowBox, flow_box};
     match flow_box(document, cascade, id) {
-        FlowBox::Skip => false,
+        FlowBox::Skip | FlowBox::Phantom => false,
         FlowBox::Box => true,
         FlowBox::Contents => document.nodes[id]
             .children
@@ -873,7 +873,9 @@ fn paragraph_content_before(
 fn renders_paragraph_content(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     match super::sibling_adjacency::flow_box(document, cascade, node_id) {
-        super::sibling_adjacency::FlowBox::Skip => false,
+        super::sibling_adjacency::FlowBox::Skip | super::sibling_adjacency::FlowBox::Phantom => {
+            false
+        }
         super::sibling_adjacency::FlowBox::Box
             if node.kind() != NodeKind::Element || node.display() != DisplayValue::Inline =>
         {

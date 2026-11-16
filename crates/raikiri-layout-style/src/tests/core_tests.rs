@@ -297,7 +297,7 @@ fn explicit_auto_alignment_and_wrong_range_calc_are_distinct() {
     cv.position = PositionValue::Absolute;
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert_eq!(v.align_self(), Some(values::AlignItems::SAFE_SELF_END));
+    assert_eq!(v.align_self(), Some(values::AlignItems::END));
     let overrides = [PropertyOverride::align_self(None)];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &overrides);
     assert_eq!(v.align_self(), None);
