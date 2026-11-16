@@ -9347,9 +9347,10 @@ fn min_height_left_behind(document: &super::context::LayoutSession<'_>, node_id:
 /// that box, collapsed with those of the last boxes in its own flow that do
 /// not close with edges of their own. A page edge inside it truncates it
 /// (CSS Fragmentation 3 §5.2), and the edges begin the next page. Zero for a
-/// paragraph, whose lines end its content, for a block of set `height`, and
-/// for one that `max-height` holds; no more than what keeps the block at its
-/// `min-height`.
+/// paragraph, whose lines end its content, and for a block of set `height`;
+/// no more than what keeps the block at its `min-height`. A block that
+/// `max-height` holds has no edges that break apart from its content (see
+/// [`content_bottom_edges`]).
 fn margin_above_edges(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9364,13 +9365,8 @@ fn margin_above_edges(
     {
         return 0.0;
     }
-    // A `max-height` that holds the block ends its content box above where
-    // its content would.
-    let (min_height, max_height) = border_box_height_bounds(document, node_id);
+    let (min_height, _) = border_box_height_bounds(document, node_id);
     let layout = &node.layout;
-    if layout.size.height >= max_height - 0.001 {
-        return 0.0;
-    }
     let Some(last) = last_flow_box(document, cascade, node_id) else {
         return 0.0;
     };

@@ -1141,6 +1141,43 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
 }
 
 #[test]
+fn page_discovery_stops_at_edges_that_a_truncated_margin_takes_past_the_limit() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // The margin below the last box crosses the end of the only page the
+    // limit allows, and the padding after it begins the next one.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent =
+        document.append_element(Some(body), "div", Some("display:block;padding-bottom:10px"));
+    document.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;height:590px;margin-bottom:20px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let control = PageLayoutControl::for_geometry_discovery(Some(1));
+
+    let pages = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
+    )
+    .expect("bounded page discovery");
+
+    assert_eq!(pages.len(), 1);
+    assert!(control.page_limit_reached());
+}
+
+#[test]
 fn page_layout_discovery_control_records_a_truncated_limit_check() {
     let control = PageLayoutControl::for_geometry_discovery(Some(1));
 
