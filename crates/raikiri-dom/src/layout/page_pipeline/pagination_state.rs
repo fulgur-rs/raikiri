@@ -1256,7 +1256,7 @@ impl PaginationState {
             env,
             edges_break,
             edges_break.raw_y + self.flow_shift,
-        );
+        )?;
         let page = page_origins.page_index_for_end(end);
         let page_end = page_origins.origin(page) + page_origins.step_at(page);
         // The content must end below the top of its page, and the edges must
@@ -1355,24 +1355,26 @@ impl PaginationState {
     /// flow, when a page edge falls inside it (CSS Fragmentation 3 §5.2):
     /// the edges begin the page at that edge, as a box after the margin
     /// would. The block shrinks by the part of the margin below the edge, and
-    /// the flow after it moves up. Returns where the content now ends.
+    /// the flow after it moves up, and the flow is on the page the edges
+    /// begin. Returns where the content now ends.
     fn truncate_margin_above_edges(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         edges_break: &EdgesBreak,
         end: f32,
-    ) -> f32 {
+    ) -> Result<f32, Halt> {
         if edges_break.margin_above <= 0.001 {
-            return end;
+            return Ok(end);
         }
         let page_origins = env.page_origins;
         let margin_start = end - edges_break.margin_above;
-        let edge_page = page_origins.page_index_for_y(margin_start - 0.001) + 1;
+        let edge_page = page_origins.first_edge_in_margin(margin_start, false, u32::MAX);
         let edge = page_origins.origin(edge_page);
         if end <= edge + 0.001 {
-            return end;
+            return Ok(end);
         }
+        reach_page(env.control, edge_page)?;
         let delta = edge - end;
         let node_id = edges_break.node_id;
         document.nodes[node_id].layout.size.height += delta;
@@ -1395,7 +1397,10 @@ impl PaginationState {
             held.into_iter()
                 .map(|(ancestor, held)| (ancestor, held, edge_page)),
         );
-        edge
+        self.current_page = self.current_page.max(edge_page);
+        let edges_end = page_origins.end_page(edge, edges_break.edges);
+        self.record_pages(env.control, edges_end, true)?;
+        Ok(edge)
     }
 
     /// The block size of the edges that a clip leaves visible once they begin

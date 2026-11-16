@@ -9364,10 +9364,16 @@ fn margin_above_edges(
     {
         return 0.0;
     }
+    // A `max-height` that holds the block ends its content box above where
+    // its content would.
+    let (min_height, max_height) = border_box_height_bounds(document, node_id);
+    let layout = &node.layout;
+    if layout.size.height >= max_height - 0.001 {
+        return 0.0;
+    }
     let Some(last) = last_flow_box(document, cascade, node_id) else {
         return 0.0;
     };
-    let layout = &node.layout;
     let content_end = layout.size.height - layout.padding.bottom - layout.border.bottom;
     // A box inside a `display: contents` child is laid out by `node_id`, so
     // the box is located from the origins of the two.
@@ -9395,12 +9401,6 @@ fn margin_above_edges(
         }
         current = last_flow_box(document, cascade, id);
     }
-    // A `max-height` that holds the block ends its content box above where
-    // its content would.
-    let (min_height, max_height) = border_box_height_bounds(document, node_id);
-    if layout.size.height >= max_height - 0.001 {
-        return 0.0;
-    }
     (content_end - last_bottom)
         .min(margin)
         .min(layout.size.height - min_height)
@@ -9422,12 +9422,13 @@ fn last_flow_box(
     Some(last)
 }
 
-/// For each block below `body_id`, the block size of the margins inside it
-/// that a page edge may truncate (CSS Fragmentation 3 §5.2): those between
-/// its in-flow children, and the margin above the edges of a block whose
-/// last box ends with one (see [`margin_above_edges`]), its own and those of
-/// the blocks inside it. A truncated margin reaches no page of its own: the
-/// content on either side of it reaches the pages the block runs on to.
+/// For each block below `body_id` whose height follows its content, the
+/// block size of the margins inside it that a page edge may truncate (CSS
+/// Fragmentation 3 §5.2): those between its in-flow children, the margin
+/// above its edges (see [`margin_above_edges`]), and those inside the blocks
+/// in it whose heights follow their content too. A truncated margin reaches
+/// no page of its own: the content and the edges around it reach the pages
+/// the block runs on to. Flex and grid items keep their margins whole.
 fn truncatable_margin_rooms(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9440,8 +9441,20 @@ fn truncatable_margin_rooms(
         .map(|found| (found.node_id, found.margin_above))
         .collect();
     let order: Vec<_> = document.preorder(body_id).collect();
+    // Whether each box lies in a flex or grid container, found top down.
+    let mut in_items = vec![false; document.nodes.len()];
+    for &node_id in &order {
+        in_items[node_id] = document
+            .parent_of(node_id)
+            .is_some_and(|parent| in_items[parent] || is_flex_or_grid(document, parent));
+    }
     for &node_id in order.iter().rev() {
-        if node_id == body_id {
+        let follows = node_id != body_id
+            && !in_items[node_id]
+            && (height_follows_content(document, node_id)
+                || min_height_left_behind(document, node_id));
+        if !follows {
+            rooms.remove(&node_id);
             continue;
         }
         let gaps = margins_between_children(document, cascade, body_id, node_id);
@@ -9450,10 +9463,7 @@ fn truncatable_margin_rooms(
             continue;
         }
         rooms.insert(node_id, room);
-        if let Some(parent) = document
-            .parent_of(node_id)
-            .filter(|&parent| parent != body_id)
-        {
+        if let Some(parent) = document.parent_of(node_id) {
             *rooms.entry(parent).or_default() += room;
         }
     }
@@ -9503,23 +9513,31 @@ fn margins_between_children(
     total
 }
 
-/// Whether the block `node_id` lies in an item of a flex or grid container
-/// below `body_id`, whose fragmentation keeps the margins of the item's
+/// Whether the block `node_id` lies in an item of a flex or grid container,
+/// the body among them, whose fragmentation keeps the margins of the item's
 /// content.
 fn in_flex_or_grid(
     document: &super::context::LayoutSession<'_>,
     node_id: usize,
     body_id: usize,
 ) -> bool {
-    document
-        .ancestors(node_id)
-        .take_while(|&id| id != body_id)
-        .any(|id| {
-            matches!(
-                document.nodes[id].formatting_context,
-                FormattingContext::Flex | FormattingContext::Grid
-            )
-        })
+    for id in document.ancestors(node_id) {
+        if is_flex_or_grid(document, id) {
+            return true;
+        }
+        if id == body_id {
+            break;
+        }
+    }
+    false
+}
+
+/// Whether `node_id` is a flex or grid container.
+fn is_flex_or_grid(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    matches!(
+        document.nodes[node_id].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    )
 }
 
 /// Whether the block `node_id`, which a set `height`, `min-height` or

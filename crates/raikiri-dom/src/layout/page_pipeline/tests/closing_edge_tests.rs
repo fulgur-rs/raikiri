@@ -4459,6 +4459,71 @@ fn a_grid_item_keeps_the_margin_above_its_edges() {
 }
 
 #[test]
+fn a_forced_break_after_truncated_edges_opens_the_page_after_them() {
+    // The padding begins the second page at the edge that truncated the
+    // margin above it, so a break forced after the parent opens the third.
+    for (parent_css, after_css) in [
+        ("padding-bottom:10px", "height:10px;break-before:page"),
+        ("padding-bottom:10px;break-after:page", "height:10px"),
+    ] {
+        let mut after = 0;
+        let (doc, pages) = paged_body(|doc, body| {
+            let parent = block(doc, body, &format!("display:block;{parent_css}"));
+            block(doc, parent, "display:block;height:90px;margin-bottom:20px");
+            after = block(doc, body, &format!("display:block;{after_css}"));
+        });
+        assert_eq!(
+            (page_flow_y(&doc, after), pages),
+            (200.0, 3),
+            "{parent_css}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_body_keeps_the_margin_above_the_edges_of_its_items() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:flex;flex-direction:column;margin:0;width:100px"),
+    );
+    let parent = block(&mut doc, body, "display:block;padding-bottom:10px");
+    block(
+        &mut doc,
+        parent,
+        "display:block;height:90px;margin-bottom:20px",
+    );
+    let after = block(&mut doc, body, "display:block;height:10px");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(page_flow_y(&doc, after), 120.0);
+}
+
+#[test]
+fn a_block_of_set_height_reaches_its_pages_past_untruncated_margins() {
+    // The margin between the children crosses no page edge, and the block
+    // keeps its height: it runs on to the third page.
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;height:220px");
+        block(doc, parent, "display:block;height:10px");
+        block(doc, parent, "display:block;height:10px;margin-top:30px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!((page_flow_y(&doc, after), pages), (220.0, 3));
+}
+
+#[test]
 fn a_paragraph_keeps_the_space_below_its_lines() {
     let mut after = 0;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
