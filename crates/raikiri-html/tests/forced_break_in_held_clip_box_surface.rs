@@ -110,4 +110,20 @@ fn a_break_at_the_edge_of_a_clip_box_falls_outside_it() {
     let body = "<div style='height:60px;overflow:hidden'><div style='height:20px'>A</div>\
          <div style='break-after:page'>B</div></div><div id=x>X</div>";
     assert_eq!(pages(body), (2, vec![None, Some(0)]));
+    // Through an element that generates no box, and from a flex item.
+    let body = "<div style='height:20px'>P</div><div style='height:60px;overflow:hidden'>\
+         <div style='display:contents'><div id=x style='height:20px;break-before:page'>A</div>\
+         </div><div>B</div></div>";
+    assert_eq!(pages(body), (2, vec![None, Some(0)]));
+    let body = "<div style='height:20px'>P</div>\
+         <div style='height:60px;overflow:hidden;display:flex;flex-direction:column'>\
+         <div id=x style='height:20px;break-before:page'>A</div><div>B</div></div>";
+    assert_eq!(pages(body), (2, vec![None, Some(0)]));
+}
+
+#[test]
+fn a_clip_margin_past_the_page_does_not_break_the_box() {
+    let body = "<div style='height:60px;overflow:clip;overflow-clip-margin:50px'>\
+         <div style='height:20px'>A</div><div id=x style='break-before:page'>B</div></div>";
+    assert_eq!(pages(body), (1, vec![Some(20)]));
 }
