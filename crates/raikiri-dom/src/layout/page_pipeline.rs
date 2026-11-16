@@ -11431,7 +11431,7 @@ pub(super) fn generated_content_end_above(
     // Generated content before an ancestor is separated from the box by the
     // ancestor's own edges or margin, unless the box begins the ancestor and
     // its margin collapses through the ancestor's top (see
-    // [`starts_with_child_margin`]): the walk goes up only from such a level.
+    // `starts_with_child_margin`): the walk goes up only from such a level.
     any_level_before(
         document,
         cascade,
