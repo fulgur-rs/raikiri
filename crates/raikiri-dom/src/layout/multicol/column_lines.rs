@@ -233,24 +233,20 @@ fn kind(tree: &LayoutSession<'_>, node: usize, columns: Columns) -> Kind {
     let own_layout = matches!(element.display(), DisplayValue::Flex | DisplayValue::Grid)
         || element.formatting_context == FormattingContext::Table
         || (block && element.multicol.is_some());
-    if block
+    let monolithic = block
         && (scrolls(tree, node)
             || element
                 .tag_name()
-                .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag) || ATOMIC_TAGS.contains(&tag)))
-    {
-        Kind::Monolithic
-    } else if own_layout {
-        if fits { Kind::Monolithic } else { Kind::Other }
-    } else if block
-        && matches!(
-            element.formatting_context,
-            FormattingContext::Block | FormattingContext::Inline
-        )
-    {
-        Kind::Plain
-    } else {
-        Kind::Other
+                .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag) || ATOMIC_TAGS.contains(&tag)));
+    let flow = matches!(
+        element.formatting_context,
+        FormattingContext::Block | FormattingContext::Inline
+    );
+    match (monolithic, own_layout, block && flow) {
+        (true, _, _) => Kind::Monolithic,
+        (_, true, _) if fits => Kind::Monolithic,
+        (_, false, true) => Kind::Plain,
+        _ => Kind::Other,
     }
 }
 

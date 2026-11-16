@@ -605,3 +605,76 @@ fn a_box_its_insets_size_keeps_its_height() {
         ],
     );
 }
+
+#[test]
+fn hidden_boxes_and_spaces_between_blocks_are_skipped() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=c1>xxx xxx</div> <div style="display:none">x</div> <div id=c2>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 20.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (38.0, 8.0, 30.0, 10.0)),
+            ("c2", (38.0, 18.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_wrapper_of_definite_height_keeps_it_while_its_lines_move() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=w style="height:20px"><div id=c1>xxx xxx</div></div><div id=n>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 15.0)),
+            ("w", (8.0, 33.0, 30.0, 15.0)),
+            ("w", (38.0, 8.0, 30.0, 5.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (38.0, 8.0, 30.0, 10.0)),
+            ("n", (38.0, 13.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+/// A scroll container is monolithic: its lines do not move.
+#[test]
+fn a_scroll_container_keeps_its_first_lines_in_its_first_column() {
+    check_has(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px;overflow:hidden"><span id=l1>xxx</span> <span id=l2>xxx</span> <span id=l3>xxx</span></div></div></div>"#,
+        &[("l1", (8.0, 33.0, 30.0, 10.0))],
+    );
+}
+
+/// The moves do not follow the items of a positioned flex container.
+#[test]
+fn a_flex_container_still_starts_in_its_first_column() {
+    check_has(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px;display:flex;flex-direction:column"><div id=c1>xxx xxx</div><div id=c2>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+        ],
+    );
+}
+
+/// A block whose first box is a float is not moved with it.
+#[test]
+fn a_block_starting_with_a_float_still_starts_in_its_first_column() {
+    check_has(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=c0>xxx</div><div id=c1><div style="float:left;width:10px">x</div><div id=c2>xxx</div></div></div></div></div>"#,
+        &[("a", (8.0, 33.0, 30.0, 15.0))],
+    );
+}
+
+/// The last column of a container whose height nothing limits holds the rest, so no column end there moves a line.
+#[test]
+fn the_last_column_of_an_auto_height_container_keeps_its_lines() {
+    check_has(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><span id=l1>xxx</span> <span id=l2>xxx</span> <span id=l3>xxx</span> <span id=l4>xxx</span> <span id=l5>xxx</span> <span id=l6>xxx</span> <span id=l7>xxx</span> <span id=l8>xxx</span> <span id=l9>xxx</span></div></div></div>"#,
+        &[
+            ("l1", (8.0, 33.0, 30.0, 10.0)),
+            ("l2", (8.0, 43.0, 30.0, 10.0)),
+            ("l3", (8.0, 53.0, 30.0, 10.0)),
+        ],
+    );
+}
