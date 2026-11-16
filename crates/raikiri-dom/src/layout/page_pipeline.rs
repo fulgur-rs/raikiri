@@ -12678,7 +12678,7 @@ struct SubtreeShifts {
     reached_moved_box: bool,
     /// Table rows, or cells outside a table, that forced breaks in their
     /// cells grew, with how far.
-    grown_rows: Vec<(usize, f32)>,
+    grown_rows: Vec<((usize, usize), f32)>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -12706,7 +12706,9 @@ struct BesideGrowth {
 impl SubtreeShifts {
     /// Records that a cell of `row` needs it `growth` taller than it was
     /// laid out, and returns how much more that is than it grew already.
-    fn grow_row(&mut self, row: usize, growth: f32) -> f32 {
+    /// `row` is the box that holds the row with the index after it, which
+    /// tells the anonymous rows of one table apart.
+    fn grow_row(&mut self, row: (usize, usize), growth: f32) -> f32 {
         match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
             Some((_, grown)) => {
                 let added = (growth - *grown).max(0.0);
@@ -16648,7 +16650,7 @@ fn shift_block_flow_after(
                 // A row grows as far as its cell that grows most, and an
                 // earlier break in it may have grown it already: only the
                 // rest of the growth moves what follows.
-                let holder = row_end.map_or(parent, |(row, _, _)| row);
+                let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
                 let added = shifts.grow_row(holder, passed);
                 let Some((row, end, table)) = row_end else {
                     // A cell outside a table sits in an anonymous table of its
@@ -16668,6 +16670,7 @@ fn shift_block_flow_after(
                     break;
                 }
                 shifts.from_box.push((row, end, added));
+                shift_rows_after(document, (row, end), table, added);
                 // The table grows with the row: its ancestors take the growth
                 // on as they take a moved box's.
                 flow_delta = added;
@@ -16715,6 +16718,31 @@ fn shift_block_flow_after(
         child = parent;
     }
     bounded
+}
+
+/// Moves the boxes of `table` after a row down by `delta`: those from index
+/// `end` on in `row`, the box that holds the row, and those after it up to
+/// the table. The flow reaches them `delta` further down.
+fn shift_rows_after(document: &mut Document, (row, end): (usize, usize), table: usize, delta: f32) {
+    for later in end..document.nodes[row].children.len() {
+        shift_block_sibling(document, document.nodes[row].children[later], delta);
+    }
+    let mut up = row;
+    while up != table {
+        let Some(parent) = document.parent_of(up) else {
+            break;
+        };
+        let count = document.nodes[parent].children.len();
+        let start = document.nodes[parent]
+            .children
+            .iter()
+            .position(|&id| id == up)
+            .map_or(count, |index| index + 1);
+        for later in start..count {
+            shift_block_sibling(document, document.nodes[parent].children[later], delta);
+        }
+        up = parent;
+    }
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it

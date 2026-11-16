@@ -292,3 +292,29 @@ fn a_row_grows_once_for_several_breaks() {
         expected
     );
 }
+
+#[test]
+fn each_anonymous_row_grows_on_its_own() {
+    let cell = |first: char, second: char| {
+        format!(
+            r#"<div style="display:table-cell;height:150px"><div style="height:20px">{first}</div><div style="height:70px;break-before:page">{second}</div></div>"#
+        )
+    };
+    // Two runs of cells around a row make two anonymous rows; each grows
+    // 20px past its cells' height.
+    assert_eq!(
+        glyph_tops(&format!(
+            r#"<div style="display:table">{}<div style="display:table-row"><div style="display:table-cell;height:30px">Y</div></div>{}</div><div>X</div>"#,
+            cell('A', 'B'),
+            cell('D', 'E')
+        )),
+        [
+            (0, 'A', 0),
+            (1, 'B', 0),
+            (1, 'Y', 70),
+            (2, 'D', 0),
+            (3, 'E', 0),
+            (3, 'X', 70)
+        ]
+    );
+}
