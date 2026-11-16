@@ -2219,6 +2219,60 @@ fn push_sliced_box_pieces(
     Some(())
 }
 
+/// Where a box with no lines, `needed` high from `top` in `column`, goes in
+/// columns `height` tall, when it reaches past the end of that column: its
+/// first piece runs to the end of the column and the next pieces start at
+/// the tops of the columns after it. `last`, when set, is the last column
+/// there is, which holds what is left of the box. `None` when the box ends in
+/// its column, leaves less room there than a cut needs, or would take more
+/// pieces than [`paragraph_group::MAX_SLICED_PIECES`].
+fn sliced_leaf_placement(
+    context: FragmentationContext,
+    column: usize,
+    top: f32,
+    needed: f32,
+    height: f32,
+    last: Option<usize>,
+) -> Option<paragraph_group::Placement> {
+    let first_height = height - top;
+    if first_height < paragraph_group::SLICE_MIN_ROOM
+        || needed - first_height <= paragraph_group::SLICE_MIN_ROOM
+        || !needed.is_finite()
+        || height <= 0.0
+    {
+        return None;
+    }
+    // The columns after the first that the rest reaches, up to the last.
+    let mut after =
+        ((needed - first_height - paragraph_group::SLICE_MIN_ROOM) / height).floor() as usize + 1;
+    if let Some(last) = last {
+        after = after.min(last.checked_sub(column)?);
+    }
+    if after + 1 > paragraph_group::MAX_SLICED_PIECES {
+        return None;
+    }
+    let piece = |at: usize, y: f32| MulticolTextFragment {
+        line_start: 0,
+        line_end: 0,
+        fragmentainer: at,
+        x: context.column_offset_x(at) - context.column_offset_x(column),
+        y,
+    };
+    let mut fragments = vec![piece(column, 0.0)];
+    fragments.extend((column + 1..=column + after).map(|at| piece(at, -top)));
+    Some(paragraph_group::Placement {
+        first_column: column,
+        first_y: top,
+        first_height,
+        last_column: column + after,
+        last_y: needed - first_height - (after - 1) as f32 * height,
+        fragments,
+        entry_column: column,
+        entry_y: top,
+        sliced: true,
+    })
+}
+
 /// The only paragraph of a balanced column container, with the line ranges
 /// that balance it over the columns.
 struct ParagraphBalance {
@@ -2816,6 +2870,12 @@ impl ColumnStack {
     }
 }
 
+/// Whether `child` is a box with no lines that a column end slices wherever
+/// it falls (CSS Fragmentation 3, 4.4), with no margins to keep with it.
+fn slices_at_column_end(tree: &LayoutSession<'_>, child: usize) -> bool {
+    lineless::is_sized_leaf_below_floats(tree, child) && lineless::slices_sized_leaf(tree, child)
+}
+
 /// A measured child of a column container where it stands in one column:
 /// its top and bottom, and the extents of its lines, between which a column
 /// may end, when it is a paragraph.
@@ -2823,6 +2883,9 @@ struct StackedChild {
     top: f32,
     bottom: f32,
     lines: Vec<(f32, f32)>,
+    /// Whether a column may end anywhere in it, as in a box with no lines
+    /// that the column ends slice.
+    sliced: bool,
 }
 
 impl StackedChild {
@@ -2832,6 +2895,15 @@ impl StackedChild {
             top,
             bottom: top + needed,
             lines: Vec::new(),
+            sliced: false,
+        }
+    }
+
+    /// A box with no lines that a column end cuts wherever it falls.
+    fn sliced(top: f32, needed: f32) -> Self {
+        Self {
+            sliced: true,
+            ..Self::atomic(top, needed)
         }
     }
 
@@ -2858,6 +2930,7 @@ impl StackedChild {
             top,
             bottom: top + needed,
             lines,
+            sliced: false,
         }
     }
 }
@@ -2882,6 +2955,27 @@ fn fill_stacked_columns(
     };
     for child in children {
         let lines = &child.lines;
+        if child.sliced {
+            // A column that the box starts past the end of ends before it;
+            // any other ends where it does, inside the box.
+            if child.top - offset > LINE_EPSILON && child.top - offset >= height - LINE_EPSILON {
+                column += 1;
+                offset = child.top;
+            }
+            while child.bottom - offset > height + LINE_EPSILON {
+                // Past the last column, or at an offset that a column no
+                // longer moves, the box cannot fit.
+                let next = offset + height;
+                if column + 1 >= count || next <= offset {
+                    return (false, used.max(height));
+                }
+                used = used.max(height);
+                column += 1;
+                offset = next;
+            }
+            used = used.max(child.bottom - offset);
+            continue;
+        }
         if lines.is_empty() {
             if overflows(child.top, child.bottom, offset) {
                 column += 1;
@@ -2966,7 +3060,20 @@ fn layout_column_group(
     let fallback_height = border_box_size.height;
     // Definite-height columns place block children sequentially. For
     // auto-height columns, the selected fill mode controls balancing below.
-    let fragment_height = context.available_height;
+    let mut fragment_height = context.available_height;
+    // Balanced columns are as tall as their content needs, up to the
+    // container's height (CSS Multi-column 1, 8.1). Columns with floats
+    // among their children are measured as if the container's height were
+    // auto, and fill the container's height only when that is not enough.
+    let definite_balance = fragment_height.filter(|_| {
+        context.column_fill != ColumnFillValue::Auto
+            && tree.context.fragmentation_stack.len() <= 1
+            && children.iter().any(|&child| is_floated(tree, child))
+            && !multicol_has_nested_descendant(tree, index)
+    });
+    if definite_balance.is_some() {
+        fragment_height = None;
+    }
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut maximum = 0.0f32;
@@ -3066,9 +3173,12 @@ fn layout_column_group(
                     keeps_float_line(tree, child, skipped + needed),
                 ) + skipped;
                 // Only the lines that flow beside floats break between
-                // columns where they are; any other block goes whole.
+                // columns where they are, and a box with no lines breaks
+                // where a column ends; any other block goes whole.
                 stacked.push(if beside && splits_beside_floats(tree, child, kind) {
                     StackedChild::of(tree, child, top, margin_top, needed)
+                } else if !beside && slices_at_column_end(tree, child) {
+                    StackedChild::sliced(top, needed)
                 } else {
                     StackedChild::atomic(top, needed)
                 });
@@ -3077,9 +3187,15 @@ fn layout_column_group(
         }
         let total = stack.height();
         let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
-        let target = if measured_beside.contains(&true) && fragment_height.is_none() {
-            // Lines beside floats break between columns where they are, so
-            // the columns are as tall as the lowest height that fits them all.
+        // Columns that may fill the container's height instead are measured
+        // as placed, so that what does not fit goes to overflow columns.
+        let breaks_inside = measured_beside.contains(&true)
+            || stacked.iter().any(|stacked| stacked.sliced)
+            || definite_balance.is_some();
+        let target = if breaks_inside && fragment_height.is_none() {
+            // Lines beside floats break between columns where they are, and
+            // boxes with no lines where the columns end, so the columns are
+            // as tall as the lowest height that fits them all.
             balanced_stack_height(
                 &stacked,
                 context.column_count,
@@ -3092,6 +3208,16 @@ fn layout_column_group(
         Some((measurements, target))
     } else {
         None
+    };
+    // Content that needs more than the container's height fills it, as in
+    // columns that do not balance, and goes on in overflow columns.
+    let auto_measurements = match (definite_balance, auto_measurements) {
+        (Some(height), Some((_, target))) if target > height + LINE_EPSILON => {
+            fragment_height = Some(height);
+            measured_beside.fill(false);
+            None
+        }
+        (_, measurements) => measurements,
     };
     // One ordinary paragraph can break inside its lines. Measuring its whole
     // block as an atomic item would keep the container at the unbroken height
@@ -3419,9 +3545,33 @@ fn layout_column_group(
         // Content past the last column of a container with a definite
         // height continues in overflow columns (CSS Multi-column 1, 8.2).
         let from = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
+        // A box with no lines that reaches past the end of its column is cut
+        // there and goes on at the top of the next ones (CSS Fragmentation 3,
+        // 4.4).
+        let sliceable = break_height.is_some()
+            && continuation.is_none()
+            && planned.is_none()
+            && paragraph_balance.is_none()
+            && beside_floats.is_none()
+            && beside.is_none()
+            && column_float.is_none()
+            && slices_at_column_end(tree, child);
+        // The last column there is, which holds what is left of a box in
+        // columns that cannot overflow.
+        let last_column = fragment_height
+            .is_none()
+            .then(|| context.column_count.saturating_sub(1));
+        let slice_from = |column: usize, from: f32| {
+            let height = break_height?;
+            (sliceable && last_column.is_none_or(|last| column < last))
+                .then(|| sliced_leaf_placement(context, column, from, needed, height, last_column))
+                .flatten()
+                .map(|placement| (placement, height))
+        };
         if let Some(height) = break_height
             && continuation.is_none()
             && group_balance.is_none()
+            && slice_from(column, from).is_none()
             && (column + 1 < context.column_count || fragment_height.is_some())
             && from > 0.0
             && from + needed > height
@@ -3440,6 +3590,10 @@ fn layout_column_group(
             beside = None;
         }
         let top = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
+        // A box with no lines that reaches past the end of its column, where
+        // it starts or where it moved to, is cut there and goes on at the
+        // top of the next ones (CSS Fragmentation 3, 4.4).
+        let sliced_leaf = slice_from(column, top);
 
         let column_context = context.in_column(
             column,
@@ -3650,6 +3804,19 @@ fn layout_column_group(
         {
             return fallback_height;
         }
+        if let Some((placement, height)) = &sliced_leaf
+            && push_sliced_box_pieces(
+                tree,
+                child,
+                child_fragment,
+                placement,
+                child_output.size.height,
+                *height,
+            )
+            .is_none()
+        {
+            return fallback_height;
+        }
         // The boxes inside a wrapper whose boxes joined the flow have their
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
@@ -3733,7 +3900,12 @@ fn layout_column_group(
         } else if child_output.size.width > 0.0 && child_output.size.height > 0.0 {
             occupied.insert(column);
         }
-        if let Some(placement) = planned {
+        if let Some((placement, height)) = &sliced_leaf {
+            occupied.extend(placement.first_column..=placement.last_column);
+            maximum = maximum.max(*height);
+            column = placement.last_column;
+            cursor = placement.last_y + margin_bottom;
+        } else if let Some(placement) = planned {
             column = placement.last_column;
             cursor = placement.last_y;
             let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
@@ -3787,7 +3959,13 @@ fn layout_column_group(
     {
         cursor = cursor.max(run.bottom);
     }
-    if retain_group {
+    // Balanced columns of a container with a definite height are as tall as
+    // their content, which the rules between them follow.
+    if retain_group
+        || definite_balance.is_some()
+            && fragment_height.is_none()
+            && !tree.context.unpaged_plain_columns
+    {
         tree.nodes[index]
             .multicol_groups
             .push(crate::fragment::MulticolGroup {
@@ -3803,6 +3981,7 @@ fn layout_column_group(
     }
     let minimum_height = if auto_measurements.is_some()
         && fragment_height.is_none()
+        && definite_balance.is_none()
         && !multicol_has_nested_descendant(tree, index)
     {
         0.0
