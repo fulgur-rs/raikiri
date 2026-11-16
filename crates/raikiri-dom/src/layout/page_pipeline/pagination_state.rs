@@ -21,17 +21,18 @@ use super::{
     forced_line_breaks, forced_line_moves, forced_target_page, generated_content_runs_past,
     grow_ancestors_below, grow_ancestors_for_shift, grow_container_beside_item,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    is_floating_box_for_pagination, is_unfixed_absolute_box, item_bottom_in, item_of,
-    last_flow_box, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
-    line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
-    lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
-    move_box_for_transition, move_flex_line_siblings, move_line_block, move_paragraph_lines,
-    page_break_is_forced, page_type_leaves_local_flow, paragraph_line_bounds,
+    height_follows_content, is_floating_box_for_pagination, is_unfixed_absolute_box,
+    item_bottom_in, item_of, last_flow_box, lead_below_ancestor, lead_below_edges,
+    leading_edges_move, leading_holder, line_block_parent, line_run_among_blocks,
+    lines_between_blocks, lines_can_shift_above_blocks, lines_can_shift_between_blocks,
+    lines_can_shift_inside, lines_move_grows_box, make_room_for_caption_header,
+    make_room_for_table_header, margin_box_starts_page, margin_kept_by_floats,
+    margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
     participates_in_margin_adjacency, place_first_table_header, place_table_footer,
-    place_text_candidate, positioned_line_moves, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
+    place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
+    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
     run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
     shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
     text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
@@ -668,11 +669,17 @@ impl PaginationState {
             self.page_names.current = candidate.page_name.clone();
         }
         reach_page(control, self.current_page)?;
-        if name_participates_in_flow && text.height > 0.0 {
+        // The text that pagination moved down past the end of a clip around
+        // its lines, as a forced break inside the clipping box does, paints
+        // nowhere and reaches no page.
+        let reach_height = text
+            .height
+            .min((text_clip_end(document, env, candidate) - text.effective_y).max(0.0));
+        if name_participates_in_flow && reach_height > 0.0 {
             self.column_contexts
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
         }
-        let end_page = page_origins.end_page(text.effective_y, text.height);
+        let end_page = page_origins.end_page(text.effective_y, reach_height);
         let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
         if step.consumes_pending_break {
@@ -2014,7 +2021,7 @@ impl PaginationState {
         );
         // The only item of a grid that stacks it as block flow breaks between
         // the lines of its paragraphs as a block does, and does not move whole.
-        if overflow.grid_item {
+        if overflow.grid_item && !super::unplaced_item_moves(document, cascade, candidate, &fit) {
             overflow.grid_item = !holds_block_flow_paragraph(document, cascade, body_id, node_id);
         }
         // A trailing item's later content may fragment, but its first piece
@@ -3126,6 +3133,51 @@ impl PaginationState {
                     moved_whole = true;
                     continue;
                 }
+                // A first line that crosses the end of the page has no break
+                // before it inside the box it starts, nor before the boxes
+                // that start with that box: when one of them ends on the
+                // page, the page cannot break inside it, so the line
+                // overflows the box and stays, as in Chromium. The lines
+                // after it go on below it and break on the pages after it as
+                // a later fragment does. Only a second line left alone under
+                // `orphans` moves the paragraph, as the break before it
+                // would.
+                if !moved_whole
+                    && line_fit.starts_on_page
+                    && line_fit.lines_before_break == 0
+                    && (line_fit.total_lines == 1 || line_fit.orphans <= 1)
+                    && starting_box_ends_on_page(
+                        document,
+                        cascade,
+                        body_id,
+                        block_id,
+                        block_effective_y,
+                        page_start,
+                        page_start + page_step,
+                    )
+                {
+                    // The pieces of the lines start at the first, which no
+                    // move takes: every later line that crosses a page end
+                    // starts the page after it.
+                    line_fit.first_fragment = false;
+                    line_fit.tail_edges = 0.0;
+                    let moves = if lines_can_move {
+                        paragraph_line_moves(
+                            &line_metrics,
+                            text.effective_y,
+                            page,
+                            &line_fit,
+                            page_origins,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    let moved = self.move_lines(
+                        document, env, candidate, entry, blocks, text, block_id, moves,
+                    );
+                    moved?;
+                    break;
+                }
                 let fix = line_fit.fix(
                     &line_metrics,
                     text.effective_y,
@@ -3762,6 +3814,8 @@ impl PaginationState {
                 self.page_names.current = candidate.page_name.clone();
             } else if let Some(natural_page) =
                 page_origins.page_index_in_flow(text.effective_y - relative_offset)
+                // Text that a clip hides whole starts no page.
+                && text.effective_y < text_clip_end(document, env, candidate) - 0.001
             {
                 reach_page(control, natural_page)?;
                 // The text of a box outside the flow falls on the page its
@@ -4023,6 +4077,38 @@ fn is_block_flow_box(
         && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
 }
 
+/// The end of the nearest clip in the flow around the lines of the text of
+/// `candidate`, where its box is now, in the coordinates of the candidates
+/// with the relative offsets that paint the text: the clip stays with its box
+/// while pagination moves the lines inside it, and hides what they paint past
+/// it. Infinite when no such clip holds the lines.
+fn text_clip_end(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    candidate: &PageCandidate,
+) -> f32 {
+    candidate
+        .ifc_root
+        .and_then(|(root, _)| env.clip_edges.get(&root))
+        .and_then(|clip| moved_line_clip_end(document, clip, env.root_flow_offset))
+        .unwrap_or(f32::INFINITY)
+}
+
+/// The nearest end of the boxes in the flow whose clip holds the lines of
+/// `clip`, where they are now, in the coordinates of the candidates. Each
+/// one's end moves with it; the lines inside it do not move it.
+fn moved_line_clip_end(
+    document: &LayoutSession<'_>,
+    clip: &super::candidates::LineClip,
+    root_flow_offset: f32,
+) -> Option<f32> {
+    clip.owners
+        .iter()
+        .map(|&owner| current_abs_y(document, owner) + document.nodes[owner].layout.size.height)
+        .reduce(f32::min)
+        .map(|end| end + root_flow_offset)
+}
+
 /// The lines of `all_line_metrics`, relative to the text at `effective_y`,
 /// that pagination may move, with the widows they keep. A clip hides the lines past its edge: they never move, and a page
 /// that the box ends on, at or above the edge, has no break inside the box for
@@ -4040,17 +4126,12 @@ fn clipped_line_metrics(
     widows: i32,
 ) -> (Vec<(f32, f32)>, i32) {
     let mut line_metrics = all_line_metrics.to_vec();
-    // Only boxes in the flow hold the lines that pagination moves here; each
-    // one's end moves with it, so the nearest end now is the one that counts.
-    let Some(end) = clip.and_then(|clip| {
-        clip.owners
-            .iter()
-            .map(|&owner| current_abs_y(document, owner) + document.nodes[owner].layout.size.height)
-            .reduce(f32::min)
-    }) else {
+    // Only boxes in the flow hold the lines that pagination moves here.
+    let Some(end) = clip.and_then(|clip| moved_line_clip_end(document, clip, root_flow_offset))
+    else {
         return (line_metrics, widows);
     };
-    let visible = end + root_flow_offset - effective_y;
+    let visible = end - effective_y;
     let widows = if line_metrics
         .last()
         .is_some_and(|&(_, bottom)| bottom > visible + 0.001)
@@ -4070,6 +4151,93 @@ fn clipped_line_metrics(
         }
     }
     (line_metrics, widows)
+}
+
+/// Whether the block `block_id`, whose border box the flow puts at
+/// `block_top` now, or one of the boxes that start
+/// with it and so have no break between their top and it, ends by
+/// `page_end`: the page cannot break inside such a box. A box whose height
+/// follows its content holds the block and ends below it; the others keep the
+/// height they have and move with the block, their first box. Positions are
+/// those of the flow, without relative offsets, which only paint the boxes
+/// elsewhere.
+fn starting_box_ends_on_page(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block_id: usize,
+    block_top: f32,
+    page_start: f32,
+    page_end: f32,
+) -> bool {
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    // How far pagination has moved the block, and the boxes that start with
+    // it, from where their layout put them.
+    let shift = block_top - flow_top(block_id);
+    let holder = first_box_ancestor_at_start(document, cascade, block_id, body_id, page_start);
+    let chain = std::iter::once(block_id)
+        .chain(
+            document
+                .layout_ancestors(block_id)
+                .take_while(|&id| id != body_id),
+        )
+        // Up to the holder, the outermost box that starts with the block.
+        .take_while({
+            let mut reached = false;
+            move |&id| !std::mem::replace(&mut reached, id == holder)
+        })
+        .collect::<Vec<_>>();
+    !chain.iter().any(|&id| {
+        empty_box_before_lies_past(document, cascade, id, |empty| {
+            flow_top(empty) + shift >= page_end - 0.001
+        })
+    }) && chain.into_iter().any(|id| {
+        (id == block_id
+            || (!document.nodes[id].display().is_inline_level()
+                && document.nodes[id].display() != raikiri_style::property::DisplayValue::Contents
+                && !height_follows_content(document, id)))
+            && flow_top(id) + shift + document.nodes[id].layout.size.height <= page_end + 0.001
+    })
+}
+
+/// Whether one of the empty boxes right before `node_id` among its in-flow
+/// siblings, whose margins collapse through them, lies where `past_end` says
+/// the page has ended: the page breaks before that box, so the box after it
+/// starts the next page.
+fn empty_box_before_lies_past(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    past_end: impl Fn(usize) -> bool,
+) -> bool {
+    document.parent_of(node_id).is_some_and(|parent| {
+        let children = &document.nodes[parent].children;
+        let before = children
+            .iter()
+            .position(|&child| child == node_id)
+            .unwrap_or(children.len());
+        let mut boxes = Vec::new();
+        for &child in children[..before].iter().rev() {
+            boxes.clear();
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            for &empty in &boxes {
+                if !collapses_through(
+                    document,
+                    cascade,
+                    empty,
+                    document.nodes[empty].layout.size.height,
+                ) {
+                    return false;
+                }
+                if past_end(empty) {
+                    return true;
+                }
+            }
+        }
+        false
+    })
 }
 
 /// Whether the block `node_id` and every block around it inside the body run
