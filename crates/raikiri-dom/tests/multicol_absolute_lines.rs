@@ -539,3 +539,69 @@ fn a_box_with_a_very_deep_flow_still_starts_in_its_first_column() {
         &[("a", (8.0, 33.0, 30.0, 15.0))],
     );
 }
+
+#[test]
+fn lines_overflowing_a_block_of_definite_height_still_move() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=c1 style="height:20px"><span id=l1>xxx</span> <span id=l2>xxx</span> <span id=l3>xxx</span> <span id=l4>xxx</span></div><div id=c2>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 15.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (38.0, 8.0, 30.0, 5.0)),
+            ("l1", (8.0, 33.0, 30.0, 10.0)),
+            ("l2", (38.0, 8.0, 30.0, 10.0)),
+            ("l3", (38.0, 18.0, 30.0, 10.0)),
+            ("l4", (38.0, 28.0, 30.0, 10.0)),
+            ("c2", (38.0, 13.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_wrapper_with_a_minimum_height_grows_with_its_blocks() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=w style="min-height:10px"><div id=c1>xxx xxx</div><div id=c2>xxx</div></div><div id=n>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 30.0)),
+            ("w", (8.0, 33.0, 30.0, 15.0)),
+            ("w", (38.0, 8.0, 30.0, 20.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (38.0, 8.0, 30.0, 10.0)),
+            ("c2", (38.0, 18.0, 30.0, 10.0)),
+            ("n", (38.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_wrapper_taller_than_its_content_takes_the_moves_first() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px"><div id=w style="min-height:50px"><div id=c1>xxx xxx</div></div><div id=n>xxx</div></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 40.0)),
+            ("a", (68.0, 8.0, 30.0, 10.0)),
+            ("w", (8.0, 33.0, 30.0, 15.0)),
+            ("w", (38.0, 8.0, 30.0, 35.0)),
+            ("c1", (8.0, 33.0, 30.0, 15.0)),
+            ("c1", (38.0, 8.0, 30.0, 10.0)),
+            ("n", (68.0, 8.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_box_its_insets_size_keeps_its_height() {
+    check(
+        r#"<div id=m style="columns:2;column-gap:0;width:60px;height:40px;column-fill:auto"><div style="position:relative;height:60px"><div id=a style="position:absolute;width:30px;top:25px;bottom:-10px"><span id=l1>xxx</span> <span id=l2>xxx</span> <span id=l3>xxx</span> <span id=l4>xxx</span></div></div></div>"#,
+        &[
+            ("a", (8.0, 33.0, 30.0, 15.0)),
+            ("a", (38.0, 8.0, 30.0, 30.0)),
+            ("l1", (8.0, 33.0, 30.0, 10.0)),
+            ("l2", (38.0, 8.0, 30.0, 10.0)),
+            ("l4", (38.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}

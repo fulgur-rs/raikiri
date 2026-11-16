@@ -7402,13 +7402,16 @@ fn height_can_grow(document: &super::context::LayoutSession<'_>, block: usize) -
 /// Whether the box of the paragraph `block` can grow when its lines move
 /// down: its height can grow with its content (see [`height_can_grow`]) and
 /// no size containment ignores that content.
-fn lines_move_grows_box(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+pub(in crate::layout) fn lines_move_grows_box(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> bool {
     height_can_grow(document, block) && !document.nodes[block].size_containment.height
 }
 
 /// The `min-height` and `max-height` of `block` as border-box heights (CSS 2.1
 /// §10.7); `max` is infinite when nothing caps the height.
-fn border_box_height_bounds(
+pub(in crate::layout) fn border_box_height_bounds(
     document: &super::context::LayoutSession<'_>,
     block: usize,
 ) -> (f32, f32) {
@@ -7442,7 +7445,7 @@ fn border_box_height_bounds(
 /// as its height bounds and `edges_below` of bottom padding and border, once
 /// its content end moves from `before` to `after`, and whether `max-height`
 /// cut the grown height short.
-fn grown_height(
+pub(in crate::layout) fn grown_height(
     old: f32,
     (min, max): (f32, f32),
     edges_below: f32,

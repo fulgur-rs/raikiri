@@ -126,28 +126,31 @@ pub(crate) fn record_out_of_flow_boxes_on_column_lines(
                 .saturating_sub(records.fragments.len() + placed.len());
             let split = columns.map_or(Split::Whole, |(_, columns)| {
                 let top = piece_origin.y + rect.y;
-                let mut layout = tree.nodes[node].layout;
-                // The lines that a column end crosses start the next column.
-                if let Some(moves) = column_lines::line_moves(
+                let layout = tree.nodes[node].layout;
+                // The lines that a column end crosses start the next column,
+                // when the columns break the box.
+                let moves = column_lines::line_moves(
                     tree,
                     node,
                     top - columns.origin.y,
                     columns.height,
                     None,
-                ) {
-                    layout = moves.moved(layout);
-                    line_moves.push((node, moves));
-                }
-                columns.pieces(
-                    &layout,
+                );
+                let moved = moves.as_ref().map_or(layout, |moves| moves.moved(layout));
+                let split = columns.pieces(
+                    &moved,
                     FragmentRect {
                         x: piece_origin.x + rect.x,
                         y: top,
-                        height: layout.size.height,
+                        height: moved.size.height,
                         ..rect
                     },
                     budget,
-                )
+                );
+                if let (Split::Pieces(_), Some(moves)) = (&split, moves) {
+                    line_moves.push((node, moves));
+                }
+                split
             });
             match split {
                 Split::Pieces(split) => {

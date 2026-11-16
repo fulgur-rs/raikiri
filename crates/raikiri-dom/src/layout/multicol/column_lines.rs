@@ -29,11 +29,10 @@ pub(super) struct LineMoves {
     lines: Vec<(usize, Vec<(usize, f32)>)>,
     /// Each block that the moved lines before it move down, with how far.
     blocks: Vec<(usize, f32)>,
-    /// Each box that grows, the box itself among them, with how far its
-    /// border box grows and how far its content moves down.
+    /// Each box inside it whose content moves, with how far its border box
+    /// grows and how far the content that reaches lowest in it moves down.
     grown: Vec<(usize, f32, f32)>,
-    /// How far the border box of the box itself grows, and how far its
-    /// content moves down.
+    /// The same for the box itself.
     own: (f32, f32),
 }
 
@@ -68,12 +67,8 @@ pub(super) fn line_moves(
     }
     let columns = Columns { height, last };
     let mut moves = LineMoves::default();
-    let (growth, moved) = plan(tree, node, top, columns, &mut moves, 0)?;
-    if moved <= 0.0 {
-        return None;
-    }
-    moves.own = (growth, moved);
-    Some(moves)
+    moves.own = plan(tree, node, top, columns, &mut moves, 0)?;
+    (!(moves.lines.is_empty() && moves.blocks.is_empty())).then_some(moves)
 }
 
 #[derive(Clone, Copy)]
@@ -83,8 +78,8 @@ struct Columns {
 }
 
 /// Plan the moves inside `node`, whose border box starts at `top`: how far
-/// its border box grows and how far its content moves down. `None` when its
-/// content holds what cannot follow the moves.
+/// its border box grows, and how far the content that reaches lowest in it
+/// moves down. `None` when its content holds what cannot follow the moves.
 fn plan(
     tree: &LayoutSession<'_>,
     node: usize,
@@ -102,24 +97,25 @@ fn plan(
     }
     let layout = element.layout;
     let content_top = top + layout.border.top + layout.padding.top;
-    let moved = match element.formatting_context {
+    // How far the end of the content moves down, and how far the content
+    // that reaches lowest does.
+    let (moved, reach) = match element.formatting_context {
         FormattingContext::Inline => {
             let lines = paragraph_moves(tree, node, content_top, columns)?;
-            let moved = lines.iter().map(|&(_, shift)| shift).sum();
+            let moved: f32 = lines.iter().map(|&(_, shift)| shift).sum();
             if !lines.is_empty() {
                 moves.lines.push((node, lines));
             }
-            moved
+            (moved, moved)
         }
         FormattingContext::Block => {
-            let mut moved = 0.0f32;
+            let (mut moved, mut reach) = (0.0f32, 0.0f32);
             for child in tree.children_through_contents(node) {
                 let child_node = &tree.nodes[child];
                 if child_node.kind() != NodeKind::Element || child_node.is_display_none() {
                     continue;
                 }
-                let child_layout = child_node.layout;
-                let mut child_top = top + child_layout.location.y + moved;
+                let mut child_top = top + child_node.layout.location.y + moved;
                 let mut delta = moved;
                 let child_kind = kind(tree, child, columns);
                 if child_kind == Kind::Other {
@@ -142,23 +138,66 @@ fn plan(
                 if delta > 0.0 {
                     moves.blocks.push((child, delta));
                 }
+                let mut child_reach = 0.0;
                 if child_kind == Kind::Plain {
-                    let (growth, _) = plan(tree, child, child_top, columns, moves, depth + 1)?;
+                    let (growth, inner) = plan(tree, child, child_top, columns, moves, depth + 1)?;
                     moved += growth;
+                    child_reach = inner;
                 }
+                reach = reach.max(moved).max(delta + child_reach);
             }
-            moved
+            (moved, reach)
         }
         _ => return None,
     };
-    if moved <= 0.0 {
-        return Some((0.0, 0.0));
+    let growth = if moved > 0.0 {
+        growth(tree, node, moved, depth == 0)
+    } else {
+        0.0
+    };
+    if depth > 0 && reach > 0.0 {
+        moves.grown.push((node, growth, reach));
     }
-    let growth = crate::layout::page_pipeline::lines_shift_growth(tree, node, moved);
-    if depth > 0 && growth > 0.0 {
-        moves.grown.push((node, growth, moved));
+    Some((growth, reach))
+}
+
+/// How far the border box of `node` grows when the end of its content moves
+/// down by `moved`: as far as its height follows its content, between its
+/// `min-height` and `max-height` (CSS 2.1, 10.7). A positioned box whose
+/// insets size it keeps its height (CSS 2.1, 10.6.4). `root` tells whether
+/// `node` is the positioned box itself.
+fn growth(tree: &LayoutSession<'_>, node: usize, moved: f32, root: bool) -> f32 {
+    use crate::layout::page_pipeline as pages;
+    let style = super::style_of(tree, node);
+    let inset = style.inset();
+    if root && !inset.top.is_auto() && !inset.bottom.is_auto() {
+        return 0.0;
     }
-    Some((growth, moved))
+    let element = &tree.nodes[node];
+    if element.formatting_context == FormattingContext::Inline {
+        return pages::lines_shift_growth(tree, node, moved);
+    }
+    if !pages::lines_move_grows_box(tree, node) {
+        return 0.0;
+    }
+    let layout = element.layout;
+    // The content ends where the lowest of its blocks does.
+    let bottom = tree
+        .children_through_contents(node)
+        .into_iter()
+        .filter(|&child| tree.nodes[child].kind() == NodeKind::Element)
+        .map(|child| {
+            let child = tree.nodes[child].layout;
+            child.location.y + child.size.height
+        })
+        .fold(layout.border.top + layout.padding.top, f32::max);
+    let (height, _) = pages::grown_height(
+        layout.size.height,
+        pages::border_box_height_bounds(tree, node),
+        layout.padding.bottom + layout.border.bottom,
+        (bottom, bottom + moved),
+    );
+    height - layout.size.height
 }
 
 /// How the moves treat a box in the flow of a block.
@@ -297,7 +336,8 @@ fn paragraph_moves(
 ) -> Option<Vec<(usize, f32)>> {
     let root = tree.ifc_layout_node(node)?.ifc.as_ref()?;
     let lines = root.lines.as_ref()?;
-    // Lines that pagination or the columns already moved are left there.
+    // Lines that pagination or the columns already moved are left there: a
+    // layout that keeps the box from an earlier one keeps its moves too.
     if !lines.shifts.is_empty()
         || root.multicol_fragments.is_some()
         || lines.fragmentainer_line_ranges.is_some()
@@ -326,7 +366,7 @@ fn paragraph_moves(
 pub(super) fn apply(tree: &mut LayoutSession<'_>, node: usize, moves: &LineMoves) {
     for (paragraph, lines) in &moves.lines {
         // The atomic inlines on each moved line, with how far the line moves.
-        let atomics: Vec<(usize, f32)> = tree
+        let atomics = tree
             .ifc_layout_node(*paragraph)
             .and_then(|element| element.ifc.as_ref())
             .and_then(|root| root.lines.as_ref())
@@ -350,7 +390,11 @@ pub(super) fn apply(tree: &mut LayoutSession<'_>, node: usize, moves: &LineMoves
                         })
                     })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // An atomic inline in several fragments of a line moves once.
+        let mut atomics = atomics;
+        atomics.sort_unstable_by_key(|&(atomic, _)| atomic);
+        atomics.dedup_by_key(|&mut (atomic, _)| atomic);
         for &(line, shift) in lines {
             crate::layout::page_pipeline::shift_ifc_lines_from(tree, *paragraph, line, shift, 0.0);
         }

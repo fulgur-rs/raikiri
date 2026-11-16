@@ -2422,9 +2422,6 @@ pub(super) fn layout(
     if outer_height.is_some_and(|outer| used_height > outer + EPSILON) {
         return None;
     }
-    for (node, moves) in &line_moves {
-        column_lines::apply(tree, *node, moves);
-    }
     tree.fragment_tree.retire_previous_roots(parent);
     tree.nodes[parent].multicol_groups.clear();
     tree.nodes[parent].multicol_rows.clear();
@@ -2626,9 +2623,13 @@ pub(super) fn layout(
         }
     }
     // The boxes are placed for good, without the block offset of their
-    // insets.
+    // insets, and the content of the positioned boxes moves as their pieces
+    // were placed.
     for &child in children {
         super::leave_block_offset_to_painter(tree, child);
+    }
+    for (node, moves) in &line_moves {
+        column_lines::apply(tree, *node, moves);
     }
     Some(used_height)
 }
