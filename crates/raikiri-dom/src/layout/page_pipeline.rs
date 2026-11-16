@@ -12679,8 +12679,9 @@ struct SubtreeShifts {
     /// Table rows, or cells outside a table, that forced breaks in their
     /// cells grew, with how far.
     grown_rows: Vec<((usize, usize), f32)>,
-    /// Tables that grew with their rows, with how far.
-    grown_tables: Vec<(usize, f32)>,
+    /// Boxes that forced breaks inside them grew, with how far in all:
+    /// their stored heights leave that growth out.
+    grown_boxes: Vec<(usize, f32)>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -12706,27 +12707,31 @@ struct BesideGrowth {
 }
 
 impl SubtreeShifts {
-    /// How far the row `row` (see [`Self::grow_row`]) has grown.
-    fn row_growth(&self, row: (usize, usize)) -> f32 {
-        self.grown_rows
-            .iter()
-            .find(|(id, _)| *id == row)
-            .map_or(0.0, |&(_, grown)| grown)
-    }
-
-    /// Records that `table` grew `added` more with one of its rows, and
-    /// returns how far it has grown in all.
-    fn grow_table(&mut self, table: usize, added: f32) -> f32 {
-        match self.grown_tables.iter_mut().find(|(id, _)| *id == table) {
+    /// Records that `id` grew `added` more, and returns how far it has
+    /// grown in all.
+    fn grow_box(&mut self, id: usize, added: f32) -> f32 {
+        match self
+            .grown_boxes
+            .iter_mut()
+            .find(|(grown_id, _)| *grown_id == id)
+        {
             Some((_, grown)) => {
                 *grown += added;
                 *grown
             }
             None => {
-                self.grown_tables.push((table, added));
+                self.grown_boxes.push((id, added));
                 added
             }
         }
+    }
+
+    /// How far `id` has grown in all (see [`Self::grow_box`]).
+    fn box_growth(&self, id: usize) -> f32 {
+        self.grown_boxes
+            .iter()
+            .find(|(grown_id, _)| *grown_id == id)
+            .map_or(0.0, |&(_, grown)| grown)
     }
 
     /// Records that a cell of `row` needs it `growth` taller than it was
@@ -14601,10 +14606,36 @@ fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize
             toward
                 .iter()
                 .find(|&&(ancestor, _)| ancestor == up)
-                .map(|&(_, branch)| index(up, child) > index(up, branch))
+                .map(|&(_, branch)| {
+                    let rank = |id: usize| (table_section_rank(document, up, id), index(up, id));
+                    rank(child) > rank(branch)
+                })
         })
         .find_map(|reached| reached)
         .unwrap_or(true)
+}
+
+/// Where `child` comes among the children of `parent` in the order the
+/// flow reaches them, before its index: a table puts its first header group
+/// first and its first footer group last (CSS 2.1 §17.2).
+fn table_section_rank(document: &Document, parent: usize, child: usize) -> u8 {
+    if !matches!(
+        document.nodes[parent].display(),
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return 1;
+    }
+    let display = document.nodes[child].display();
+    let first_of = |group: DisplayValue| {
+        display == group
+            && document.nodes[parent]
+                .children
+                .iter()
+                .find(|&&id| document.nodes[id].display() == group)
+                == Some(&child)
+    };
+    1 + u8::from(first_of(DisplayValue::TableFooterGroup))
+        - u8::from(first_of(DisplayValue::TableHeaderGroup))
 }
 
 /// The index of `child` among the children of `parent`.
@@ -16666,10 +16697,12 @@ fn shift_block_flow_after(
                 // §17.5.3). The cells beside it keep their places, and the
                 // flow after the row follows its growth.
                 shift_later_flow_siblings(document, parent, child, flow_delta);
-                let child_growth =
-                    child_total
-                        .take()
-                        .unwrap_or(if child == node_id { 0.0 } else { flow_delta });
+                // The box the cell holds may have grown on earlier breaks too.
+                let child_growth = if child == node_id {
+                    0.0
+                } else {
+                    shifts.box_growth(child)
+                };
                 let passed = moved_content_growth(
                     document,
                     cascade,
@@ -16692,7 +16725,7 @@ fn shift_block_flow_after(
                         shifts.bounded.push((parent, flow_delta - added, flow_page));
                     }
                     flow_delta = added;
-                    child_total = Some(shifts.row_growth(holder));
+                    child_total = Some(shifts.grow_box(parent, added));
                     child = parent;
                     if flow_delta <= 0.001 {
                         break;
@@ -16708,7 +16741,7 @@ fn shift_block_flow_after(
                 // The table grows with the row: its ancestors take the growth
                 // on as they take a moved box's.
                 flow_delta = added;
-                child_total = Some(shifts.grow_table(table, added));
+                child_total = Some(shifts.grow_box(table, added));
                 child = table;
                 walk = AncestorCursor::new(document.parent_of(table), ParentRelation::Source);
                 continue;
@@ -16743,6 +16776,7 @@ fn shift_block_flow_after(
             (child, child_growth),
             flow_delta,
         );
+        shifts.grow_box(parent, passed.min(flow_delta));
         if passed < flow_delta - 0.001 {
             shifts
                 .bounded

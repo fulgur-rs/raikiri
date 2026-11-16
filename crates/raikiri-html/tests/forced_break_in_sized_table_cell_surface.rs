@@ -382,3 +382,32 @@ fn a_wrapper_sized_by_its_height_limits_keeps_the_margin_inside() {
         [(0, 'A', 0), (1, 'B', 0), (1, 'X', 70)]
     );
 }
+
+#[test]
+fn a_wrapper_in_the_cell_passes_on_all_its_growth() {
+    // Two breaks inside a wrapper: the cell's content ends at 220px.
+    assert_eq!(
+        glyph_tops(
+            r#"<table><tr><td style="height:100px"><div><div style="height:20px">A</div><div style="height:70px;break-before:page">B</div><div style="height:20px;break-before:page">C</div></div></td></tr></table><div>X</div>"#
+        ),
+        [(0, 'A', 0), (1, 'B', 0), (2, 'C', 0), (2, 'X', 20)]
+    );
+}
+
+#[test]
+fn the_footer_follows_the_grown_row() {
+    // The footer closes the table at the row's end, 170px, wherever it is
+    // among the table's children, and the flow after the table follows it.
+    // The copy of the footer that also ends the first page is not checked
+    // here.
+    let cell = broken_cell(150, 70);
+    for table in [
+        format!("<table><tbody><tr>{cell}</tr></tbody><tfoot><tr><td>F</td></tr></tfoot></table>"),
+        format!("<table><tfoot><tr><td>F</td></tr></tfoot><tbody><tr>{cell}</tr></tbody></table>"),
+    ] {
+        let tops = glyph_tops(&format!("{table}<div>X</div>"));
+        for glyph in [(1, 'B', 0), (1, 'F', 70), (2, 'X', 0)] {
+            assert!(tops.contains(&glyph), "{table}: {tops:?}");
+        }
+    }
+}
