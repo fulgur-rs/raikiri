@@ -10870,8 +10870,10 @@ pub(super) fn follows_box_on_page(
         body_id,
         node_id,
         |parent, node, boxes| {
-            // An element that generates no box of its own may still hold a
-            // block-level generated box, which is content of the page.
+            // An element that generates no box of its own, an empty or a
+            // `display: contents` one, may still hold generated content,
+            // block-level or on the lines of the paragraph, which is content
+            // of the page.
             document.nodes[parent]
                 .children
                 .iter()
@@ -10884,7 +10886,7 @@ pub(super) fn follows_box_on_page(
                         ]
                         .into_iter()
                         .any(|pseudo| {
-                            generates_block_pseudo(cascade, child, pseudo)
+                            renders_pseudo(cascade, child, pseudo)
                                 && pseudo_on_page(parent, child, pseudo)
                         })
                 })
@@ -10913,9 +10915,10 @@ pub(super) fn follows_box_on_page(
     )
 }
 
-/// Whether the element `node_id` has a `pseudo` box that is block-level and
-/// in the flow, with content to show.
-fn generates_block_pseudo(
+/// Whether the element `node_id` has a `pseudo` box of the flow: generated
+/// content that is not absolutely positioned. It is not a child in the arena,
+/// so walks over the children do not see it.
+fn renders_pseudo(
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
@@ -10923,20 +10926,13 @@ fn generates_block_pseudo(
     cascade
         .pseudo
         .get(&(raikiri_style::StyleNodeId::new(node_id as u64), pseudo))
-        .is_some_and(|style| !style.display.is_inline_level() && pseudo_style_renders(style))
+        .is_some_and(|style| pseudo_style_renders(style))
 }
 
-/// Whether the element `parent` has a `::before` box of the flow: generated
-/// content that is not absolutely positioned. It is not a child in the arena,
-/// so walks over the children do not see it.
+/// Whether the element `parent` has a `::before` box of the flow (see
+/// [`renders_pseudo`]).
 fn renders_before_pseudo(cascade: &CascadeResult, parent: usize) -> bool {
-    cascade
-        .pseudo
-        .get(&(
-            raikiri_style::StyleNodeId::new(parent as u64),
-            raikiri_style::PseudoElem::Before,
-        ))
-        .is_some_and(|style| pseudo_style_renders(style))
+    renders_pseudo(cascade, parent, raikiri_style::PseudoElem::Before)
 }
 
 /// Whether a pseudo-element of `style` generates a box of the flow:

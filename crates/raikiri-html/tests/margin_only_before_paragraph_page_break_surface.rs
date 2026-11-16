@@ -305,3 +305,25 @@ fn a_generated_box_counts_where_it_ends() {
         assert_eq!(glyph_tops(&body), [(2, 'A', 45), (2, 'Z', 75)], "{body}");
     }
 }
+
+#[test]
+fn generated_text_of_a_contents_element_before_the_paragraph_lets_it_move_whole() {
+    for (class, content) in LINES {
+        for pseudo in ["before", "after"] {
+            let body = document(
+                &format!(
+                    r#"<style>.s::{pseudo}{{content:"x"}}</style><span class="s" style="display:contents"></span>"#
+                ),
+                "",
+                class,
+                "margin:10px 0 0;padding-top:40px",
+                content,
+            );
+            assert_eq!(
+                glyph_tops(&body),
+                [(0, 'x', 5), (1, 'A', 45), (1, 'Z', 75)],
+                "{body}"
+            );
+        }
+    }
+}
