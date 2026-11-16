@@ -4296,3 +4296,429 @@ fn moved_rows_check_their_table_for_spanning_cells_once() {
     let last_row = ids[ids.len() - 2];
     assert_eq!(page_flow_y(&doc, last_row), 360.0);
 }
+
+/// `body > [div(parent_css) > children, div(10px)]` on 100px pages, each
+/// child a block styled by its entry. Returns the page-flow y of the block
+/// after the parent and the number of pages.
+fn after_margin_above_edges(parent_css: &str, children: &[&str]) -> (f32, usize) {
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{parent_css}"));
+        for css in children {
+            block(doc, parent, &format!("display:block;{css}"));
+        }
+        after = block(doc, body, "display:block;height:10px");
+    });
+    (page_flow_y(&doc, after), pages)
+}
+
+#[test]
+fn a_page_edge_in_the_margin_above_the_edges_truncates_it() {
+    // CSS Fragmentation 3 §5.2: the last box's margin crosses the page end,
+    // where the page breaks. The padding begins the second page, and the
+    // block after the parent follows it there, as in Chromium.
+    for child in [
+        "height:90px;margin-bottom:20px",
+        "height:100px;margin-bottom:20px",
+        "height:60px;padding-bottom:30px;margin-bottom:20px",
+        "height:90px;margin-bottom:5px",
+    ] {
+        assert_eq!(
+            after_margin_above_edges("padding-bottom:10px", &[child]),
+            (110.0, 2),
+            "{child}"
+        );
+    }
+}
+
+#[test]
+fn a_margin_above_the_edges_crossing_more_than_a_page_ends_at_the_first_edge() {
+    // The rest of the margin is truncated with the pages it would fill.
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px", &["height:90px;margin-bottom:150px"]),
+        (110.0, 2)
+    );
+    // So it is in a block that ends with the parent, whose own padding
+    // follows the parent's.
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let outer = block(doc, body, "display:block;padding-bottom:5px");
+        let parent = block(doc, outer, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!((page_flow_y(&doc, after), pages), (115.0, 2));
+}
+
+#[test]
+fn a_truncated_margin_between_the_children_of_a_block_reaches_no_page() {
+    // The margin above the second box is truncated at the first page edge.
+    // The wrapper around both is as tall as the margin was before that, but
+    // the rest of the margin does not add the pages it would have filled.
+    let (mut second, mut after) = (0, 0);
+    let (doc, pages) = paged_body(|doc, body| {
+        let wrapper = block(doc, body, "display:block;border-bottom:1px solid");
+        block(doc, wrapper, "display:block;height:20px");
+        second = block(doc, wrapper, "display:block;height:20px;margin-top:1000px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, second), page_flow_y(&doc, after), pages),
+        (100.0, 121.0, 2)
+    );
+}
+
+#[test]
+fn a_margin_collapsed_out_of_the_last_box_is_truncated_above_the_edges() {
+    // The inner block has no edges of its own, so the margin of its child
+    // collapses through its end, and through a `display: contents` element
+    // that has no box.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:10px");
+        let inner = block(doc, parent, "display:block");
+        block(doc, inner, "display:block;height:90px;margin-bottom:20px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 110.0);
+    for (inner_css, expected) in [("height:90px", 110.0), ("height:30px", 60.0)] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:10px");
+            let contents = block(doc, parent, "display:contents");
+            block(
+                doc,
+                contents,
+                &format!("display:block;{inner_css};margin-bottom:20px"),
+            );
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{inner_css}");
+    }
+}
+
+#[test]
+fn a_margin_above_the_edges_that_ends_on_its_page_stays() {
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px", &["height:60px;margin-bottom:20px"]),
+        (90.0, 1)
+    );
+    // The margins of an empty last box collapse through it.
+    assert_eq!(
+        after_margin_above_edges(
+            "padding-bottom:10px",
+            &["height:30px", "height:0;margin-bottom:20px"]
+        ),
+        (60.0, 1)
+    );
+}
+
+#[test]
+fn a_min_height_left_behind_lets_the_margin_above_the_edges_be_truncated() {
+    let child = ["height:90px;margin-bottom:20px"];
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;min-height:50px", &child),
+        (110.0, 2)
+    );
+    // A `min-height` past the content keeps the block, and its padding,
+    // where they are.
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;min-height:150px", &child),
+        (160.0, 2)
+    );
+}
+
+#[test]
+fn a_cut_inside_a_block_counts_against_its_min_height() {
+    // The inner block's margin is cut at the first page edge, which takes
+    // most of what the outer block's min-height leaves; the outer cut then
+    // stops at the min-height, as in Chromium.
+    for (min_height, expected) in [
+        (250.0, 260.0),
+        (230.0, 240.0),
+        (150.0, 210.0),
+        (260.0, 270.0),
+        (280.0, 290.0),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let outer = block(
+                doc,
+                body,
+                &format!("display:block;min-height:{min_height}px;padding-bottom:10px"),
+            );
+            let inner = block(
+                doc,
+                outer,
+                "display:block;padding-bottom:10px;margin-bottom:150px",
+            );
+            block(doc, inner, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{min_height}");
+    }
+}
+
+#[test]
+fn a_block_whose_height_does_not_follow_its_content_keeps_the_margin() {
+    let child = ["height:90px;margin-bottom:20px"];
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;height:120px", &child),
+        (130.0, 2)
+    );
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;max-height:40px", &child),
+        (50.0, 1)
+    );
+    assert_eq!(
+        after_margin_above_edges("padding-bottom:10px;contain:size", &child),
+        (10.0, 1)
+    );
+}
+
+#[test]
+fn a_grid_item_keeps_the_margin_above_its_edges() {
+    // Chromium leaves the margin inside the item whole.
+    let mut after = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let grid = block(doc, body, "display:grid");
+        let parent = block(doc, grid, "display:block;padding-bottom:10px");
+        block(doc, parent, "display:block;height:90px;margin-bottom:20px");
+        after = block(doc, grid, "display:block;height:10px");
+    });
+    assert_eq!(page_flow_y(&doc, after), 120.0);
+}
+
+#[test]
+fn a_forced_break_after_truncated_edges_opens_the_page_after_them() {
+    // The padding begins the second page at the edge that truncated the
+    // margin above it, so a break forced after the parent opens the third.
+    for (parent_css, after_css) in [
+        ("padding-bottom:10px", "height:10px;break-before:page"),
+        ("padding-bottom:10px;break-after:page", "height:10px"),
+    ] {
+        let mut after = 0;
+        let (doc, pages) = paged_body(|doc, body| {
+            let parent = block(doc, body, &format!("display:block;{parent_css}"));
+            block(doc, parent, "display:block;height:90px;margin-bottom:20px");
+            after = block(doc, body, &format!("display:block;{after_css}"));
+        });
+        assert_eq!(
+            (page_flow_y(&doc, after), pages),
+            (200.0, 3),
+            "{parent_css}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_body_keeps_the_margin_above_the_edges_of_its_items() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:flex;flex-direction:column;margin:0;width:100px"),
+    );
+    let parent = block(&mut doc, body, "display:block;padding-bottom:10px");
+    block(
+        &mut doc,
+        parent,
+        "display:block;height:90px;margin-bottom:20px",
+    );
+    let after = block(&mut doc, body, "display:block;height:10px");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(page_flow_y(&doc, after), 120.0);
+}
+
+#[test]
+fn a_block_of_set_height_reaches_its_pages_past_untruncated_margins() {
+    // The margin between the children crosses no page edge, and the block
+    // keeps its height: it runs on to the third page.
+    let mut after = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;height:220px");
+        block(doc, parent, "display:block;height:10px");
+        block(doc, parent, "display:block;height:10px;margin-top:30px");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!((page_flow_y(&doc, after), pages), (220.0, 3));
+}
+
+#[test]
+fn a_paragraph_keeps_the_space_below_its_lines() {
+    let mut after = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let paragraph = block(doc, body, "display:block;padding-bottom:10px");
+        doc.append_text(paragraph, "aaa");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert!(page_flow_y(&doc, after) < 100.0);
+}
+
+#[test]
+fn a_float_that_a_block_holds_keeps_the_margin_above_the_edges_down_to_it() {
+    // The page edge truncates the margin, but the content box of a block
+    // formatting context still holds the float, as in Chromium.
+    for (parent_css, float_height, expected) in [
+        ("display:flow-root;padding-bottom:10px", 150.0, 160.0),
+        ("display:flow-root;padding-bottom:10px", 300.0, 310.0),
+        // A float that sticks out of its block keeps nothing.
+        ("padding-bottom:10px", 150.0, 110.0),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, &format!("display:block;{parent_css}"));
+            block(
+                doc,
+                parent,
+                &format!("float:left;width:10px;height:{float_height}px"),
+            );
+            block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            page_flow_y(&doc, after),
+            expected,
+            "{parent_css} {float_height}"
+        );
+    }
+}
+
+#[test]
+fn a_relative_offset_leaves_the_margin_a_float_keeps_where_it_was() {
+    // The float keeps the margin down to its normal-flow bottom, whatever
+    // relative offset paints it or the box around it elsewhere, as in
+    // Chromium.
+    for (wrapper_css, float_css) in [
+        ("position:relative;top:-100px", ""),
+        ("", "position:relative;top:-100px"),
+    ] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:flow-root;padding-bottom:10px");
+            let wrapper = block(doc, parent, &format!("display:block;{wrapper_css}"));
+            block(
+                doc,
+                wrapper,
+                &format!("float:left;width:10px;height:150px;{float_css}"),
+            );
+            block(doc, parent, "display:block;height:90px;margin-bottom:150px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), 160.0, "{wrapper_css} {float_css}");
+    }
+}
+
+#[test]
+fn a_float_that_a_break_moves_keeps_the_margin_down_to_where_it_lands() {
+    // A float that avoids a break inside moves to the next page, and the
+    // margin above the edges is kept down to where it lands, as in Chromium.
+    for (float_height, expected) in [(90.0, 200.0), (60.0, 170.0)] {
+        let mut after = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            let parent = block(doc, body, "display:flow-root;padding-bottom:10px");
+            block(
+                doc,
+                parent,
+                &format!("float:left;width:10px;height:{float_height}px;break-inside:avoid"),
+            );
+            block(doc, parent, "display:block;height:10px");
+            block(doc, parent, "display:block;height:10px;margin-bottom:200px");
+            after = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, after), expected, "{float_height}");
+    }
+}
+
+#[test]
+fn a_min_height_past_the_first_page_edge_keeps_the_cut_at_that_edge() {
+    // The margin is cut at the first page edge inside it, and min-height
+    // then holds the block below that edge, as in Chromium.
+    assert_eq!(
+        after_margin_above_edges(
+            "padding-bottom:10px;min-height:150px",
+            &["height:90px;margin-bottom:200px"]
+        ),
+        (160.0, 2)
+    );
+}
+
+#[test]
+fn a_min_height_bounds_the_margins_its_pages_leave_out() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The margin between the children is truncated at the page edge, but
+    // the block keeps its min-height and reaches the third page, as in
+    // Chromium, even when the body clips its overflow.
+    for body_css in ["", "overflow:hidden"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some(&format!("display:block;margin:0;width:100px;{body_css}")),
+        );
+        let parent = doc.append_element(Some(body), "div", Some("display:block;min-height:220px"));
+        doc.append_element(Some(parent), "div", Some("display:block;height:90px"));
+        doc.append_element(
+            Some(parent),
+            "div",
+            Some("display:block;height:90px;margin-top:150px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+        assert_eq!(pages.len(), 3, "{body_css}");
+    }
+}
+
+#[test]
+fn edges_that_begin_a_page_reach_it_past_margins_that_stay_whole() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // No page edge falls inside the margins, so none is truncated, and the
+    // bottom padding alone begins the third page, as in Chromium, even when
+    // the body clips its overflow.
+    for children in [
+        ["height:40px", "height:150px;margin-top:10px"],
+        ["height:90px;margin-bottom:10px", "height:100px"],
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some("display:block;margin:0;width:100px;overflow:hidden"),
+        );
+        let parent =
+            doc.append_element(Some(body), "div", Some("display:block;padding-bottom:10px"));
+        for child in children {
+            doc.append_element(Some(parent), "div", Some(&format!("display:block;{child}")));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+        assert_eq!(pages.len(), 3, "{children:?}");
+    }
+}

@@ -1141,6 +1141,43 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
 }
 
 #[test]
+fn page_discovery_stops_at_edges_that_a_truncated_margin_takes_past_the_limit() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // The margin below the last box crosses the end of the only page the
+    // limit allows, and the padding after it begins the next one.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent =
+        document.append_element(Some(body), "div", Some("display:block;padding-bottom:10px"));
+    document.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;height:590px;margin-bottom:20px"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    let control = PageLayoutControl::for_geometry_discovery(Some(1));
+
+    let pages = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
+    )
+    .expect("bounded page discovery");
+
+    assert_eq!(pages.len(), 1);
+    assert!(control.page_limit_reached());
+}
+
+#[test]
 fn page_layout_discovery_control_records_a_truncated_limit_check() {
     let control = PageLayoutControl::for_geometry_discovery(Some(1));
 
@@ -16222,16 +16259,18 @@ fn a_margin_collapsed_from_a_first_child_breaks_at_the_first_page_edge() {
 }
 
 #[test]
-fn a_bordered_wrapper_keeps_its_last_childs_margin_inside() {
-    // The border separates the child's margin from the wrapper's, so the gap
-    // after the wrapper holds no margin to truncate.
+fn a_bordered_wrapper_truncates_its_last_childs_margin_at_the_page_edge() {
+    // The border keeps the child's margin inside the wrapper, where the first
+    // page edge in it truncates it: the border begins the second page, and
+    // the box after the wrapper follows it there. The rest of the margin
+    // reaches no page.
     assert_eq!(
         nested_margin_layout(
             "border-bottom:1px solid",
             "height:20px",
             [Some("margin-bottom:1000px"), None]
         ),
-        (1021.0, 11)
+        (101.0, 2)
     );
 }
 
@@ -21595,4 +21634,28 @@ fn a_length_that_does_not_depend_on_the_paragraph_height_keeps_the_child_followi
             "child {index}"
         );
     }
+}
+
+#[test]
+fn a_block_formatting_context_holds_only_the_floats_of_its_own_flow() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let root = doc.append_element(Some(body), "div", Some("display:flow-root"));
+    let plain = doc.append_element(Some(root), "div", Some("display:block"));
+    let own = doc.append_element(Some(plain), "div", Some("float:left;width:10px"));
+    let nested = doc.append_element(Some(root), "div", Some("display:flow-root"));
+    doc.append_element(Some(nested), "div", Some("float:left;width:10px"));
+    let out = doc.append_element(Some(root), "div", Some("position:absolute"));
+    doc.append_element(Some(out), "div", Some("float:left;width:10px"));
+    let contents = doc.append_element(Some(root), "div", Some("display:contents"));
+    let through = doc.append_element(Some(contents), "div", Some("float:right;width:10px"));
+    doc.append_element(Some(root), "div", Some("display:none;float:left"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    let mut floats = own_floats(&session, &cascade, root);
+    floats.sort_unstable();
+    assert_eq!(floats, vec![own, through]);
 }
