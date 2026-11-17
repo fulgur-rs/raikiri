@@ -17485,7 +17485,7 @@ fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: u
         match flow_step(document, child, parent) {
             FlowStep::Skip => {}
             FlowStep::Cell(_) => return true,
-            FlowStep::Stop => return false,
+            FlowStep::Stop => break,
             FlowStep::Inline | FlowStep::Flow { .. } => child = parent,
         }
     }
