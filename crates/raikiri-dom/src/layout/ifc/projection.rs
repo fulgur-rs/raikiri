@@ -1585,6 +1585,12 @@ fn project_children_builder(
     {
         builder.push_forced_break(NodeId(generated_node_id(root, PseudoElem::Marker) as u64));
     }
+    // The root's own `::before` and `::after` start and end the paragraph.
+    for block in &mut generated_images.blocks {
+        block.of_root = [PseudoElem::Before, PseudoElem::After]
+            .into_iter()
+            .find(|&pseudo| block.start == generated_node_id(root, pseudo) as u64);
+    }
     Ok(Projected {
         paragraph: builder,
         meta: ProjectedMeta {

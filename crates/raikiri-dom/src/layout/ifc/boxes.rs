@@ -188,6 +188,7 @@ pub(crate) fn layout_with_boxes_in(
             leading_block_margin: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
+            first_block_start: None,
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -402,6 +403,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             leading_block_margin: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
+            first_block_start: None,
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
@@ -585,6 +587,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         leading_block_margin: None,
         block_line_starts,
         generated_block_starts: Vec::new(),
+        first_block_start: None,
         block_ends: Vec::new(),
         shifts,
         fragment_box_placements,
@@ -855,6 +858,8 @@ fn run_boxes_segment(
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut generated_block_starts = Vec::new();
+    let mut first_block_start = None;
+    let mut leading_unordered = false;
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
@@ -1348,8 +1353,28 @@ fn run_boxes_segment(
                     generated_blocks::token(&root.generated_blocks, node.0, block_cursor)
                 {
                     block_cursor = index;
-                    if matches!(edge, generated_blocks::Token::Start(_)) {
+                    if let generated_blocks::Token::Start(block) = edge {
                         generated_block_starts.push((block_line_starts.len(), lines.len()));
+                        match block.of_root {
+                            Some(raikiri_style::PseudoElem::Before) => {}
+                            Some(_) => {
+                                // The margins above a box that starts the
+                                // paragraph escape through its top edge.
+                                let escapes = top_margin_escapes
+                                    && leading_margin_open
+                                    && lines.is_empty()
+                                    && y == 0.0;
+                                first_block_start.get_or_insert((
+                                    lines.len(),
+                                    if escapes { y } else { y + pending.resolve() },
+                                ));
+                            }
+                            // A descendant's box may come before or after an
+                            // out-of-flow box that no block child precedes,
+                            // so the start of the next block does not place
+                            // that box.
+                            None => leading_unordered |= first_block_start.is_none(),
+                        }
                     }
                     // A generated block is laid out along the block axis of
                     // a horizontal root, and of a vertical one when the box
@@ -1433,6 +1458,16 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
+                // The margins above a block that starts the paragraph escape
+                // through its top edge.
+                first_block_start.get_or_insert((
+                    lines.len(),
+                    if top_margin_escapes && starts_paragraph {
+                        y
+                    } else {
+                        y + pending.resolve()
+                    },
+                ));
                 let mut block = if geometry.blocks_apart {
                     BlockChild::apart(y, pending)
                 } else {
@@ -1606,6 +1641,7 @@ fn run_boxes_segment(
             leading_block_margin,
             block_line_starts,
             generated_block_starts,
+            first_block_start: first_block_start.filter(|_| !leading_unordered),
             block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
@@ -4994,10 +5030,10 @@ fn shifted_static_position(
 /// of the line otherwise (CSS 2.1 10.6.4). One without an anchor has no line
 /// of its own: it follows the lines that come after the block child before it
 /// and before the next block child or block-level `::after` (or that block
-/// itself when no line does), or starts the paragraph
-/// when nothing comes before it, or else, for the lines and blocks that
-/// `::before` generates, follows all the content. `boxes` are the paragraph's
-/// boxes in document order.
+/// itself when no line does), or, when no block child comes before it, at
+/// the start of the first block child or block-level `::after` (see
+/// [`leading_static_offset`]). `boxes` are the paragraph's boxes in document
+/// order.
 fn static_block_offset(
     lines: &IfcLines,
     boxes: &[(usize, IfcBoxKind)],
@@ -5090,8 +5126,26 @@ fn static_block_offset(
                     }
                 },
             ),
-        // Nothing comes before the box, but for lines and blocks generated by
-        // `::before`, which are not among the boxes.
+        None => leading_static_offset(lines),
+    }
+}
+
+/// The static block offset of an out-of-flow box without an anchor that no
+/// block child comes before: only a `::before` and its lines can. The box
+/// sits where the first block child or block-level `::after` after it starts,
+/// below the margins above that block but not its own, as an empty in-flow
+/// block there would (CSS 2.1 10.6.4). With neither after it, it follows all
+/// the content, or starts the paragraph when there is none.
+fn leading_static_offset(lines: &IfcLines) -> f32 {
+    match lines.first_block_start {
+        // The box moves with the content before it, and not with the block
+        // after it when pagination moves that block alone.
+        Some((next_line, start)) => {
+            start
+                + next_line
+                    .checked_sub(1)
+                    .map_or(lines.shifts.aligned(), |last| lines.shift_of(last))
+        }
         None if lines.lines.is_empty() && lines.placed_blocks.is_empty() => lines.shifts.aligned(),
         None => lines.height + lines.shifts.aligned(),
     }

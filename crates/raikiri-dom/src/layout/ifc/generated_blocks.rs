@@ -106,6 +106,11 @@ pub(crate) struct GeneratedBlock {
     /// The sides and sizes above are on the axes of a vertical root (see
     /// [`GeneratedBlock::on_root_axes`]); the root lays the box out.
     pub(crate) on_root_axes: bool,
+    /// `Some(pseudo)` when the box is the `::before` or `::after` of the
+    /// paragraph's root itself, which come before and after all the other
+    /// content of the paragraph; `None` for one of a descendant, which can
+    /// sit anywhere among it.
+    pub(crate) of_root: Option<raikiri_style::PseudoElem>,
 }
 
 /// `sides` on the axes of a vertical root: `top` and `bottom` become the
@@ -174,6 +179,7 @@ impl GeneratedBlock {
             break_before: cv.break_before,
             break_after: cv.break_after,
             on_root_axes: false,
+            of_root: None,
         }
     }
 
