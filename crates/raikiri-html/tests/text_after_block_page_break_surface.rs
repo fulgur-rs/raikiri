@@ -2816,6 +2816,10 @@ fn lines_with_a_gap_that_a_float_leaves_between_them_stay_where_the_layout_put_t
     );
 }
 
+/// A label, the markup after the lead-in block, and the page count and lines
+/// it expects.
+type ShapeCase = (&'static str, String, u32, &'static [(u32, f32, f32)]);
+
 /// The box after a float that took a forced break keeps its own margin also
 /// when its lines change places beside the float there: when a word goes below
 /// the float, and when the box holds blocks, generated blocks, nested blocks,
@@ -2826,7 +2830,7 @@ fn lines_with_a_gap_that_a_float_leaves_between_them_stay_where_the_layout_put_t
 fn page_start_float_margin_reflows_boxes_of_every_shape() {
     const LEAD: &str = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
     const TALL_FLOAT: &str = "<div style='float:left;width:40px;height:50px'></div>";
-    let cases: [(&str, String, u32, &[(u32, f32, f32)]); 10] = [
+    let cases: [ShapeCase; 10] = [
         (
             "word below the float",
             format!("{TALL_FLOAT}<div style='margin-top:10px'>AB CDEF GH</div>"),
