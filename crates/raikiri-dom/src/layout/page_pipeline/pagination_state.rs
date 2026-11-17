@@ -2098,14 +2098,18 @@ impl PaginationState {
             });
         overflow.page |= overflow.leading_piece_with_holder;
         let grid_row = candidate.context.first_grid_row();
-        // An empty box of auto height stays with the box before it.
-        let empty_auto = || super::empty_auto_box(document, cascade, node_id);
+        // An empty box that its margins collapse through may stay with the
+        // box before it.
+        let stays_empty_once = std::cell::OnceCell::new();
+        let stays_empty = || {
+            *stays_empty_once.get_or_init(|| super::collapsed_empty_box(document, cascade, node_id))
+        };
         let grid_content_break =
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
         }) || (closing_edges_move(candidate, &fit)
-            && !empty_auto()
+            && !stays_empty()
             && super::capped_edges_follow(
                 document,
                 cascade,
@@ -2128,7 +2132,7 @@ impl PaginationState {
                     candidate,
                     &fit,
                 ))
-                && !empty_auto();
+                && !stays_empty();
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
         let potential_forced_holder = (forced_before

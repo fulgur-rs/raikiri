@@ -21,7 +21,7 @@ use super::{
     page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
     pagination_child_parent_y, paragraph_lines_keep_together, passes_closing_edges,
     positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line,
+    push_in_flow_boxes_rev, selected_page_name, unplaced_line,
 };
 use std::collections::HashMap;
 
@@ -2327,14 +2327,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The margin below the last box sits between it and the padding
                 // and border of this block, unless it collapses through that
                 // block (when it has neither) or through the box itself (when
-                // it takes no block space).
+                // that box is empty and stays with the box before it).
                 let edges_after_box = |index: usize| {
                     closing_chain.map_or(0.0, |edges| {
                         let margin = flow_flags[index]
                             .0
                             .filter(|&last_box| {
                                 own_closing_edges.is_some_and(|own| own > 0.0)
-                                    && !takes_no_block_space(document, last_box)
+                                    && !super::collapsed_empty_box(document, cascade, last_box)
                             })
                             .map_or(0.0, |last_box| {
                                 end_margin_through(document, cascade, last_box)

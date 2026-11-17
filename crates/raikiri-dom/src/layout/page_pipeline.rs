@@ -9528,7 +9528,7 @@ fn min_height_edges_move(
     // up further.
     let own_margin = document.nodes[candidate.node_id].layout.margin.bottom;
     fit.flow_y + candidate.height + own_margin >= content_end - 0.001 && {
-        let end_margin = if takes_no_block_space(document, candidate.node_id) {
+        let end_margin = if collapsed_empty_box(document, cascade, candidate.node_id) {
             0.0
         } else {
             end_margin_through(document, cascade, candidate.node_id)
@@ -9537,11 +9537,28 @@ fn min_height_edges_move(
     }
 }
 
-/// Whether `node_id` is an empty box of auto height whose margins collapse
-/// through it. Chromium leaves no break before such a box: it stays with the
-/// box before it rather than moving on with the edges that close its block,
-/// and a page edge truncates the margins that collapse through it.
-pub(super) fn empty_auto_box(
+/// Whether `node_id` is an empty box that its margins collapse through and
+/// that stays with the box before it. Chromium leaves no break before such a
+/// box: it does not move on with the edges that close its block, and a page
+/// edge truncates the margins that collapse through it. A box of auto height
+/// is one, and so is a box of set height zero once a margin other than zero
+/// collapses into its top (see [`margin_collapses_into_top`]). Without one,
+/// Chromium breaks before such a box as before any other: it moves on with
+/// the edges, and keeps its bottom margin whole above them.
+pub(super) fn collapsed_empty_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    collapses_as_empty_box(document, cascade, node_id)
+        && (document.block_axis(node_id).height().is_auto()
+            || margin_collapses_into_top(document, cascade, node_id))
+}
+
+/// Whether `node_id` is an empty element whose margins collapse through it,
+/// with no clearance or forced break to keep them apart, whatever its height
+/// says.
+fn collapses_as_empty_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
@@ -9550,7 +9567,6 @@ pub(super) fn empty_auto_box(
     let computed = &cascade.computed[node_id];
     node.kind() == NodeKind::Element
         && node.layout.size.height.abs() <= 0.001
-        && document.block_axis(node_id).height().is_auto()
         // Clearance keeps the margins from collapsing through it, and a
         // forced break before or after it keeps them whole.
         && computed.clear == ClearValue::None
@@ -9559,10 +9575,63 @@ pub(super) fn empty_auto_box(
         && collapses_through(document, cascade, node_id, 0.0)
 }
 
+/// Whether a margin other than zero collapses into the top of the empty box
+/// `node_id`: its own top margin, or the bottom margin of the box before it
+/// in the flow, collapsed with those of the empty boxes between the two. A
+/// `display: contents` element lends the boxes inside it to that flow, and
+/// a forced break or text between the two keeps them apart. Chromium keeps
+/// such a box behind even when the margins cancel out.
+fn margin_collapses_into_top(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let non_zero = |(positive, negative): (f32, f32)| positive > 0.0 || negative < 0.0;
+    if document.nodes[node_id].layout.margin.top != 0.0 {
+        return true;
+    }
+    let mut boxes = Vec::new();
+    let mut current = node_id;
+    while let Some(parent) = document.parent_of(current) {
+        // Walked from the end, the box is reached past only the few that
+        // follow it, as it usually ends its block.
+        for &sibling in document.nodes[parent]
+            .children
+            .iter()
+            .rev()
+            .skip_while(|&&child| child != current)
+            .skip(1)
+        {
+            boxes.clear();
+            push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
+            for &id in &boxes {
+                if document.nodes[id].kind() != NodeKind::Element
+                    || page_break_is_forced(document, id, cascade.computed[id].break_after)
+                {
+                    return false;
+                }
+                if !collapses_as_empty_box(document, cascade, id) {
+                    return non_zero(adjoining_margin_extremes(
+                        document, cascade, id, false, None,
+                    ));
+                }
+                if non_zero(empty_box_margin_extremes(document, cascade, id)) {
+                    return true;
+                }
+            }
+        }
+        if document.nodes[parent].display() != DisplayValue::Contents {
+            break;
+        }
+        current = parent;
+    }
+    false
+}
+
 /// The box whose margin box ends the flow of its parent when `last`, the
 /// last box in that flow, is followed by nothing, and the margin below it:
-/// the last box before the empty boxes of auto height that end the flow
-/// (see [`empty_auto_box`]), whose bottom margin collapses with all of
+/// the last box before the empty boxes that end the flow and stay with it
+/// (see [`collapsed_empty_box`]), whose bottom margin collapses with all of
 /// theirs into one, or `last` itself with its own bottom margin collapsed
 /// with those inside it (see [`end_margin_through`]). `None` when no box
 /// that takes part in the flow comes before those empty boxes.
@@ -9571,7 +9640,7 @@ fn flow_end_box(
     cascade: &CascadeResult,
     last: usize,
 ) -> Option<(usize, f32)> {
-    if !empty_auto_box(document, cascade, last) {
+    if !collapsed_empty_box(document, cascade, last) {
         return Some((last, end_margin_through(document, cascade, last)));
     }
     let parent = document.parent_of(last)?;
@@ -9587,7 +9656,7 @@ fn flow_end_box(
         if !takes_part_in_flow(document, cascade, child) {
             continue;
         }
-        let (child_positive, child_negative) = if empty_auto_box(document, cascade, child) {
+        let (child_positive, child_negative) = if collapsed_empty_box(document, cascade, child) {
             empty_box_margin_extremes(document, cascade, child)
         } else {
             // A `display: contents` element has no margin box of its own.
@@ -9892,15 +9961,16 @@ fn content_bottom_edges(
         && (height_follows_content(document, node_id)
             || min_height_left_behind(document, node_id)
             || content_ends_above_edges(document, cascade, body_id, node_id)
-            || ends_with_empty_auto_box(document, cascade, node_id)))
+            || ends_with_collapsed_empty_box(document, cascade, node_id)))
     .then_some(edges)
 }
 
 /// Whether the flow of the block `node_id`, whose height nothing caps, ends
-/// with an empty box of auto height (see [`empty_auto_box`]). That box does
+/// with an empty box that stays with the box before it (see
+/// [`collapsed_empty_box`]). That box does
 /// not move on with the edges below it, so the page breaks between the two
 /// instead, even where the block's `min-height` ends at its content.
-fn ends_with_empty_auto_box(
+fn ends_with_collapsed_empty_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
@@ -9908,7 +9978,7 @@ fn ends_with_empty_auto_box(
     !document.nodes[node_id].is_ifc_root()
         && !height_is_capped(document, node_id)
         && last_flow_box(document, cascade, node_id)
-            .is_some_and(|last| empty_auto_box(document, cascade, last))
+            .is_some_and(|last| collapsed_empty_box(document, cascade, last))
 }
 
 /// Whether the block `node_id` of auto `height` and `max-height` has grown
@@ -9950,10 +10020,10 @@ fn margin_above_edges(
     let Some(last) = last_flow_box(document, cascade, node_id) else {
         return (0.0, 0.0);
     };
-    // Empty boxes of auto height at the end leave the margins that collapse
-    // through them below the box before them, where a page edge truncates
-    // them as one (see `flow_end_box`).
-    let (last, end_margin) = if empty_auto_box(document, cascade, last) {
+    // Empty boxes at the end that stay with the box before them leave the
+    // margins that collapse through them below that box, where a page edge
+    // truncates them as one (see `flow_end_box`).
+    let (last, end_margin) = if collapsed_empty_box(document, cascade, last) {
         match flow_end_box(document, cascade, last) {
             Some((end, margin)) => (end, Some(margin.max(0.0))),
             None => return (0.0, 0.0),
