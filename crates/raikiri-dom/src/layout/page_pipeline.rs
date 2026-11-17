@@ -8563,11 +8563,6 @@ impl PendingBreak {
         })
     }
 
-    /// The box after which the pending break is forced.
-    fn source(&self) -> Option<usize> {
-        self.source
-    }
-
     /// Drop the pending break once a later box has consumed it.
     fn clear(&mut self) {
         self.source = None;
@@ -18166,6 +18161,10 @@ fn text_offset_in_flex_line(
         document.nodes[id].layout.location.y
             - layout_relative_offset_y(document, cascade, body_id, id)
     };
+    // A break after a box inside the item falls inside it, not before a line.
+    if is_descendant_or_self(document, source, root) {
+        return None;
+    }
     let mut item = root;
     let mut offset = offset;
     let container = loop {

@@ -285,5 +285,15 @@ fn a_break_after_a_line_moves_the_top_of_the_next_line_to_the_page_top() {
             "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-after:page;width:100px;height:30px'>a</div><div style='width:40px;margin-top:-10px'><div style='height:30px;margin-top:5px'>Q</div></div><div style='width:40px;height:50px'>R</div></div><div>Z</div>",
             &[(0, 'a', 5), (1, 'Q', 25), (1, 'R', 5), (1, 'Z', 55)],
         ),
+        // An offset of an inline box around the text only paints it lower.
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-after:page;width:100px;height:30px'>a</div><div style='width:40px;height:30px'><span style='position:relative;top:10px'>Q</span></div><div style='width:40px;height:50px'>R</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'Q', 35), (1, 'R', 5), (1, 'Z', 55)],
+        ),
+        // A break after a box inside the item falls inside the item.
+        (
+            "<div style='display:flex'><div style='width:100px'>a<div style='break-after:page'>b</div>c</div></div>",
+            &[(0, 'a', 5), (0, 'b', 35), (1, 'c', 5)],
+        ),
     ]);
 }
