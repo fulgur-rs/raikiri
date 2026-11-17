@@ -5323,9 +5323,7 @@ fn boxes_before_floats_after_a_block(
     lines: &IfcLines,
 ) -> HashMap<usize, f32> {
     let mut found = HashMap::new();
-    let Some(root) = tree.nodes[idx].ifc.as_ref() else {
-        return found; // cov:ignore: the caller only places the boxes of a laid-out paragraph.
-    };
+    let root = tree.nodes[idx].ifc.as_ref().expect("the paragraph's root");
     // The root's block-level `::before` comes before every child.
     let root_before = generated_block_end(root, lines, idx, PseudoElem::Before);
     let has = |kind| root.boxes.iter().any(|b| b.kind == kind);
@@ -5338,9 +5336,11 @@ fn boxes_before_floats_after_a_block(
         return found;
     }
     let cascade = tree.style_views.cascade();
-    // Where the block the children since it follow ends, while no line
-    // content has come since (`None` inside when that is not known).
-    let mut after_block = root_before.map(Some);
+    // The block the children since it follow, while no line content has come
+    // since. Where it ends is looked up once a float needs it.
+    let mut after_block = root_before.map(|end| PrecedingBlock::Ended(Some(end)));
+    // The block ends of the lines by block, indexed when first needed.
+    let mut ends: Option<HashMap<usize, f32>> = None;
     // The out-of-flow boxes after the last block or float, with no line
     // content between.
     let mut waiting = Vec::new();
@@ -5352,7 +5352,7 @@ fn boxes_before_floats_after_a_block(
                 continue;
             }
             ParagraphChild::Block(element, pseudo) => {
-                after_block = Some(generated_block_end(root, lines, element, pseudo));
+                after_block = Some(PrecedingBlock::Generated(element, pseudo));
                 waiting.clear();
                 continue;
             }
@@ -5372,15 +5372,36 @@ fn boxes_before_floats_after_a_block(
                 if child.display() == DisplayValue::None
                     || child.is_non_rendered_html_element() => {}
             NodeKind::Element if kind == Some(IfcBoxKind::Float) => {
-                if let Some(Some(end)) = after_block {
-                    found.extend(waiting.drain(..).map(|node| (node, end)));
+                if !waiting.is_empty()
+                    && let Some(block) = &mut after_block
+                {
+                    let end = block.end(
+                        |id| {
+                            ends.get_or_insert_with(|| {
+                                lines
+                                    .block_ends
+                                    .iter()
+                                    .map(|&(id, next_line, end)| {
+                                        (id, end + lines.shift_of(next_line))
+                                    })
+                                    .collect()
+                            })
+                            .get(&id)
+                            .copied()
+                        },
+                        |element, pseudo| generated_block_end(root, lines, element, pseudo),
+                    );
+                    found.extend(
+                        end.into_iter()
+                            .flat_map(|end| waiting.iter().map(move |&node| (node, end))),
+                    );
                 }
                 waiting.clear();
             }
             NodeKind::Element if kind == Some(IfcBoxKind::Block) => {
                 // The parts of an anonymous table are one block child.
                 let block = tree.anonymous_table_of(id).unwrap_or(id);
-                after_block = Some(block_end(lines, block).map(|(_, end)| end));
+                after_block = Some(PrecedingBlock::Child(block));
                 waiting.clear();
             }
             NodeKind::Text | NodeKind::Element => {
@@ -5393,15 +5414,35 @@ fn boxes_before_floats_after_a_block(
     found
 }
 
-/// The index of the first line after the block child `block` of a paragraph
-/// with `lines`, and the block offset where the content after it starts
-/// (see [`IfcLines::block_ends`]), moved as that line was.
-fn block_end(lines: &IfcLines, block: usize) -> Option<(usize, f32)> {
-    lines
-        .block_ends
-        .iter()
-        .find(|&&(id, ..)| id == block)
-        .map(|&(_, next_line, end)| (next_line, end + lines.shift_of(next_line)))
+/// The block that the children of a paragraph since it follow (see
+/// [`boxes_before_floats_after_a_block`]).
+enum PrecedingBlock {
+    /// A block child.
+    Child(usize),
+    /// The block-level `pseudo` of a `display: contents` element.
+    Generated(usize, PseudoElem),
+    /// A block whose end was looked up: the block offset where the content
+    /// after it starts, `None` when the lines do not record it.
+    Ended(Option<f32>),
+}
+
+impl PrecedingBlock {
+    /// Where the content after the block starts: looked up the first time,
+    /// with `child_end` for a block child and `generated_end` for a generated
+    /// block, and kept.
+    fn end(
+        &mut self,
+        child_end: impl FnOnce(usize) -> Option<f32>,
+        generated_end: impl FnOnce(usize, PseudoElem) -> Option<f32>,
+    ) -> Option<f32> {
+        let end = match *self {
+            Self::Child(id) => child_end(id),
+            Self::Generated(element, pseudo) => generated_end(element, pseudo),
+            Self::Ended(end) => end,
+        };
+        *self = Self::Ended(end);
+        end
+    }
 }
 
 /// The block offset where the content after the block-level `pseudo` of
