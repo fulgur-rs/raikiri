@@ -16416,6 +16416,11 @@ fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, true), 3);
     // A margin box already at a page top stays on that page.
     assert_eq!(pages.transition_natural_page(210.0, 10.0, 0, 3, true), 2);
+    // A negative margin puts the margin box below the border box: the break
+    // follows content that runs on past the border box's page.
+    assert_eq!(pages.transition_natural_page(100.0, -10.0, 0, 3, true), 2);
+    assert_eq!(pages.transition_natural_page(95.0, -10.0, 0, 3, true), 2);
+    assert_eq!(pages.transition_natural_page(90.0, -10.0, 0, 3, true), 1);
     // Without a page-type change, or on a page the flow has not reached,
     // the box keeps the page it falls on.
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, false), 2);
@@ -18101,8 +18106,9 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
         grid_item: false,
     };
     // A forced break keeps a positive block-start margin, the table's lead
-    // and the relative offset, so the box lands below the page top and the
-    // flow, which the offset does not move, follows the page boundary.
+    // and the relative offset, so the box lands below the page top. The flow
+    // after it moves with the box, and the line it sits on moves by the
+    // distance of its border box without the offset.
     let kept = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, true, &overflow(5.0));
     assert_eq!(kept.target_y, 116.0);
     assert_eq!(kept.node_delta, 26.0);

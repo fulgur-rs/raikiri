@@ -2198,8 +2198,8 @@ impl PaginationState {
                 // before it on this page, which the break still leaves
                 // behind, or back over a page edge the break would share,
                 // which the break then moves the box over.
-                let margin_box_y = effective_y - margin_top;
-                let margin_box_starts_page = if margin_top < 0.0 {
+                let margin_box_y = effective_y - relative_offset - margin_top;
+                let starts_page = if margin_top < 0.0 {
                     (margin_box_y - page_start).abs() <= 0.001
                 } else {
                     margin_box_starts_page(
@@ -2209,7 +2209,7 @@ impl PaginationState {
                         page_start,
                     )
                 };
-                margin_box_starts_page
+                starts_page
                     || self.child_positions.begins_page_below_leading_edges(
                         document, cascade, body_id, node_id, page_start,
                     )

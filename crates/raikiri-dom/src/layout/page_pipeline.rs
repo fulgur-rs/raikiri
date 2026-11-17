@@ -2124,8 +2124,20 @@ impl PageOrigins {
         let Some(page) = self.page_index_in_flow(effective_y) else {
             return current_page;
         };
-        let margin_box_y = effective_y - margin_top.max(0.0);
-        if forced_transition && page > current_page && flow_max >= page && margin_box_y.is_finite()
+        // A forced break sits at the top of the margin box. A negative margin
+        // puts that top below the border box, past content that runs on
+        // beyond the border box's page.
+        let margin_box_y = effective_y - margin_top;
+        let break_page = if margin_box_y.is_finite() {
+            self.page_index_in_flow(margin_box_y)
+                .map_or(page, |at| at.max(page))
+        } else {
+            page
+        };
+        if forced_transition
+            && break_page > current_page
+            && flow_max >= break_page
+            && margin_box_y.is_finite()
         {
             self.page_starting_at_or_after(margin_box_y)
         } else {

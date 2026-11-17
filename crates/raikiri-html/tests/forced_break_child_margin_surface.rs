@@ -271,3 +271,28 @@ fn the_flow_after_a_box_pulled_back_over_a_forced_break_follows_the_box() {
     );
     assert_eq!(pulled_over, [(0, 0.0, 75.0), (1, 0.0, 5.0)]);
 }
+
+#[test]
+fn a_forced_break_after_a_box_that_runs_past_a_page_edge_opens_the_page_after() {
+    // The break sits at the top of the box's margin box. A negative margin
+    // puts the border box above it, but the break still follows the content
+    // that runs on to the second page, and opens the third.
+    let tall = "<div style='height:110px'>a</div>";
+    for (style, expected) in [
+        ("margin-top:-10px", [(2, 0.0, -5.0), (2, 0.0, 25.0)]),
+        (
+            "position:relative;top:10px;margin-top:-10px",
+            [(2, 0.0, 5.0), (2, 0.0, 25.0)],
+        ),
+        // A relative offset does not move the break either.
+        (
+            "position:relative;top:-10px",
+            [(2, 0.0, -5.0), (2, 0.0, 35.0)],
+        ),
+    ] {
+        let body = format!(
+            "{tall}<div style='break-before:page;{style};height:30px'>XX</div><div>ZZ</div>"
+        );
+        assert_eq!(lines(&body), expected, "{body}");
+    }
+}
