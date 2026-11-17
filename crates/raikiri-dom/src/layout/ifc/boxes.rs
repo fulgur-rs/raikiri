@@ -32,7 +32,9 @@ use raikiri_layout_style::values::{
     MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_style::PseudoElem;
 use raikiri_style::property::{DisplayValue, PositionValue};
+use raikiri_traits::NodeKind;
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{LineOptions, TextGroupAlign};
 use shodo::{
@@ -5298,6 +5300,244 @@ fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -
         .any(|id| tree.nodes[id].display().is_inline_level())
 }
 
+/// The inline-level out-of-flow children of the paragraph rooted at `idx`
+/// that Chromium keeps out of the lines after them, each with the block
+/// offset where it sits, from the content box's block-start edge: a box that
+/// follows a block child, with nothing but floats between, and comes before
+/// a float child, with no line content between.
+///
+/// Inline content after a block child goes into an anonymous block box (CSS
+/// 2.1, 9.2.1.1), which Chromium builds as it meets the content: the
+/// out-of-flow boxes right before the content join that box, but a float in
+/// between leaves the ones before it as children of the root. Such a box
+/// takes the static position of a block-level box there: below the block,
+/// before the floats move the lines down, on a line that holds nothing, so
+/// neither the float after it nor the text of the line beside the float
+/// moves it.
+///
+/// A layout that records no block ends (a fragmenting one) leaves every box
+/// at its anchor.
+fn boxes_before_floats_after_a_block(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    lines: &IfcLines,
+) -> HashMap<usize, f32> {
+    let mut found = HashMap::new();
+    let root = tree.nodes[idx].ifc.as_ref().expect("the paragraph's root");
+    // The root's block-level `::before` comes before every child.
+    let root_before = generated_block_end(root, lines, idx, PseudoElem::Before);
+    let has = |kind| root.boxes.iter().any(|b| b.kind == kind);
+    // The content of an anonymous cell is only some of its owner's
+    // children, and is left alone.
+    if tree.ifc_source_owner(idx) != idx
+        || !has(IfcBoxKind::Float)
+        || (!has(IfcBoxKind::Block) && root.generated_blocks.is_empty())
+    {
+        return found;
+    }
+    let cascade = tree.style_views.cascade();
+    // The block the children since it follow, while no line content has come
+    // since. Where it ends is looked up once a float needs it.
+    let mut after_block = root_before.map(|end| PrecedingBlock::Ended(Some(end)));
+    // The block ends of the lines by block, indexed when first needed.
+    let mut ends: Option<HashMap<usize, f32>> = None;
+    // The out-of-flow boxes after the last block or float, with no line
+    // content between.
+    let mut waiting = Vec::new();
+    for child in paragraph_children(tree, cascade, idx) {
+        let id = match child {
+            ParagraphChild::Content => {
+                after_block = None;
+                waiting.clear();
+                continue;
+            }
+            ParagraphChild::Block(element, pseudo) => {
+                after_block = Some(PrecedingBlock::Generated(element, pseudo));
+                waiting.clear();
+                continue;
+            }
+            ParagraphChild::Node(id) => id,
+        };
+        let child = &tree.nodes[id];
+        let kind = match child.kind() {
+            NodeKind::Element => super::projection::box_kind(cascade, tree, id),
+            _ => None,
+        };
+        match child.kind() {
+            // White space that makes no line is no line content.
+            NodeKind::Text if !super::assign::text_makes_a_line(tree, cascade, id) => {}
+            NodeKind::Element if kind == Some(IfcBoxKind::OutOfFlow) => waiting
+                .extend((after_block.is_some() && child.display().is_inline_level()).then_some(id)),
+            NodeKind::Element
+                if child.display() == DisplayValue::None
+                    || child.is_non_rendered_html_element() => {}
+            NodeKind::Element if kind == Some(IfcBoxKind::Float) => {
+                if !waiting.is_empty()
+                    && let Some(block) = &mut after_block
+                {
+                    let end = block.end(
+                        |id| {
+                            ends.get_or_insert_with(|| {
+                                lines
+                                    .block_ends
+                                    .iter()
+                                    .map(|&(id, next_line, end)| {
+                                        (id, end + lines.shift_of(next_line))
+                                    })
+                                    .collect()
+                            })
+                            .get(&id)
+                            .copied()
+                        },
+                        |element, pseudo| generated_block_end(root, lines, element, pseudo),
+                    );
+                    found.extend(
+                        end.into_iter()
+                            .flat_map(|end| waiting.iter().map(move |&node| (node, end))),
+                    );
+                }
+                waiting.clear();
+            }
+            NodeKind::Element if kind == Some(IfcBoxKind::Block) => {
+                // The parts of an anonymous table are one block child.
+                let block = tree.anonymous_table_of(id).unwrap_or(id);
+                after_block = Some(PrecedingBlock::Child(block));
+                waiting.clear();
+            }
+            NodeKind::Text | NodeKind::Element => {
+                after_block = None;
+                waiting.clear();
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The block that the children of a paragraph since it follow (see
+/// [`boxes_before_floats_after_a_block`]).
+enum PrecedingBlock {
+    /// A block child.
+    Child(usize),
+    /// The block-level `pseudo` of a `display: contents` element.
+    Generated(usize, PseudoElem),
+    /// A block whose end was looked up: the block offset where the content
+    /// after it starts, `None` when the lines do not record it.
+    Ended(Option<f32>),
+}
+
+impl PrecedingBlock {
+    /// Where the content after the block starts: looked up the first time,
+    /// with `child_end` for a block child and `generated_end` for a generated
+    /// block, and kept.
+    fn end(
+        &mut self,
+        child_end: impl FnOnce(usize) -> Option<f32>,
+        generated_end: impl FnOnce(usize, PseudoElem) -> Option<f32>,
+    ) -> Option<f32> {
+        let end = match *self {
+            Self::Child(id) => child_end(id),
+            Self::Generated(element, pseudo) => generated_end(element, pseudo),
+            Self::Ended(end) => end,
+        };
+        *self = Self::Ended(end);
+        end
+    }
+}
+
+/// The block offset where the content after the block-level `pseudo` of
+/// `element` starts in the paragraph `root` with `lines`: below its border
+/// box and its block-end margin, moved as its last line was. `None` when it
+/// is not a block laid out in the paragraph.
+fn generated_block_end(
+    root: &IfcRoot,
+    lines: &IfcLines,
+    element: usize,
+    pseudo: PseudoElem,
+) -> Option<f32> {
+    let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
+    let block = root
+        .generated_blocks
+        .iter()
+        .find(|block| block.start == id)?;
+    let placed = lines
+        .placed_blocks
+        .iter()
+        .find(|placed| placed.node == id)?;
+    Some(
+        placed.border_box.y
+            + placed.border_box.height
+            + block.margins(lines.width).bottom
+            + lines.shift_of(placed.end_line),
+    )
+}
+
+/// A child of a paragraph's root, in document order, with the children of a
+/// `display: contents` element in its place (CSS Display 3, 2.5).
+enum ParagraphChild {
+    Node(usize),
+    /// The inline `::before` or `::after` of a `display: contents` element:
+    /// line content.
+    Content,
+    /// The block-level `::before` or `::after` of a `display: contents`
+    /// element.
+    Block(usize, PseudoElem),
+}
+
+/// The children of the paragraph rooted at `idx` (see [`ParagraphChild`]).
+fn paragraph_children(
+    tree: &Document,
+    cascade: &raikiri_style::CascadeResult,
+    idx: usize,
+) -> Vec<ParagraphChild> {
+    enum Step {
+        Enter(usize),
+        Generated(usize, PseudoElem),
+    }
+    let generated = |element, pseudo| {
+        crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo).then(|| {
+            let inline = cascade
+                .pseudo
+                .get(&(raikiri_style::StyleNodeId::new(element as u64), pseudo))
+                .is_some_and(|cv| cv.display.is_inline_level());
+            if inline {
+                ParagraphChild::Content
+            } else {
+                ParagraphChild::Block(element, pseudo)
+            }
+        })
+    };
+    let mut children = Vec::new();
+    let mut stack: Vec<Step> = tree.nodes[idx]
+        .children
+        .iter()
+        .rev()
+        .map(|&id| Step::Enter(id))
+        .collect();
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Generated(element, pseudo) => children.extend(generated(element, pseudo)),
+            Step::Enter(id)
+                if tree.nodes[id].kind() == NodeKind::Element
+                    && tree.nodes[id].display() == DisplayValue::Contents
+                    && !tree.nodes[id].is_non_rendered_html_element() =>
+            {
+                stack.push(Step::Generated(id, PseudoElem::After));
+                stack.extend(
+                    tree.nodes[id]
+                        .children
+                        .iter()
+                        .rev()
+                        .map(|&child| Step::Enter(child)),
+                );
+                stack.push(Step::Generated(id, PseudoElem::Before));
+            }
+            Step::Enter(id) => children.push(ParagraphChild::Node(id)),
+        }
+    }
+    children
+}
+
 /// Mark the out-of-flow boxes of the paragraph rooted at `idx` (or at
 /// `owner`, the source owner of an anonymous cell's content) that come after
 /// a block-level `::before` or `::after` of an element in it, in document
@@ -5641,6 +5881,9 @@ pub(crate) fn place_out_of_flow(
     let mut fallback = None;
 
     let owner = tree.ifc_source_owner(idx);
+    // The inline-level boxes that stay out of the lines after them, found
+    // when a box with an anchor needs them.
+    let mut before_floats: Option<HashMap<usize, f32>> = None;
     // The padding boxes of the inline elements on the lines, made when a box
     // needs them.
     let mut inline_boxes: Option<oof_index::InlinePaddingBoxes> = None;
@@ -5722,19 +5965,34 @@ pub(crate) fn place_out_of_flow(
                 inline_level,
             )
         };
+        // A box that stays out of the lines after it sits where a block-level
+        // box would: below the block it follows, before the floats after it
+        // move the lines down. The lines of a vertical root have no line of
+        // its own to place it on, so it keeps its anchor there.
+        let out_of_lines = (!vertical_root && inline_level && anchor.is_some())
+            .then(|| {
+                before_floats
+                    .get_or_insert_with(|| boxes_before_floats_after_a_block(tree, idx, &lines))
+                    .get(&node)
+                    .copied()
+            })
+            .flatten();
+        let block_offset = out_of_lines.unwrap_or(block_offset);
         // The columns move a box with the line it sits on.
         let (dx, dy) = match (column_fragments.as_deref(), anchor) {
             (Some(fragments), Some((line, _))) => column_shift(&lines, fragments, line),
             _ => (0.0, 0.0),
         };
         // A box that was inline-level extends from its anchor the way the
-        // text there reads.
-        let inline_anchor = anchor.filter(|_| inline_level).map(|(index, position)| {
-            (
-                position,
-                anchor_has_odd_level(&lines.lines[index], position, rtl),
-            )
-        });
+        // text there reads. One out of the lines sits on a line of its own.
+        let inline_anchor = anchor
+            .filter(|_| inline_level && out_of_lines.is_none())
+            .map(|(index, position)| {
+                (
+                    position,
+                    anchor_has_odd_level(&lines.lines[index], position, rtl),
+                )
+            });
         let static_spot = if vertical_root {
             vertical_static_position(
                 writing_mode,

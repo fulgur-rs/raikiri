@@ -247,7 +247,7 @@ impl GeneratedBlock {
 
     /// Margins in px against the containing block width `basis`; `auto` is
     /// zero.
-    fn margins(&self, basis: f32) -> Sides<f32> {
+    pub(crate) fn margins(&self, basis: f32) -> Sides<f32> {
         let side = |value| length_or_auto(value, Some(basis)).unwrap_or(0.0);
         Sides {
             top: side(&self.margin.top),
