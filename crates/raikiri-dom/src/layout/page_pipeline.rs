@@ -880,14 +880,16 @@ fn block_border_box_end(
     // own, and a relative offset moves a box without moving the flow.
     let encloses_floats = holds_floats(document, cascade, flow_root);
     let mut content_end = top + edges_top;
+    // The border-box end of the last child with a border box of its own,
+    // and that child.
     let mut last_flow_end = None;
     // Where the margin box of the last child ends in the committed flow.
     // Pagination may have cut a margin that crossed a page edge, which the
     // margins themselves do not show.
     let mut last_margin_end = f32::INFINITY;
-    // The block-end margins that adjoin the end of the flow: the one of the
-    // last child with a border box of its own and those of the empty children
-    // after it, whose margins collapse through them (CSS 2 §8.3.1).
+    // The margins of the empty children after the last child with a border
+    // box of its own, which collapse through them (CSS 2 §8.3.1). The block-end
+    // margins of that child join them where they adjoin the end of the flow.
     let mut trailing = CollapsibleMarginSet::ZERO;
     let block_children = root.formatting_context == FormattingContext::Block;
     // Popped in document order, each with the flow offset of its parent's
@@ -991,13 +993,8 @@ fn block_border_box_end(
                     .collapse_with_margin(positive)
                     .collapse_with_margin(negative);
             } else {
-                // The block-end margins of the child's own last boxes that
-                // adjoin its end collapse with its own one.
-                let (positive, negative) =
-                    adjoining_margin_extremes(document, cascade, child, false, None);
-                last_flow_end = Some(border_end);
-                trailing =
-                    CollapsibleMarginSet::from_margin(positive).collapse_with_margin(negative);
+                last_flow_end = Some((border_end, child));
+                trailing = CollapsibleMarginSet::ZERO;
             }
         }
     }
@@ -1007,8 +1004,20 @@ fn block_border_box_end(
     // through every child joined the root's block-start margin when nothing
     // separates them, so they lie outside the root too.
     let encloses_margins = edges_bottom > 0.0 || encloses_floats;
-    if let Some(end) = last_flow_end {
+    if let Some((end, last)) = last_flow_end {
         let end = if encloses_margins {
+            // The block-end margins of the last child's own last boxes that
+            // adjoin its end collapse with its own one.
+            // Margins never collapse between flex or grid items.
+            let (positive, negative) = if block_children {
+                adjoining_margin_extremes(document, cascade, last, false, None)
+            } else {
+                let margin = document.nodes[last].layout.margin.bottom;
+                (margin.max(0.0), margin.min(0.0))
+            };
+            let trailing = trailing
+                .collapse_with_margin(positive)
+                .collapse_with_margin(negative);
             (end + trailing.resolve()).min(last_margin_end)
         } else {
             end

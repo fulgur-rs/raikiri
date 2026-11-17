@@ -420,6 +420,26 @@ fn a_negative_margin_escaping_a_wrapper_keeps_the_parent_on_its_page() {
             }
         }
     }
+    // A relative offset moves the box without moving its margin.
+    let body = "<div style='width:20px;padding-bottom:15px'><div>X X X X</div>\
+                <div style='margin-bottom:10px'><div style='position:relative;top:5px;height:35px;margin-bottom:-50px'>T</div></div></div><div>Z</div>";
+    assert_eq!(
+        pages_and_tops(body),
+        (2, vec![('T', 1, 70), ('Z', 1, 75)]),
+        "{body}"
+    );
+    // A flex or grid item keeps its margins, and those inside it, apart.
+    for display in ["flex;flex-direction:column", "grid"] {
+        let body = format!(
+            "<div style='width:20px;display:{display};padding-bottom:15px'><div>X X X X</div>\
+             <div style='margin-bottom:10px'><div style='height:35px;margin-bottom:-50px'>T</div></div></div><div>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
     // The same with a 20px box right inside the wrapper.
     let body = "<div style='width:20px;padding-bottom:15px'><div>X X X X</div>\
                 <div style='margin-bottom:10px'><div style='height:20px;margin-bottom:-50px'>T</div></div></div><div>Z</div>";
