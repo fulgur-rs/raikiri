@@ -249,5 +249,10 @@ fn a_break_before_an_item_measures_its_line_where_the_flow_has_put_it() {
             "<div style='height:100px'>a</div><div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-before:page;width:40px;height:30px'>X</div><div style='width:40px;height:50px'>Y</div></div>",
             &[(0, 'a', 5), (1, 'X', 25), (1, 'Y', 5)],
         ),
+        // A break before the container has moved it on.
+        (
+            "<div>a</div><div style='break-before:page;height:70px'>b</div><div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-before:page;width:40px;height:30px'>X</div><div style='width:40px;height:50px'>Y</div></div>",
+            &[(0, 'a', 5), (1, 'b', 5), (2, 'X', 25), (2, 'Y', 5)],
+        ),
     ]);
 }

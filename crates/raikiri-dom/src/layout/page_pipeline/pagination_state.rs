@@ -1835,6 +1835,9 @@ impl PaginationState {
         } else {
             raw_y + self.flow_shift
         };
+        // The other items of a flex line sit where the flow has put their
+        // container, as the box does before it moves to `effective_y`.
+        let line_y = current_abs_y(document, node_id);
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
@@ -1864,7 +1867,7 @@ impl PaginationState {
             self.last_named.joins_transition(candidate),
         );
         let flex_line = (forced_before || pending_break_applies || named_page_change)
-            .then(|| super::row_flex_line(document, cascade, body_id, node_id, raw_y))
+            .then(|| super::row_flex_line(document, cascade, body_id, node_id, line_y))
             .flatten();
         let continuation_offset = document
             .continuation_margin
