@@ -6420,7 +6420,7 @@ fn avoided_box_holder(
         {
             break;
         }
-        // A box begins where its child is drawn, as for [`leading_holder`]:
+        // A box begins where its child is drawn, as for `leading_holder`:
         // a relative offset on the way leaves the box apart from it. A kept
         // margin is measured in the flow, with the margins that collapse up
         // through the child into it.
