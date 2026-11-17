@@ -8071,9 +8071,12 @@ fn escaped_end_margin_shift(
 
 /// The extremes of the margins that collapse below the box `node`: its own
 /// bottom margin and the margins that adjoin it from the boxes that follow
-/// it in the flow of its parent, `display: contents` ones looked into. Empty
-/// boxes there let all of their margins through to the next box, whose top
-/// margins adjoin too (see [`adjoining_margin_extremes`]).
+/// it in the flow, `display: contents` ones looked into. Empty boxes there
+/// let all of their margins through to the next box, whose top margins
+/// adjoin too (see [`adjoining_margin_extremes`]). When no box follows, the
+/// margin reaches past the end of the parent: through a `display: contents`
+/// one, and through the bottom of a block that takes its height from its
+/// content, whose own bottom margin joins it (CSS 2 §8.3.1).
 fn margin_after_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -8081,41 +8084,60 @@ fn margin_after_box(
 ) -> (f32, f32) {
     let bottom = document.nodes[node].layout.margin.bottom;
     let (mut positive, mut negative) = (bottom.max(0.0), bottom.min(0.0));
-    let siblings = document
-        .parent_of(node)
-        .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
-    let mut boxes = Vec::new();
-    for &sibling in siblings
-        .iter()
-        .rev()
-        .take_while(|&&sibling| sibling != node)
-    {
-        push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
-    }
-    for next in boxes.into_iter().rev() {
-        // Text and inline-level boxes make a line, which no margin crosses.
-        if document.nodes[next].kind() != NodeKind::Element
-            || document.nodes[next].display().is_inline_level()
+    let mut current = node;
+    while let Some(parent) = document.parent_of(current) {
+        let mut boxes = Vec::new();
+        for &sibling in document.nodes[parent]
+            .children
+            .iter()
+            .rev()
+            .take_while(|&&sibling| sibling != current)
         {
+            push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
+        }
+        for next in boxes.into_iter().rev() {
+            // Text and inline-level boxes make a line, which no margin
+            // crosses.
+            if document.nodes[next].kind() != NodeKind::Element
+                || document.nodes[next].display().is_inline_level()
+            {
+                return (positive, negative);
+            }
+            let empty = cascade.computed[next].clear == ClearValue::None
+                && collapses_through(
+                    document,
+                    cascade,
+                    next,
+                    document.nodes[next].layout.size.height,
+                );
+            let (next_positive, next_negative) = if empty {
+                empty_box_margin_extremes(document, cascade, next)
+            } else {
+                adjoining_margin_extremes(document, cascade, next, true, None)
+            };
+            positive = positive.max(next_positive);
+            negative = negative.min(next_negative);
+            if !empty {
+                return (positive, negative);
+            }
+        }
+        if document.nodes[parent].kind() != NodeKind::Element {
             break;
         }
-        let empty = cascade.computed[next].clear == ClearValue::None
-            && collapses_through(
-                document,
-                cascade,
-                next,
-                document.nodes[next].layout.size.height,
-            );
-        let (next_positive, next_negative) = if empty {
-            empty_box_margin_extremes(document, cascade, next)
-        } else {
-            adjoining_margin_extremes(document, cascade, next, true, None)
-        };
-        positive = positive.max(next_positive);
-        negative = negative.min(next_negative);
-        if !empty {
-            break;
+        if document.nodes[parent].display() != DisplayValue::Contents {
+            let layout = &document.nodes[parent].layout;
+            if layout.padding.bottom + layout.border.bottom > 0.0
+                || !margins_may_collapse_through(document, cascade, parent)
+                || !document.block_axis(parent).height().is_auto()
+                || border_box_height_bounds(document, parent).0 > 0.0
+            {
+                break;
+            }
+            let margin = layout.margin.bottom;
+            positive = positive.max(margin);
+            negative = negative.min(margin);
         }
+        current = parent;
     }
     (positive, negative)
 }

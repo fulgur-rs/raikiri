@@ -326,3 +326,27 @@ fn the_margins_after_the_box_reach_through_empty_boxes_and_contents_wrappers() {
         );
     }
 }
+
+#[test]
+fn the_margins_after_the_box_reach_past_the_end_of_its_parent() {
+    // With no box after it in its parent, the escaping margin collapses
+    // with the margins past the parent's end: through a contents wrapper,
+    // and through the bottom of a block of auto height with its own margin.
+    let inner = "<div style='width:20px;min-height:170px'><div>X X X X</div>\
+                 <div style='height:30px;margin-bottom:-40px'>T</div></div>";
+    for (margin, z) in [(-60, 35), (-10, 55)] {
+        for body in [
+            format!(
+                "<div style='display:contents'>{inner}</div><div style='margin-top:{margin}px'>Z</div>"
+            ),
+            format!("<div style='margin-bottom:{margin}px'>{inner}</div><div>Z</div>"),
+            format!("<div>{inner}</div><div style='margin-top:{margin}px'>Z</div>"),
+        ] {
+            assert_eq!(
+                pages_and_tops(&body),
+                (2, vec![('T', 1, 65), ('Z', 1, z)]),
+                "{body}"
+            );
+        }
+    }
+}
