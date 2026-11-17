@@ -11,17 +11,17 @@ use super::{
     avoids_page_break_inside, block_after_last_line, box_forces_break_after, box_is_unbreakable,
     boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
     closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
-    first_named_item_start_page, first_owned_text_line_top, has_block_leading_content,
-    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination, is_flow_table_caption,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
-    lone_box_with_floats, margin_above_edges, moves_later_siblings, moves_reach_cell_row,
-    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    takes_no_block_space, unplaced_line,
+    end_margin_through, first_named_item_start_page, first_owned_text_line_top,
+    has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
+    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
+    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
+    lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
+    moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, passes_closing_edges,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line,
 };
 use std::collections::HashMap;
 
@@ -270,6 +270,17 @@ pub(super) struct ElementContext {
     /// has a break to take of its own, and the box stays; one that does not
     /// moves along with the box (see [`super::closing_edges_move`]).
     pub(super) closing_edges_float_reach: f32,
+    /// The block that the box ends, and the bottom padding and border that
+    /// close it, when the block's `min-height` leaves room below the box: the
+    /// edges follow the box only once pagination moved content in the block
+    /// down far enough to grow it past that room (see
+    /// [`super::min_height_edges_move`]).
+    pub(super) min_height_edges: Option<(usize, f32)>,
+    /// The block whose bottom padding and border `closing_edges` holds, when a
+    /// `height` or `max-height` ends that block where it ends: the edges
+    /// follow the box only while it ends inside the block (see
+    /// [`super::capped_edges_follow`]).
+    pub(super) capped_edges_block: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -432,6 +443,16 @@ impl BoxContext {
     pub(super) fn closing_edges_float_reach(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
+    }
+
+    pub(super) fn capped_edges_block(self) -> Option<usize> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.capped_edges_block)
+    }
+
+    pub(super) fn min_height_edges(self) -> Option<(usize, f32)> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.min_height_edges)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -676,6 +697,13 @@ struct CandidateFrame<'name> {
     /// end with the node: it is the last box in the flow of each of them, and
     /// their heights follow their content.
     closing_edges: f32,
+    /// The parent and the bottom padding and border that close it, when the
+    /// node is the last box in its flow and the parent's `min-height` leaves
+    /// room below the node (see [`ElementContext::min_height_edges`]).
+    min_height_edges: Option<(usize, f32)>,
+    /// The block whose edges `closing_edges` holds, when its height does not
+    /// follow its content (see [`ElementContext::capped_edges_block`]).
+    capped_edges_block: Option<usize>,
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
@@ -777,6 +805,8 @@ impl CandidateFrame<'_> {
             lines_clip_owner: None,
             lines_clip_box: None,
             closing_edges: 0.0,
+            min_height_edges: None,
+            capped_edges_block: None,
             previous_box: None,
             column_break_before: false,
             lone_in_edges: true,
@@ -1992,6 +2022,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !flex_item_candidate
                             && is_plain_block_box(document, node_id)));
                 let margin_candidate = margin_shape && can_move_nested;
+                // The last box of a block whose `min-height` leaves room below
+                // it, which moved content may still fill. A paragraph too
+                // short to break between its lines moves whole with the
+                // edges, as a box does.
+                let min_height_edges_candidate = frame.min_height_edges.filter(|_| {
+                    in_flow_block
+                        && can_move_nested
+                        && break_before_available()
+                        && breaks_only_around(document, cascade, node_id, self.has_named_pages)
+                });
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -2002,6 +2042,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
+                        || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
                         || avoided_unit.is_some()
@@ -2083,6 +2124,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 } else {
                                     0.0
                                 },
+                                capped_edges_block: frame.capped_edges_block.filter(|_| {
+                                    closing_edges_candidate || lone_box_candidate.is_some()
+                                }),
                                 closing_edges_inside: lone_box_candidate.unwrap_or(0.0),
                                 closing_edges_span: match frame.tie {
                                     AvoidTie::RunStart { span } if closing_edges_candidate => span,
@@ -2112,6 +2156,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
                                 closing_edges_float_reach,
+                                min_height_edges: min_height_edges_candidate,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -2232,7 +2277,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // other boxes that lay them out in block flow need the box
                 // before them only to take a forced break, so they get it only
                 // when the document forces one.
+                // The edges of a block whose `min-height` leaves room below
+                // its last box, which they follow once moved content fills it.
+                let min_height_room = own_closing_edges
+                    .is_none()
+                    .then(|| super::min_height_room_edges(document, cascade, body_id, node_id))
+                    .flatten();
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
+                    || min_height_room.is_some()
                     || (child_order.len() > 1
                         && (moves_later_siblings(document, node_id)
                             || (self.forces_break_after
@@ -2285,7 +2337,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && !takes_no_block_space(document, last_box)
                             })
                             .map_or(0.0, |last_box| {
-                                document.nodes[last_box].layout.margin.bottom
+                                end_margin_through(document, cascade, last_box)
                             });
                         // Something else, such as a float that the block
                         // encloses, reaches below the last box: the edges
@@ -2319,6 +2371,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     })
                 };
                 let last_box_edges = last_in_flow.map_or(0.0, edges_after_box);
+                // A block whose `min-height` leaves room below its last box
+                // grows past it once pagination moves the content above that
+                // box down; the edges then follow the box (see
+                // `min_height_edges_move`).
+                let min_height_edges = last_in_flow
+                    .and_then(|index| flow_flags[index].0)
+                    .and(min_height_room)
+                    .map(|edges| (node_id, edges));
                 // A last box that an avoided break ties to the box before it
                 // goes to the next page with the boxes it is tied to, when
                 // they all fit after the break before the first of them but
@@ -2518,6 +2578,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             lines_clip_owner,
                             lines_clip_box,
                             closing_edges: child_closing_edges,
+                            min_height_edges: min_height_edges
+                                .filter(|_| last_in_flow == Some(index)),
+                            capped_edges_block: (child_closing_edges > 0.0
+                                && at_chain_start.is_none())
+                            .then(|| {
+                                if height_follows_content(document, node_id) {
+                                    frame.capped_edges_block.filter(|_| inherited_edges > 0.0)
+                                } else {
+                                    Some(node_id)
+                                }
+                            })
+                            .flatten(),
                             previous_box: child_previous_box,
                             column_break_before: child_column_break,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
