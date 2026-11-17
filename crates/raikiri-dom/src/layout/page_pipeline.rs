@@ -13382,7 +13382,7 @@ impl SiblingMargins {
             return None;
         }
         let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
-        let gap = gap.min(escape_free_gap(document, cascade, previous, gap));
+        let gap = escape_free_gap(document, cascade, previous, gap);
         let float_break_page = self
             .break_taken_by_float
             .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
