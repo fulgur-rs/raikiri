@@ -7044,9 +7044,8 @@ fn follow_ifc_block_with_oof(
 fn is_descendant_or_self(document: &Document, node_id: usize, ancestor_id: usize) -> bool {
     if document.anonymous_table_cell(ancestor_id).is_some() {
         // An anonymous cell is no source parent of the boxes it wraps.
-        return std::iter::once(node_id)
-            .chain(document.ancestors(node_id))
-            .any(|id| id == ancestor_id || document.anonymous_cell_of(id) == Some(ancestor_id));
+        return node_id == ancestor_id
+            || wrapping_anonymous_cell(document, node_id) == Some(ancestor_id);
     }
     document.is_ancestor_or_self(ancestor_id, node_id)
 }
@@ -11551,13 +11550,15 @@ impl EnteredParagraphs {
         let mut first = ifc_root
             .filter(|&(root, _)| document.is_anonymous_cell(root))
             .is_none_or(|(root, _)| self.roots.insert(root));
-        // A box that an anonymous cell wraps is laid out among the cell's
-        // lines, though the cell is none of its source ancestors: it enters
-        // the cell's paragraph too, ahead of the text after it.
-        if let Some(cell) = std::iter::once(node_id)
-            .chain(document.ancestors(node_id))
-            .find_map(|id| document.anonymous_cell_of(id))
+        // A block that an anonymous cell lays out among its lines enters
+        // the cell's paragraph too, though the cell is none of its source
+        // ancestors: the text after it then follows the lines that moved
+        // with it instead of moving the whole cell again.
+        if let Some(cell) = wrapping_anonymous_cell(document, node_id)
             .filter(|&cell| ifc_root.is_none_or(|(root, _)| root != cell))
+            && document
+                .ifc_layout_node(cell)
+                .is_some_and(|cell| cell.ifc.is_some())
             && !self.roots.insert(cell)
         {
             first = false;
@@ -17179,18 +17180,48 @@ fn edges_break_container(
 /// The paragraph that lays `block` out as a block among its lines, whose
 /// content after the block follows it with its lines.
 fn ifc_paragraph_of_block(document: &Document, block: usize) -> Option<usize> {
-    document.layout_parent_of(block).filter(|&root| {
-        document
-            .ifc_layout_node(root)
-            .and_then(|node| node.ifc.as_ref())
-            .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| {
-                lines
-                    .block_line_starts
-                    .iter()
-                    .any(|&(child, _)| child == block)
-            })
-    })
+    document
+        .layout_parent_of(block)
+        .filter(|&root| lines_hold_block(document, root, block))
+}
+
+/// Whether the paragraph `root` lays `block` out as a block among its lines.
+fn lines_hold_block(document: &Document, root: usize, block: usize) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(child, _)| child == block)
+        })
+}
+
+/// The anonymous table cell that wraps `node_id` or the ancestor of it that
+/// is a child of a table part (CSS 2.1 §17.2.1), if table fixup wrapped one.
+fn wrapping_anonymous_cell(document: &Document, node_id: usize) -> Option<usize> {
+    let mut id = node_id;
+    loop {
+        if let Some(cell) = document.anonymous_cell_of(id) {
+            return Some(cell);
+        }
+        let parent = document.parent_of(id)?;
+        if matches!(
+            document.nodes[parent].display(),
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableCell
+        ) {
+            return None;
+        }
+        id = parent;
+    }
 }
 
 /// Whether `id` stacks its children in block order, so that the boxes
@@ -17271,96 +17302,93 @@ fn shift_block_flow_after(
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
         walk.advance(document);
-        if document.nodes[parent].display() == DisplayValue::Contents {
-            continue;
-        }
-        if document.nodes[child].in_ifc_subtree() && document.nodes[parent].in_ifc_subtree() {
-            // Moved text and the inline boxes around it move with the lines
-            // of their paragraph.
-            child = parent;
-            continue;
-        }
-        if let Some(cell) = growing_cell(document, child, parent) {
-            // A table cell's `height` is a minimum: the row grows only as
-            // far as the cell's moved content ends past it (CSS 2.1
-            // §17.5.3). The cells beside it keep their places, and the
-            // flow after the row follows its growth.
-            let parent = cell;
-            if cell_lines_hold_block(document, cell, child) {
-                // The lines after a block on the cell's lines follow it; the
-                // moved box itself already took them along.
-                if child != node_id {
-                    let layout = document.nodes[child].layout;
-                    let top = document.pagination_local_y(child);
-                    let _ = follow_ifc_block(
-                        document,
-                        cell,
-                        child,
-                        top,
-                        top + layout.size.height,
-                        flow_delta,
-                    );
-                }
-            } else if !document.nodes[child].in_ifc_subtree() {
-                shift_later_flow_siblings(document, cell, child, flow_delta);
-            }
-            // The box the cell holds may have grown on earlier breaks too.
-            let child_growth = if child == node_id {
-                0.0
-            } else {
-                shifts.box_growth(child)
-            };
-            let passed = moved_content_growth(
-                document,
-                cascade,
-                body_id,
-                parent,
-                (child, child_growth),
-                f32::INFINITY,
-            );
-            bounded = true;
-            let row_end = cell_row_end(document, parent);
-            // A row grows as far as its cell that grows most, and an
-            // earlier break in it may have grown it already: only the
-            // rest of the growth moves what follows.
-            let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
-            let added = shifts.grow_row(holder, passed);
-            let Some((row, end, table)) = row_end else {
-                // A cell outside a table sits in an anonymous table of its
-                // own (CSS 2.1 §17.2.1), which grows with it.
-                if added < flow_delta - 0.001 {
-                    shifts.bounded.push((parent, flow_delta - added, flow_page));
-                }
-                flow_delta = added;
-                child_total = Some(shifts.grow_box(parent, added));
+        let moved_lines = match flow_step(document, child, parent) {
+            FlowStep::Skip => continue,
+            FlowStep::Inline => {
                 child = parent;
-                if flow_delta <= 0.001 {
+                continue;
+            }
+            FlowStep::Stop => break,
+            FlowStep::Flow { moved_lines } => moved_lines,
+            FlowStep::Cell(cell) => {
+                // A table cell's `height` is a minimum: the row grows only as
+                // far as the cell's moved content ends past it (CSS 2.1
+                // §17.5.3). The cells beside it keep their places, and the
+                // flow after the row follows its growth.
+                let parent = cell;
+                if lines_hold_block(document, cell, child) {
+                    // The lines after a block on the cell's lines follow it; the
+                    // moved box itself already took them along.
+                    if child != node_id {
+                        let layout = document.nodes[child].layout;
+                        let top = document.pagination_local_y(child);
+                        let _ = follow_ifc_block(
+                            document,
+                            cell,
+                            child,
+                            top,
+                            top + layout.size.height,
+                            flow_delta,
+                        );
+                    }
+                } else if !document.nodes[child].in_ifc_subtree() {
+                    shift_later_flow_siblings(document, cell, child, flow_delta);
+                }
+                // The box the cell holds may have grown on earlier breaks too.
+                let child_growth = if child == node_id {
+                    0.0
+                } else {
+                    shifts.box_growth(child)
+                };
+                let passed = moved_content_growth(
+                    document,
+                    cascade,
+                    body_id,
+                    parent,
+                    (child, child_growth),
+                    f32::INFINITY,
+                );
+                bounded = true;
+                let row_end = cell_row_end(document, parent);
+                // A row grows as far as its cell that grows most, and an
+                // earlier break in it may have grown it already: only the
+                // rest of the growth moves what follows.
+                let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
+                let added = shifts.grow_row(holder, passed);
+                let Some((row, end, table)) = row_end else {
+                    // A cell outside a table sits in an anonymous table of its
+                    // own (CSS 2.1 §17.2.1), which grows with it.
+                    if added < flow_delta - 0.001 {
+                        shifts.bounded.push((parent, flow_delta - added, flow_page));
+                    }
+                    flow_delta = added;
+                    child_total = Some(shifts.grow_box(parent, added));
+                    child = parent;
+                    if flow_delta <= 0.001 {
+                        break;
+                    }
+                    continue;
+                };
+                shifts.bounded.push((parent, flow_delta, flow_page));
+                if added <= 0.001 {
                     break;
                 }
+                shifts.from_box.push((row, end, added));
+                shift_rows_after(document, cascade, (row, end), table, added);
+                // The table grows with the row: its ancestors take the growth
+                // on as they take a moved box's.
+                flow_delta = added;
+                child_total = Some(shifts.grow_box(table, added));
+                child = table;
+                walk = AncestorCursor::new(document.parent_of(table), ParentRelation::Source);
                 continue;
-            };
-            shifts.bounded.push((parent, flow_delta, flow_page));
-            if added <= 0.001 {
-                break;
             }
-            shifts.from_box.push((row, end, added));
-            shift_rows_after(document, cascade, (row, end), table, added);
-            // The table grows with the row: its ancestors take the growth
-            // on as they take a moved box's.
-            flow_delta = added;
-            child_total = Some(shifts.grow_box(table, added));
-            child = table;
-            walk = AncestorCursor::new(document.parent_of(table), ParentRelation::Source);
-            continue;
-        }
-        // Moved text took the rest of its paragraph along with its lines.
-        let moved_lines = document.nodes[child].in_ifc_subtree();
-        let paragraph = moved_lines || ifc_paragraph_of_block(document, child) == Some(parent);
-        if !paragraph && !stacks_children_in_block_flow(document, parent) {
-            break;
-        }
+        };
         // The moved box itself already took the lines after it along.
-        if paragraph && !moved_lines && child != node_id {
+        if !moved_lines
+            && child != node_id
+            && ifc_paragraph_of_block(document, child) == Some(parent)
+        {
             let layout = document.nodes[child].layout;
             let top = document.pagination_local_y(child);
             let _ = follow_ifc_block(
@@ -17377,10 +17405,14 @@ fn shift_block_flow_after(
         }
         // The moved box moved whole; an ancestor of it keeps its stored
         // height while its content end moves down with the shift.
-        let child_growth =
-            child_total
-                .take()
-                .unwrap_or(if child == node_id { 0.0 } else { flow_delta });
+        // Moved text grows its paragraph by its lines alone.
+        let child_growth = child_total
+            .take()
+            .unwrap_or(if child == node_id || moved_lines {
+                0.0
+            } else {
+                flow_delta
+            });
         let passed = forced_break_growth(
             document,
             cascade,
@@ -17450,25 +17482,59 @@ fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: u
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current() {
         walk.advance(document);
-        if document.nodes[parent].display() == DisplayValue::Contents {
-            continue;
+        match flow_step(document, child, parent) {
+            FlowStep::Skip => {}
+            FlowStep::Cell(_) => return true,
+            FlowStep::Stop => return false,
+            FlowStep::Inline | FlowStep::Flow { .. } => child = parent,
         }
-        if document.nodes[child].in_ifc_subtree() && document.nodes[parent].in_ifc_subtree() {
-            child = parent;
-            continue;
-        }
-        if growing_cell(document, child, parent).is_some() {
-            return true;
-        }
-        if !document.nodes[child].in_ifc_subtree()
-            && ifc_paragraph_of_block(document, child) != Some(parent)
-            && !stacks_children_in_block_flow(document, parent)
-        {
-            return false;
-        }
-        child = parent;
     }
     false
+}
+
+/// One step of the walk of [`shift_block_flow_after`] from `child`, which
+/// holds moved content, to its source parent `parent`.
+enum FlowStep {
+    /// `parent` generates no box (`display: contents`): its parent lays
+    /// `child` out.
+    Skip,
+    /// `child` and `parent` are inline content of one paragraph, which
+    /// moves with its lines.
+    Inline,
+    /// The table cell whose row grows to hold the moved content (see
+    /// [`growing_cell`]).
+    Cell(usize),
+    /// `parent` takes the moved content on in its flow: it stacks its
+    /// children in block flow, or lays `child` out among its lines. With
+    /// `moved_lines`, `child` is inline content whose lines already moved.
+    Flow { moved_lines: bool },
+    /// `parent` takes no moved content on.
+    Stop,
+}
+
+fn flow_step(
+    document: &super::context::LayoutSession<'_>,
+    child: usize,
+    parent: usize,
+) -> FlowStep {
+    if document.nodes[parent].display() == DisplayValue::Contents {
+        return FlowStep::Skip;
+    }
+    let moved_lines = document.nodes[child].in_ifc_subtree();
+    if moved_lines && document.nodes[parent].in_ifc_subtree() {
+        return FlowStep::Inline;
+    }
+    if let Some(cell) = growing_cell(document, child, parent) {
+        return FlowStep::Cell(cell);
+    }
+    if moved_lines
+        || ifc_paragraph_of_block(document, child) == Some(parent)
+        || stacks_children_in_block_flow(document, parent)
+    {
+        FlowStep::Flow { moved_lines }
+    } else {
+        FlowStep::Stop
+    }
 }
 
 /// The table cell whose row grows to hold content moved down from `child`,
@@ -17488,26 +17554,8 @@ fn growing_cell(
         && node.multicol.is_none()
         && (node.ifc.is_none()
             || document.nodes[child].in_ifc_subtree()
-            || cell_lines_hold_block(document, cell, child)))
+            || lines_hold_block(document, cell, child)))
     .then_some(cell)
-}
-
-/// Whether `cell` lays `block` out as a block among its lines.
-fn cell_lines_hold_block(
-    document: &super::context::LayoutSession<'_>,
-    cell: usize,
-    block: usize,
-) -> bool {
-    document
-        .ifc_layout_node(cell)
-        .and_then(|node| node.ifc.as_ref())
-        .and_then(|ifc| ifc.lines.as_ref())
-        .is_some_and(|lines| {
-            lines
-                .block_line_starts
-                .iter()
-                .any(|&(child, _)| child == block)
-        })
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it

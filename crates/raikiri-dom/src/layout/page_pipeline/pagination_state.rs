@@ -3897,27 +3897,37 @@ impl PaginationState {
                 // offset paints it that far from there.
                 let delta = target_y - (text.effective_y - relative_offset);
                 if delta.is_finite() {
-                    // The lines of a table cell that a forced break moves
-                    // grow the cell's row, and the cells beside it stay; the
-                    // row takes the growth on from the cell's own height.
-                    let cell_row = (delta > 0.0 && super::moves_reach_cell_row(document, node_id))
-                        .then(|| text_ifc_root)
-                        .flatten()
+                    // Content of a table cell that a forced break moves
+                    // grows the cell's row, and the cells beside it stay.
+                    // A float or an out-of-flow box takes the break apart
+                    // from the flow of the cell.
+                    let in_cell_flow = delta > 0.0
+                        && !candidate.context.is_float_descendant()
+                        && !candidate.context.is_out_of_flow_descendant()
+                        && super::moves_reach_cell_row(document, node_id);
+                    let moved_root = entry.ifc_root.map(|(root, _)| root);
+                    // Moved lines grow their root, which the row measures from
+                    // the root's height before they moved.
+                    let lines_root = text_ifc_root
+                        .filter(|_| in_cell_flow && moved_root.is_none())
                         .map(|root| (root, document.nodes[root].layout.size.height));
                     shift_text_candidate(
                         document,
                         text_lines,
                         node_id,
-                        entry.ifc_root.map(|(root, _)| root),
+                        moved_root,
                         text_ifc_root,
                         delta,
                     );
-                    if let Some((root, height)) = cell_row {
+                    if let Some((root, height)) = lines_root {
                         document.table_layout_node_mut(root).layout.size.height = height;
+                    }
+                    if in_cell_flow {
+                        // A root that moved whole is the box that moved.
                         super::shift_block_flow_after(
                             document,
                             env.cascade,
-                            node_id,
+                            moved_root.unwrap_or(node_id),
                             env.body_id,
                             delta,
                             &mut self.subtree_shifts,
