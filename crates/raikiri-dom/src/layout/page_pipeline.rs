@@ -10245,21 +10245,21 @@ fn empty_box_offset(
         adjoining_margin_extremes(document, cascade, end, false, None);
     positive = positive.max(top_positive);
     negative = negative.min(top_negative);
-    if let Some(parent) = document.parent_of(empty) {
-        for &child in document.nodes[parent]
-            .children
-            .iter()
-            .rev()
-            .skip_while(|&&child| child != empty)
-            .skip(1)
-            .take_while(|&&child| child != end)
-        {
-            if takes_part_in_flow(document, cascade, child) {
-                let (child_positive, child_negative) =
-                    empty_box_margin_extremes(document, cascade, child);
-                positive = positive.max(child_positive);
-                negative = negative.min(child_negative);
-            }
+    let siblings = document
+        .parent_of(empty)
+        .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
+    for &child in siblings
+        .iter()
+        .rev()
+        .skip_while(|&&child| child != empty)
+        .skip(1)
+        .take_while(|&&child| child != end)
+    {
+        if takes_part_in_flow(document, cascade, child) {
+            let (child_positive, child_negative) =
+                empty_box_margin_extremes(document, cascade, child);
+            positive = positive.max(child_positive);
+            negative = negative.min(child_negative);
         }
     }
     positive + negative
