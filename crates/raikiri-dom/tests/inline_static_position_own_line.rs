@@ -234,6 +234,11 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<div style="text-align:center;text-align-last:left;width:100px">X<p style="margin:0;width:20px">A</p><span><span id=q style="position:absolute">Q</span></span><p style="margin:0;width:20px">A</p>T</div>"#,
         [0.0, 20.0, 10.0, 10.0],
     ),
+    (
+        "a float in a later block does not narrow the line",
+        r#"<div style="width:100px">X<p style="margin:0">A</p><span id=q style="position:absolute">Q</span><div><div style="float:left;width:40px;height:20px"></div>B</div>T</div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
 ];
 
 #[test]

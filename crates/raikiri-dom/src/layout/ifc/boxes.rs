@@ -1,7 +1,9 @@
 //! Lay out a paragraph together with the boxes that sit in its lines.
 
 use super::clear_breaks::ClearBreakIndex;
-use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::flow::{
+    FloatSnapshots, FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent,
+};
 use super::generated_atomics::logical_box;
 use super::generated_blocks;
 use super::geometry::IfcAxes;
@@ -12,7 +14,7 @@ use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::block_flow;
 use crate::layout::dispatch::block_flow::context::{
-    BlockContext, BlockFormattingContext, BoxProbe, FloatView,
+    BlockContext, BlockFormattingContext, BoxProbe,
 };
 use crate::layout::dispatch::{
     fit_content_room, measure_against_parent_height, pads_by_percentage_on_physical_axes,
@@ -116,9 +118,8 @@ struct FragmentedFloatOutput<'a> {
     placements: &'a mut Vec<IfcBoxFragment>,
     earliest_float_top: &'a mut f32,
     oof_candidates: &'a mut OofCandidates,
-    /// The floats each float of the paragraph found placed before it, when
-    /// they are kept (see [`super::flow::LineFloats`]).
-    float_views: &'a mut Option<Vec<(usize, Option<FloatView>)>>,
+    /// The floats kept for the lines of out-of-flow boxes, if any are.
+    float_views: &'a mut Option<FloatSnapshots>,
 }
 
 /// Resolve what the root's percentages refer to before its lines are laid
@@ -869,14 +870,16 @@ fn run_boxes_segment(
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
-    // The floats before each float of the paragraph, kept for the lines that
-    // its inline-level out-of-flow boxes may sit on alone.
-    let mut float_views = (root.writing_mode == WritingMode::HorizontalTb
-        && fragmentainer.is_none()
-        && root.boxes.iter().any(|b| {
-            b.kind == IfcBoxKind::OutOfFlow && tree.nodes[b.node].display().is_inline_level()
-        }))
-    .then(Vec::new);
+    // The floats kept for the lines that the paragraph's inline-level
+    // out-of-flow boxes may sit on alone.
+    let mut float_views =
+        if root.writing_mode == WritingMode::HorizontalTb && fragmentainer.is_none() {
+            FloatSnapshots::new(&root.boxes, |node| {
+                tree.nodes[node].display().is_inline_level()
+            })
+        } else {
+            None
+        };
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
@@ -1477,6 +1480,9 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
+                if let Some(views) = float_views.as_mut() {
+                    views.record(node.0 as usize, ctx);
+                }
                 // The margins above a block that starts the paragraph escape
                 // through its top edge.
                 first_block_start.get_or_insert((
@@ -1704,7 +1710,7 @@ fn commit_fragmented_float(
     } = output;
     let node = float.node;
     if let Some(views) = float_views {
-        views.push((node, ctx.float_view()));
+        views.record(node, ctx);
     }
     let (top, mut child_candidates) =
         commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
@@ -5250,8 +5256,9 @@ fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -
 struct BoxSurroundings {
     /// A block-level box comes before it.
     block_before: bool,
-    /// The first float after it.
-    next_float: Option<usize>,
+    /// The first float or block-level box after it (see
+    /// [`FloatSnapshots`]).
+    boundary: Option<usize>,
 }
 
 /// The lines, missing from the lines of a horizontal paragraph, that its
@@ -5277,16 +5284,16 @@ impl<'a> HypotheticalLines<'a> {
             .map(|(index, line)| lines.line_top(index) + line.block_size())
             .collect();
         let mut surroundings = HashMap::new();
-        let mut next_float = None;
+        let mut boundary = None;
         for b in root.boxes.iter().rev() {
             match b.kind {
-                IfcBoxKind::Float => next_float = Some(b.node),
+                IfcBoxKind::Float | IfcBoxKind::Block => boundary = Some(b.node),
                 IfcBoxKind::OutOfFlow => {
                     surroundings.insert(
                         b.node,
                         BoxSurroundings {
                             block_before: false,
-                            next_float,
+                            boundary,
                         },
                     );
                 }
@@ -5327,7 +5334,7 @@ impl<'a> HypotheticalLines<'a> {
     /// it is aligned by `text-align` alone (see
     /// [`block_flow::static_inline_share`]) and the indent moves its aligned
     /// point (see [`block_flow::static_line_indent`]). Either line is set in
-    /// by the floats placed before the box.
+    /// by the floats placed before the box's boundary.
     fn anchor(&self, node: usize, in_inline_box: bool, block_offset: f32) -> (f32, AxisStaticEdge) {
         let lines = self.lines;
         let around = self.surroundings.get(&node).copied().unwrap_or_default();
@@ -5339,7 +5346,7 @@ impl<'a> HypotheticalLines<'a> {
                 inline_start: 0.0,
                 inline_size: lines.width,
             },
-            |floats| floats.space_at(unaligned, around.next_float),
+            |floats| floats.space_at(unaligned, around.boundary),
         );
         let after_break = {
             let at = self
