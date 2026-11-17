@@ -427,14 +427,8 @@ fn push_generated(
                 super::generated_blocks::align_physically(&mut options, rtl);
             }
             Some(
-                GeneratedBlock::new(
-                    id.0,
-                    end,
-                    cv,
-                    (options, indent),
-                    (orthogonal, pseudo == PseudoElem::After),
-                )
-                .on_root_axes(images.writing_mode, images.rtl),
+                GeneratedBlock::new(id.0, end, cv, (options, indent), orthogonal)
+                    .on_root_axes(images.writing_mode, images.rtl),
             )
         }
         None => None,
@@ -1590,6 +1584,12 @@ fn project_children_builder(
         && super::assign::marker_holds_only_line(doc, cascade, root, fonts, counters)?
     {
         builder.push_forced_break(NodeId(generated_node_id(root, PseudoElem::Marker) as u64));
+    }
+    // The root's own `::before` and `::after` start and end the paragraph.
+    for block in &mut generated_images.blocks {
+        block.of_root = [PseudoElem::Before, PseudoElem::After]
+            .into_iter()
+            .find(|&pseudo| block.start == generated_node_id(root, pseudo) as u64);
     }
     Ok(Projected {
         paragraph: builder,

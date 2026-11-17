@@ -859,6 +859,7 @@ fn run_boxes_segment(
     let mut block_line_starts = Vec::new();
     let mut generated_block_starts = Vec::new();
     let mut first_block_start = None;
+    let mut leading_unordered = false;
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
@@ -1354,17 +1355,25 @@ fn run_boxes_segment(
                     block_cursor = index;
                     if let generated_blocks::Token::Start(block) = edge {
                         generated_block_starts.push((block_line_starts.len(), lines.len()));
-                        if block.after {
-                            // The margins above a box that starts the
-                            // paragraph escape through its top edge.
-                            let escapes = top_margin_escapes
-                                && leading_margin_open
-                                && lines.is_empty()
-                                && y == 0.0;
-                            first_block_start.get_or_insert((
-                                lines.len(),
-                                if escapes { y } else { y + pending.resolve() },
-                            ));
+                        match block.of_root {
+                            Some(raikiri_style::PseudoElem::Before) => {}
+                            Some(_) => {
+                                // The margins above a box that starts the
+                                // paragraph escape through its top edge.
+                                let escapes = top_margin_escapes
+                                    && leading_margin_open
+                                    && lines.is_empty()
+                                    && y == 0.0;
+                                first_block_start.get_or_insert((
+                                    lines.len(),
+                                    if escapes { y } else { y + pending.resolve() },
+                                ));
+                            }
+                            // A descendant's box may come before or after an
+                            // out-of-flow box that no block child precedes,
+                            // so the start of the next block does not place
+                            // that box.
+                            None => leading_unordered |= first_block_start.is_none(),
                         }
                     }
                     // A generated block is laid out along the block axis of
@@ -1632,7 +1641,7 @@ fn run_boxes_segment(
             leading_block_margin,
             block_line_starts,
             generated_block_starts,
-            first_block_start,
+            first_block_start: first_block_start.filter(|_| !leading_unordered),
             block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,

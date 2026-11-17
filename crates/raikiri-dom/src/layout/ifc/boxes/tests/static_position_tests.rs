@@ -997,4 +997,18 @@ fn an_out_of_flow_box_before_the_first_block_child_sits_where_that_block_starts(
         &[Child::Box("")],
         ESCAPING,
     );
+    // The `::after` of a descendant can come before the box, which then
+    // follows it.
+    check(
+        "descendant_generated_block_then_box",
+        Setup {
+            sheet: r#"#cb span::after{content:"";display:block;height:10px}"#,
+            root_css: "",
+        },
+        &[Child::Styled("display:contents", &[]), Child::Box("")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+        ],
+    );
 }
