@@ -6285,15 +6285,16 @@ fn sibling_renders(document: &Document, sibling: usize) -> bool {
 /// ancestors' starts behind on the earlier page.
 ///
 /// An ancestor without top border or padding begins where its child does, and
-/// is left with an empty start otherwise. One with a top border or padding is a
-/// plain block box that begins its page below `page_start`: the page breaks
+/// is left with an empty start otherwise. One with a top border or padding, or
+/// one that keeps the margin of its first child inside it, is a plain block
+/// box that begins its page below `page_start`: the page breaks
 /// before it rather than between those edges and `block`, which would leave
 /// them alone at the foot of the page (CSS Break 3 §4.1), unless clearance
 /// puts the child below its margin after the edges. One that starts at
 /// `page_start` gains nothing by moving, and stops the walk. A
 /// `display: contents` ancestor has no box and is passed over.
 fn first_box_ancestor_at_start(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
@@ -6341,12 +6342,19 @@ fn first_box_ancestor_at_start(
         // relative offset that only paints it elsewhere.
         let child_flow_start =
             child_start - layout_relative_offset_y(document, cascade, body_id, box_child);
-        let child_margin = document.nodes[box_child].layout.margin.top.max(0.0);
+        // The margin above the child, with those that collapse up through it.
+        let child_margin = collapsed_margin_above(document, cascade, box_child).max(0.0);
         box_child = parent;
         child_top = parent_top;
         let layout = &document.nodes[parent].layout;
         let has_edges = layout.border.top != 0.0 || layout.padding.top != 0.0;
-        let moves_with_block = if has_edges {
+        // A box that establishes an independent formatting context keeps the
+        // margin of its first child inside it (CSS 2 §8.3.1): that margin
+        // does not adjoin a break before the box, so it goes along as its
+        // edges would, whether it is positive or negative.
+        let keeps_child_margin = (child_start - parent_top).abs() > 0.01
+            && !margins_may_collapse_through(document, cascade, parent);
+        let moves_with_block = if has_edges || keeps_child_margin {
             // The page breaks before a relative offset moves the box, so the
             // ancestor starts the page at its place in the normal flow. A
             // child that clearance put further down than its margin leaves a
@@ -6365,6 +6373,80 @@ fn first_box_ancestor_at_start(
         moved = parent;
     }
     moved
+}
+
+/// The outermost box that `node_id`, a box that avoids a break inside it,
+/// begins with nothing of its own above it, and how far below that box's top
+/// `node_id` starts in the flow: `(holder, lead)`. The walk passes the plain
+/// blocks that begin where their child does, as [`leading_holder`] does
+/// without edges, and also those that establish an independent formatting
+/// context and keep the margin of their first child inside them (CSS 2
+/// §8.3.1), when they begin below `page_start`: that margin does not adjoin a
+/// break before them, so it moves with the box. A negative one leaves the
+/// box above the holder's top, and the lead negative. Border or padding
+/// above the child stops the walk, as does anything else before it, and a
+/// box placed out of flow or by an inline formatting context.
+fn avoided_box_holder(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_start: f32,
+) -> (usize, f32) {
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let mut holder = node_id;
+    let mut child = node_id;
+    // The nearest box at or below `child`: a `display: contents` element has
+    // no box of its own.
+    let mut box_child = node_id;
+    for ancestor in document
+        .layout_ancestors(node_id)
+        .take_while(|&id| id != body_id)
+    {
+        if renders_before_child(document, ancestor, child) {
+            break;
+        }
+        child = ancestor;
+        if document.nodes[ancestor].display() == DisplayValue::Contents {
+            continue;
+        }
+        let layout = &document.nodes[ancestor].layout;
+        if !is_plain_block_box(document, ancestor)
+            || document.nodes[ancestor].is_multicol_container()
+            || is_floating_box_for_pagination(document, cascade, ancestor)
+            || has_unusual_coordinates(document, box_child)
+            || has_unusual_coordinates(document, ancestor)
+            || layout.border.top != 0.0
+            || layout.padding.top != 0.0
+        {
+            break;
+        }
+        // A box begins where its child is drawn, as for `leading_holder`:
+        // a relative offset on the way leaves the box apart from it. A kept
+        // margin is measured in the flow, with the margins that collapse up
+        // through the child into it.
+        let begins_with_child =
+            (current_abs_y(document, box_child) - current_abs_y(document, ancestor)).abs() <= 0.01;
+        let keeps_child_margin = !begins_with_child
+            && (flow_top(box_child)
+                - flow_top(ancestor)
+                - collapsed_margin_above(document, cascade, box_child))
+            .abs()
+                <= 0.01
+            && !margins_may_collapse_through(document, cascade, ancestor)
+            && flow_top(ancestor) > page_start + 0.001;
+        if !(begins_with_child || keeps_child_margin) {
+            break;
+        }
+        holder = ancestor;
+        box_child = ancestor;
+    }
+    (
+        holder,
+        lead_below_ancestor(document, cascade, body_id, node_id, holder),
+    )
 }
 
 /// Whether the lead to a contained box consists only of cloned leading
@@ -6501,7 +6583,7 @@ fn leading_holder_with(
         holder = ancestor;
     }
     let lead = if edges {
-        lead_below_ancestor(document, cascade, body_id, node_id, holder)
+        flow_distance(document, cascade, body_id, node_id, holder).max(0.0)
     } else {
         0.0
     };
@@ -9115,7 +9197,16 @@ fn lineless_piece(
         } else {
             end
         },
-        has_edges: piece.has_edges || edges_above > 0.0,
+        // A box that establishes an independent formatting context keeps a
+        // positive margin of its first child inside it (CSS 2 §8.3.1), which
+        // a break before the child cannot truncate: it stays above the
+        // content as edges would. Columns start a fragmentation context of
+        // their own, which truncates the margin at their top instead.
+        has_edges: piece.has_edges
+            || edges_above > 0.0
+            || (top > 0.01
+                && node.multicol.is_none()
+                && !margins_may_collapse_through(document, cascade, node_id)),
         monolithic: piece.monolithic,
     })
 }
@@ -14275,8 +14366,23 @@ fn move_paragraph_lines(
 /// How far below the top of `moved` the block `block` starts in the normal
 /// flow, when `moved` is the box that the walk from the block up chose to move
 /// with it (see [`first_box_ancestor_at_start`]): the edges of the ancestors
-/// above it, without the relative offsets that moved either box.
+/// above it, without the relative offsets that moved either box. It is
+/// negative only by the negative margins that boxes on the way keep inside
+/// the box above them, which puts the block above the top of `moved`.
 fn lead_below_ancestor(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    moved: usize,
+) -> f32 {
+    flow_distance(document, cascade, body_id, block, moved)
+        .max(kept_negative_margins(document, cascade, block, moved))
+}
+
+/// How far below `moved` the flow puts `block`, without the relative offsets
+/// that moved either box.
+fn flow_distance(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
@@ -14286,7 +14392,38 @@ fn lead_below_ancestor(
     let flow_y = |id: usize| {
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
-    (flow_y(block) - flow_y(moved)).max(0.0)
+    flow_y(block) - flow_y(moved)
+}
+
+/// The sum of the negative top margins that the boxes from `block` up to
+/// `moved` keep inside a parent with a top border or padding, or one whose
+/// top their margins do not collapse through (CSS 2 §8.3.1). Each is the most
+/// negative of the margins that collapse together above the child.
+fn kept_negative_margins(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    moved: usize,
+) -> f32 {
+    let mut kept = 0.0;
+    let mut child = block;
+    for parent in document.layout_ancestors(block) {
+        if child == moved {
+            break;
+        }
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        let layout = &document.nodes[parent].layout;
+        if layout.border.top != 0.0
+            || layout.padding.top != 0.0
+            || !margins_may_collapse_through(document, cascade, parent)
+        {
+            kept += adjoining_margin_extremes(document, cascade, child, true, None).1;
+        }
+        child = parent;
+    }
+    kept
 }
 
 /// Moves `block_id`, which the flow puts at `from_y`, so that the box it
@@ -14421,7 +14558,14 @@ fn move_box_for_transition(
         owner.direct_body
     });
     let nested_block = !direct_body && moves_in_flow_down;
-    if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
+    if page_overflow && nested_block && moves_reach_cell_row(document, holder) {
+        // A box moved out of a page in a table cell takes the content after
+        // it along, and its row grows to hold it, as for a forced break
+        // there; the cells beside it stay.
+        moved_in_bounded_ancestor = shift_block_flow_after(
+            document, cascade, holder, body_id, node_delta, shifts, flow_page,
+        );
+    } else if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
@@ -16966,7 +17110,9 @@ fn collapses_with_previous_block(
 
 /// Moves the boxes after `node_id` in block flow down by `flow_delta`, up to
 /// the first ancestor below `body_id` that does not stack its children in
-/// block order, for a forced break before `node_id`. Returns whether an
+/// block order, for a forced break before `node_id` or for `node_id` moved
+/// out of a page in a table cell (see [`moves_reach_cell_row`]). Returns
+/// whether an
 /// ancestor's height kept it from holding the moved content.
 ///
 /// A `display: contents` ancestor has no box; its parent lays the moved box
@@ -17138,6 +17284,45 @@ fn shift_rows_after(
             shift_block_sibling(document, later, delta);
         }
         up = parent;
+    }
+}
+
+/// Whether a box moved down from `node_id` reaches the row of a table cell
+/// along the walk of [`shift_block_flow_after`]: every box between them
+/// stacks its children in block flow, and the cell itself holds neither
+/// columns nor lines, so its row can grow to hold the moved content.
+fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    first_parent_off_block_flow(document, node_id).is_some_and(|(child, parent)| {
+        document.anonymous_cell_of(child).is_some()
+            || document.nodes[parent].display() == DisplayValue::TableCell
+                && document.nodes[parent].multicol.is_none()
+                && document
+                    .ifc_layout_node(parent)
+                    .is_none_or(|node| node.ifc.is_none())
+    })
+}
+
+/// The first ancestor of `node_id` that does not take a moved box's flow on
+/// in block order, with its child on the way there: the parent where the
+/// walk of [`shift_block_flow_after`] stops.
+fn first_parent_off_block_flow(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> Option<(usize, usize)> {
+    let mut child = node_id;
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    loop {
+        let parent = walk.current()?;
+        walk.advance(document);
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        if ifc_paragraph_of_block(document, child) != Some(parent)
+            && !stacks_children_in_block_flow(document, parent)
+        {
+            return Some((child, parent));
+        }
+        child = parent;
     }
 }
 

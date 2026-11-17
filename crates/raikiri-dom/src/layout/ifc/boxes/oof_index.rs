@@ -124,11 +124,7 @@ impl StaticFallbackIndex {
         }
         let offset = |before: Option<usize>, after: Option<usize>| {
             let Some(block) = before else {
-                return if lines.lines.is_empty() && lines.placed_blocks.is_empty() {
-                    lines.shifts.aligned()
-                } else {
-                    lines.height + lines.shifts.aligned()
-                };
+                return leading_static_offset(lines);
             };
             let Some(&(next_line, end)) = ends.get(&block) else {
                 return lines.height + lines.shifts.aligned();
