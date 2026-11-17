@@ -447,7 +447,7 @@ fn decimal_updates_preserve_range_maxima_when_pending_offsets_are_consumed() {
 }
 
 #[test]
-fn negative_last_margin_replaces_the_unadjusted_last_end_in_the_aggregate() {
+fn the_margin_box_of_the_last_child_ends_the_content_alone() {
     let mut doc = crate::Document::new();
     let parent = doc.append_element(Some(0), "div", None::<&str>);
     let first = doc.append_element(Some(parent), "div", None::<&str>);
@@ -460,9 +460,12 @@ fn negative_last_margin_replaces_the_unadjusted_last_end_in_the_aggregate() {
         vec![leaf(first, 90.0, true), leaf(last, 100.0, true)],
     );
     doc.normal_block_shifts = Some(Box::new(state));
-    let result = extents(&doc, parent, first, 10.0, 10.0, 0.0, false).unwrap();
-    assert_eq!(result[0], (80.0, 90.0));
-    assert_eq!(result[1], (90.0, 100.0));
+    let margin = |node: usize| Some((node, doc.nodes[node].layout.margin.bottom));
+    let result = extents(&doc, parent, first, 10.0, 10.0, 0.0, false, margin).unwrap();
+    // The negative margin pulls the end above the first child, which then
+    // overflows the box (CSS 2 §10.6.3).
+    assert_eq!(result[0], (40.0, 50.0));
+    assert_eq!(result[1], (50.0, 60.0));
 }
 
 #[test]
@@ -670,17 +673,40 @@ fn extent_queries_reject_untracked_children_and_keep_a_trailing_float_separate()
     );
     doc.normal_block_shifts = Some(Box::new(state));
     assert_eq!(
-        extents(&doc, float_parent, flow, 10.0, 20.0, 30.0, false),
+        extents(&doc, float_parent, flow, 10.0, 20.0, 30.0, false, |node| {
+            Some((node, 0.0))
+        }),
         None
     );
-    assert_eq!(extents(&doc, parent, hidden, 10.0, 20.0, 30.0, false), None);
-    assert_eq!(extents(&doc, parent, 999, 10.0, 20.0, 30.0, false), None);
     assert_eq!(
-        extents(&doc, parent, float, 10.0, 20.0, 30.0, false),
+        extents(&doc, parent, hidden, 10.0, 20.0, 30.0, false, |node| Some(
+            (node, 0.0)
+        )),
+        None
+    );
+    assert_eq!(
+        extents(&doc, parent, 999, 10.0, 20.0, 30.0, false, |node| Some((
+            node, 0.0
+        ))),
+        None
+    );
+    assert_eq!(
+        extents(&doc, parent, float, 10.0, 20.0, 30.0, false, |node| Some((
+            node, 0.0
+        ))),
         Some([(90.0, 90.0), (90.0, 90.0), (80.0, 110.0)])
     );
     assert_eq!(
-        extents(&doc, float_parent, only_float, 5.0, 5.0, 5.0, true),
+        extents(
+            &doc,
+            float_parent,
+            only_float,
+            5.0,
+            5.0,
+            5.0,
+            true,
+            |node| Some((node, 0.0))
+        ),
         Some([
             (f32::NEG_INFINITY, f32::NEG_INFINITY),
             (f32::NEG_INFINITY, f32::NEG_INFINITY),
