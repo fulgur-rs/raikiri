@@ -151,6 +151,10 @@ impl BlockFormattingContext {
 struct LeadingStrut {
     anchor: f32,
     margins: CollapsibleMarginSet,
+    /// Whether clearance put the top of the box at `anchor`: the margins
+    /// that collapse with its own then all lie above it, so the first child
+    /// starts at `anchor` whatever its margin.
+    below_clearance: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -227,13 +231,14 @@ impl BlockContext<'_> {
         let leading_strut =
             if let Some(inherited) = self.state.leading_strut.filter(|_| joins_top_strut) {
                 LeadingStrut {
-                    anchor: inherited.anchor,
                     margins: inherited.margins.collapse_with_set(margins),
+                    ..inherited
                 }
             } else {
                 LeadingStrut {
                     anchor: self.origin + anchor,
                     margins,
+                    below_clearance: false,
                 }
             };
         let mut child = self.sub_context(offset, insets);
@@ -241,9 +246,33 @@ impl BlockContext<'_> {
         child
     }
 
+    /// A sub-context for the children of a box that clearance put at
+    /// `offset`: its margin no longer collapses with the margins before it
+    /// (CSS 2 §8.3.1), and the margins of its first children collapse into
+    /// its own above its top.
+    pub(crate) fn sub_context_below_clearance(
+        &mut self,
+        offset: f32,
+        insets: [f32; 2],
+    ) -> BlockContext<'_> {
+        let anchor = self.origin + offset;
+        let mut child = self.sub_context(offset, insets);
+        child.state.leading_strut = Some(LeadingStrut {
+            anchor,
+            margins: CollapsibleMarginSet::ZERO,
+            below_clearance: true,
+        });
+        child
+    }
+
     pub(crate) fn hypothetical_top_position(&self, margins: CollapsibleMarginSet) -> Option<f32> {
         self.state.leading_strut.map(|strut| {
-            strut.anchor + strut.margins.collapse_with_set(margins).resolve() - self.origin
+            let margins = if strut.below_clearance {
+                0.0
+            } else {
+                strut.margins.collapse_with_set(margins).resolve()
+            };
+            strut.anchor + margins - self.origin
         })
     }
 
