@@ -274,6 +274,56 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<div style="text-align:left;text-align-last:right;line-height:0;width:100px">X<br><br><div></div><span id=q style="position:absolute;line-height:10px">Q</span><p style="margin:0;line-height:10px">A</p>T</div>"#,
         [0.0, 0.0, 10.0, 10.0],
     ),
+    (
+        "a forced break after the box and a later block does not count",
+        r#"<div style="text-align:left;text-align-last:right;line-height:0;width:100px"><span id=q style="position:absolute;line-height:10px">Q</span><div></div>X<br></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break after the box and a later block does not count in rtl",
+        r#"<div style="direction:rtl;text-align:right;text-align-last:left;line-height:0;width:100px"><span id=q style="position:absolute;line-height:10px">Q</span><div></div>X<br></div>"#,
+        [90.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break before the box still counts with another after it",
+        r#"<div style="text-align:left;text-align-last:right;line-height:0;width:100px">Y<br><span id=q style="position:absolute;line-height:10px">Q</span><div></div>X<br></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break in a block-level ::after does not count",
+        r#"<style>#c::after{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;line-height:0;width:100px"><span id=q style="position:absolute;line-height:10px">Q</span></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break in a block-level ::before does not count",
+        r#"<style>#c::before{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;line-height:0;width:100px"><span id=q style="position:absolute;line-height:10px">Q</span></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break in ::after after a block does not count",
+        r#"<style>#c::after{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;line-height:0;width:100px">Y<p style="margin:0">A</p><span id=q style="position:absolute;line-height:10px">Q</span></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break after a block-level ::before counts",
+        r#"<style>#c::before{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;line-height:0;width:100px">Y<br><span id=q style="position:absolute;line-height:10px">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break before a block-level ::after counts",
+        r#"<style>#c::after{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;width:100px">Y<br><span id=q style="position:absolute">Q</span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "a block-level ::before alone before the box does not count",
+        r#"<style>#c::before{display:block;content:"X\A";white-space:pre}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p>T</div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break before the box counts with a generated block and a break after it",
+        r#"<style>.b::before{display:block;content:"Z"}</style><div style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p>Y<br><span id=q style="position:absolute">Q</span><span class=b></span>W<br></div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
 ];
 
 #[test]

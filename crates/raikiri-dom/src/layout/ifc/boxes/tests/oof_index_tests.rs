@@ -177,11 +177,10 @@ fn compare_fallbacks(lines: &IfcLines, boxes: &[IfcBox]) {
     let index = StaticFallbackIndex::new(lines, boxes);
     let order: Vec<_> = boxes.iter().map(|box_| (box_.node, box_.kind)).collect();
     for node in boxes.iter().map(|box_| box_.node).chain([usize::MAX]) {
-        assert_eq!(
-            index.offset(node).to_bits(),
-            static_block_offset(lines, &order, node, None, false).to_bits(),
-            "node {node}"
-        );
+        let (offset, line) = index.place(node);
+        let (expected, expected_line) = static_block_offset(lines, &order, node, None, false);
+        assert_eq!(offset.to_bits(), expected.to_bits(), "node {node}");
+        assert_eq!(line, expected_line, "node {node}");
     }
 }
 
@@ -301,7 +300,7 @@ fn empty_lines_with_generated_blocks_keep_the_content_end_fallback() {
         kind: IfcBoxKind::OutOfFlow,
     }];
     compare_fallbacks(&lines, &boxes);
-    assert_eq!(StaticFallbackIndex::new(&lines, &boxes).offset(7), 17.0);
+    assert_eq!(StaticFallbackIndex::new(&lines, &boxes).place(7).0, 17.0);
 }
 
 #[test]
