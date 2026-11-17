@@ -1,8 +1,8 @@
 //! Reuse page-walk boundaries to reflow a float and its following block.
 
 use super::{
-    CascadeResult, ClearValue, DisplayValue, FloatValue, NodeKind, collapses_through,
-    current_abs_y, margins_may_collapse_through,
+    CascadeResult, ClearValue, DisplayValue, FloatValue, NodeKind, collapsed_margin_above,
+    collapses_through, current_abs_y, margins_may_collapse_through,
 };
 use crate::layout::context::LayoutSession;
 use raikiri_style::ComputedLengthPercentageOrAuto;
@@ -35,7 +35,7 @@ pub(crate) struct Plan {
     groups: HashMap<(usize, usize), FlowStart>,
     floats: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
-    margin_flows: HashMap<usize, usize>,
+    margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
 }
@@ -57,7 +57,10 @@ impl Plan {
         !self.margin_flows.is_empty()
     }
 
-    pub(crate) fn margin_float(&self, flow: usize) -> Option<usize> {
+    /// The float that `flow` lines up below, and the margin the forced
+    /// break keeps above `flow`: its own collapsed with the margins of its
+    /// first children that adjoin it.
+    pub(crate) fn margin_float(&self, flow: usize) -> Option<(usize, f32)> {
         self.margin_flows.get(&flow).copied()
     }
 
@@ -104,7 +107,10 @@ impl Plan {
                     if margin.is_some() {
                         // Source geometry may shrink before a later forced break.
                         // Retain the relationship, not the old page's coordinates.
-                        plan.margin_flows.insert(flow, float);
+                        plan.margin_flows.insert(
+                            flow,
+                            (float, collapsed_margin_above(document, cascade, flow)),
+                        );
                         plan.groups.insert((float, flow), start);
                     }
                     continue;
@@ -216,9 +222,12 @@ impl Plan {
     }
 }
 
-// Reflow only a flat IFC whose own margin is the complete retained strut.
-// Float-created gaps require a separate resumption strategy.
-// Cache the structural kind, while resolving the used margin on every attempt.
+// Reflow an in-flow block below the float's top plus its own margin, the
+// margin the forced break keeps; the margins of its first children collapse
+// into that one above its top. Layout places the whole box again there,
+// so its lines, block children and generated blocks are broken against the
+// float afresh, wherever the earlier layout put them. A relative offset only
+// moves the box once it is placed. Resolve the used margin on every attempt.
 fn plain_flow_margin(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -228,7 +237,10 @@ fn plain_flow_margin(
     let node = &document.nodes[flow];
     let margin = node.layout.margin.top;
     if node.display() != DisplayValue::Block
-        || !matches!(node.position(), PositionValue::Static)
+        || !matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
         || node.used_writing_mode.is_vertical()
         || cascade.computed[flow].clear != ClearValue::None
         || !margins_may_collapse_through(document, cascade, flow)
@@ -238,19 +250,7 @@ fn plain_flow_margin(
     {
         return None;
     }
-    let ifc = document.ifc_layout_node(flow)?.ifc.as_ref()?;
-    let lines = ifc.lines.as_ref()?;
-    let mut end = 0.0;
-    (ifc.generated_blocks.is_empty()
-        && !lines.lines.is_empty()
-        && lines.placed_blocks.is_empty()
-        && lines.block_line_starts.is_empty()
-        && lines.lines.iter().all(|line| {
-            let follows = line.block_offset() <= end + 0.001;
-            end = line.block_offset() + line.block_size();
-            follows
-        }))
-    .then_some(margin)
+    Some(margin)
 }
 
 fn hidden_or_positioned(document: &LayoutSession<'_>, id: usize) -> bool {
