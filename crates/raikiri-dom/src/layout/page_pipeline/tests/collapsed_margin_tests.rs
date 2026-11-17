@@ -311,3 +311,44 @@ fn a_negative_margin_inside_a_top_border_goes_along_with_a_paragraph() {
         [100.0, 91.0]
     );
 }
+
+/// Whether the box of set height zero inside a `display: contents` wrapper
+/// stays with the box before the wrapper, whose bottom margin is
+/// `margin_bottom`.
+fn empty_box_in_contents_stays(margin_bottom: &str) -> bool {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;width:100px"),
+    );
+    let style = format!("display:block;height:20px;margin-bottom:{margin_bottom}");
+    doc.append_element(Some(body), "div", Some(&style));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+    let empty = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:0;margin-bottom:30px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    collapsed_empty_box(&session, &cascade, empty)
+}
+
+#[test]
+fn the_margin_above_an_empty_box_is_found_past_a_contents_wrapper() {
+    // The box before the wrapper adjoins the empty box: its bottom margin
+    // collapses into the empty box's top, which keeps the box behind.
+    assert!(empty_box_in_contents_stays("5px"));
+    assert!(!empty_box_in_contents_stays("0"));
+}

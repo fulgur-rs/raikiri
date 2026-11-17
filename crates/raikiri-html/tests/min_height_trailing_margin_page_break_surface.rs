@@ -113,3 +113,57 @@ fn padding_below_the_room_of_a_min_height_begins_the_next_page() {
                 <div>X X X X</div></div><div>Z</div>";
     assert_eq!(pages_and_tops(body), (3, vec![('Z', 2, 20)]), "{body}");
 }
+
+#[test]
+fn an_empty_last_box_of_set_height_zero_moves_on_with_the_padding() {
+    // With no margin collapsing into its top, a box that `height: 0` makes
+    // empty begins the next page with the padding, and keeps its bottom
+    // margin whole above it. A negative margin still pulls the padding up.
+    for style in ["", "min-height:170px;"] {
+        for (t, margin, z) in [(20, 10, 30), (20, 30, 50), (25, 5, 25), (30, 10, 30)] {
+            let tail = format!(
+                "<div style='height:{t}px'>T</div><div style='height:0;margin-bottom:{margin}px'></div>"
+            );
+            assert_tops(style, &tail, (1, 65), (2, z));
+        }
+        let tail =
+            "<div style='height:30px'>T</div><div style='height:0;margin-bottom:-10px'></div>";
+        assert_tops(style, tail, (1, 65), (2, 5));
+        // A box that holds its content in a context of its own, or whose
+        // content overflows it, takes no margins through it either.
+        for last in [
+            "<div style='display:flow-root;height:0;margin-bottom:30px'></div>",
+            "<div style='height:0;margin-bottom:30px'><div style='height:10px'></div></div>",
+        ] {
+            let tail = format!("<div style='height:20px'>T</div>{last}");
+            assert_tops(style, &tail, (1, 65), (2, 50));
+        }
+    }
+}
+
+#[test]
+fn a_margin_above_an_empty_box_of_set_height_zero_keeps_it_behind() {
+    // A margin that collapses into the top of the empty box, its own or one
+    // of the boxes before it, joins the margins that collapse through it: the
+    // box stays, and the page edge truncates them.
+    for style in ["", "min-height:170px;"] {
+        for tail in [
+            "<div style='height:20px;margin-bottom:5px'>T</div>\
+             <div style='height:0;margin-bottom:30px'></div>",
+            "<div style='height:30px;margin-bottom:-5px'>T</div>\
+             <div style='height:0;margin-bottom:10px'></div>",
+            "<div style='height:20px'>T</div><div style='margin-bottom:5px'></div>\
+             <div style='height:0;margin-bottom:30px'></div>",
+            "<div style='height:20px'>T</div><div style='height:0;margin-top:10px'></div>",
+            // An empty box of auto height after it ends the flow and stays,
+            // and the margins of both collapse through to the page edge.
+            "<div style='height:20px'>T</div><div style='height:0;margin-bottom:30px'></div>\
+             <div style='margin-bottom:5px'></div>",
+            // Margins that cancel out still keep the box behind.
+            "<div style='height:20px;margin-bottom:10px'>T</div>\
+             <div style='height:0;margin-top:-10px;margin-bottom:30px'></div>",
+        ] {
+            assert_tops(style, tail, (1, 65), (2, 20));
+        }
+    }
+}
