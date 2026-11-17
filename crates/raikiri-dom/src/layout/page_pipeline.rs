@@ -8010,7 +8010,12 @@ fn grown_auto_height(
     } else {
         0.0
     };
-    let margin_shift = if can_grow && !contains_margins && !capped {
+    // Without a `min-height` the height is always that of the content.
+    let margin_shift = if can_grow
+        && !contains_margins
+        && !capped
+        && border_box_height_bounds(document, parent).0 > 0.0
+    {
         escaped_end_margin_shift(document, cascade, parent, (old, in_flow_height), flow)
     } else {
         0.0
@@ -8034,6 +8039,8 @@ fn grown_auto_height(
 /// `ends.0` to `ends.1`: that margin collapses through the bottom of the
 /// block, and moves the flow after it, only while the block's height is
 /// that of its content, which `min-height` may make taller, as in Chromium.
+/// It then collapses with the margins after the block, its own bottom margin
+/// and the top margins of the box after it.
 fn escaped_end_margin_shift(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -8046,9 +8053,12 @@ fn escaped_end_margin_shift(
     else {
         return 0.0;
     };
+    let (after_positive, after_negative) = margin_after_box(document, cascade, parent);
     // A positive margin that this lets through would reach past the page
     // end, where a break truncates it, so only a negative one moves the flow.
-    let margin = (positive + negative).min(0.0);
+    let margin = (positive.max(after_positive) + negative.min(after_negative)
+        - (after_positive + after_negative))
+        .min(0.0);
     let escaped = |height: f32, end: f32| {
         if (height - end).abs() <= CONTENT_END_TOLERANCE {
             margin
@@ -8057,6 +8067,35 @@ fn escaped_end_margin_shift(
         }
     };
     escaped(heights.1, ends.1) - escaped(heights.0, ends.0)
+}
+
+/// The extremes of the margins that collapse below the box `node`: its own
+/// bottom margin and the top margins that adjoin the top of the next box
+/// that takes part in the flow of its parent (see
+/// [`adjoining_margin_extremes`]).
+fn margin_after_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+) -> (f32, f32) {
+    let bottom = document.nodes[node].layout.margin.bottom;
+    let (positive, negative) = (bottom.max(0.0), bottom.min(0.0));
+    let next = document.parent_of(node).and_then(|parent| {
+        document.nodes[parent]
+            .children
+            .iter()
+            .skip_while(|&&child| child != node)
+            .skip(1)
+            .copied()
+            .find(|&child| takes_part_in_flow(document, cascade, child))
+    });
+    let Some(next) = next.filter(|&next| document.nodes[next].display() != DisplayValue::Contents)
+    else {
+        return (positive, negative);
+    };
+    let (next_positive, next_negative) =
+        adjoining_margin_extremes(document, cascade, next, true, None);
+    (positive.max(next_positive), negative.min(next_negative))
 }
 
 /// The furthest left or right float end in `branch`, in `parent`'s flow
@@ -10192,19 +10231,20 @@ fn margin_above_edges(
 /// How far below the box `end` the empty box `empty` lies, that ends the
 /// flow after it with the empty boxes between the two: the position of an
 /// empty box that the margins collapse through is where its top margin
-/// ends (CSS 2 §8.3.1), the margins of `end`, of those between and its own
-/// top margin collapsed into one.
+/// ends (CSS 2 §8.3.1), the margins of `end`, of those between and the
+/// margins that adjoin its own top collapsed into one.
 fn empty_box_offset(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     end: usize,
     empty: usize,
 ) -> f32 {
-    let top = document.nodes[empty].layout.margin.top;
+    let (top_positive, top_negative) =
+        adjoining_margin_extremes(document, cascade, empty, true, None);
     let (mut positive, mut negative) =
         adjoining_margin_extremes(document, cascade, end, false, None);
-    positive = positive.max(top);
-    negative = negative.min(top);
+    positive = positive.max(top_positive);
+    negative = negative.min(top_negative);
     if let Some(parent) = document.parent_of(empty) {
         for &child in document.nodes[parent]
             .children
@@ -15489,8 +15529,14 @@ fn grow_ancestors_walk(
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
         let flow_absorbed = (new_flow - old_flow).clamp(0.0, limit);
         // The bottom margin that starts or stops collapsing through the box
-        // moves the flow after it too, but not the box.
-        let flow_passed = flow_absorbed + grown.margin_shift;
+        // moves the flow after it too, but not the box. A walk that stops
+        // below a container hands the container only the growth.
+        let flow_passed = flow_absorbed
+            + if stop.is_none() {
+                grown.margin_shift
+            } else {
+                0.0
+            };
         if flow_passed < -0.001 {
             pulled = Some((parent, flow_passed));
         }
@@ -15529,7 +15575,14 @@ fn grow_ancestors_walk(
         && node != body_id
     {
         let held = shrink_ancestors_after_content_change(
-            document, cascade, node, pull, 0.0, body_id, ifc_boxes, None,
+            document,
+            cascade,
+            node,
+            pull,
+            0.0,
+            body_id,
+            &IfcBoxShifts::default(),
+            None,
         );
         shifts.bounded.extend(
             held.into_iter()
@@ -16114,7 +16167,9 @@ fn shrink_ancestors_after_content_change(
         document.nodes[parent].layout.size.height = adjusted.height;
         document.mark_pagination_extent_dirty(parent);
         let (old_flow, new_flow) = adjusted.flow_heights;
-        let passed = new_flow - old_flow;
+        // A bottom margin that stops collapsing through the box as its height
+        // stays at its `min-height` moves the flow after it back down.
+        let passed = new_flow - old_flow + adjusted.margin_shift;
         if flow_delta < 0.0 && passed > flow_delta + 0.001 {
             held.push((parent, flow_delta - passed.min(0.0)));
         }
@@ -16130,7 +16185,7 @@ fn shrink_ancestors_after_content_change(
             adjusted.float_extent_delta
         };
         size_delta = adjusted.height - old_height;
-        flow_delta = new_flow - old_flow;
+        flow_delta = passed;
         child = parent;
         if parent == flow_root
             || (flow_delta.abs() <= 0.001

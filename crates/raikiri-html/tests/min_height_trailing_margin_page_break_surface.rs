@@ -235,3 +235,61 @@ fn a_negative_margin_escapes_a_box_whose_moved_content_outgrew_its_min_height() 
         }
     }
 }
+
+#[test]
+fn an_escaping_margin_collapses_with_the_margins_after_the_box() {
+    // The negative margin that escapes the box collapses with the bottom
+    // margin of the box and the top margin of the next block, and moves the
+    // flow by no more than that collapsed margin changes.
+    for (own, last, z_top, z) in [
+        (-10, -40, 0, 55),
+        (-10, -20, 0, 75),
+        (-60, -40, 0, 35),
+        (-60, -20, 0, 35),
+        (0, -40, -10, 55),
+    ] {
+        let body = format!(
+            "<div style='width:20px;min-height:170px;margin-bottom:{own}px'><div>X X X X</div>\
+             <div style='height:30px;margin-bottom:{last}px'>T</div></div>\
+             <div style='margin-top:{z_top}px'>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn the_margins_inside_an_empty_last_box_place_it_below_the_page_end() {
+    // A margin of a box inside the empty box collapses into its top, and
+    // places it as far down as its own would.
+    for (t, inner, below) in [(20, 40, -50), (30, 20, -30), (30, 30, -50)] {
+        let tail = format!(
+            "<div style='height:{t}px'>T</div>\
+             <div style='margin-bottom:{below}px'><div style='margin-top:{inner}px'></div></div>"
+        );
+        assert_tops("", &tail, (1, 65), (2, 20));
+    }
+}
+
+#[test]
+fn a_negative_margin_stops_escaping_when_truncation_shrinks_the_content() {
+    // The content first outgrows the `min-height` and lets the last margin
+    // through. The page edge then truncates the top margin of `Y`, the
+    // content ends above the `min-height`, and the flow after the box
+    // follows the box again.
+    for top in [40, 60] {
+        let body = format!(
+            "<div style='width:20px;min-height:200px'><div>X X X</div>\
+             <div style='margin-top:{top}px;height:60px'>Y</div>\
+             <div style='height:30px;margin-bottom:-40px'>T</div></div><div>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
+}

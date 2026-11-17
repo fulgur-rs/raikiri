@@ -1133,7 +1133,7 @@ fn grow_inside_after(
             grown.float_extent_delta
         };
         size_delta = grown.height - height;
-        flow_delta = grown.flow_heights.1 - grown.flow_heights.0;
+        flow_delta = grown.flow_heights.1 - grown.flow_heights.0 + grown.margin_shift;
         // Only the initial whole box moved; its ancestors grew in place.
         position_delta = 0.0;
         child = parent;
