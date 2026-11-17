@@ -349,4 +349,12 @@ fn the_margins_after_the_box_reach_past_the_end_of_its_parent() {
             );
         }
     }
+    // Bottom padding on the parent keeps the margins past it apart.
+    let body =
+        format!("<div style='margin-bottom:-10px;padding-bottom:1px'>{inner}</div><div>Z</div>");
+    assert_eq!(
+        pages_and_tops(&body),
+        (2, vec![('T', 1, 65), ('Z', 1, 46)]),
+        "{body}"
+    );
 }
