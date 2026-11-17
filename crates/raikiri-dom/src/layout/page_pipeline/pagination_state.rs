@@ -2193,14 +2193,26 @@ impl PaginationState {
                         document, cascade, body_id, node_id, page_start,
                     )
             } else {
-                margin_box_starts_page(
-                    page_origins,
-                    effective_y - margin_top.max(0.0),
-                    self.current_page,
-                    page_start,
-                ) || self.child_positions.begins_page_below_leading_edges(
-                    document, cascade, body_id, node_id, page_start,
-                )
+                // The break sits at the top of the margin box. A negative
+                // margin pulls the border box above that point, over content
+                // before it on this page, which the break still leaves
+                // behind, or back over a page edge the break would share,
+                // which the break then moves the box over.
+                let margin_box_y = effective_y - margin_top;
+                let margin_box_starts_page = if margin_top < 0.0 {
+                    (margin_box_y - page_start).abs() <= 0.001
+                } else {
+                    margin_box_starts_page(
+                        page_origins,
+                        margin_box_y,
+                        self.current_page,
+                        page_start,
+                    )
+                };
+                margin_box_starts_page
+                    || self.child_positions.begins_page_below_leading_edges(
+                        document, cascade, body_id, node_id, page_start,
+                    )
             };
         // CSS Fragmentation 3 §5.2: only a new forced boundary retains the
         // leading margin. Existing boundaries do not open another page.
@@ -2367,11 +2379,10 @@ impl PaginationState {
                 },
             );
         }
-        // A negative block-start margin can pull a forced-break box
-        // back into the preceding page.  Keep the break boundary for
-        // following siblings (and for page count), but materialize
-        // this box at the underflowed coordinate.  This is the
-        // `underflow-from-next-page` case from CSS Break.
+        // A negative block-start margin can pull a forced-break box back
+        // into the preceding page (the `underflow-from-next-page` case from
+        // CSS Break). The break still opens its page, and the box lands at
+        // the pulled-up coordinate with the flow after it.
         // A carried holder lands from its flow position, and a float that a
         // forced break moves resumes below the boundary its offset keeps (see
         // `float_resumption`): neither lands with the offset.
@@ -2445,16 +2456,11 @@ impl PaginationState {
                     landing.shift_delta,
                 );
             }
-            // A kept margin moves the box's descendants and its
-            // later siblings along with the box.
+            // A kept margin moves the box's descendants and its later
+            // siblings along with the box, a negative one too: the flow
+            // after a box it pulls back over the break follows the box, as
+            // in Chromium.
             self.flow_shift += landing.node_delta;
-            // A carried holder retains its margin in the following flow too.
-            // The ordinary child-only underflow leaves that flow at the boundary.
-            if forced_holder.is_none()
-                && let Some(correction) = landing.underflow_correction()
-            {
-                self.deferred_shifts.underflow = Some((holder, correction));
-            }
             self.float_shifts.settle_transition(
                 document,
                 cascade,
@@ -2590,18 +2596,15 @@ impl PaginationState {
                     })
                     .flatten()
             });
-        if let Some(MarginTruncation { delta, underflow }) = truncation {
+        if let Some(MarginTruncation { delta, underflows }) = truncation {
             self.sibling_margins.moved_boxes |= delta != 0.0;
             let held = move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
             self.flow_shift += delta;
             position.effective_y += delta;
-            if let Some(underflow) = underflow {
-                // Descendants follow the negative margin; later
-                // siblings still follow the forced break boundary.
-                self.deferred_shifts.underflow = Some((node_id, underflow));
-            } else {
-                // A pulled empty box stands where the box after it lands,
-                // which is the page the flow reaches.
+            // A negative margin pulls the box back over a forced break, which
+            // still opens its page. Otherwise a pulled empty box stands where
+            // the box after it lands, which is the page the flow reaches.
+            if !underflows {
                 natural_page = page_origins.page_index_for_y(flow_y + delta - pulled);
             }
             // An ancestor whose height does not shrink with its content keeps

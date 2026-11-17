@@ -2075,8 +2075,8 @@ impl PageOrigins {
     }
 
     /// Where a box starts when an unforced break falls in the collapsed
-    /// margin above it at the edge that opens `natural_page`: the top of the
-    /// page it lands on and its border-box top.
+    /// margin above it at the edge that opens `natural_page`: its border-box
+    /// top.
     ///
     /// A forced break that already coincides with that edge sits before the
     /// margin, which therefore stays on the new page above the box's
@@ -2090,15 +2090,15 @@ impl PageOrigins {
         margin_top: f32,
         margin_start: impl FnOnce() -> f32,
         follows_forced_break: bool,
-    ) -> (f32, f32) {
+    ) -> f32 {
         if forced_before {
-            let page_top = self.origin(natural_page);
-            (page_top, page_top + margin_top)
+            self.origin(natural_page) + margin_top
         } else {
-            let first_edge =
-                self.first_edge_in_margin(margin_start(), follows_forced_break, natural_page);
-            let page_top = self.origin(first_edge);
-            (page_top, page_top)
+            self.origin(self.first_edge_in_margin(
+                margin_start(),
+                follows_forced_break,
+                natural_page,
+            ))
         }
     }
 
@@ -8679,8 +8679,6 @@ fn transition_target_y(
 /// Where a page transition places a box, and how far that moves the box and
 /// the flow after it.
 struct TransitionLanding {
-    /// The top of the page the box moves to.
-    page_top: f32,
     /// Where the box's border box starts after the move (see
     /// [`transition_target_y`]).
     target_y: f32,
@@ -8688,9 +8686,6 @@ struct TransitionLanding {
     node_delta: f32,
     /// How far the flow after the box moves down.
     shift_delta: f32,
-    /// The relative offset that paints the box away from its place in the
-    /// flow, included in `target_y`.
-    relative_offset: f32,
 }
 
 impl TransitionLanding {
@@ -8700,8 +8695,7 @@ impl TransitionLanding {
     ///
     /// Both distances are the additional movement for this boundary, since the
     /// box already sits at `effective_y`. The flow shift is measured from the
-    /// box's place in the flow, without the offset, and stays at the page
-    /// boundary even when the box itself underflows into the preceding page.
+    /// box's place in the flow, without the offset.
     fn new(
         page_top: f32,
         effective_y: f32,
@@ -8720,28 +8714,15 @@ impl TransitionLanding {
             overflow.table_row,
         );
         Self {
-            page_top,
             target_y,
             node_delta: target_y - effective_y,
             shift_delta: page_top - (effective_y - relative_offset),
-            relative_offset,
         }
     }
 
     /// Whether both distances are usable numbers, so that the box can move.
     fn is_finite(&self) -> bool {
         self.node_delta.is_finite() && self.shift_delta.is_finite()
-    }
-
-    /// The correction that later siblings still need when the box underflows
-    /// into the page above the one it moves to: its descendants follow the
-    /// box, while the flow after it begins at the page boundary. It is only
-    /// meaningful when [`is_finite`](Self::is_finite) holds.
-    /// The box underflows where the flow puts it, without its relative
-    /// offset.
-    fn underflow_correction(&self) -> Option<f32> {
-        (self.target_y - self.relative_offset < self.page_top)
-            .then_some(self.shift_delta - self.node_delta)
     }
 }
 
@@ -11821,10 +11802,6 @@ impl TrailingFlexChildren {
 /// a moved line.
 #[derive(Default)]
 struct DeferredShifts {
-    /// When a forced-break box underflows into the preceding page, descendants
-    /// follow the box while later siblings still begin after the break
-    /// boundary: `(box, correction)`.
-    underflow: Option<(usize, f32)>,
     /// Lines of a paragraph that were moved down to a later page, because
     /// they cross a page end or to keep enough widows there. The flow after
     /// the paragraph, and its texts that start on a moved line, take each
@@ -11941,12 +11918,6 @@ impl DeferredShifts {
                 !reached
             },
         );
-        if let Some((ancestor_id, correction)) = self.underflow
-            && !is_descendant_or_self(document, node_id, ancestor_id)
-        {
-            *flow_shift += correction;
-            self.underflow = None;
-        }
         reached_page
     }
 }
@@ -13325,7 +13296,7 @@ fn truncation_after_generated_content(
     if previous_bottom > page_top + 0.001 || content_top >= page_top - 0.001 {
         return None;
     }
-    let (target_top, target_y) = page_origins.truncated_margin_target(
+    let target_y = page_origins.truncated_margin_target(
         at.natural_page,
         at.forced_before,
         at.margin_top,
@@ -13334,7 +13305,7 @@ fn truncation_after_generated_content(
     );
     Some(MarginTruncation {
         delta: target_y - at.effective_y,
-        underflow: (target_y < target_top).then_some(target_top - target_y),
+        underflows: at.forced_before && at.margin_top < 0.0,
     })
 }
 
@@ -13342,9 +13313,9 @@ fn truncation_after_generated_content(
 struct MarginTruncation {
     /// How far the box moves; negative when it moves up.
     delta: f32,
-    /// How far a negative margin pulls the box above the top of its page,
-    /// if it does.
-    underflow: Option<f32>,
+    /// Whether a negative margin after a forced break pulls the box above
+    /// the top of the page the break opens. The break still opens that page.
+    underflows: bool,
 }
 
 impl SiblingMargins {
@@ -13401,7 +13372,7 @@ impl SiblingMargins {
         {
             return Some(MarginTruncation {
                 delta: end - effective_y,
-                underflow: None,
+                underflows: false,
             });
         }
         let natural_page = run_end.map_or(at.natural_page, |end| {
@@ -13442,7 +13413,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (target_top, mut target_y) = page_origins.truncated_margin_target(
+        let mut target_y = page_origins.truncated_margin_target(
             float_break_page.unwrap_or(natural_page),
             forced_before,
             at.margin_top,
@@ -13465,7 +13436,7 @@ impl SiblingMargins {
         }
         Some(MarginTruncation {
             delta: target_y - effective_y,
-            underflow: (target_y < target_top).then_some(target_top - target_y),
+            underflows: forced_before && at.margin_top < 0.0,
         })
     }
 

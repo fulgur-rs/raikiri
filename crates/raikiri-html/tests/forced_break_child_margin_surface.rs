@@ -242,3 +242,24 @@ fn the_margin_of_a_first_child_offset_by_position_relative_stays_above_the_box()
         [(1, 0.0, 12.0), (1, 0.0, 42.0)]
     );
 }
+
+#[test]
+fn the_flow_after_a_box_pulled_back_over_a_forced_break_follows_the_box() {
+    // A negative margin pulls the box above the top of the page the break
+    // opens, and the block after the box follows it there, whether the
+    // margin is the box's own or that of its first child.
+    for body in [
+        format!("{BREAK}<div style='margin-top:-10px'>XX</div><div>ZZ</div>"),
+        format!("{BREAK}<div><div style='margin-top:-10px'>XX</div></div><div>ZZ</div>"),
+    ] {
+        assert_eq!(lines(&body), [(1, 0.0, -5.0), (1, 0.0, 25.0)], "{body}");
+    }
+    // A margin that pulls the box back over all of the content before the
+    // break leaves that content on its page, and the break still opens the
+    // next one, where the flow after the box goes on.
+    let pulled_over = lines(
+        "<div style='height:30px'>a</div>\
+         <div style='break-before:page;margin-top:-30px'>XX</div><div>ZZ</div>",
+    );
+    assert_eq!(pulled_over, [(0, 0.0, 75.0), (1, 0.0, 5.0)]);
+}
