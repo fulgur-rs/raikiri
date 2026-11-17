@@ -485,7 +485,20 @@ impl PaginationState {
         // rather than acquiring independent text-page shifts.
         if let Some(group) = self.table_headers.owner(node_id) {
             // The footer closes the table below the rows placed before it,
-            // and what follows the table follows the footer.
+            // and what follows the table follows the footer: the shifts that
+            // end before it, as inside a cell of those rows, are settled
+            // first.
+            if self
+                .table_headers
+                .headers
+                .get(&group)
+                .is_some_and(|footer| footer.footer && footer.visit_shift.is_none())
+                && let Some(page) =
+                    self.subtree_shifts
+                        .leave(document, node_id, &mut self.flow_shift)
+            {
+                self.current_page = page;
+            }
             if self
                 .table_headers
                 .headers

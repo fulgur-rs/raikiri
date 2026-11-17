@@ -43,7 +43,7 @@ use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
-use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position};
+use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position, ResolveOrZero};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -13081,6 +13081,12 @@ struct SubtreeShifts {
     /// Whether the last [`SubtreeShifts::leave`] reached a box that moved
     /// down below a float grown inside another float.
     reached_moved_box: bool,
+    /// Table rows, or cells outside a table, that forced breaks in their
+    /// cells grew, with how far.
+    grown_rows: Vec<((usize, usize), f32)>,
+    /// Boxes that forced breaks inside them grew, with how far in all:
+    /// their stored heights leave that growth out.
+    grown_boxes: Vec<(usize, f32)>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -13106,6 +13112,51 @@ struct BesideGrowth {
 }
 
 impl SubtreeShifts {
+    /// Records that `id` grew `added` more, and returns how far it has
+    /// grown in all.
+    fn grow_box(&mut self, id: usize, added: f32) -> f32 {
+        match self
+            .grown_boxes
+            .iter_mut()
+            .find(|(grown_id, _)| *grown_id == id)
+        {
+            Some((_, grown)) => {
+                *grown += added;
+                *grown
+            }
+            None => {
+                self.grown_boxes.push((id, added));
+                added
+            }
+        }
+    }
+
+    /// How far `id` has grown in all (see [`Self::grow_box`]).
+    fn box_growth(&self, id: usize) -> f32 {
+        self.grown_boxes
+            .iter()
+            .find(|(grown_id, _)| *grown_id == id)
+            .map_or(0.0, |&(_, grown)| grown)
+    }
+
+    /// Records that a cell of `row` needs it `growth` taller than it was
+    /// laid out, and returns how much more that is than it grew already.
+    /// `row` is the box that holds the row with the index after it, which
+    /// tells the anonymous rows of one table apart.
+    fn grow_row(&mut self, row: (usize, usize), growth: f32) -> f32 {
+        match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
+            Some((_, grown)) => {
+                let added = (growth - *grown).max(0.0);
+                *grown = grown.max(growth);
+                added
+            }
+            None => {
+                self.grown_rows.push((row, growth));
+                growth
+            }
+        }
+    }
+
     /// A box that moves down by `delta` takes the floats inside it along. A
     /// float there that already went down on its own keeps its place: it
     /// gives back as much of its own move as the box adds, so it does not
@@ -15006,10 +15057,36 @@ fn reaches_child(document: &Document, node_id: usize, parent: usize, from: usize
             toward
                 .iter()
                 .find(|&&(ancestor, _)| ancestor == up)
-                .map(|&(_, branch)| index(up, child) > index(up, branch))
+                .map(|&(_, branch)| {
+                    let rank = |id: usize| (table_section_rank(document, up, id), index(up, id));
+                    rank(child) > rank(branch)
+                })
         })
         .find_map(|reached| reached)
         .unwrap_or(true)
+}
+
+/// Where `child` comes among the children of `parent` in the order the
+/// flow reaches them, before its index: a table puts its first header group
+/// first and its first footer group last (CSS 2.1 §17.2).
+fn table_section_rank(document: &Document, parent: usize, child: usize) -> u8 {
+    if !matches!(
+        document.nodes[parent].display(),
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return 1;
+    }
+    let display = document.nodes[child].display();
+    let first_of = |group: DisplayValue| {
+        display == group
+            && document.nodes[parent]
+                .children
+                .iter()
+                .find(|&&id| document.nodes[id].display() == group)
+                == Some(&child)
+    };
+    1 + u8::from(first_of(DisplayValue::TableFooterGroup))
+        - u8::from(first_of(DisplayValue::TableHeaderGroup))
 }
 
 /// The index of `child` among the children of `parent`.
@@ -15080,7 +15157,7 @@ fn flow_content_end(
 ) -> f32 {
     let layout = &document.nodes[block].layout;
     let mut end = layout.padding.top + layout.border.top;
-    let mut last_margin = 0.0;
+    let mut last = None;
     for child in laid_out_children(document, block) {
         let node = &document.nodes[child];
         if node.kind() != NodeKind::Element
@@ -15097,12 +15174,75 @@ fn flow_content_end(
             pagination_child_parent_y(document, block, child, document.pagination_local_y(child))
                 - layout_relative_offset_y(document, cascade, body_id, child);
         end = end.max(top + node.layout.size.height);
-        last_margin = node.layout.margin.bottom;
+        last = Some(child);
     }
-    if layout.padding.bottom + layout.border.bottom > 0.0 {
-        end += last_margin;
+    // A table cell's layout padding also holds the room its vertical
+    // alignment leaves, and its children's margins never collapse through
+    // it.
+    if (layout.padding.bottom + layout.border.bottom > 0.0
+        || encloses_child_margins(document, cascade, block))
+        && let Some(last) = last
+    {
+        end += collapsed_end_margin(document, cascade, last);
     }
     content_bottom(document, block).map_or(end, |lines| end.max(lines))
+}
+
+/// Whether `block` keeps its last child's bottom margin inside however thin
+/// its bottom edges are: a box that establishes a block formatting context,
+/// such as a table cell, which no child margin collapses through (CSS 2.1
+/// §8.3.1).
+fn encloses_child_margins(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+) -> bool {
+    holds_floats(document, cascade, block)
+}
+
+/// The bottom margin of `node_id` with the bottom margins of its last
+/// in-flow descendants that collapse through its bottom edge (CSS 2.1
+/// §8.3.1): those of a box with no bottom padding or border, an `auto`
+/// height and no formatting context of its own.
+fn collapsed_end_margin(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    let (mut positive, mut negative) = (0.0f32, 0.0f32);
+    let mut id = node_id;
+    loop {
+        let layout = &document.nodes[id].layout;
+        let margin = layout.margin.bottom;
+        positive = positive.max(margin);
+        negative = negative.min(margin);
+        // A `min-height` or `max-height` that sets the used height keeps the
+        // margin inside the box too.
+        let (min, max) = border_box_height_bounds(document, id);
+        let height = layout.size.height;
+        let content_sized = (min <= 0.0 || height > min + 0.001) && height < max - 0.001;
+        let passes_through = layout.padding.bottom + layout.border.bottom <= 0.0
+            && !holds_floats(document, cascade, id)
+            && definite_content_height(document, id).is_none()
+            && content_sized;
+        if !passes_through {
+            break;
+        }
+        // Text or an inline box after the last block keeps that block's
+        // margin inside the box.
+        let last = page_edge_child(document, cascade, id, false, 0)
+            .ok()
+            .flatten()
+            .filter(|&child| {
+                document.nodes[child].kind() == NodeKind::Element
+                    && is_block_level_flow_box(document.nodes[child].display())
+            });
+        match last {
+            Some(child) => id = child,
+            None => break,
+        }
+    }
+    positive + negative
 }
 
 /// An in-flow box that clears a float that moves (see [`BelowGrownFloat`]).
@@ -15965,7 +16105,15 @@ fn moves_later_siblings(document: &Document, parent: usize) -> bool {
 /// down by `delta`, the distance `child`'s block-end edge moved: in block
 /// flow they follow it.
 fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usize, delta: f32) {
-    if !moves_later_siblings(document, parent) || delta == 0.0 || !delta.is_finite() {
+    if moves_later_siblings(document, parent) {
+        shift_later_flow_siblings(document, parent, child, delta);
+    }
+}
+
+/// Moves the boxes that follow `child` in `parent`, which stacks its
+/// children in block flow, down by `delta`.
+fn shift_later_flow_siblings(document: &mut Document, parent: usize, child: usize, delta: f32) {
+    if delta == 0.0 || !delta.is_finite() {
         return;
     }
     if document
@@ -16978,6 +17126,9 @@ fn shift_block_flow_after(
     let mut flow_delta = flow_delta;
     let mut bounded = false;
     let mut child = node_id;
+    // How far `child` has grown in all, when a table grew on earlier breaks
+    // too: its stored height leaves all of that growth out.
+    let mut child_total = None;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
         walk.advance(document);
@@ -16986,6 +17137,66 @@ fn shift_block_flow_after(
         }
         let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
         if !paragraph && !stacks_children_in_block_flow(document, parent) {
+            if document.nodes[parent].display() == DisplayValue::TableCell
+                && document.nodes[parent].multicol.is_none()
+                && document
+                    .ifc_layout_node(parent)
+                    .is_none_or(|node| node.ifc.is_none())
+            {
+                // A table cell's `height` is a minimum: the row grows only as
+                // far as the cell's moved content ends past it (CSS 2.1
+                // §17.5.3). The cells beside it keep their places, and the
+                // flow after the row follows its growth.
+                shift_later_flow_siblings(document, parent, child, flow_delta);
+                // The box the cell holds may have grown on earlier breaks too.
+                let child_growth = if child == node_id {
+                    0.0
+                } else {
+                    shifts.box_growth(child)
+                };
+                let passed = moved_content_growth(
+                    document,
+                    cascade,
+                    body_id,
+                    parent,
+                    (child, child_growth),
+                    f32::INFINITY,
+                );
+                bounded = true;
+                let row_end = cell_row_end(document, parent);
+                // A row grows as far as its cell that grows most, and an
+                // earlier break in it may have grown it already: only the
+                // rest of the growth moves what follows.
+                let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
+                let added = shifts.grow_row(holder, passed);
+                let Some((row, end, table)) = row_end else {
+                    // A cell outside a table sits in an anonymous table of its
+                    // own (CSS 2.1 §17.2.1), which grows with it.
+                    if added < flow_delta - 0.001 {
+                        shifts.bounded.push((parent, flow_delta - added, flow_page));
+                    }
+                    flow_delta = added;
+                    child_total = Some(shifts.grow_box(parent, added));
+                    child = parent;
+                    if flow_delta <= 0.001 {
+                        break;
+                    }
+                    continue;
+                };
+                shifts.bounded.push((parent, flow_delta, flow_page));
+                if added <= 0.001 {
+                    break;
+                }
+                shifts.from_box.push((row, end, added));
+                shift_rows_after(document, cascade, (row, end), table, added);
+                // The table grows with the row: its ancestors take the growth
+                // on as they take a moved box's.
+                flow_delta = added;
+                child_total = Some(shifts.grow_box(table, added));
+                child = table;
+                walk = AncestorCursor::new(document.parent_of(table), ParentRelation::Source);
+                continue;
+            }
             break;
         }
         // The moved box itself already took the lines after it along.
@@ -17004,7 +17215,10 @@ fn shift_block_flow_after(
         shift_later_block_siblings(document, parent, child, flow_delta);
         // The moved box moved whole; an ancestor of it keeps its stored
         // height while its content end moves down with the shift.
-        let child_growth = if child == node_id { 0.0 } else { flow_delta };
+        let child_growth =
+            child_total
+                .take()
+                .unwrap_or(if child == node_id { 0.0 } else { flow_delta });
         let passed = forced_break_growth(
             document,
             cascade,
@@ -17013,6 +17227,7 @@ fn shift_block_flow_after(
             (child, child_growth),
             flow_delta,
         );
+        shifts.grow_box(parent, passed.min(flow_delta));
         if passed < flow_delta - 0.001 {
             shifts
                 .bounded
@@ -17026,6 +17241,89 @@ fn shift_block_flow_after(
         child = parent;
     }
     bounded
+}
+
+/// Moves the boxes of `table` after a row down by `delta`: those from index
+/// `end` on in `row`, the box that holds the row, and those after it up to
+/// the table. The flow reaches them `delta` further down.
+fn shift_rows_after(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    (row, end): (usize, usize),
+    table: usize,
+    delta: f32,
+) {
+    for later in end..document.nodes[row].children.len() {
+        shift_block_sibling(document, document.nodes[row].children[later], delta);
+    }
+    let mut up = row;
+    while up != table
+        && let Some(parent) = document.parent_of(up)
+    {
+        // The table puts its header and footer groups first and last
+        // (CSS 2.1 §17.2), whatever their place among its children.
+        let order = if parent == table {
+            super::page::pagination_child_order(document, cascade, table)
+        } else {
+            document.nodes[parent].children.clone()
+        };
+        let start = order
+            .iter()
+            .position(|&id| id == up)
+            .map_or(order.len(), |index| index + 1);
+        for &later in &order[start..] {
+            shift_block_sibling(document, later, delta);
+        }
+        up = parent;
+    }
+}
+
+/// The box that holds the row of the table cell `cell`, the index in it
+/// after which the boxes follow the row, and the table around them. The row
+/// is the cell's parent, or the anonymous row that wraps the run of cells in
+/// a table or row group (CSS 2.1 §17.2.1). `None` when the cell is not in a
+/// table.
+fn cell_row_end(document: &Document, cell: usize) -> Option<(usize, usize, usize)> {
+    let mut branch = cell;
+    let mut up = document.parent_of(cell)?;
+    while document.nodes[up].display() == DisplayValue::Contents {
+        branch = up;
+        up = document.parent_of(up)?;
+    }
+    let end = match document.nodes[up].display() {
+        DisplayValue::TableRow => document.nodes[up].children.len(),
+        DisplayValue::Table
+        | DisplayValue::InlineTable
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup => {
+            let children = &document.nodes[up].children;
+            let index = children.iter().position(|&id| id == branch)?;
+            index
+                + 1
+                + children[index + 1..]
+                    .iter()
+                    .take_while(|&&id| {
+                        !matches!(
+                            document.nodes[id].display(),
+                            DisplayValue::TableRow
+                                | DisplayValue::TableRowGroup
+                                | DisplayValue::TableHeaderGroup
+                                | DisplayValue::TableFooterGroup
+                                | DisplayValue::TableCaption
+                        )
+                    })
+                    .count()
+        }
+        _ => return None,
+    };
+    let table = std::iter::successors(Some(up), |&id| document.parent_of(id)).find(|&id| {
+        matches!(
+            document.nodes[id].display(),
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+    })?;
+    Some((up, end, table))
 }
 
 /// How far `block` grows when a forced break inside its child `child` moves
@@ -17057,12 +17355,49 @@ fn forced_break_growth(
     if !holds && old > min + 0.001 && max.is_infinite() {
         return moved;
     }
+    moved_content_growth(
+        document,
+        cascade,
+        body_id,
+        block,
+        (child, child_growth),
+        max,
+    )
+}
+
+/// How far `block` grows, up to the border-box height `max`, to hold its
+/// in-flow content once its child `child` has grown by `child_growth`.
+fn moved_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    max: f32,
+) -> f32 {
+    let old = document.nodes[block].layout.size.height;
     let layout = &document.nodes[block].layout;
-    let edges_below = layout.padding.bottom + layout.border.bottom;
+    // A table cell keeps the room its vertical alignment leaves in its
+    // padding; only its own padding and border lie below its content.
+    let padding_below = if document.nodes[block].display() == DisplayValue::TableCell {
+        // Percentages resolve against the table's width.
+        let basis = cell_row_end(document, block)
+            .map(|(_, _, table)| table)
+            .or_else(|| document.parent_of(block))
+            .map(|table| document.nodes[table].layout.size.width);
+        document
+            .pagination_style(block)
+            .padding()
+            .resolve_or_zero(basis)
+            .bottom
+    } else {
+        layout.padding.bottom
+    };
+    let edges_below = padding_below + layout.border.bottom;
     let child_end = if child_growth > 0.0 {
         let node = &document.nodes[child];
-        let margin = if edges_below > 0.0 {
-            node.layout.margin.bottom
+        let margin = if edges_below > 0.0 || encloses_child_margins(document, cascade, block) {
+            collapsed_end_margin(document, cascade, child)
         } else {
             0.0
         };
