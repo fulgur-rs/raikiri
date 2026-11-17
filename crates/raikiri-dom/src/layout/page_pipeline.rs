@@ -7806,7 +7806,7 @@ fn grown_auto_height(
     };
     // The box whose margin box ends the content, for the last child: the
     // margin below it ends the content too when the box keeps it inside, and
-    // may pull the end up (see [`flow_end_box`]).
+    // may pull the end up (see `flow_end_box`).
     let end_box = |child: usize| {
         flow_end_box(document, cascade, child)
             .map(|(end, margin)| (end, if contains_margins { margin } else { 0.0 }))
@@ -9947,7 +9947,7 @@ fn margin_above_edges(
     };
     // Empty boxes of auto height at the end leave the margins that collapse
     // through them below the box before them, where a page edge truncates
-    // them as one (see [`flow_end_box`]).
+    // them as one (see `flow_end_box`).
     let (last, end_margin) = if empty_auto_box(document, cascade, last) {
         match flow_end_box(document, cascade, last) {
             Some((end, margin)) => (end, Some(margin.max(0.0))),
