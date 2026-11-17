@@ -167,3 +167,71 @@ fn a_margin_above_an_empty_box_of_set_height_zero_keeps_it_behind() {
         }
     }
 }
+
+#[test]
+fn an_empty_last_box_that_begins_past_the_page_end_moves_the_padding_on() {
+    // The empty box sits where the margins above it end. Once that is past
+    // the page end, the padding begins the next page, even when the negative
+    // margin of the empty box pulls the end of the content back up.
+    let tail = |t: i32, above: i32, below: i32| {
+        format!(
+            "<div style='height:{t}px;margin-bottom:{above}px'>T</div>\
+             <div style='margin-bottom:{below}px'></div>"
+        )
+    };
+    for (t, above, below) in [
+        (30, 20, -30),
+        (30, 20, -50),
+        (20, 40, -50),
+        (35, 10, -30),
+        (40, 10, -50),
+    ] {
+        assert_tops("", &tail(t, above, below), (1, 65), (2, 20));
+    }
+    // Where the empty box still begins on the page, the padding stays
+    // behind, or the next block follows on the same page.
+    assert_tops("", &tail(30, 10, -30), (1, 65), (2, 5));
+    for (t, above, below, z) in [(20, 5, -30, 75), (20, 20, -50, 70)] {
+        let body = moved_box("", &tail(t, above, below));
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_negative_margin_escapes_a_box_whose_moved_content_outgrew_its_min_height() {
+    // Without bottom padding, the last margin collapses through the bottom of
+    // the box only while its content fills it. When the moved content grows
+    // the box past its `min-height`, a negative margin escapes it and pulls
+    // the next block up.
+    for min_height in [170, 190] {
+        for wrapper in [false, true] {
+            for (t, margin, pages, z) in [
+                (30, -10, 3, (2, 5)),
+                (30, -20, 2, (1, 75)),
+                (30, -40, 2, (1, 55)),
+                (40, -20, 3, (2, 5)),
+                (40, -40, 2, (1, 65)),
+            ] {
+                let last = format!("<div style='height:{t}px;margin-bottom:{margin}px'>T</div>");
+                let last = if wrapper {
+                    format!("<div>{last}</div>")
+                } else {
+                    last
+                };
+                let body = format!(
+                    "<div style='width:20px;min-height:{min_height}px'><div>X X X X</div>{last}</div>\
+                     <div>Z</div>"
+                );
+                assert_eq!(
+                    pages_and_tops(&body),
+                    (pages, vec![('T', 1, 65), ('Z', z.0, z.1)]),
+                    "{body}"
+                );
+            }
+        }
+    }
+}

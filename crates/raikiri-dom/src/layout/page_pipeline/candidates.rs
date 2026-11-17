@@ -969,6 +969,10 @@ pub(super) struct EdgesBreak {
     /// The block size of the top of that margin that a float the block
     /// holds keeps from a cut.
     pub(super) margin_kept: f32,
+    /// How far below the end of the content the last of the empty boxes that
+    /// end the flow lies, when a negative margin ends the content above it
+    /// (see [`margin_above_edges`]).
+    pub(super) margin_reach: f32,
     /// The end of the clip around the block, in the coordinates of the
     /// candidates, when that clip keeps its place as the edges are pushed
     /// down, and infinity when none does. It names the clip.
@@ -2635,7 +2639,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     } else {
                         (f32::INFINITY, f32::INFINITY)
                     };
-                    let (margin_above, margin_kept) =
+                    let (margin_above, margin_kept, margin_reach) =
                         margin_above_edges(document, cascade, body_id, node_id);
                     self.edges_breaks.push(EdgesBreak {
                         node_id,
@@ -2644,6 +2648,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         edges,
                         margin_above,
                         margin_kept,
+                        margin_reach,
                         clip_end,
                         clip_room,
                         beside,
