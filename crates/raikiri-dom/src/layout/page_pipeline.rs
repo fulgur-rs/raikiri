@@ -18142,6 +18142,47 @@ fn row_flex_line(
     })
 }
 
+/// How far below the top of its flex line the text `offset` below the top of
+/// the box `root` starts, when a break after `source` falls before the text
+/// inside a row flex container around both: on the line of the item that
+/// holds the text, beside the line that holds `source`. Measured in the
+/// layout of the line, which pagination has not moved apart: each box lies
+/// where layout put it in its parent, and a relative offset only paints it
+/// elsewhere.
+fn text_offset_in_flex_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    source: usize,
+    root: usize,
+    offset: f32,
+) -> Option<f32> {
+    let local_top = |id: usize| {
+        document.nodes[id].layout.location.y
+            - layout_relative_offset_y(document, cascade, body_id, id)
+    };
+    // A break after a box inside the item falls inside it, not before a line.
+    if is_descendant_or_self(document, source, root) {
+        return None;
+    }
+    let mut item = root;
+    let mut offset = offset;
+    let container = loop {
+        let parent = candidates::candidate_parent(document, item)?;
+        if is_descendant_or_self(document, source, parent) {
+            break row_flex_container(document, cascade, item)?;
+        }
+        offset += local_top(item);
+        item = parent;
+    };
+    let margin_top = |id: usize| local_top(id) - document.nodes[id].layout.margin.top;
+    let line_top = flex_line_peers(document, cascade, body_id, container, item)
+        .into_iter()
+        .map(|(id, _)| margin_top(id))
+        .fold(margin_top(item), f32::min);
+    Some(offset + local_top(item) - line_top)
+}
+
 /// Places captured peers from their saved positions, so an ancestor that
 /// already moved them does not cause the displacement to be added twice.
 fn place_flex_line_peers(document: &mut Document, peers: &[(usize, f32)], delta: f32) {

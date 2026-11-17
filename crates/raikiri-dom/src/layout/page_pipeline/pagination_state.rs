@@ -3927,8 +3927,37 @@ impl PaginationState {
         let consumes_pending_break = pending_break_applies && name_participates_in_flow;
         if self.saw_child {
             if consumes_pending_break || named_page_change {
+                // The break before the first text of a flex line moves the
+                // top of the line to the top of the page, and the text keeps
+                // its place in the line below that top.
+                // An offset of an inline box around the text only paints it
+                // lower in its line.
+                let line_offset = self
+                    .pending_break
+                    .source
+                    .filter(|_| consumes_pending_break)
+                    .zip(candidate.ifc_root)
+                    .and_then(|(source, (root, offset))| {
+                        let inline_offset = relative_offset
+                            - accumulated_relative_offset_y(
+                                document,
+                                env.cascade,
+                                env.body_id,
+                                root,
+                            );
+                        super::text_offset_in_flex_line(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            source,
+                            root,
+                            offset - inline_offset,
+                        )
+                    })
+                    .unwrap_or(0.0);
+                let flow_top = text.effective_y - relative_offset - line_offset;
                 let natural_page = page_origins
-                    .page_index_in_flow(text.effective_y - relative_offset)
+                    .page_index_in_flow(flow_top)
                     .unwrap_or(self.current_page);
                 let target_page = forced_target_page(self.current_page, natural_page);
                 reach_page(control, target_page)?;
@@ -3940,7 +3969,7 @@ impl PaginationState {
                 // later candidates whose ancestor is not moved here. The text
                 // starts the page where the flow puts it, and its relative
                 // offset paints it that far from there.
-                let delta = target_y - (text.effective_y - relative_offset);
+                let delta = target_y - flow_top;
                 if delta.is_finite() {
                     shift_text_candidate(
                         document,
