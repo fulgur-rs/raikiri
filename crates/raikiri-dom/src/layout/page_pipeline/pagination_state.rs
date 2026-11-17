@@ -3897,6 +3897,13 @@ impl PaginationState {
                 // offset paints it that far from there.
                 let delta = target_y - (text.effective_y - relative_offset);
                 if delta.is_finite() {
+                    // The lines of a table cell that a forced break moves
+                    // grow the cell's row, and the cells beside it stay; the
+                    // row takes the growth on from the cell's own height.
+                    let cell_row = (delta > 0.0 && super::moves_reach_cell_row(document, node_id))
+                        .then(|| text_ifc_root)
+                        .flatten()
+                        .map(|root| (root, document.nodes[root].layout.size.height));
                     shift_text_candidate(
                         document,
                         text_lines,
@@ -3905,6 +3912,18 @@ impl PaginationState {
                         text_ifc_root,
                         delta,
                     );
+                    if let Some((root, height)) = cell_row {
+                        document.table_layout_node_mut(root).layout.size.height = height;
+                        super::shift_block_flow_after(
+                            document,
+                            env.cascade,
+                            node_id,
+                            env.body_id,
+                            delta,
+                            &mut self.subtree_shifts,
+                            entry.page_before_candidate,
+                        );
+                    }
                     self.flow_shift += delta;
                     text.effective_y += delta;
                 }
