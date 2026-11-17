@@ -296,3 +296,12 @@ fn a_forced_break_after_a_box_that_runs_past_a_page_edge_opens_the_page_after() 
         assert_eq!(lines(&body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_forced_break_after_content_that_ends_at_a_page_edge_opens_the_page_there() {
+    // The content reaches no further than the second page, and the break at
+    // its end opens the third, above which a negative margin pulls the box.
+    let body = "<div style='height:200px'>a</div>\
+                <div style='break-before:page;margin-top:-10px;height:30px'>XX</div><div>ZZ</div>";
+    assert_eq!(lines(body), [(2, 0.0, -5.0), (2, 0.0, 25.0)]);
+}

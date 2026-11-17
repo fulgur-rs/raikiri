@@ -2131,14 +2131,14 @@ impl PageOrigins {
         let break_page = self
             .page_index_in_flow(margin_box_y)
             .map_or(page, |at| at.max(page));
-        if forced_transition
-            && break_page > current_page
-            && flow_max >= break_page
-            && margin_box_y.is_finite()
-        {
+        if !forced_transition {
+            page
+        } else if break_page > current_page && flow_max >= break_page && margin_box_y.is_finite() {
             self.page_starting_at_or_after(margin_box_y)
         } else {
-            page
+            // Content that ends at a page edge reaches no further than the
+            // page before it, and the break opens the page at that edge.
+            break_page
         }
     }
 
@@ -18076,29 +18076,56 @@ fn row_flex_container(
     .then_some(parent)
 }
 
-/// The in-flow peers currently sharing `node_id`'s row at `y`, with their
-/// current coordinates. Capture membership before any transition moves it.
+/// The in-flow peers currently sharing `node_id`'s flex line in the row flex
+/// container `parent_id`, with their current coordinates: every other item
+/// when the container does not wrap, and otherwise those on the line of
+/// `node_id` (see [`flex_line_of`]). The line is found in the inline axis, so
+/// the alignment and margins of the items do not matter. Capture membership
+/// before any transition moves it.
 fn flex_line_peers(
     document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
     parent_id: usize,
     node_id: usize,
-    y: f32,
 ) -> Vec<(usize, f32)> {
-    // Items start their margin boxes at the top of their line, whatever
-    // their margins, a negative one too.
-    let start = y - document.nodes[node_id].layout.margin.top;
-    document
+    let items: Vec<usize> = document
         .children_through_contents(parent_id)
         .into_iter()
-        .filter(|&id| {
-            id != node_id && is_in_flow_flex_child_for_pagination(document, parent_id, id)
-        })
-        .filter_map(|id| {
-            let before_y = current_abs_y(document, id);
-            let line_top = before_y - document.nodes[id].layout.margin.top;
-            ((line_top - start).abs() <= 0.001).then_some((id, before_y))
-        })
+        .filter(|&id| is_in_flow_flex_child_for_pagination(document, parent_id, id))
+        .collect();
+    let line = if cascade.computed[parent_id].flex_wrap == FlexWrapValue::NoWrap {
+        items
+    } else {
+        flex_line_of(document, cascade, body_id, parent_id, items, node_id)
+    };
+    line.into_iter()
+        .filter(|&id| id != node_id)
+        .map(|id| (id, current_abs_y(document, id)))
         .collect()
+}
+
+/// How far below the top of its flex line, in the row flex container
+/// `parent_id`, the margin box of `node_id` starts. The line starts at the
+/// highest margin box of its items, in their places in the flow.
+fn flex_line_offset(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    parent_id: usize,
+    node_id: usize,
+) -> f32 {
+    let margin_box_top = |id: usize| {
+        current_abs_y(document, id)
+            - layout_relative_offset_y(document, cascade, body_id, id)
+            - document.nodes[id].layout.margin.top
+    };
+    let own = margin_box_top(node_id);
+    let line_top = flex_line_peers(document, cascade, body_id, parent_id, node_id)
+        .into_iter()
+        .map(|(id, _)| margin_box_top(id))
+        .fold(own, f32::min);
+    own - line_top
 }
 
 /// Places captured peers from their saved positions, so an ancestor that
@@ -18109,18 +18136,19 @@ fn place_flex_line_peers(document: &mut Document, peers: &[(usize, f32)], delta:
     }
 }
 
-/// Moves the siblings of `node_id` in `parent_id` that start at its raw
-/// position `raw_y` down by `shift_delta`, taking them as the other items on
-/// its flex line. Every other sibling keeps its flow coordinates.
+/// Moves the other items on the flex line of `node_id` in the row flex
+/// container `parent_id` down by `delta`. Every other sibling keeps its flow
+/// coordinates.
 fn move_flex_line_siblings(
     document: &mut Document,
+    cascade: &CascadeResult,
+    body_id: usize,
     parent_id: usize,
     node_id: usize,
-    raw_y: f32,
-    shift_delta: f32,
+    delta: f32,
 ) {
-    let peers = flex_line_peers(document, parent_id, node_id, raw_y);
-    place_flex_line_peers(document, &peers, shift_delta);
+    let peers = flex_line_peers(document, cascade, body_id, parent_id, node_id);
+    place_flex_line_peers(document, &peers, delta);
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose

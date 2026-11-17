@@ -2394,18 +2394,26 @@ impl PaginationState {
         } else {
             relative_offset
         };
+        let row_tail_move = overflow.page && candidate.context.item_tail_edges() > 0.0;
+        let row_flex_parent = (forced_before || row_tail_move)
+            .then(|| row_flex_container(document, cascade, node_id))
+            .flatten();
+        // A forced break moves the top of the item's flex line to the top of
+        // the page, and the item keeps its place in the line below that top,
+        // as alignment and the margins of the items set it.
+        let line_offset = row_flex_parent
+            .filter(|_| lands_after_forced_break)
+            .map_or(0.0, |parent| {
+                super::flex_line_offset(document, cascade, body_id, parent, node_id)
+            });
         let landing = TransitionLanding::new(
-            page_origins.origin(target_page),
+            page_origins.origin(target_page) + line_offset,
             landing_y,
             margin_top,
             landing_relative,
             lands_after_forced_break,
             overflow,
         );
-        let row_tail_move = overflow.page && candidate.context.item_tail_edges() > 0.0;
-        let row_flex_parent = (forced_before || row_tail_move)
-            .then(|| row_flex_container(document, cascade, node_id))
-            .flatten();
         if landing.is_finite() {
             if !lands_after_forced_break {
                 let consumed = self.float_gaps.discard_in_holder(
@@ -2423,7 +2431,7 @@ impl PaginationState {
                 let before_y = current_abs_y(document, node_id);
                 (
                     before_y,
-                    super::flex_line_peers(document, parent, node_id, before_y),
+                    super::flex_line_peers(document, cascade, body_id, parent, node_id),
                 )
             });
             let moved_in_bounded_ancestor = move_box_for_transition(
@@ -2443,17 +2451,17 @@ impl PaginationState {
             );
             // Forced breaks and closing-tail breaks belong to the whole
             // aligned flex line; the other lines keep their flow coordinates.
-            // The line starts at the top of the box's margin box, which
-            // moves to the top of the page.
+            // The line moves by the distance of the box's margin box.
             if let Some((before_y, peers)) = tail_line {
                 let delta = current_abs_y(document, node_id) - before_y;
                 super::place_flex_line_peers(document, &peers, delta);
             } else if let Some(parent_id) = row_flex_parent {
                 move_flex_line_siblings(
                     document,
+                    cascade,
+                    body_id,
                     parent_id,
                     node_id,
-                    candidate.raw_y,
                     landing.shift_delta + margin_top,
                 );
             }

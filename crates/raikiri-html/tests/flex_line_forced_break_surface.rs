@@ -201,3 +201,29 @@ fn a_break_before_a_later_item_with_a_margin_moves_its_whole_line() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_in_an_aligned_line_moves_the_top_of_the_line_to_the_page_top() {
+    // The items keep their places in the line, as alignment and their
+    // margins set them, below the top of the line, which the break moves
+    // to the top of the next page. The line holds the items laid out side by
+    // side, whatever their block positions.
+    assert_rows(&[
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 0), (1, 'Y', 10), (1, 'Z', 30)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:20px'>Y</div><div style='break-before:page;width:40px;height:30px;margin-top:5px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 20), (1, 'Z', 40)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:baseline'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+        (
+            "<div style='height:30px'>a</div><div style='display:flex;flex-wrap:nowrap;width:100px;align-items:baseline'><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+    ]);
+}

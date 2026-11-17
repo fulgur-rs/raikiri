@@ -16421,6 +16421,9 @@ fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
     assert_eq!(pages.transition_natural_page(100.0, -10.0, 0, 3, true), 2);
     assert_eq!(pages.transition_natural_page(95.0, -10.0, 0, 3, true), 2);
     assert_eq!(pages.transition_natural_page(90.0, -10.0, 0, 3, true), 1);
+    // A margin box at the edge of a page past the flow opens that page.
+    assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, true), 2);
+    assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, false), 1);
     // Without a page-type change, or on a page the flow has not reached,
     // the box keeps the page it falls on.
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, false), 2);
