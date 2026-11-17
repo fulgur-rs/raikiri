@@ -329,5 +329,37 @@ fn a_context_root_in_a_cleared_box_is_placed_below_the_floats_it_clears() {
             ),
             &[("c", 0.0, 40.0, 800.0, 10.0), ("r", 0.0, 40.0, 760.0, 10.0)],
         ),
+        (
+            "a larger margin of its own beside a float that reaches past the top",
+            &cleared_holder(
+                10,
+                "<div style='float: right; width: 20px; height: 12px'></div>",
+                "overflow: hidden; margin-top: 10px",
+            ),
+            &[("c", 0.0, 40.0, 800.0, 10.0), ("r", 0.0, 40.0, 780.0, 10.0)],
+        ),
+        (
+            "a margin larger than the clearance",
+            &cleared_holder(
+                10,
+                "<div style='float: right; width: 20px; height: 80px'></div>",
+                "overflow: hidden; margin-top: 40px",
+            ),
+            &[("c", 0.0, 50.0, 800.0, 10.0), ("r", 0.0, 50.0, 780.0, 10.0)],
+        ),
+        (
+            "a margin larger than the clearance with no float beside",
+            &cleared_holder(10, "", "overflow: hidden; margin-top: 40px"),
+            &[("c", 0.0, 50.0, 800.0, 10.0), ("r", 0.0, 50.0, 800.0, 10.0)],
+        ),
     ]);
+    check_boxes(&[(
+        "a wrapper with a margin",
+        "<div style='height: 10px; margin-bottom: 20px'></div>\
+         <div style='float: left; width: 40px; height: 10px'></div>\
+         <div style='float: right; width: 20px; height: 12px'></div>\
+         <div id=c style='clear: left; margin-top: 5px'><div style='margin-top: 10px'>\
+         <div id=r style='overflow: hidden'>AB CD</div></div></div>",
+        &[("c", 0.0, 40.0, 800.0, 10.0), ("r", 0.0, 40.0, 780.0, 10.0)],
+    )]);
 }

@@ -2819,13 +2819,14 @@ fn lines_with_a_gap_that_a_float_leaves_between_them_stay_where_the_layout_put_t
 /// The box after a float that took a forced break keeps its own margin also
 /// when its lines change places beside the float there: when a word goes below
 /// the float, and when the box holds blocks, generated blocks, nested blocks,
-/// a box of its own formatting context or a relative offset. Chromium lays
-/// the box out again at the kept margin.
+/// a box of its own formatting context or a relative offset. The margins of
+/// its first children collapse into the kept one. Chromium lays the box out
+/// again at the kept margin.
 #[test]
 fn page_start_float_margin_reflows_boxes_of_every_shape() {
     const LEAD: &str = "<div style='break-after:page;height:30px;margin-bottom:30px'>a</div>";
     const TALL_FLOAT: &str = "<div style='float:left;width:40px;height:50px'></div>";
-    let cases: [(&str, String, u32, &[(u32, f32, f32)]); 8] = [
+    let cases: [(&str, String, u32, &[(u32, f32, f32)]); 10] = [
         (
             "word below the float",
             format!("{TALL_FLOAT}<div style='margin-top:10px'>AB CDEF GH</div>"),
@@ -2886,6 +2887,23 @@ fn page_start_float_margin_reflows_boxes_of_every_shape() {
                 .to_owned(),
             2,
             &[(1, 0.0, 15.0)],
+        ),
+        (
+            "first child's larger margin",
+            format!(
+                "{TALL_FLOAT}<div style='margin-top:10px'><div style='margin-top:30px'>AB CD</div>\
+                 </div><div>ZZ</div>"
+            ),
+            3,
+            &[(1, 40.0, 35.0), (1, 0.0, 65.0)],
+        ),
+        (
+            "first child's negative margin",
+            "<div style='float:left;width:40px;height:10px'></div><div style='margin-top:10px'>\
+             <div style='margin-top:-5px'>AB CD</div></div><div>ZZ</div>"
+                .to_owned(),
+            2,
+            &[(1, 40.0, 10.0), (1, 0.0, 40.0)],
         ),
     ];
     for (label, rest, pages, expected) in cases {

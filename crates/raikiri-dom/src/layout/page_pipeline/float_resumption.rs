@@ -1,8 +1,8 @@
 //! Reuse page-walk boundaries to reflow a float and its following block.
 
 use super::{
-    CascadeResult, ClearValue, DisplayValue, FloatValue, NodeKind, collapses_through,
-    current_abs_y, margins_may_collapse_through,
+    CascadeResult, ClearValue, DisplayValue, FloatValue, NodeKind, collapsed_margin_above,
+    collapses_through, current_abs_y, margins_may_collapse_through,
 };
 use crate::layout::context::LayoutSession;
 use raikiri_style::ComputedLengthPercentageOrAuto;
@@ -35,7 +35,7 @@ pub(crate) struct Plan {
     groups: HashMap<(usize, usize), FlowStart>,
     floats: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
-    margin_flows: HashMap<usize, usize>,
+    margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
 }
@@ -57,7 +57,10 @@ impl Plan {
         !self.margin_flows.is_empty()
     }
 
-    pub(crate) fn margin_float(&self, flow: usize) -> Option<usize> {
+    /// The float that `flow` lines up below, and the margin the forced
+    /// break keeps above `flow`: its own collapsed with the margins of its
+    /// first children that adjoin it.
+    pub(crate) fn margin_float(&self, flow: usize) -> Option<(usize, f32)> {
         self.margin_flows.get(&flow).copied()
     }
 
@@ -104,7 +107,10 @@ impl Plan {
                     if margin.is_some() {
                         // Source geometry may shrink before a later forced break.
                         // Retain the relationship, not the old page's coordinates.
-                        plan.margin_flows.insert(flow, float);
+                        plan.margin_flows.insert(
+                            flow,
+                            (float, collapsed_margin_above(document, cascade, flow)),
+                        );
                         plan.groups.insert((float, flow), start);
                     }
                     continue;
@@ -216,8 +222,9 @@ impl Plan {
     }
 }
 
-// Reflow an in-flow block whose own margin is the complete retained strut.
-// Layout places the whole box again below the float's top plus that margin,
+// Reflow an in-flow block below the float's top plus its own margin, the
+// margin the forced break keeps; the margins of its first children collapse
+// into that one above its top. Layout places the whole box again there,
 // so its lines, block children and generated blocks are broken against the
 // float afresh, wherever the earlier layout put them. A relative offset only
 // moves the box once it is placed. Resolve the used margin on every attempt.

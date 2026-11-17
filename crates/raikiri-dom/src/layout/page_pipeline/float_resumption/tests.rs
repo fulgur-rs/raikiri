@@ -341,7 +341,7 @@ fn margin_resumption_retains_a_relationship_without_freezing_page_coordinates() 
     with_margin_fixture("margin-top:10%", |session, cascade, float, flow| {
         session.nodes[flow].layout.margin.top = 10.0;
         let plan = Plan::collect(session, cascade);
-        assert_eq!(plan.margin_float(flow), Some(float));
+        assert_eq!(plan.margin_float(flow), Some((float, 10.0)));
         assert!(plan.has_margin_flows());
         assert!(!plan.is_empty());
         assert_eq!(plan.float_top(float), None);
@@ -357,7 +357,11 @@ fn margin_resumption_retains_a_relationship_without_freezing_page_coordinates() 
             .get_mut(&float)
             .unwrap()
             .page_origin += 100.0;
-        assert_eq!(Plan::collect(session, cascade), plan);
+        // The margin is resolved again on every attempt; the page
+        // coordinates are not kept.
+        let mut expected = plan.clone();
+        expected.margin_flows.insert(flow, (float, 20.0));
+        assert_eq!(Plan::collect(session, cascade), expected);
         session.nodes[flow].layout.margin.top = 0.0;
         assert!(Plan::collect(session, cascade).is_empty());
     });
