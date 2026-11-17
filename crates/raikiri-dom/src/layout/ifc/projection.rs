@@ -427,8 +427,14 @@ fn push_generated(
                 super::generated_blocks::align_physically(&mut options, rtl);
             }
             Some(
-                GeneratedBlock::new(id.0, end, cv, (options, indent), orthogonal)
-                    .on_root_axes(images.writing_mode, images.rtl),
+                GeneratedBlock::new(
+                    id.0,
+                    end,
+                    cv,
+                    (options, indent),
+                    (orthogonal, pseudo == PseudoElem::After),
+                )
+                .on_root_axes(images.writing_mode, images.rtl),
             )
         }
         None => None,

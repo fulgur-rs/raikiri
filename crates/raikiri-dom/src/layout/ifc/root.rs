@@ -216,8 +216,9 @@ pub(crate) struct IfcLines {
     /// Where the first block child or block-level `::after` of the root
     /// starts: the index of the first line after it and the block offset,
     /// from the content-box block-start edge, below the lines and the
-    /// margins above it, before its own margins. `None` when the root has
-    /// neither. A fragmenting layout records none.
+    /// margins above it that do not escape through the root's top edge,
+    /// before its own margins. `None` when the root has neither. A
+    /// fragmenting layout records none.
     pub(crate) first_block_start: Option<(usize, f32)>,
     /// Each block child of the root with the index of the first line after it
     /// and the block offset, from the content-box block-start edge, where the

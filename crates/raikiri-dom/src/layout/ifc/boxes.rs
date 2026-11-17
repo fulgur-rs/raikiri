@@ -1354,8 +1354,17 @@ fn run_boxes_segment(
                     block_cursor = index;
                     if let generated_blocks::Token::Start(block) = edge {
                         generated_block_starts.push((block_line_starts.len(), lines.len()));
-                        if block.is_after() {
-                            first_block_start.get_or_insert((lines.len(), y + pending.resolve()));
+                        if block.after {
+                            // The margins above a box that starts the
+                            // paragraph escape through its top edge.
+                            let escapes = top_margin_escapes
+                                && leading_margin_open
+                                && lines.is_empty()
+                                && y == 0.0;
+                            first_block_start.get_or_insert((
+                                lines.len(),
+                                if escapes { y } else { y + pending.resolve() },
+                            ));
                         }
                     }
                     // A generated block is laid out along the block axis of
@@ -1440,7 +1449,16 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                first_block_start.get_or_insert((lines.len(), y + pending.resolve()));
+                // The margins above a block that starts the paragraph escape
+                // through its top edge.
+                first_block_start.get_or_insert((
+                    lines.len(),
+                    if top_margin_escapes && starts_paragraph {
+                        y
+                    } else {
+                        y + pending.resolve()
+                    },
+                ));
                 let mut block = if geometry.blocks_apart {
                     BlockChild::apart(y, pending)
                 } else {
@@ -5111,7 +5129,14 @@ fn static_block_offset(
 /// the content, or starts the paragraph when there is none.
 fn leading_static_offset(lines: &IfcLines) -> f32 {
     match lines.first_block_start {
-        Some((next_line, start)) => start + lines.shift_of(next_line),
+        // The box moves with the content before it, and not with the block
+        // after it when pagination moves that block alone.
+        Some((next_line, start)) => {
+            start
+                + next_line
+                    .checked_sub(1)
+                    .map_or(lines.shifts.aligned(), |last| lines.shift_of(last))
+        }
         None if lines.lines.is_empty() && lines.placed_blocks.is_empty() => lines.shifts.aligned(),
         None => lines.height + lines.shifts.aligned(),
     }

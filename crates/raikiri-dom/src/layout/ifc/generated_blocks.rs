@@ -106,6 +106,9 @@ pub(crate) struct GeneratedBlock {
     /// The sides and sizes above are on the axes of a vertical root (see
     /// [`GeneratedBlock::on_root_axes`]); the root lays the box out.
     pub(crate) on_root_axes: bool,
+    /// Whether the box is an `::after`, which follows all the other content
+    /// of its element, rather than a `::before`.
+    pub(crate) after: bool,
 }
 
 /// `sides` on the axes of a vertical root: `top` and `bottom` become the
@@ -127,25 +130,17 @@ fn on_axes<T>(sides: Sides<T>, block_start_right: bool) -> Sides<T> {
 }
 
 impl GeneratedBlock {
-    /// Whether the box is an `::after`, which follows all the other content
-    /// of its element, rather than a `::before`.
-    pub(crate) fn is_after(&self) -> bool {
-        usize::try_from(self.start)
-            .ok()
-            .and_then(crate::generated_content::generated_origin)
-            .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::After)
-    }
-
     /// The geometry of the generated box styled by `cv`, marked by the tokens
     /// `start` and `end`, whose lines are set by the line options and raw
     /// `text-indent` in `lines`; `orthogonal` says its writing mode is
-    /// orthogonal to its box parent's.
+    /// orthogonal to its box parent's, and `after` that the box is an
+    /// `::after`.
     pub(crate) fn new(
         start: u64,
         end: u64,
         cv: &ComputedValues,
         lines: (LineOptions, ComputedTextIndent),
-        orthogonal: bool,
+        (orthogonal, after): (bool, bool),
     ) -> Self {
         Self {
             start,
@@ -183,6 +178,7 @@ impl GeneratedBlock {
             break_before: cv.break_before,
             break_after: cv.break_after,
             on_root_axes: false,
+            after,
         }
     }
 

@@ -863,6 +863,17 @@ fn a_block_level_box_follows_the_text_before_it_in_visual_order() {
     );
 }
 
+/// A box whose block-start margins collapse through the root's top edge
+/// with the margins of an empty `::before`: they escape the horizontal
+/// root, and stay in a vertical one, which is an orthogonal flow.
+const ESCAPING: &[Expected] = &[
+    ("horizontal-tb", "ltr", (0.0, 0.0, 30.0, 20.0)),
+    ("horizontal-tb", "rtl", (170.0, 0.0, 30.0, 20.0)),
+    ("vertical-rl", "ltr", (164.0, 0.0, 30.0, 20.0)),
+    ("vertical-lr", "ltr", (6.0, 0.0, 30.0, 20.0)),
+    ("sideways-lr", "rtl", (6.0, 0.0, 30.0, 20.0)),
+];
+
 #[test]
 fn an_out_of_flow_box_before_the_first_block_child_sits_where_that_block_starts() {
     // A vertical root whose lines run from the bottom does not lay a
@@ -967,5 +978,23 @@ fn an_out_of_flow_box_before_the_first_block_child_sits_where_that_block_starts(
             ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
             ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
         ],
+    );
+    check(
+        "escaping_margins_box_block",
+        Setup {
+            sheet: r#"#cb::before{content:"";display:block;margin-block-end:6px}"#,
+            root_css: "",
+        },
+        &[Child::Box(""), Child::Block("AA", "")],
+        ESCAPING,
+    );
+    check(
+        "escaping_margins_box_generated_block",
+        Setup {
+            sheet: r#"#cb::before,#cb::after{content:"";display:block;margin-block-end:6px}"#,
+            root_css: "",
+        },
+        &[Child::Box("")],
+        ESCAPING,
     );
 }
