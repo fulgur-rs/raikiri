@@ -986,12 +986,18 @@ fn block_border_box_end(
                 && child_computed.clear == ClearValue::None
                 && collapses_through(document, cascade, child, layout.size.height)
             {
+                let (positive, negative) = empty_box_margin_extremes(document, cascade, child);
                 trailing = trailing
-                    .collapse_with_margin(layout.margin.top)
-                    .collapse_with_margin(layout.margin.bottom);
+                    .collapse_with_margin(positive)
+                    .collapse_with_margin(negative);
             } else {
+                // The block-end margins of the child's own last boxes that
+                // adjoin its end collapse with its own one.
+                let (positive, negative) =
+                    adjoining_margin_extremes(document, cascade, child, false, None);
                 last_flow_end = Some(border_end);
-                trailing = CollapsibleMarginSet::from_margin(layout.margin.bottom);
+                trailing =
+                    CollapsibleMarginSet::from_margin(positive).collapse_with_margin(negative);
             }
         }
     }
