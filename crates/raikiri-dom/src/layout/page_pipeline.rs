@@ -9586,10 +9586,18 @@ fn margin_collapses_into_top(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let non_zero = |(positive, negative): (f32, f32)| positive > 0.0 || negative < 0.0;
-    if document.nodes[node_id].layout.margin.top != 0.0 {
-        return true;
-    }
+    document.nodes[node_id].layout.margin.top != 0.0 || margin_above_box(document, cascade, node_id)
+}
+
+/// Whether one of the margins that end the flow above the box `node_id`
+/// is other than zero: the bottom margin of the box before it, collapsed
+/// with those of the empty boxes between the two (see
+/// [`margin_collapses_into_top`]).
+fn margin_above_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     let mut boxes = Vec::new();
     let mut current = node_id;
     while let Some(parent) = document.parent_of(current) {
@@ -9611,11 +9619,11 @@ fn margin_collapses_into_top(
                     return false;
                 }
                 if !collapses_as_empty_box(document, cascade, id) {
-                    return non_zero(adjoining_margin_extremes(
+                    return non_zero_margin(adjoining_margin_extremes(
                         document, cascade, id, false, None,
                     ));
                 }
-                if non_zero(empty_box_margin_extremes(document, cascade, id)) {
+                if non_zero_margin(empty_box_margin_extremes(document, cascade, id)) {
                     return true;
                 }
             }
@@ -9644,9 +9652,11 @@ fn flow_end_box(
         return Some((last, end_margin_through(document, cascade, last)));
     }
     let parent = document.parent_of(last)?;
-    // Walked from the end, `last` and the boxes before it are reached past
-    // only the few that follow it outside the flow.
-    let (mut positive, mut negative) = (0.0_f32, 0.0_f32);
+    // The empty boxes that end the flow, `last` first, and the box before
+    // them. Walked from the end, `last` is reached past only the few that
+    // follow it outside the flow.
+    let mut run = Vec::new();
+    let mut before = None;
     for &child in document.nodes[parent]
         .children
         .iter()
@@ -9656,21 +9666,51 @@ fn flow_end_box(
         if !takes_part_in_flow(document, cascade, child) {
             continue;
         }
-        let (child_positive, child_negative) = if collapsed_empty_box(document, cascade, child) {
-            empty_box_margin_extremes(document, cascade, child)
-        } else {
-            // A `display: contents` element has no margin box of its own.
-            let (child_positive, child_negative) =
-                adjoining_margin_extremes(document, cascade, child, false, None);
-            return (document.nodes[child].display() != DisplayValue::Contents).then_some((
-                child,
-                positive.max(child_positive) + negative.min(child_negative),
-            ));
-        };
-        positive = positive.max(child_positive);
-        negative = negative.min(child_negative);
+        if !collapses_as_empty_box(document, cascade, child) {
+            before = Some(child);
+            break;
+        }
+        run.push(child);
     }
-    None
+    // Which of them stay with the box before them, found from the first on:
+    // each one adds its margins to those that collapse into the tops of the
+    // boxes after it (see `collapsed_empty_box`).
+    let mut stays = vec![false; run.len()];
+    let mut above = run
+        .last()
+        .is_some_and(|&first| margin_above_box(document, cascade, first));
+    for (index, &child) in run.iter().enumerate().rev() {
+        stays[index] = document.block_axis(child).height().is_auto()
+            || document.nodes[child].layout.margin.top != 0.0
+            || above;
+        above |= non_zero_margin(empty_box_margin_extremes(document, cascade, child));
+    }
+    // The last box that does not stay ends the flow, with the margins of
+    // those after it collapsed into its own.
+    let (mut positive, mut negative) = (0.0_f32, 0.0_f32);
+    let end = run
+        .iter()
+        .zip(&stays)
+        .find_map(|(&child, &stays)| {
+            (!stays).then_some(child).or_else(|| {
+                let (child_positive, child_negative) =
+                    empty_box_margin_extremes(document, cascade, child);
+                positive = positive.max(child_positive);
+                negative = negative.min(child_negative);
+                None
+            })
+        })
+        .or(before)?;
+    // A `display: contents` element has no margin box of its own.
+    let (end_positive, end_negative) =
+        adjoining_margin_extremes(document, cascade, end, false, None);
+    (document.nodes[end].display() != DisplayValue::Contents)
+        .then_some((end, positive.max(end_positive) + negative.min(end_negative)))
+}
+
+/// Whether margin extremes hold a margin other than zero.
+fn non_zero_margin((positive, negative): (f32, f32)) -> bool {
+    positive > 0.0 || negative < 0.0
 }
 
 /// [`closing_edges_of`] for a block that stacks its boxes in block flow and

@@ -155,6 +155,10 @@ fn a_margin_above_an_empty_box_of_set_height_zero_keeps_it_behind() {
             "<div style='height:20px'>T</div><div style='margin-bottom:5px'></div>\
              <div style='height:0;margin-bottom:30px'></div>",
             "<div style='height:20px'>T</div><div style='height:0;margin-top:10px'></div>",
+            // An empty box of auto height after it ends the flow and stays,
+            // and the margins of both collapse through to the page edge.
+            "<div style='height:20px'>T</div><div style='height:0;margin-bottom:30px'></div>\
+             <div style='margin-bottom:5px'></div>",
             // Margins that cancel out still keep the box behind.
             "<div style='height:20px;margin-bottom:10px'>T</div>\
              <div style='height:0;margin-top:-10px;margin-bottom:30px'></div>",
