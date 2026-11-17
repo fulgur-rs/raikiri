@@ -12378,8 +12378,8 @@ fn lines_can_shift_inside(
 /// Whether the lines of the paragraph `block_id` that follow its block
 /// children can move down inside it: its height grows with them, it is in one
 /// column, and the only boxes it lays out are atomic inlines, floats, block
-/// children and out-of-flow boxes. The block children follow the moved lines
-/// when pagination reaches them. An out-of-flow box is one that a block-axis
+/// children and out-of-flow boxes. The block children move with the lines
+/// before them (see [`blocks_after_line`]). An out-of-flow box is one that a block-axis
 /// inset places away from the lines or that follows them (see
 /// [`out_of_flow_follow`]). A float is a page candidate of its own, placed
 /// where the layout put it: the lines move, the float does not follow them.
@@ -12557,6 +12557,28 @@ fn straddling_line(
     (top > page_start + 0.001 && top < page_end - 0.001).then_some(line)
 }
 
+/// The block children of the paragraph `root` that come after its line
+/// `line`: moving the lines from `line` on moves them too, so that a block
+/// placed later starts from where the lines took it. A block split across
+/// columns comes after the line only when its first part does.
+fn blocks_after_line(document: &Document, root: usize, line: usize) -> HashSet<usize> {
+    let mut first_after: HashMap<usize, usize> = HashMap::new();
+    let starts = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .into_iter()
+        .flat_map(|lines| &lines.block_line_starts);
+    for &(block, after) in starts {
+        let first = first_after.entry(block).or_insert(after);
+        *first = (*first).min(after);
+    }
+    first_after
+        .into_iter()
+        .filter_map(|(block, after)| (after > line).then_some(block))
+        .collect()
+}
+
 /// Whether `node_id` lies in a block child of the paragraph `root` that comes
 /// after line `line`, so that moving the lines from `line` on moves it too.
 fn follows_line_of_paragraph(
@@ -12579,10 +12601,7 @@ fn follows_line_of_paragraph(
                 index >= line && shaped.fragments().any(|fragment| {
                     matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
                 })
-            }) || lines
-                .block_line_starts
-                .iter()
-                .any(|&(child, after)| child == block && after > line)
+            }) || blocks_after_line(document, root, line).contains(&block)
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
@@ -14297,9 +14316,10 @@ fn with_height_delta(
 
 /// Moves the lines of the paragraph `moved.block_id` from `moved.line` on down
 /// by `moved.shift`, together with the out-of-flow boxes of the paragraph that
-/// follow them (see [`out_of_flow_moves`]) and the floats that sit on them
-/// (see [`floats_on_moved_lines`]), and grows the paragraph's box to hold
-/// them. Returns how far the box grew and the floats that moved.
+/// follow them (see [`out_of_flow_moves`]), the floats that sit on them (see
+/// [`floats_on_moved_lines`]) and the block children that come after them
+/// (see [`blocks_after_line`]), and grows the paragraph's box to hold them.
+/// Returns how far the box grew and the floats that moved.
 fn shift_paragraph_lines(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -14324,9 +14344,14 @@ fn shift_paragraph_lines(
             _ => None,
         })
         .collect();
+    let blocks = blocks_after_line(document, moved.block_id, moved.line);
     let floats = floats_on_moved_lines(document, moved, went_ahead);
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
-    for node in atomics.into_iter().chain(floats.iter().copied()) {
+    for node in atomics
+        .into_iter()
+        .chain(blocks)
+        .chain(floats.iter().copied())
+    {
         document.translate_pagination_y(node, moved.shift);
     }
     for (node, delta) in follows {

@@ -197,17 +197,9 @@ pub(super) fn move_line(
     shifts: &mut SubtreeShifts,
     (flow_page, page): (u32, u32),
 ) -> f32 {
-    let lines = document
-        .ifc_layout_node(owner.root)
-        .and_then(|node| node.ifc.as_ref())
-        .and_then(|ifc| ifc.lines.as_ref())
-        .expect("delegated lines");
-    let boxes: HashSet<usize> = lines
-        .block_line_starts
-        .iter()
-        .filter_map(|&(node, after)| (after > owner.line).then_some(node))
-        .collect();
-    let growth = move_paragraph_lines(
+    // The block children after the line move with it in
+    // `shift_paragraph_lines`.
+    move_paragraph_lines(
         document,
         cascade,
         body_id,
@@ -220,9 +212,5 @@ pub(super) fn move_line(
         },
         shifts,
         flow_page,
-    );
-    for node in boxes {
-        document.translate_pagination_y(node, shift);
-    }
-    growth
+    )
 }
