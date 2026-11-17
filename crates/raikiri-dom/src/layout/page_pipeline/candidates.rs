@@ -2009,12 +2009,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && is_plain_block_box(document, node_id)));
                 let margin_candidate = margin_shape && can_move_nested;
                 // The last box of a block whose `min-height` leaves room below
-                // it, which moved content may still fill.
+                // it, which moved content may still fill. A paragraph whose
+                // lines keep together moves whole, as a box does.
                 let min_height_edges_candidate = frame.min_height_edges.filter(|_| {
                     in_flow_block
                         && can_move_nested
                         && break_before_available()
-                        && !node.is_ifc_root()
+                        && (!node.is_ifc_root()
+                            || paragraph_lines_keep_together(document, cascade, node_id))
                         && breaks_only_around(document, cascade, node_id, self.has_named_pages)
                 });
                 let is_break_candidate = !is_body

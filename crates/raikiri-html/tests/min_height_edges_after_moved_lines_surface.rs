@@ -155,3 +155,22 @@ fn a_max_height_lets_the_edges_follow_only_as_far_as_it_grows() {
         (1, 'X', 65)
     );
 }
+
+#[test]
+fn a_last_paragraph_after_moved_lines_moves_with_the_edges_its_margin_leaves() {
+    // The lines sit in a block before the last box, and the last box is a
+    // paragraph of one line. A negative bottom margin on it pulls the edges
+    // up: they follow it only as far as its margin box reaches.
+    for (style, margin, t, z) in [
+        ("height:30px", 0, (2, 5), (2, 50)),
+        ("height:40px", -10, (2, 5), (2, 50)),
+        ("height:40px", -20, (1, 65), (2, 5)),
+    ] {
+        let body = format!(
+            "<div style='width:20px;min-height:170px;padding-bottom:15px'><div>X X X X</div><div style='{style};margin-bottom:{margin}px'>T</div></div><div>Z</div>"
+        );
+        let tops = glyph_tops(&body);
+        assert!(tops.contains(&(t.0, 'T', t.1)), "{body}: {tops:?}");
+        assert!(tops.contains(&(z.0, 'Z', z.1)), "{body}: {tops:?}");
+    }
+}

@@ -9404,7 +9404,7 @@ fn min_height_edges_move(
         - layout.border.bottom;
     let margin = document.nodes[candidate.node_id].layout.margin.bottom;
     fit.flow_y + candidate.height + margin >= content_end - 0.001
-        && tail_edges_move(edges + margin.max(0.0), 0.0, candidate, fit)
+        && tail_edges_move(edges + margin, 0.0, candidate, fit)
 }
 
 /// [`closing_edges_of`] for a block that stacks its boxes in block flow and
