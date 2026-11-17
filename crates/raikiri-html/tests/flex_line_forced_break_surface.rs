@@ -180,3 +180,24 @@ fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_before_a_later_item_with_a_margin_moves_its_whole_line() {
+    // The items of the line start their margin boxes at its top, which the
+    // break moves to the top of the next page, whatever the margins of the
+    // item it is before, a negative one too.
+    assert_rows(&[
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px'>Y</div><div style='break-before:page;margin-top:10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 15), (1, 'Y', 5), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px;margin-top:5px'>Y</div><div style='break-before:page;margin-top:10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 15), (1, 'Y', 10), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px;margin-top:5px'>Y</div><div style='break-before:page;margin-top:-10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+    ]);
+}

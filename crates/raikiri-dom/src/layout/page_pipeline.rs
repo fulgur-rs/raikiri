@@ -8676,15 +8676,16 @@ fn transition_target_y(
     }
 }
 
-/// Where a page transition places a box, and how far that moves the box and
-/// the flow after it.
+/// Where a page transition places a box, and how far that moves the box,
+/// and with it the flow after it, and the line it starts.
 struct TransitionLanding {
     /// Where the box's border box starts after the move (see
     /// [`transition_target_y`]).
     target_y: f32,
-    /// How far the box itself moves down.
+    /// How far the box itself moves down, and the flow after it with it.
     node_delta: f32,
-    /// How far the flow after the box moves down.
+    /// How far the box's border box, at its place in the flow without its
+    /// relative offset, would move down to the top of its page.
     shift_delta: f32,
 }
 
@@ -8694,7 +8695,7 @@ impl TransitionLanding {
     /// `page_top`.
     ///
     /// Both distances are the additional movement for this boundary, since the
-    /// box already sits at `effective_y`. The flow shift is measured from the
+    /// box already sits at `effective_y`. The line shift is measured from the
     /// box's place in the flow, without the offset.
     fn new(
         page_top: f32,
@@ -15048,8 +15049,6 @@ struct ForcedBreakHolder {
 struct TransitionMove {
     /// How far the box itself moves down.
     node_delta: f32,
-    /// How far the flow after the box moves down.
-    shift_delta: f32,
     /// Whether the box moves because it would cross a page edge it avoids.
     page_overflow: bool,
     /// Whether a forced or page-type break moves the box.
@@ -15080,7 +15079,6 @@ fn move_box_for_transition(
     let node_id = candidate.node_id;
     let TransitionMove {
         node_delta,
-        shift_delta,
         page_overflow,
         forced_transition,
         holder,
@@ -15142,21 +15140,10 @@ fn move_box_for_transition(
         // A forced break ends its ancestors' fragments on this page, which
         // their continuations account for; only the boxes after it in block
         // flow follow it, up to the first ancestor that does not stack its
-        // children in block order. A box pulled back over the break by a
-        // negative margin still leaves the flow after it at the break.
-        let following_delta = if forced_holder.is_some() {
-            node_delta
-        } else {
-            node_delta.max(shift_delta)
-        };
+        // children in block order. They follow a box that a negative margin
+        // pulls back over the break too.
         moved_in_bounded_ancestor = shift_block_flow_after(
-            document,
-            cascade,
-            holder,
-            body_id,
-            following_delta,
-            shifts,
-            flow_page,
+            document, cascade, holder, body_id, node_delta, shifts, flow_page,
         );
     }
     moved_in_bounded_ancestor
@@ -18088,6 +18075,9 @@ fn flex_line_peers(
     node_id: usize,
     y: f32,
 ) -> Vec<(usize, f32)> {
+    // Items start their margin boxes at the top of their line, whatever
+    // their margins, a negative one too.
+    let start = y - document.nodes[node_id].layout.margin.top;
     document
         .children_through_contents(parent_id)
         .into_iter()
@@ -18096,7 +18086,8 @@ fn flex_line_peers(
         })
         .filter_map(|id| {
             let before_y = current_abs_y(document, id);
-            ((before_y - y).abs() <= 0.001).then_some((id, before_y))
+            let line_top = before_y - document.nodes[id].layout.margin.top;
+            ((line_top - start).abs() <= 0.001).then_some((id, before_y))
         })
         .collect()
 }

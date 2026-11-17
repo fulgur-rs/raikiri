@@ -2433,7 +2433,6 @@ impl PaginationState {
                 candidate,
                 &TransitionMove {
                     node_delta: landing.node_delta,
-                    shift_delta: landing.shift_delta,
                     page_overflow: overflow.page || margin_pushes_box_on,
                     forced_transition: lands_after_forced_break,
                     holder,
@@ -2444,6 +2443,8 @@ impl PaginationState {
             );
             // Forced breaks and closing-tail breaks belong to the whole
             // aligned flex line; the other lines keep their flow coordinates.
+            // The line starts at the top of the box's margin box, which
+            // moves to the top of the page.
             if let Some((before_y, peers)) = tail_line {
                 let delta = current_abs_y(document, node_id) - before_y;
                 super::place_flex_line_peers(document, &peers, delta);
@@ -2453,7 +2454,7 @@ impl PaginationState {
                     parent_id,
                     node_id,
                     candidate.raw_y,
-                    landing.shift_delta,
+                    landing.shift_delta + margin_top,
                 );
             }
             // A kept margin moves the box's descendants and its later

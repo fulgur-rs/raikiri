@@ -254,6 +254,14 @@ fn the_flow_after_a_box_pulled_back_over_a_forced_break_follows_the_box() {
     ] {
         assert_eq!(lines(&body), [(1, 0.0, -5.0), (1, 0.0, 25.0)], "{body}");
     }
+    // The boxes after it in its parent follow it too, and so does the flow
+    // after the parent.
+    let nested = lines(
+        "<div><div style='height:30px'>a</div>\
+         <div style='break-before:page;margin-top:-10px;height:30px'>XX</div>\
+         <div>YY</div></div><div>ZZ</div>",
+    );
+    assert_eq!(nested, [(1, 0.0, -5.0), (1, 0.0, 25.0), (1, 0.0, 55.0)]);
     // A margin that pulls the box back over all of the content before the
     // break leaves that content on its page, and the break still opens the
     // next one, where the flow after the box goes on.

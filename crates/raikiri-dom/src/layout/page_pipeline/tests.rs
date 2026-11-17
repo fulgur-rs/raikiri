@@ -17022,15 +17022,14 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     };
     let mv = |page_overflow, forced_transition, holder| TransitionMove {
         node_delta: 30.0,
-        shift_delta: 40.0,
         page_overflow,
         forced_transition,
         holder,
         forced_holder: None,
     };
 
-    // A forced break moves the box by its own delta and the boxes after it
-    // in block flow by the larger of the two deltas.
+    // A forced break moves the box and the boxes after it in block flow by
+    // the box's delta.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
     let mut shifts = SubtreeShifts::default();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
@@ -17046,7 +17045,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     drop(session);
     assert!(!bounded);
     assert_eq!(doc.nodes[first].layout.location.y, 30.0);
-    assert_eq!(doc.nodes[second].layout.location.y, 50.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 40.0);
     assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 
     // A box that moves because it would cross a page edge it avoids
@@ -17263,7 +17262,6 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
         &candidate,
         &TransitionMove {
             node_delta: 30.0,
-            shift_delta: 30.0,
             page_overflow: true,
             forced_transition: false,
             holder,
