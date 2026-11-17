@@ -680,7 +680,8 @@ struct CandidateFrame<'name> {
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
     /// A free boundary before the leading plain blocks of this node. Only
-    /// the column's leading-replaced-piece rule inherits this boundary.
+    /// the column's leading-replaced-piece rule, and the leading piece and
+    /// first row of a row flex container or grid, inherit this boundary.
     column_break_before: bool,
     /// Whether no box comes before the node in its parent or in any block the
     /// node starts, up to the outermost block whose bottom padding or border
@@ -1771,24 +1772,29 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // row that does not fit after them; the line of a flex
                 // container may do so on the page it moves to (see
                 // `grid_rows`).
-                let first_grid_row = (in_flow_container && !is_body && breaks_before_box)
+                // The first box of plain blocks that start after a free
+                // break takes that break too (see `column_break_before`).
+                let container_breaks_before = breaks_before_box || column_break_before;
+                let first_grid_row = (in_flow_container && !is_body && container_breaks_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
                 // A row flex container whose padding or border above its
                 // items would be left alone at the foot of a page, because
                 // the first piece of its content does not fit after them,
-                // moves to the next page whole. So does a grid whose rows
-                // cannot be read, when its first item cannot be split from
-                // them either. A column flex container breaks between those
-                // edges and its first item, as Chromium does, even when the
-                // item is monolithic.
+                // moves to the next page whole. So does a grid of several
+                // columns whose rows cannot be read, when its first item
+                // cannot be split from them either. A column flex container,
+                // or a grid of one column, which stacks its items as block
+                // flow, breaks between those edges and its first item, as
+                // Chromium does, even when the item is monolithic.
                 let display = document.nodes[node_id].display();
                 let leading_piece = (in_flow_container
                     && !is_body
-                    && breaks_before_box
+                    && container_breaks_before
                     && (display == DisplayValue::Flex && !column_flex
                         || display == DisplayValue::Grid
                             && first_grid_row.is_none()
+                            && !super::grid_stacks_items(document, node_id)
                             && super::grid_rows::first_item_is_unbreakable(
                                 document, cascade, node_id,
                             ))

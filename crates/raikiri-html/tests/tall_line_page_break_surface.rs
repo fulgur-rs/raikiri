@@ -316,13 +316,13 @@ fn a_line_taller_than_a_page_below_top_edges_starts_the_next_page() {
 }
 
 #[test]
-fn a_grid_whose_rows_cannot_be_followed_moves_whole_with_an_unbreakable_first_item() {
-    // A grid that clips its overflow gives its rows no first-row placement,
-    // so the border goes with an image that cannot be split from it, rather
-    // than leaving the image cut by the page end. (Chromium keeps the border
-    // and starts the image on the next page, five pixels higher.)
+fn a_grid_of_one_column_keeps_its_border_and_moves_an_unbreakable_first_item() {
+    // A grid of one column stacks its items as block flow: the border stays
+    // at the foot of the page and the image that does not fit after it
+    // starts the next page, as Chromium prints it, also when the grid clips
+    // its overflow and gives its rows no first-row placement.
     assert_rows(&[(
         "<div style='height:60px'></div><div style='display:grid;border-top:5px solid;overflow:hidden'><img style='width:20px;height:50px'></div><div>Z</div>",
-        &[(1, 'Z', 60)],
+        &[(1, 'Z', 55)],
     )]);
 }
