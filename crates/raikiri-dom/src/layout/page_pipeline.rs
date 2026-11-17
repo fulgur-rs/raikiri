@@ -7327,17 +7327,6 @@ fn adjoining_margin_extremes(
     start: bool,
     clearance_free: Option<&margin_clearance::ClearanceFree>,
 ) -> (f32, f32) {
-    adjoining_margin_extremes_with_coordinates(document, cascade, id, start, clearance_free, None)
-}
-
-fn adjoining_margin_extremes_with_coordinates(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    id: usize,
-    start: bool,
-    clearance_free: Option<&margin_clearance::ClearanceFree>,
-    flow_root: Option<usize>,
-) -> (f32, f32) {
     let layout = &document.nodes[id].layout;
     let margin = if start {
         layout.margin.top
@@ -7373,10 +7362,9 @@ fn adjoining_margin_extremes_with_coordinates(
         // The child's margin adjoins only when its border box touches this
         // box's content edge, which a used height or a line before it would
         // prevent.
-        // A carried forced holder measures contact before relative offsets.
-        let child_y = flow_root.map_or(document.pagination_local_y(child), |root| {
-            normal_flow_y(document, cascade, root, child)
-        });
+        // Contact is measured in the flow, before relative offsets: an
+        // offset moves the box without moving its margins (CSS 2 §9.4.3).
+        let child_y = normal_flow_y(document, cascade, id, child);
         let touches = if start {
             child_y <= 0.001
         } else {
@@ -7404,14 +7392,8 @@ fn adjoining_margin_extremes_with_coordinates(
             negative = negative.min(child_negative);
             continue;
         }
-        let (child_positive, child_negative) = adjoining_margin_extremes_with_coordinates(
-            document,
-            cascade,
-            child,
-            start,
-            clearance_free,
-            flow_root,
-        );
+        let (child_positive, child_negative) =
+            adjoining_margin_extremes(document, cascade, child, start, clearance_free);
         positive = positive.max(child_positive);
         negative = negative.min(child_negative);
         break;
@@ -7589,26 +7571,6 @@ fn collapsed_start_margin_gain(
 ) -> f32 {
     let (positive, negative) =
         adjoining_margin_extremes(document, cascade, id, true, Some(clearance_free));
-    positive + negative - document.nodes[id].layout.margin.top
-}
-
-/// The collapsed start gain of a carried forced holder in normal flow.
-/// Relative offsets do not separate margins that adjoin before painting.
-fn collapsed_start_margin_gain_in_flow(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body_id: usize,
-    id: usize,
-    clearance_free: &margin_clearance::ClearanceFree,
-) -> f32 {
-    let (positive, negative) = adjoining_margin_extremes_with_coordinates(
-        document,
-        cascade,
-        id,
-        true,
-        Some(clearance_free),
-        Some(body_id),
-    );
     positive + negative - document.nodes[id].layout.margin.top
 }
 
