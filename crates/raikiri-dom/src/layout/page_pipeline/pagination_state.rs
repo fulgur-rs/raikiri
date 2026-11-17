@@ -2471,11 +2471,8 @@ impl PaginationState {
                 let delta = current_abs_y(document, node_id) - before_y;
                 super::place_flex_line_peers(document, &peers, delta);
             } else if let Some(line) = &page_break.flex_line {
-                let kept_margin = if lands_after_forced_break {
-                    margin_top
-                } else {
-                    0.0
-                };
+                let kept = lands_after_forced_break;
+                let kept_margin = if kept { margin_top } else { 0.0 };
                 super::place_flex_line_peers(
                     document,
                     &line.peers,
