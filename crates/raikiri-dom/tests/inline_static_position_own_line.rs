@@ -10,6 +10,10 @@
 //! indent of a first line narrows it. Block flow places such a box on the
 //! same empty line as a paragraph does.
 //!
+//! A box that follows a block-level sibling and comes before a float, with
+//! no line content between, stays out of the anonymous block that holds the
+//! line beside the float, so it sits on such an empty line too.
+//!
 //! The expected boxes are the ones Chromium computes for the same markup, with
 //! no body margin and `10px/10px Ahem` text: each is the box's left, top,
 //! width and height.
@@ -378,6 +382,141 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "a box after a block-level ::before in an anonymous table cell",
         r#"<style>.b::before{display:block;content:"";height:20px}</style><div style="display:table-row;text-indent:15px;text-align:left"><span class=b><span id=q style="position:absolute">Q</span></span></div>"#,
         [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "center before a float after a block",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "left in rtl before a right float after a block",
+        r#"<div style="text-align:left;direction:rtl;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:right;width:40px;height:20px"></div>TT UU</div>"#,
+        [-10.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "right before a float after a block",
+        r#"<div style="text-align:right;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center after a float after a block keeps its anchor",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><div style="float:left;width:40px;height:20px"></div><span id=q style="position:absolute">Q</span>T</div>"#,
+        [65.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "right in rtl before a float after a block and white space",
+        r#"<div style="text-align:right;direction:rtl;width:100px">X<p style="margin:0;width:20px">A</p> <span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [90.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center between floats after a block",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><div style="float:left;width:40px;height:20px"></div><span id=q style="position:absolute">Q</span><div style="float:right;width:40px;height:20px"></div>T</div>"#,
+        [70.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center in rtl between floats after a block",
+        r#"<div style="text-align:center;direction:rtl;width:100px">X<p style="margin:0;width:20px">A</p><div style="float:left;width:40px;height:20px"></div><span id=q style="position:absolute">Q</span><div style="float:right;width:40px;height:20px"></div>T</div>"#,
+        [60.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center in display contents before a float after a block",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span style="display:contents"><span id=q style="position:absolute">Q</span></span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "right before a float in display contents after a block",
+        r#"<div style="text-align:right;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><span style="display:contents"><div style="float:left;width:40px;height:20px"></div></span>T</div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a hidden element and a float after a block",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><b style="display:none">Z</b><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before an empty span and a float keeps its anchor",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><span></span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [65.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float after a block with a bottom margin",
+        r#"<div style="text-align:center;direction:ltr;width:100px">X<p style="margin:0 0 10px;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 30.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float after an empty block",
+        r#"<div style="text-align:center;direction:ltr;width:100px"><div></div><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float at the start keeps its anchor",
+        r#"<div style="text-align:center;direction:ltr;width:100px;display:flow-root"><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [65.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "center in rtl before a float after a block-level ::before",
+        r#"<style>.bb::before{content:"B";display:block}</style><div class=bb style="text-align:center;direction:rtl;width:100px"><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [40.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "indented before a float after a block",
+        r#"<div style="text-align:left;direction:ltr;width:100px;text-indent:15px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [15.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "left before a float too wide to share the line after a block",
+        r#"<div style="text-align:left;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:100px;height:20px"></div>T</div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float too wide to share the line after an anonymous table",
+        r#"<div style="text-align:center;width:100px"><span style="display:table-cell">C</span><span id=q style="position:absolute">Q</span><div style="float:left;width:100px;height:20px"></div>T</div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "center after generated text in display contents keeps its anchor",
+        r#"<style>.t::before{content:"Z"}</style><div style="text-align:center;width:100px">X<p style="margin:0;width:20px">A</p><span class=t style="display:contents"></span><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [70.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "left in an anonymous cell after a cell keeps its anchor",
+        r#"<div style="text-align:left;width:100px"><div style="display:table-row"><div style="display:table-cell">C</div><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div>T<p style="margin:0">B</p></div></div>"#,
+        [50.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float in display contents with generated text after",
+        r#"<style>.t::after{content:"Z"}</style><div style="text-align:center;width:100px">X<p style="margin:0;width:20px">A</p><span class=t style="display:contents"><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div></span>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before generated text and a float keeps its anchor",
+        r#"<style>.t::after{content:"Z"}</style><div style="text-align:center;width:100px">X<p style="margin:0;width:20px">A</p><span class=t style="display:contents"><span id=q style="position:absolute">Q</span></span><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [60.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a too wide float after a block-level ::before",
+        r#"<style>.bb::before{content:"B";display:block}</style><div class=bb style="text-align:center;width:100px"><span id=q style="position:absolute">Q</span><div style="float:left;width:100px;height:20px"></div>T</div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "center before a too wide float after a padded block-level ::before",
+        r#"<style>.bb::before{content:"B";display:block;padding:3px}</style><div class=bb style="text-align:center;width:100px"><span id=q style="position:absolute">Q</span><div style="float:left;width:100px;height:20px"></div>T</div>"#,
+        [50.0, 16.0, 10.0, 10.0],
+    ),
+    (
+        "center before a too wide float after a block-level ::before with a margin",
+        r#"<style>.bb::before{content:"B";display:block;margin-bottom:10px}</style><div class=bb style="text-align:center;width:100px"><span id=q style="position:absolute">Q</span><div style="float:left;width:100px;height:20px"></div>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a comment and a float after a block",
+        r#"<div style="text-align:center;width:100px">X<p style="margin:0;width:20px">A</p><span id=q style="position:absolute">Q</span><!-- c --><div style="float:left;width:40px;height:20px"></div>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "center before a float after the block-level ::before of display contents",
+        r#"<style>.t::before{content:"Z";display:block}</style><div style="text-align:center;width:100px">X<span class=t style="display:contents"><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div></span>T</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
     ),
 ];
 
