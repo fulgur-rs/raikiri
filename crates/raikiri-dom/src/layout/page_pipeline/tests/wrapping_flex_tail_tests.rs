@@ -463,10 +463,11 @@ fn captured_tail_members_do_not_move_an_old_line_that_reaches_their_former_y() {
         },
     );
     let cascade = crate::layout::test_support::cascaded(&r.doc);
+    let body = r.doc.parent_of(r.holder).expect("body");
     let mut tree = crate::layout::context::LayoutSession::resumed(&mut r.doc, &cascade);
     let representative = r.items[2];
     let before = current_abs_y(&tree, representative);
-    let peers = flex_line_peers(&tree, r.flex, representative, before);
+    let peers = flex_line_peers(&tree, &cascade, body, r.flex, representative);
     assert_eq!(
         peers.iter().map(|&(id, _)| id).collect::<Vec<_>>(),
         [r.items[1]]

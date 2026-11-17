@@ -180,3 +180,79 @@ fn a_break_after_an_item_still_starts_the_next_line_or_row_on_a_new_page() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_before_a_later_item_with_a_margin_moves_its_whole_line() {
+    // The items of the line start their margin boxes at its top, which the
+    // break moves to the top of the next page, whatever the margins of the
+    // item it is before, a negative one too.
+    assert_rows(&[
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px'>Y</div><div style='break-before:page;margin-top:10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 15), (1, 'Y', 5), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px;margin-top:5px'>Y</div><div style='break-before:page;margin-top:10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 15), (1, 'Y', 10), (1, 'Z', 45)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:30px;margin-top:5px'>Y</div><div style='break-before:page;margin-top:-10px;width:40px;height:30px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_break_in_an_aligned_line_moves_the_top_of_the_line_to_the_page_top() {
+    // The items keep their places in the line, as alignment and their
+    // margins set them, below the top of the line, which the break moves
+    // to the top of the next page. The line holds the items laid out side by
+    // side, whatever their block positions.
+    assert_rows(&[
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 0), (1, 'Y', 10), (1, 'Z', 30)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='width:100px;height:30px'>a</div><div style='width:40px;height:20px'>Y</div><div style='break-before:page;width:40px;height:30px;margin-top:5px'>X</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 20), (1, 'Z', 40)],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px;align-items:baseline'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+        (
+            "<div style='height:30px'>a</div><div style='display:flex;flex-wrap:nowrap;width:100px;align-items:baseline'><div style='break-before:page;width:40px;height:30px;margin-top:-10px'>X</div><div style='width:40px;height:20px;margin-top:5px'>Y</div></div><div>Z</div>",
+            &[(0, 'a', 5), (1, 'X', 10), (1, 'Y', 10), (1, 'Z', 40)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_break_before_an_item_measures_its_line_where_the_flow_has_put_it() {
+    assert_rows(&[
+        // An earlier break in the container has moved the flow on, and the
+        // next one still moves the line of its item to the top of a page.
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:100px;height:30px'>X</div><div style='break-before:page;width:40px;height:30px'>Q</div><div style='width:40px;height:30px'>R</div></div><div>Z</div>",
+            &[
+                (0, 'a', 5),
+                (1, 'X', 5),
+                (2, 'Q', 5),
+                (2, 'R', 5),
+                (2, 'Z', 35),
+            ],
+        ),
+        // A line that already starts the page keeps it, though alignment puts
+        // the item below the top of the line.
+        (
+            "<div style='height:100px'>a</div><div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-before:page;width:40px;height:30px'>X</div><div style='width:40px;height:50px'>Y</div></div>",
+            &[(0, 'a', 5), (1, 'X', 25), (1, 'Y', 5)],
+        ),
+        // A break before the container has moved it on.
+        (
+            "<div>a</div><div style='break-before:page;height:70px'>b</div><div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-before:page;width:40px;height:30px'>X</div><div style='width:40px;height:50px'>Y</div></div>",
+            &[(0, 'a', 5), (1, 'b', 5), (2, 'X', 25), (2, 'Y', 5)],
+        ),
+    ]);
+}

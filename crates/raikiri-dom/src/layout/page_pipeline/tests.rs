@@ -11269,6 +11269,8 @@ fn a_float_does_not_interrupt_adjoining_block_margins() {
 
 #[test]
 fn a_forced_break_at_a_page_edge_keeps_a_negative_top_margin() {
+    // The margin pulls the box back over the break, and the box after it
+    // follows it there, as in Chromium.
     for first in ["height:80px", "height:80px;margin-bottom:50px"] {
         assert_eq!(
             page_box_positions(&[
@@ -11276,10 +11278,20 @@ fn a_forced_break_at_a_page_edge_keeps_a_negative_top_margin() {
                 "margin-top:-10px;height:20px;break-before:page",
                 "height:10px",
             ]),
-            (vec![0.0, 90.0, 120.0], 2),
+            (vec![0.0, 90.0, 110.0], 2),
             "{first}"
         );
     }
+    // A margin that pulls the box back over all of the content before it
+    // still leaves that content behind the break.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "margin-top:-20px;height:30px;break-before:page",
+            "height:10px",
+        ]),
+        (vec![0.0, 80.0, 110.0], 2)
+    );
 }
 
 #[test]
@@ -16404,8 +16416,16 @@ fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, true), 3);
     // A margin box already at a page top stays on that page.
     assert_eq!(pages.transition_natural_page(210.0, 10.0, 0, 3, true), 2);
-    // Without a page-type change, or on a page the flow has not reached,
-    // the box keeps the page it falls on.
+    // A negative margin puts the margin box below the border box: the break
+    // follows content that runs on past the border box's page.
+    assert_eq!(pages.transition_natural_page(100.0, -10.0, 0, 3, true), 2);
+    assert_eq!(pages.transition_natural_page(95.0, -10.0, 0, 3, true), 2);
+    assert_eq!(pages.transition_natural_page(90.0, -10.0, 0, 3, true), 1);
+    // A margin box at the edge of a page past the flow opens that page.
+    assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, true), 2);
+    assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, false), 1);
+    // Without a page-type change the box keeps the page it falls on, and on
+    // a page the flow has not reached its margin box does.
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, false), 2);
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 1, true), 2);
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 2, 3, true), 2);
@@ -16444,26 +16464,26 @@ fn a_truncated_margin_breaks_at_its_first_page_edge() {
     // A coinciding forced break keeps the margin on the new page.
     assert_eq!(
         pages.truncated_margin_target(2, true, 15.0, || unreachable!(), false),
-        (200.0, 215.0)
+        215.0
     );
     // Otherwise the box starts at the first page edge inside its margin.
     assert_eq!(
         pages.truncated_margin_target(3, false, 15.0, || 150.0, false),
-        (200.0, 200.0)
+        200.0
     );
     // An edge at the margin start counts only without a forced break there.
     assert_eq!(
         pages.truncated_margin_target(3, false, 15.0, || 200.0, false),
-        (200.0, 200.0)
+        200.0
     );
     assert_eq!(
         pages.truncated_margin_target(3, false, 15.0, || 200.0, true),
-        (300.0, 300.0)
+        300.0
     );
     // The edge never passes the page the box falls on.
     assert_eq!(
         pages.truncated_margin_target(1, false, 15.0, || 150.0, false),
-        (100.0, 100.0)
+        100.0
     );
 }
 
@@ -17010,15 +17030,14 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     };
     let mv = |page_overflow, forced_transition, holder| TransitionMove {
         node_delta: 30.0,
-        shift_delta: 40.0,
         page_overflow,
         forced_transition,
         holder,
         forced_holder: None,
     };
 
-    // A forced break moves the box by its own delta and the boxes after it
-    // in block flow by the larger of the two deltas.
+    // A forced break moves the box and the boxes after it in block flow by
+    // the box's delta.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
     let mut shifts = SubtreeShifts::default();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
@@ -17034,7 +17053,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     drop(session);
     assert!(!bounded);
     assert_eq!(doc.nodes[first].layout.location.y, 30.0);
-    assert_eq!(doc.nodes[second].layout.location.y, 50.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 40.0);
     assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 
     // A box that moves because it would cross a page edge it avoids
@@ -17251,7 +17270,6 @@ fn a_transition_moves_the_wrapper_that_begins_with_the_box_and_keeps_its_height(
         &candidate,
         &TransitionMove {
             node_delta: 30.0,
-            shift_delta: 30.0,
             page_overflow: true,
             forced_transition: false,
             holder,
@@ -17658,7 +17676,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     // The block moves up to the top of the page.
     let found = truncation(&mut doc, &mut margins, &cascade, &at).unwrap();
     assert_eq!(found.delta, -20.0);
-    assert_eq!(found.underflow, None);
+    assert!(!found.underflows);
 
     // After a forced break it keeps its margin on the new page, or is pulled
     // above the page top by a negative one.
@@ -17668,7 +17686,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     };
     let found = truncation(&mut doc, &mut margins, &cascade, &forced).unwrap();
     assert_eq!(found.delta, 10.0);
-    assert_eq!(found.underflow, None);
+    assert!(!found.underflows);
     let pulled_up = MarginBreak {
         forced_before: true,
         margin_top: -5.0,
@@ -17676,7 +17694,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     };
     let found = truncation(&mut doc, &mut margins, &cascade, &pulled_up).unwrap();
     assert_eq!(found.delta, -25.0);
-    assert_eq!(found.underflow, Some(5.0));
+    assert!(found.underflows);
 
     // Nothing is truncated when the margin does not collapse with the block
     // before, or the page edge is not inside it.
@@ -17756,7 +17774,7 @@ fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() 
         .truncation_at_break(&session, &cascade, &origins, &at)
         .unwrap();
     assert_eq!(found.delta, -10.0);
-    assert_eq!(found.underflow, None);
+    assert!(!found.underflows);
     let (pulling, pulled) = margins.pulled_run_end(&session, &cascade, &at).unwrap();
     assert_eq!((pulling.node_id, pulled), (next, 10.0));
 
@@ -18091,30 +18109,27 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
         grid_item: false,
     };
     // A forced break keeps a positive block-start margin, the table's lead
-    // and the relative offset, so the box lands below the page top and the
-    // flow, which the offset does not move, follows the page boundary.
+    // and the relative offset, so the box lands below the page top. The flow
+    // after it moves with the box, and the line it sits on moves by the
+    // distance of its border box without the offset.
     let kept = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, true, &overflow(5.0));
-    assert_eq!(kept.page_top, 100.0);
     assert_eq!(kept.target_y, 116.0);
     assert_eq!(kept.node_delta, 26.0);
     assert_eq!(kept.shift_delta, 13.0);
     assert!(kept.is_finite());
-    assert_eq!(kept.underflow_correction(), None);
 
     // A negative margin after a forced break pulls the box above the page
-    // top, and the flow after it keeps the distance the box did not move.
+    // top.
     let underflow = TransitionLanding::new(100.0, 90.0, -6.0, 3.0, true, &overflow(0.0));
     assert_eq!(underflow.target_y, 97.0);
     assert_eq!(underflow.node_delta, 7.0);
     assert_eq!(underflow.shift_delta, 13.0);
-    assert_eq!(underflow.underflow_correction(), Some(6.0));
 
     // An unforced move truncates the margin and keeps the relative offset.
     let unforced = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, false, &overflow(5.0));
     assert_eq!(unforced.target_y, 103.0);
     assert_eq!(unforced.node_delta, 13.0);
     assert_eq!(unforced.shift_delta, 13.0);
-    assert_eq!(unforced.underflow_correction(), None);
 
     // A position that is not a number never moves the box.
     let unresolved = TransitionLanding::new(100.0, f32::NAN, 8.0, 3.0, true, &overflow(0.0));
@@ -18263,14 +18278,6 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
             .unwrap();
         assert!(start.is_some());
     };
-
-    // A box before the candidate that underflowed into the preceding page
-    // keeps its correction for the flow after it.
-    let mut state = new_state();
-    state.deferred_shifts.underflow = Some((clearing, 7.0));
-    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
-    assert_eq!(state.flow_shift, 7.0);
-    assert!(state.deferred_shifts.underflow.is_none());
 
     // Leaving a subtree that could not hold a moved box takes back the part
     // of the shift it did not absorb, and returns to the page the flow was on.
@@ -18615,6 +18622,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         keeps_margin_at_break: false,
         holder: None,
         forced_holder: None,
+        flex_line: None,
     }
 }
 
@@ -19826,6 +19834,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         keeps_margin_at_break: forced,
         holder: None,
         forced_holder: None,
+        flex_line: None,
     }
 }
 

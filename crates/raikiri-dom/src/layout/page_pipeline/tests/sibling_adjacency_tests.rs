@@ -48,7 +48,7 @@ fn sibling_adjacency_work_does_not_multiply_prefix_width_by_break_count() {
                     )
                     .expect("the page edge crosses the adjoining margin");
                 assert_eq!(found.delta, -20.0);
-                assert_eq!(found.underflow, None);
+                assert!(!found.underflows);
             }
             let elapsed = start.elapsed();
             let [calls, positions, boxes] = SIBLING_ADJACENCY_WORK.get();
