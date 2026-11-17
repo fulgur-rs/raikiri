@@ -485,7 +485,20 @@ impl PaginationState {
         // rather than acquiring independent text-page shifts.
         if let Some(group) = self.table_headers.owner(node_id) {
             // The footer closes the table below the rows placed before it,
-            // and what follows the table follows the footer.
+            // and what follows the table follows the footer: the shifts that
+            // end before it, as inside a cell of those rows, are settled
+            // first.
+            if self
+                .table_headers
+                .headers
+                .get(&group)
+                .is_some_and(|footer| footer.footer && footer.visit_shift.is_none())
+                && let Some(page) =
+                    self.subtree_shifts
+                        .leave(document, node_id, &mut self.flow_shift)
+            {
+                self.current_page = page;
+            }
             if self
                 .table_headers
                 .headers
@@ -1887,7 +1900,22 @@ impl PaginationState {
         // the walk over its ancestors is left to those.
         let crosses_page_end = effective_y - relative_offset + height + trailing_margin
             > fit_page_start + page_origins.step_at(fit_page);
-        let column_piece = candidate.context.leading_column_replaced_piece_end();
+        // A row flex container or grid nested at the start of plain blocks
+        // takes them along with its leading piece, as a column does with its
+        // first replaced piece.
+        let replaced_piece = candidate.context.leading_column_replaced_piece_end();
+        let container_piece = (replaced_piece.is_none()
+            && !candidate.context.is_direct_body_element())
+        .then(|| {
+            candidate.context.leading_piece_end().or_else(|| {
+                candidate
+                    .context
+                    .first_grid_row()
+                    .and_then(super::grid_rows::FirstRow::whole_end)
+            })
+        })
+        .flatten();
+        let column_piece = replaced_piece.or(container_piece);
         let column_crosses = column_piece.is_some_and(|end| {
             effective_y - relative_offset + end > fit_page_start + page_origins.step_at(fit_page)
         });
@@ -1918,11 +1946,16 @@ impl PaginationState {
                     // holder than the edges and margins between them, follows
                     // something there and moves alone.
                     holder != node_id
-                        && (column_piece.is_some()
+                        && (replaced_piece.is_some()
                             || lead
                                 <= super::leading_space_between(document, cascade, node_id, holder)
                                     + 0.01)
                         && (lead <= 0.0
+                            // A container goes on with its leading piece even
+                            // when the piece is taller than the next page (see
+                            // `leading_edges_move`), and the blocks it begins
+                            // go along.
+                            || container_piece.is_some()
                             // A paragraph of one unplaced line needs room for
                             // the line alone: the edges after it go on to the
                             // pages after it.
@@ -2034,23 +2067,27 @@ impl PaginationState {
         // A column can travel with its first replaced or size-contained piece after earlier
         // flow content. At the start of the flow, the column stays and its
         // image moves on alone, even when body or wrapper margins remain.
-        overflow.leading_column_replaced = column_piece.is_some_and(|end| {
-            avoided_box_moves(
-                fit.flow_y - fit.holder_lead,
-                fit.holder_margin_top,
-                fit.flow_y + end,
-                fit.page_start,
-                fit.page_end,
-            ) && (document.layout_parent_of(node_id) == Some(body_id)
-                || !self.child_positions.begins_page_below_leading_edges(
-                    document,
-                    cascade,
-                    body_id,
-                    node_id,
+        // A container whose holder cannot go along moves alone, by the rules
+        // for its own edges (see `leading_edges_move`).
+        overflow.leading_piece_with_holder = replaced_piece
+            .or(container_piece.filter(|_| holder.is_some()))
+            .is_some_and(|end| {
+                avoided_box_moves(
+                    fit.flow_y - fit.holder_lead,
+                    fit.holder_margin_top,
+                    fit.flow_y + end,
                     fit.page_start,
-                ))
-        });
-        overflow.page |= overflow.leading_column_replaced;
+                    fit.page_end,
+                ) && (document.layout_parent_of(node_id) == Some(body_id)
+                    || !self.child_positions.begins_page_below_leading_edges(
+                        document,
+                        cascade,
+                        body_id,
+                        node_id,
+                        fit.page_start,
+                    ))
+            });
+        overflow.page |= overflow.leading_piece_with_holder;
         let grid_row = candidate.context.first_grid_row();
         let grid_content_break =
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
@@ -2214,12 +2251,14 @@ impl PaginationState {
         // next page, rather than leaving their start on this one: they start
         // the page, and the box lands below the padding, border and margin
         // they keep above it where `begin_box` found room for it there. Else
-        // the blocks that start where the box does move with it.
+        // the blocks that start where the box does move with it, and so do
+        // those that begin a page below the margin they keep inside them
+        // above a box that avoids a break (see `avoided_box_holder`).
         let (holder, holder_lead) = if let Some(owner) = forced_holder {
             (owner.node, owner.lead)
         } else if (overflow.unbreakable
             || overflow.moved_for_avoided_break
-            || overflow.leading_column_replaced)
+            || overflow.leading_piece_with_holder)
             && !forced_transition
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
@@ -2227,8 +2266,21 @@ impl PaginationState {
         {
             page_break
                 .holder
-                .filter(|_| overflow.unbreakable || overflow.leading_column_replaced)
-                .unwrap_or_else(|| leading_holder(document, cascade, body_id, node_id, false))
+                .filter(|_| overflow.unbreakable || overflow.leading_piece_with_holder)
+                .unwrap_or_else(|| {
+                    if !overflow.moved_for_avoided_break || overflow.unbreakable {
+                        return leading_holder(document, cascade, body_id, node_id, false);
+                    }
+                    // The kept margin goes along even where the box then
+                    // breaks inside on the next page, as in Chromium.
+                    super::avoided_box_holder(
+                        document,
+                        cascade,
+                        body_id,
+                        node_id,
+                        page_origins.origin(fit_page),
+                    )
+                })
         } else {
             (node_id, 0.0)
         };

@@ -17,11 +17,11 @@ use super::{
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
     is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
-    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    takes_no_block_space, unplaced_line,
+    moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
+    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
+    pagination_child_parent_y, paragraph_lines_keep_together, passes_closing_edges,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line,
 };
 use std::collections::HashMap;
 
@@ -708,7 +708,8 @@ struct CandidateFrame<'name> {
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
     /// A free boundary before the leading plain blocks of this node. Only
-    /// the column's leading-replaced-piece rule inherits this boundary.
+    /// the column's leading-replaced-piece rule, and the leading piece and
+    /// first row of a row flex container or grid, inherit this boundary.
     column_break_before: bool,
     /// Whether no box comes before the node in its parent or in any block the
     /// node starts, up to the outermost block whose bottom padding or border
@@ -1611,11 +1612,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && [FloatValue::Left, FloatValue::Right]
                         .into_iter()
                         .any(|side| clears_float_side(computed.clear, side));
-                let nested_candidate_base = participates_in_flow
+                let nested_flow_base = participates_in_flow
                     && !direct_body_child
-                    && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
+                let nested_candidate_base = nested_flow_base && !inside_table;
+                // A block in the flow of a table cell avoids a break inside
+                // it as in any block flow: Chromium moves it to the next
+                // page, and its row grows to hold it.
+                let cell_avoid_base = nested_flow_base
+                    && inside_table
+                    && avoids_by_property
+                    && moves_reach_cell_row(document, node_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1801,24 +1809,29 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // row that does not fit after them; the line of a flex
                 // container may do so on the page it moves to (see
                 // `grid_rows`).
-                let first_grid_row = (in_flow_container && !is_body && breaks_before_box)
+                // The first box of plain blocks that start after a free
+                // break takes that break too (see `column_break_before`).
+                let container_breaks_before = breaks_before_box || column_break_before;
+                let first_grid_row = (in_flow_container && !is_body && container_breaks_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
                 // A row flex container whose padding or border above its
                 // items would be left alone at the foot of a page, because
                 // the first piece of its content does not fit after them,
-                // moves to the next page whole. So does a grid whose rows
-                // cannot be read, when its first item cannot be split from
-                // them either. A column flex container breaks between those
-                // edges and its first item, as Chromium does, even when the
-                // item is monolithic.
+                // moves to the next page whole. So does a grid of several
+                // columns whose rows cannot be read, when its first item
+                // cannot be split from them either. A column flex container,
+                // or a grid of one column, which stacks its items as block
+                // flow, breaks between those edges and its first item, as
+                // Chromium does, even when the item is monolithic.
                 let display = document.nodes[node_id].display();
                 let leading_piece = (in_flow_container
                     && !is_body
-                    && breaks_before_box
+                    && container_breaks_before
                     && (display == DisplayValue::Flex && !column_flex
                         || display == DisplayValue::Grid
                             && first_grid_row.is_none()
+                            && !super::grid_stacks_items(document, node_id)
                             && super::grid_rows::first_item_is_unbreakable(
                                 document, cascade, node_id,
                             ))
@@ -1889,6 +1902,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && ((!inline_level && is_block_flow_box && avoids_break)
                             || is_float
                             || clears_float))
+                    || (cell_avoid_base && !inline_level && is_block_flow_box)
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -1929,7 +1943,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         (false, false)
                     };
                 let can_move_nested = !side_by_side_ancestor && !bounded_clipping_ancestor;
-                let nested_avoid_candidate = nested_candidate_base
+                let nested_avoid_candidate = (nested_candidate_base || cell_avoid_base)
                     && !inline_level
                     && is_block_flow_box
                     && avoids_break

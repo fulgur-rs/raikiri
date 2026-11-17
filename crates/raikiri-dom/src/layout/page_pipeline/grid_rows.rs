@@ -25,6 +25,12 @@ impl FirstRow {
             && avoided_box_moves(flow_y, margin_top, flow_y + self.end, page_start, page_end)
     }
 
+    /// Where the row ends below the top of its grid, when the row starts at
+    /// the top of the grid's content and so moves with the grid.
+    pub(super) fn whole_end(self) -> Option<f32> {
+        (self.start <= TOLERANCE).then_some(self.end)
+    }
+
     /// A padded row breaks after its leading edges, rather than moving them.
     /// Zero means its area already begins exactly on the next page boundary.
     pub(super) fn content_shift(self, flow_y: f32, page_start: f32, page_end: f32) -> Option<f32> {
@@ -238,6 +244,7 @@ fn readable_subtree(document: &Document, cascade: &CascadeResult, grid: usize) -
         if node.display() == DisplayValue::None {
             continue;
         }
+        let item = document.parent_of(id) == Some(grid);
         if matches!(
             node.position(),
             PositionValue::Absolute | PositionValue::Fixed
@@ -246,13 +253,17 @@ fn readable_subtree(document: &Document, cascade: &CascadeResult, grid: usize) -
             // line (see `unbreakable_piece`); other generated content is not
             // read.
             || (node.has_before_or_after_content
-                && (document.parent_of(id) != Some(grid)
-                    || unplaced_line_piece(document, cascade, id).is_none()))
-            || node.size_containment.height
+                && (!item || unplaced_line_piece(document, cascade, id).is_none()))
+            || (node.size_containment.height && !item)
             || node.used_writing_mode.is_vertical()
             || is_floating_box_for_pagination(document, cascade, id)
         {
             return false;
+        }
+        // An item with size containment is one piece whatever it holds (see
+        // `unbreakable_piece`).
+        if node.size_containment.height {
+            continue;
         }
         pending.extend(node.children.iter().copied());
     }

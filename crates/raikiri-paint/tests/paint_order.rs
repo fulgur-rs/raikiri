@@ -1585,8 +1585,8 @@ fn assert_clip_rects_on_every_page(body: &str) {
     }
 }
 
-/// A padded overflow box that starts at the top of the first page and runs
-/// over several pages.
+/// A padded overflow box whose content fits the first page and whose
+/// padding runs over several pages, so a break cuts it there.
 #[test]
 fn overflow_clip_rectangles_match_across_pages() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
@@ -1743,8 +1743,8 @@ fn empty_overflow_scopes_are_removed_from_the_recorded_scene_as_well_as_the_trac
 #[test]
 fn overflow_clip_rectangles_match_for_padding_cut_by_a_break() {
     assert_clip_rects_on_every_page(
-        "<div style=\"height: 150px\"></div>\
-         <div style=\"overflow: hidden; padding-bottom: 50px; height: 10px\"><p>a</p></div>",
+        "<div style=\"height: 120px\"></div>\
+         <div style=\"overflow: hidden; padding-bottom: 150px; height: 20px\"><p style=\"margin: 0\">a</p></div>",
     );
 }
 
