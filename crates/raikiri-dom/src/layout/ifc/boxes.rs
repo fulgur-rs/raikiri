@@ -196,6 +196,8 @@ pub(crate) fn layout_with_boxes_in(
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
             first_block_start: None,
+            block_starts: Vec::new(),
+            flow_end: 0.0,
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -413,6 +415,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
             first_block_start: None,
+            block_starts: Vec::new(),
+            flow_end: 0.0,
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
@@ -607,6 +611,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         generated_block_starts: Vec::new(),
         generated_block_lines,
         first_block_start: None,
+        block_starts: Vec::new(),
+        flow_end: 0.0,
         block_ends: Vec::new(),
         shifts,
         fragment_box_placements,
@@ -879,15 +885,17 @@ fn run_boxes_segment(
     let mut block_line_starts = Vec::new();
     let mut generated_block_starts = Vec::new();
     let mut generated_block_lines = Vec::new();
-    // The first lines of the generated blocks open at this point: a block
-    // carried from the previous fragmentainer starts here.
-    let mut generated_open = if open_block.is_some() {
-        vec![0]
+    // The first lines of the generated blocks open at this point, with
+    // their entries in `block_starts`: a block carried from the previous
+    // fragmentainer starts here.
+    let mut generated_open: Vec<(usize, Option<usize>)> = if open_block.is_some() {
+        vec![(0, None)]
     } else {
         Vec::new()
     };
     let mut first_block_start = None;
     let mut leading_unordered = false;
+    let mut block_starts: Vec<(usize, usize, f32)> = Vec::new();
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
@@ -1397,31 +1405,43 @@ fn run_boxes_segment(
                 {
                     block_cursor = index;
                     match edge {
-                        generated_blocks::Token::Start(_) => generated_open.push(lines.len()),
-                        generated_blocks::Token::End(_) => generated_block_lines
-                            .extend(generated_open.pop().map(|first| (first, lines.len()))),
+                        // The root's `::before` has no entry in `block_starts`.
+                        generated_blocks::Token::Start(block) => generated_open.push((
+                            lines.len(),
+                            (block.of_root != Some(raikiri_style::PseudoElem::Before))
+                                .then_some(block_starts.len()),
+                        )),
+                        generated_blocks::Token::End(_) => {
+                            let open = generated_open.pop();
+                            generated_block_lines
+                                .extend(open.map(|(first, _)| (first, lines.len())));
+                            if let Some(entry) = open.and_then(|(_, entry)| entry) {
+                                block_starts[entry].1 = lines.len();
+                            }
+                        }
                     }
                     if let generated_blocks::Token::Start(block) = edge {
                         generated_block_starts.push((block_line_starts.len(), lines.len()));
-                        match block.of_root {
-                            Some(raikiri_style::PseudoElem::Before) => {}
-                            Some(_) => {
-                                // The margins above a box that starts the
-                                // paragraph escape through its top edge.
-                                let escapes = top_margin_escapes
-                                    && leading_margin_open
-                                    && lines.is_empty()
-                                    && y == 0.0;
-                                first_block_start.get_or_insert((
-                                    lines.len(),
-                                    if escapes { y } else { y + pending.resolve() },
-                                ));
+                        if block.of_root != Some(raikiri_style::PseudoElem::Before) {
+                            // The margins above a box that starts the
+                            // paragraph escape through its top edge.
+                            let escapes = top_margin_escapes
+                                && leading_margin_open
+                                && lines.is_empty()
+                                && y == 0.0;
+                            let start =
+                                (lines.len(), if escapes { y } else { y + pending.resolve() });
+                            block_starts.push((start.0, start.0, start.1));
+                            match block.of_root {
+                                Some(_) => {
+                                    first_block_start.get_or_insert(start);
+                                }
+                                // A descendant's box may come before or after
+                                // an out-of-flow box that no block child
+                                // precedes, so the start of the next block
+                                // does not place that box.
+                                None => leading_unordered |= first_block_start.is_none(),
                             }
-                            // A descendant's box may come before or after an
-                            // out-of-flow box that no block child precedes,
-                            // so the start of the next block does not place
-                            // that box.
-                            None => leading_unordered |= first_block_start.is_none(),
                         }
                     }
                     // A generated block is laid out along the block axis of
@@ -1511,14 +1531,16 @@ fn run_boxes_segment(
                 }
                 // The margins above a block that starts the paragraph escape
                 // through its top edge.
-                first_block_start.get_or_insert((
+                let start = (
                     lines.len(),
                     if top_margin_escapes && starts_paragraph {
                         y
                     } else {
                         y + pending.resolve()
                     },
-                ));
+                );
+                block_starts.push((start.0, start.0, start.1));
+                first_block_start.get_or_insert(start);
                 let mut block = if geometry.blocks_apart {
                     BlockChild::apart(y, pending)
                 } else {
@@ -1608,6 +1630,7 @@ fn run_boxes_segment(
     if top_margin_escapes && leading_margin_open {
         pending = CollapsibleMarginSet::ZERO;
     }
+    let flow_end = y + pending.resolve();
     let escaping_margin = if continuation.is_some() {
         CollapsibleMarginSet::ZERO
     } else if bottom_margin_escapes {
@@ -1678,7 +1701,11 @@ fn run_boxes_segment(
         0.0
     };
     // A block still open goes on in the next fragmentainer.
-    generated_block_lines.extend(generated_open.into_iter().map(|first| (first, lines.len())));
+    generated_block_lines.extend(
+        generated_open
+            .into_iter()
+            .map(|(first, _)| (first, lines.len())),
+    );
     // Most paragraphs keep fewer lines than a vector grows room for.
     lines.shrink_to_fit();
     RunBoxesOutcome {
@@ -1697,6 +1724,8 @@ fn run_boxes_segment(
             generated_block_starts,
             generated_block_lines,
             first_block_start: first_block_start.filter(|_| !leading_unordered),
+            block_starts,
+            flow_end,
             block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
@@ -5549,20 +5578,7 @@ fn mark_generated_blocks_before(
     (idx, owner): (usize, usize),
     surroundings: &mut HashMap<usize, BoxSurroundings>,
 ) {
-    let mut befores = HashSet::new();
-    let mut afters = HashSet::new();
-    let origins = root
-        .generated_blocks
-        .iter()
-        .filter(|block| block.of_root.is_none())
-        .filter_map(|block| crate::generated_content::generated_origin(block.start as usize));
-    for (element, pseudo) in origins {
-        if pseudo == raikiri_style::PseudoElem::Before {
-            befores.insert(element);
-        } else if pseudo == raikiri_style::PseudoElem::After {
-            afters.insert(element);
-        }
-    }
+    let (befores, afters) = generated_block_origins(root);
     if befores.is_empty() && afters.is_empty() {
         return;
     }
@@ -5591,6 +5607,224 @@ fn mark_generated_blocks_before(
             open.push(node);
         }
     }
+}
+
+/// The out-of-flow boxes among the children of the paragraph rooted at `idx`
+/// that Chromium puts in the anonymous block holding the line content of
+/// their run of children between two block-level ones: an inline element,
+/// even an empty one or one that holds a block, or text that makes a line.
+///
+/// Chromium starts that block at the first such content of the run, and the
+/// out-of-flow boxes right before the content join it, unless a float comes
+/// between them (see [`boxes_before_floats_after_a_block`]). A box in the
+/// block that has no anchor sits on a line like the others there; a box out
+/// of it sits on a line that holds nothing at all. The content of an
+/// anonymous cell (`owner`, its source owner, is not `idx`) is only some of
+/// its owner's children, and is left alone.
+fn boxes_in_anonymous_line_blocks(
+    tree: &LayoutSession<'_>,
+    (idx, owner): (usize, usize),
+) -> HashSet<usize> {
+    let mut found = HashSet::new();
+    if owner != idx {
+        return found;
+    }
+    let cascade = tree.style_views.cascade();
+    // The run's anonymous block has started.
+    let mut started = false;
+    // The boxes of the run before it starts, since the last float.
+    let mut waiting = Vec::new();
+    for child in paragraph_children(tree, cascade, idx) {
+        let content = match child {
+            ParagraphChild::Content => true,
+            ParagraphChild::Block(..) => {
+                started = false;
+                waiting.clear();
+                continue;
+            }
+            ParagraphChild::Node(id) => {
+                let node = &tree.nodes[id];
+                match node.kind() {
+                    NodeKind::Text => super::assign::text_makes_a_line(tree, cascade, id),
+                    NodeKind::Element
+                        if node.display() != DisplayValue::None
+                            && !node.is_non_rendered_html_element() =>
+                    {
+                        match super::projection::box_kind(cascade, tree, id) {
+                            Some(IfcBoxKind::OutOfFlow) if started => {
+                                found.insert(id);
+                                false
+                            }
+                            Some(IfcBoxKind::OutOfFlow) => {
+                                waiting.push(id);
+                                false
+                            }
+                            Some(IfcBoxKind::Block) => {
+                                started = false;
+                                waiting.clear();
+                                false
+                            }
+                            Some(IfcBoxKind::Float) => {
+                                waiting.clear();
+                                false
+                            }
+                            _ => true,
+                        }
+                    }
+                    _ => false,
+                }
+            }
+        };
+        if content {
+            started = true;
+            found.extend(waiting.drain(..));
+        }
+    }
+    found
+}
+
+/// The elements of the paragraph of `root` whose `::before` and whose
+/// `::after` are block-level boxes laid out in it.
+fn generated_block_origins(root: &IfcRoot) -> (HashSet<usize>, HashSet<usize>) {
+    let mut befores = HashSet::new();
+    let mut afters = HashSet::new();
+    let origins = root
+        .generated_blocks
+        .iter()
+        .filter(|block| block.of_root.is_none())
+        .filter_map(|block| crate::generated_content::generated_origin(block.start as usize));
+    for (element, pseudo) in origins {
+        if pseudo == raikiri_style::PseudoElem::Before {
+            befores.insert(element);
+        } else if pseudo == raikiri_style::PseudoElem::After {
+            afters.insert(element);
+        }
+    }
+    (befores, afters)
+}
+
+/// The static block offsets of the out-of-flow boxes of the paragraph rooted
+/// at `idx`, for the boxes without an anchor, with the line each box follows
+/// (see [`static_block_offset`]). Empty for the content of an anonymous cell
+/// (`owner`, its source owner, is not `idx`), which is only some of its
+/// owner's children, and for a fragmenting layout, which records no block
+/// starts.
+///
+/// Such a box sits where an empty block would: at the start of the first
+/// block-level box after it in document order, a block child or a block-level
+/// `::before` or `::after` of an element, which can sit anywhere among the
+/// content, below the margins above that box but not its own (CSS 2.1
+/// 10.6.4), or at the end of the content when none comes after it. It
+/// follows the last line before that box, unless a block-level box comes
+/// between them.
+fn offsets_in_document_order(
+    tree: &Document,
+    lines: &IfcLines,
+    (idx, owner): (usize, usize),
+) -> HashMap<usize, (f32, Option<usize>)> {
+    enum Step {
+        Enter(usize),
+        /// The element's `::after` block comes here.
+        After,
+    }
+    if owner != idx || lines.block_starts.is_empty() {
+        return HashMap::new();
+    }
+    #[cfg(test)]
+    tests::OOF_ORDER_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+    let root = tree.nodes[idx].ifc.as_ref().expect("the paragraph's root");
+    let (befores, afters) = generated_block_origins(root);
+    let mut kinds = HashMap::new();
+    for b in &root.boxes {
+        kinds.entry(b.node).or_insert(b.kind);
+    }
+    let mut left = root
+        .boxes
+        .iter()
+        .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
+        .count();
+    // The number of block-level boxes before each box, in document order.
+    let mut counts = HashMap::new();
+    let mut before = 0;
+    let mut stack: Vec<Step> = tree.nodes[idx]
+        .children
+        .iter()
+        .rev()
+        .map(|&id| Step::Enter(id))
+        .collect();
+    while let Some(step) = stack.pop() {
+        #[cfg(test)]
+        tests::OOF_BOX_VISITS.with(|count| count.set(count.get() + 1));
+        let id = match step {
+            Step::After => {
+                before += 1;
+                continue;
+            }
+            Step::Enter(id) => id,
+        };
+        // The parts of an anonymous table are one block child, which the
+        // first stands for.
+        if let Some(table) = tree.anonymous_table_of(id) {
+            before += usize::from(
+                tree.anonymous_table_parts(table).and_then(<[usize]>::first) == Some(&id),
+            );
+            continue;
+        }
+        match kinds.get(&id) {
+            Some(IfcBoxKind::OutOfFlow) => {
+                if counts.insert(id, before).is_none() {
+                    left -= 1;
+                }
+                if left == 0 {
+                    break;
+                }
+                continue;
+            }
+            Some(IfcBoxKind::Block) => {
+                before += 1;
+                continue;
+            }
+            // Their content is laid out apart from the paragraph.
+            Some(IfcBoxKind::Float | IfcBoxKind::Atomic) => continue,
+            None => {}
+        }
+        before += usize::from(befores.contains(&id));
+        if afters.contains(&id) {
+            stack.push(Step::After);
+        }
+        stack.extend(
+            tree.nodes[id]
+                .children
+                .iter()
+                .rev()
+                .map(|&child| Step::Enter(child)),
+        );
+    }
+    counts
+        .into_iter()
+        .map(|(node, before)| {
+            let (next_line, start) = lines
+                .block_starts
+                .get(before)
+                .map_or((lines.lines.len(), lines.flow_end), |&(first, _, start)| {
+                    (first, start)
+                });
+            // The lines of a generated block before the box are its own.
+            let after_line = before
+                .checked_sub(1)
+                .and_then(|previous| lines.block_starts.get(previous))
+                .map_or(0, |&(_, after, _)| after);
+            let last = next_line.checked_sub(1).filter(|&last| last >= after_line);
+            // The box moves with the content before it, and not with the
+            // block after it when pagination moves that block alone.
+            let shift = match last {
+                Some(last) => lines.shift_of(last),
+                None if before == 0 => lines.shifts.aligned(),
+                None => lines.shift_of(after_line),
+            };
+            (node, (start + shift, last))
+        })
+        .collect()
 }
 
 /// Where the boxes of a paragraph stand around one of its out-of-flow boxes.
@@ -5884,6 +6118,12 @@ pub(crate) fn place_out_of_flow(
     // The inline-level boxes that stay out of the lines after them, found
     // when a box with an anchor needs them.
     let mut before_floats: Option<HashMap<usize, f32>> = None;
+    // The static block offsets of the boxes without an anchor, found when
+    // such a box needs them.
+    let mut among_generated: Option<HashMap<usize, (f32, Option<usize>)>> = None;
+    // The boxes in the anonymous blocks that hold the line content of the
+    // children, found when a box without an anchor needs them.
+    let mut beside_inline: Option<HashSet<usize>> = None;
     // The padding boxes of the inline elements on the lines, made when a box
     // needs them.
     let mut inline_boxes: Option<oof_index::InlinePaddingBoxes> = None;
@@ -5940,7 +6180,20 @@ pub(crate) fn place_out_of_flow(
         let inline_level = tree.nodes[node].display().is_inline_level();
         // The box's static position along the root's block axis, from the
         // content box's block-start edge.
-        let (block_offset, preceding_line) = if anchor.is_none() && anchors.is_some() {
+        // A box without an anchor is placed among the block-level boxes in
+        // document order.
+        let among = anchor
+            .is_none()
+            .then(|| {
+                among_generated
+                    .get_or_insert_with(|| offsets_in_document_order(tree, &lines, (idx, owner)))
+                    .get(&node)
+                    .copied()
+            })
+            .flatten();
+        let (block_offset, preceding_line) = if let Some(offset) = among {
+            offset
+        } else if anchor.is_none() && anchors.is_some() {
             fallback
                 .get_or_insert_with(|| {
                     let boxes = tree.nodes[idx]
@@ -6020,7 +6273,12 @@ pub(crate) fn place_out_of_flow(
                 // A box that was inline-level but has no anchor sits on a line
                 // of its own, which the lines do not hold.
                 None if inline_level => {
-                    let in_inline_box = has_inline_ancestor(tree, idx, owner, node);
+                    let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
+                        || beside_inline
+                            .get_or_insert_with(|| {
+                                boxes_in_anonymous_line_blocks(tree, (idx, owner))
+                            })
+                            .contains(&node);
                     let line = hypothetical
                         .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)));
                     let (at, edge) = line.anchor(node, in_inline_box, block_offset, preceding_line);
