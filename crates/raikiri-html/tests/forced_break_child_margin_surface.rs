@@ -221,3 +221,24 @@ fn the_margins_after_a_child_that_does_not_collapse_through_stay_inside() {
     ));
     assert_eq!(text, [(1, 0.0, 15.0)]);
 }
+
+#[test]
+fn the_margin_of_a_first_child_offset_by_position_relative_stays_above_the_box() {
+    // A relative offset moves the child without moving its margin, which
+    // still collapses through the box to sit above it at the top of the page.
+    assert_eq!(
+        wrapped("", "position:relative;top:3px;margin-top:30px"),
+        [(1, 0.0, 38.0), (1, 0.0, 68.0)]
+    );
+    assert_eq!(
+        wrapped(
+            "margin-top:20px",
+            "position:relative;top:10px;margin-top:30px"
+        ),
+        [(1, 0.0, 45.0), (1, 0.0, 75.0)]
+    );
+    assert_eq!(
+        wrapped("", "position:relative;top:-3px;margin-top:10px"),
+        [(1, 0.0, 12.0), (1, 0.0, 42.0)]
+    );
+}

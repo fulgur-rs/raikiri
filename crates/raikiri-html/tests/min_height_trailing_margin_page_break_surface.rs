@@ -428,6 +428,20 @@ fn a_negative_margin_escaping_a_wrapper_keeps_the_parent_on_its_page() {
         (2, vec![('T', 1, 70), ('Z', 1, 75)]),
         "{body}"
     );
+    // An offset up does not part the box from the end of the wrapper either:
+    // its margin still adjoins the wrapper's and pulls the parent's padding
+    // onto the page, unless what is left of the margin is too small.
+    for (top, margin, expected) in [
+        (-5, -50, (2, vec![('T', 1, 60), ('Z', 1, 75)])),
+        (-1, -50, (2, vec![('T', 1, 64), ('Z', 1, 75)])),
+        (-5, -30, (3, vec![('T', 1, 60), ('Z', 2, 5)])),
+    ] {
+        let body = format!(
+            "<div style='width:20px;padding-bottom:15px'><div>X X X X</div>\
+             <div style='margin-bottom:10px'><div style='position:relative;top:{top}px;height:35px;margin-bottom:{margin}px'>T</div></div></div><div>Z</div>"
+        );
+        assert_eq!(pages_and_tops(&body), expected, "{body}");
+    }
     // A flex or grid item keeps its margins, and those inside it, apart.
     for display in ["flex;flex-direction:column", "grid"] {
         let body = format!(
@@ -448,4 +462,23 @@ fn a_negative_margin_escaping_a_wrapper_keeps_the_parent_on_its_page() {
         (2, vec![('T', 1, 65), ('Z', 1, 60)]),
         "{body}"
     );
+}
+
+#[test]
+fn a_margin_kept_in_by_a_min_height_stays_in_when_the_last_box_is_offset_up() {
+    // Once the `min-height` holds the moved content above its bottom, the
+    // margin of the last box stays inside it, whatever the relative offset
+    // that paints the box higher.
+    for top in [-10, -5] {
+        let body = format!(
+            "<div style='width:20px;min-height:150px'><div>X X X X</div>\
+             <div style='position:relative;top:{top}px;height:30px;margin-bottom:30px'>T</div></div>\
+             <div style='margin-top:5px'>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65 + top), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
 }
