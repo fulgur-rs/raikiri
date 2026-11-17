@@ -190,6 +190,35 @@ pub(crate) struct BlockContextSnapshot {
     content_insets: [f32; 2],
 }
 
+/// The floats of a context as one block saw them, in that block's
+/// coordinates (see [`BlockContext::float_view`]). The float storage is
+/// shared, not copied.
+#[derive(Clone)]
+pub(crate) struct FloatView {
+    floats: Arc<FloatContext>,
+    origin: f32,
+    border_insets: [f32; 2],
+    content_insets: [f32; 2],
+}
+
+impl FloatView {
+    /// `query` asked of a context of the block that holds these floats.
+    pub(crate) fn query<R>(&self, query: impl FnOnce(&BlockContext<'_>) -> R) -> R {
+        let mut owner = BlockFormattingContext {
+            floats: Arc::clone(&self.floats),
+        };
+        let context = BlockContext {
+            owner: &mut owner,
+            origin: self.origin,
+            border_insets: self.border_insets,
+            content_insets: self.content_insets,
+            root: false,
+            state: FlowState::new([false; 2]),
+        };
+        query(&context)
+    }
+}
+
 /// Coordinates and margin lifecycle of one block within its owning context.
 /// The borrow ties nested blocks to the same float storage without exposing
 /// or depending on the private fields of Taffy's native block context.
@@ -322,6 +351,18 @@ impl BlockContext<'_> {
 
     pub(crate) fn has_floats(&self) -> bool {
         self.owner.floats.has_floats()
+    }
+
+    /// The floats placed so far, seen from this block, kept for questions
+    /// about the room beside them once the block's layout is over. `None`
+    /// when there are none.
+    pub(crate) fn float_view(&self) -> Option<FloatView> {
+        self.has_floats().then(|| FloatView {
+            floats: Arc::clone(&self.owner.floats),
+            origin: self.origin,
+            border_insets: self.border_insets,
+            content_insets: self.content_insets,
+        })
     }
 
     pub(crate) fn has_active_floats(&self, from: f32) -> bool {

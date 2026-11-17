@@ -318,50 +318,45 @@ fn vertical_insets_do_not_change_the_float_slot_of_the_static_line() {
     );
 }
 
+/// Chromium does not take the empty static line for a last line:
+/// `text-align-last` leaves it on the edge `text-align` gives it.
 #[test]
-fn text_align_last_aligns_the_static_line() {
-    assert_eq!(
-        abs_rect_after(
-            "text-align:left;text-align-last:right",
-            &["height:50px"],
-            "display:inline"
-        ),
-        (200.0, 50.0, 40.0, 10.0)
-    );
-    assert_eq!(
-        abs_rect_after(
-            "text-align:left;text-align-last:center",
-            &["height:50px"],
-            "display:inline"
-        ),
-        (100.0, 50.0, 40.0, 10.0)
-    );
-}
-
-#[test]
-fn logical_and_physical_text_align_last_values_set_the_static_line_edge() {
-    for (text_align_last, expected_x) in [("start", 0.0), ("end", 200.0), ("left", 0.0)] {
+fn text_align_last_does_not_align_the_static_line() {
+    for text_align_last in ["right", "center"] {
+        assert_eq!(
+            abs_rect_after(
+                &format!("text-align:left;text-align-last:{text_align_last}"),
+                &["height:50px"],
+                "display:inline"
+            ),
+            (0.0, 50.0, 40.0, 10.0),
+            "text-align-last:{text_align_last}"
+        );
+    }
+    for text_align_last in ["start", "end", "left"] {
         assert_eq!(
             abs_rect_after(
                 &format!("text-align:left;text-align-last:{text_align_last}"),
                 &[],
                 "display:inline"
             ),
-            (expected_x, 0.0, 40.0, 10.0),
+            (0.0, 0.0, 40.0, 10.0),
             "text-align-last:{text_align_last}"
         );
     }
 }
 
+/// With nothing on the static line to justify, Chromium keeps the box at
+/// the line's start edge.
 #[test]
-fn unexpandable_justified_static_lines_use_center_alignment() {
+fn unexpandable_justified_static_lines_keep_the_start_edge() {
     assert_eq!(
         abs_rect_after(
             "text-align:left;text-align-last:justify",
             &[],
             "display:inline-block;width:40px"
         ),
-        (100.0, 0.0, 40.0, 10.0)
+        (0.0, 0.0, 40.0, 10.0)
     );
     assert_eq!(
         abs_rect_after(
@@ -369,7 +364,7 @@ fn unexpandable_justified_static_lines_use_center_alignment() {
             &[],
             "display:inline-block;width:40px"
         ),
-        (100.0, 0.0, 40.0, 10.0)
+        (0.0, 0.0, 40.0, 10.0)
     );
 }
 

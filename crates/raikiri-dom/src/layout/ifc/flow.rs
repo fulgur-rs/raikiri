@@ -1,11 +1,11 @@
 //! Measure and break an ifc root's paragraph.
 
-use super::boxes::BoxEdges;
+use super::boxes::{BoxEdges, IfcBox, IfcBoxKind};
 use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
 use crate::layout::context::LayoutSession;
-use crate::layout::dispatch::block_flow::context::BlockContext;
+use crate::layout::dispatch::block_flow::context::{BlockContext, FloatView};
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_layout_geometry::{Edges, Line};
 use raikiri_layout_style::values::Clear;
@@ -15,6 +15,7 @@ use shodo::geometry::BaselineKind;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
+use std::collections::HashSet;
 
 /// Logical inline space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -204,6 +205,115 @@ pub(crate) fn line_space(
     }
 }
 
+/// The floats that the boxes after an inline-level out-of-flow box of a
+/// paragraph found placed, recorded while its lines are laid out. A line that
+/// holds nothing but such a box comes before the floats that follow the box
+/// in the paragraph, including those inside a later block child, so the
+/// floats are kept as they stood at the first float or block child after
+/// each such box (its boundary). Only those boundaries are kept: a view keeps
+/// the float storage shared, so the next float placed copies it.
+pub(crate) struct FloatSnapshots {
+    boundaries: HashSet<usize>,
+    views: Vec<(usize, Option<FloatView>)>,
+}
+
+impl FloatSnapshots {
+    /// The boundaries of the inline-level out-of-flow boxes of a horizontal
+    /// paragraph whose `boxes` are listed, or `None` when it has no such box.
+    /// A box after the last float or block has no boundary and reads the
+    /// floats as they stand once the lines are laid out, so the set may be
+    /// empty.
+    pub(crate) fn new(boxes: &[IfcBox], inline_level: impl Fn(usize) -> bool) -> Option<Self> {
+        let mut boundaries = HashSet::new();
+        let mut next = None;
+        let mut any = false;
+        for b in boxes.iter().rev() {
+            match b.kind {
+                IfcBoxKind::Float | IfcBoxKind::Block => next = Some(b.node),
+                IfcBoxKind::OutOfFlow if inline_level(b.node) => {
+                    // A box after the last float or block has no boundary
+                    // but still needs the final floats.
+                    any = true;
+                    boundaries.extend(next);
+                }
+                _ => {}
+            }
+        }
+        any.then(|| Self {
+            boundaries,
+            views: Vec::new(),
+        })
+    }
+
+    /// Keep the floats `ctx` holds when `node`, about to be placed, is a
+    /// boundary.
+    pub(crate) fn record(&mut self, node: usize, ctx: &BlockContext<'_>) {
+        if self.boundaries.remove(&node) {
+            self.views.push((node, ctx.float_view()));
+        }
+    }
+}
+
+/// The floats beside a paragraph, kept once its lines are laid out to ask
+/// for the room of a line that holds nothing but out-of-flow boxes (see
+/// [`line_space`] and [`FloatSnapshots`]).
+pub(crate) struct LineFloats {
+    /// The floats as they stood at each boundary (`None` when there were
+    /// none).
+    before: Vec<(usize, Option<FloatView>)>,
+    /// All the floats once the lines are laid out.
+    after: Option<FloatView>,
+    /// The insets of the content box from the context's border-box origin,
+    /// along the inline and the block axis.
+    content_insets: (f32, f32),
+    content_width: f32,
+}
+
+impl LineFloats {
+    /// The floats `ctx` holds and the floats kept at the boundaries,
+    /// beside a content box `content_width` wide.
+    pub(crate) fn new(
+        ctx: &BlockContext<'_>,
+        snapshots: FloatSnapshots,
+        content_insets: (f32, f32),
+        content_width: f32,
+    ) -> Self {
+        Self {
+            before: snapshots.views,
+            after: ctx.float_view(),
+            content_insets,
+            content_width,
+        }
+    }
+
+    /// The space of an empty line at block offset `y` from the content box,
+    /// beside the floats placed before the boundary `next`, or beside all of
+    /// them when `next` is `None` or was never reached.
+    pub(crate) fn space_at(&self, y: f32, next: Option<usize>) -> LineSpace {
+        let view = next
+            .and_then(|next| self.before.iter().find(|&&(node, _)| node == next))
+            .map_or(self.after.as_ref(), |(_, view)| view.as_ref());
+        view.map_or(
+            LineSpace {
+                inline_start: 0.0,
+                inline_size: self.content_width,
+            },
+            |view| {
+                view.query(|ctx| {
+                    line_space(
+                        ctx,
+                        self.content_insets.0,
+                        self.content_insets.1,
+                        self.content_width,
+                        y,
+                        0.0,
+                    )
+                })
+            },
+        )
+    }
+}
+
 pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) -> IfcLines {
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -335,6 +445,7 @@ pub(crate) fn place_lines(
         leading_block_margin: None,
         block_line_starts: Vec::new(),
         generated_block_starts: Vec::new(),
+        generated_block_lines: Vec::new(),
         first_block_start: None,
         block_ends: Vec::new(),
         shifts: super::root::LineShifts::default(),
@@ -343,6 +454,7 @@ pub(crate) fn place_lines(
         unfragmented_tail_column: None,
         placed_blocks: Vec::new(),
         forced_breaks: Vec::new(),
+        line_floats: None,
     }
 }
 

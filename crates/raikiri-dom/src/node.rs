@@ -20,9 +20,9 @@ use crate::layout::taffy_adapter::LayoutCache;
 
 use raikiri_style::property::{
     BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, PositionValue,
-    Sides, TableLayoutValue, TextAlign, TextAlignLast, VerticalAlign, WritingMode,
+    Sides, TableLayoutValue, TextAlign, VerticalAlign, WritingMode,
 };
-use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
+use raikiri_style::{ComputedBorder, ComputedBorderSpacing, ComputedTextIndent};
 use raikiri_traits::{IntrinsicBox, NodeKind, PaintRect};
 
 bitflags::bitflags! {
@@ -542,9 +542,11 @@ pub struct BoxState {
     /// Computed line alignment used for the hypothetical inline static
     /// position of out-of-flow children in block flow.
     pub(crate) static_position_text_align: TextAlign,
-    /// Computed last-line alignment used for the hypothetical inline static
-    /// position of out-of-flow children in block flow.
-    pub(crate) static_position_text_align_last: TextAlignLast,
+    /// Computed `text-indent` and whether it is `hanging`, used for the
+    /// hypothetical inline static position of out-of-flow children in block
+    /// flow.
+    pub(crate) static_position_text_indent: ComputedTextIndent,
+    pub(crate) static_position_text_indent_hanging: bool,
     /// Computed `table-layout` for the table engine. No `taffy::Style`
     /// counterpart exists (taffy 0.12 has no table layout), so the keyword
     /// is carried here alongside [`Self::display`] and read by
@@ -782,7 +784,8 @@ impl BoxState {
     fn initial() -> Self {
         Self {
             static_position_text_align: TextAlign::Start,
-            static_position_text_align_last: TextAlignLast::Auto,
+            static_position_text_indent: ComputedTextIndent::Px(0.0),
+            static_position_text_indent_hanging: false,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
             hides_empty_table_cell: false,

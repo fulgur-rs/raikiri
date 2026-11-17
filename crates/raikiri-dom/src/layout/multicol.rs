@@ -696,7 +696,6 @@ impl FlowPass {
                 };
                 crate::layout::dispatch::block_flow::static_inline_share(
                     node.static_position_text_align,
-                    node.static_position_text_align_last,
                     direction,
                 )
             };

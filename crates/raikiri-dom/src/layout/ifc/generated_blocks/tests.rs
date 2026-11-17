@@ -887,6 +887,8 @@ fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
         )
     };
     assert_eq!(line_starts(&lines.lines), [5.0, 0.0, 0.0, 0.0]);
+    // Each fragmentainer records the lines of the box it holds.
+    assert_eq!(lines.generated_block_lines, [(0, 2), (2, 4)]);
 }
 
 /// Where each line of a `white-space: pre-wrap` paragraph starts when its

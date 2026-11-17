@@ -47,8 +47,9 @@ struct Neighbours {
 /// Geometry is the same as [`super::static_block_offset`], including duplicate
 /// IDs, first metadata matches, and original-order generated block thresholds.
 pub(super) struct StaticFallbackIndex {
-    offsets: HashMap<usize, f32>,
-    absent: f32,
+    /// The offset of each box, with the line it follows.
+    offsets: HashMap<usize, (f32, Option<usize>)>,
+    absent: (f32, Option<usize>),
 }
 
 impl StaticFallbackIndex {
@@ -127,7 +128,10 @@ impl StaticFallbackIndex {
                 return leading_static_offset(lines);
             };
             let Some(&(next_line, end)) = ends.get(&block) else {
-                return lines.height + lines.shifts.aligned();
+                return (
+                    lines.height + lines.shifts.aligned(),
+                    lines.lines.len().checked_sub(1),
+                );
             };
             let next_block = after
                 .and_then(|id| starts.get(&id))
@@ -140,8 +144,11 @@ impl StaticFallbackIndex {
                 .min()
                 .unwrap_or(lines.lines.len());
             match lines_end.checked_sub(1).filter(|&last| last >= next_line) {
-                Some(last) => lines.line_top(last) + lines.lines[last].block_size(),
-                None => end + lines.shift_of(next_line),
+                Some(last) => (
+                    lines.line_top(last) + lines.lines[last].block_size(),
+                    Some(last),
+                ),
+                None => (end + lines.shift_of(next_line), None),
             }
         };
         let absent = offset(before, None);
@@ -156,7 +163,9 @@ impl StaticFallbackIndex {
         Self { offsets, absent }
     }
 
-    pub(super) fn offset(&self, node: usize) -> f32 {
+    /// The static block offset of `node`, with the line it follows (see
+    /// [`super::static_block_offset`]).
+    pub(super) fn place(&self, node: usize) -> (f32, Option<usize>) {
         self.offsets.get(&node).copied().unwrap_or(self.absent)
     }
 }
