@@ -369,7 +369,7 @@ fn margin_resumption_requires_an_ordinary_shared_context_and_positive_margin() {
         "margin-top:0",
         "margin-top:-10px",
         "margin-top:10px;clear:both",
-        "margin-top:10px;position:relative",
+        "margin-top:10px;position:sticky",
         "margin-top:10px;display:flow-root",
         "margin-top:10px;writing-mode:vertical-rl",
     ] {
@@ -377,6 +377,13 @@ fn margin_resumption_requires_an_ordinary_shared_context_and_positive_margin() {
             assert!(Plan::collect(session, cascade).is_empty(), "{style}");
         });
     }
+    // A relative offset moves the box only after it is placed again.
+    with_margin_fixture(
+        "margin-top:10px;position:relative",
+        |session, cascade, _, _| {
+            assert!(!Plan::collect(session, cascade).is_empty());
+        },
+    );
     with_margin_fixture("margin-top:10px", |session, cascade, float, flow| {
         let boundary = session
             .context

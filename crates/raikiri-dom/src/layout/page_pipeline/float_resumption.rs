@@ -216,9 +216,11 @@ impl Plan {
     }
 }
 
-// Reflow only a flat IFC whose own margin is the complete retained strut.
-// Float-created gaps require a separate resumption strategy.
-// Cache the structural kind, while resolving the used margin on every attempt.
+// Reflow an in-flow block whose own margin is the complete retained strut.
+// Layout places the whole box again below the float's top plus that margin,
+// so its lines, block children and generated blocks are broken against the
+// float afresh, wherever the earlier layout put them. A relative offset only
+// moves the box once it is placed. Resolve the used margin on every attempt.
 fn plain_flow_margin(
     document: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -228,7 +230,10 @@ fn plain_flow_margin(
     let node = &document.nodes[flow];
     let margin = node.layout.margin.top;
     if node.display() != DisplayValue::Block
-        || !matches!(node.position(), PositionValue::Static)
+        || !matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
         || node.used_writing_mode.is_vertical()
         || cascade.computed[flow].clear != ClearValue::None
         || !margins_may_collapse_through(document, cascade, flow)
@@ -238,19 +243,7 @@ fn plain_flow_margin(
     {
         return None;
     }
-    let ifc = document.ifc_layout_node(flow)?.ifc.as_ref()?;
-    let lines = ifc.lines.as_ref()?;
-    let mut end = 0.0;
-    (ifc.generated_blocks.is_empty()
-        && !lines.lines.is_empty()
-        && lines.placed_blocks.is_empty()
-        && lines.block_line_starts.is_empty()
-        && lines.lines.iter().all(|line| {
-            let follows = line.block_offset() <= end + 0.001;
-            end = line.block_offset() + line.block_size();
-            follows
-        }))
-    .then_some(margin)
+    Some(margin)
 }
 
 fn hidden_or_positioned(document: &LayoutSession<'_>, id: usize) -> bool {

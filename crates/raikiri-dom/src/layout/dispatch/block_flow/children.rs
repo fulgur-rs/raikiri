@@ -1017,15 +1017,25 @@ pub(super) fn layout(
                 flow.end + pending.collapse_with_margin(margin.top).resolve()
             })
             .max(clear_y);
+        let mut cleared = false;
         let (output, top, top_set, bottom_set, clearance, used_clearance, floated_end, adjoining) = loop {
             let (output, floated_end, adjoining) = if same {
                 let right_inset = width - left - child_width;
+                // Clearance separates the box's margin from the margins
+                // before it (CSS 2 §8.3.1), so the first child's margin
+                // collapses with the box's own margin only, above its top.
+                let (anchor, strut) = if cleared {
+                    let own = CollapsibleMarginSet::from_margin(margin.top);
+                    (guess - own.resolve(), own)
+                } else {
+                    (flow.end, pending.collapse_with_margin(margin.top))
+                };
                 let mut sub = ctx.sub_context_for_collapsing_child(
                     guess,
                     [left, right_inset],
-                    flow.end,
-                    pending.collapse_with_margin(margin.top),
-                    joins,
+                    anchor,
+                    strut,
+                    joins && !cleared,
                 );
                 sub.set_origin_resolved(final_pass);
                 let output = measure_in_flow_child(tree, node, child, child_input, Some(&mut sub));
@@ -1080,6 +1090,14 @@ pub(super) fn layout(
             } else {
                 flow.end + pending.collapse_with_set(top_set).resolve()
             };
+            // A box placed below floats lays its children out again with the
+            // margins clearance separated.
+            if same && clearance && !cleared {
+                ctx.restore(&saved);
+                guess = top;
+                cleared = true;
+                continue;
+            }
             if resolved && same && ctx.has_floats() && (!final_pass || (guess - top).abs() > 0.001)
             {
                 ctx.restore(&saved);
