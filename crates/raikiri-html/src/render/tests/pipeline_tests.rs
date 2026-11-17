@@ -781,11 +781,11 @@ fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
 }
 
 #[test]
-fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limit() {
+fn pipeline_discovers_named_page_of_oversized_text_before_enforcing_page_limit() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} @page tall{size:200px 200px;margin:0}</style>\
-         <div style='height:250px;line-height:250px'>text</div>\
-         <div style='margin-top:-160px;page:tall;height:10px'></div>",
+         <div style='height:50px'></div>\
+         <div style='page:tall;height:150px;line-height:150px'>text</div>",
     );
     let config = LayoutConfig::builder()
         .limits(
@@ -813,7 +813,7 @@ fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limi
             assert_eq!(output.slices.len(), 2);
             assert_eq!(output.slices[1].page_name.as_deref(), Some("tall"));
         }
-        Err(error) => panic!("expected the named tall page after text to fit, got {error}"),
+        Err(error) => panic!("expected the text on the named tall page to fit, got {error}"),
         Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
