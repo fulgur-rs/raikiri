@@ -7359,17 +7359,6 @@ fn adjoining_margin_extremes(
     let (mut positive, mut negative) = own;
     for (index, child) in boxes.into_iter().enumerate() {
         let child_layout = &document.nodes[child].layout;
-        // The child's margin adjoins only when its border box touches this
-        // box's content edge, which a used height or a line before it would
-        // prevent.
-        // Contact is measured in the flow, before relative offsets: an
-        // offset moves the box without moving its margins (CSS 2 §9.4.3).
-        let child_y = normal_flow_y(document, cascade, id, child);
-        let touches = if start {
-            child_y <= 0.001
-        } else {
-            child_y + child_layout.size.height >= layout.size.height - 0.001
-        };
         // A box with used clearance may have been put below a float, which
         // keeps its margin from adjoining this edge once an earlier box is
         // there. Use facts from before pagination moved the floats.
@@ -7377,9 +7366,21 @@ fn adjoining_margin_extremes(
             && !clearance_free.is_some_and(|facts| facts.contains(child));
         if document.nodes[child].kind() != NodeKind::Element
             || document.nodes[child].display().is_inline_level()
-            || !touches
             || (index > 0 && clears)
         {
+            break;
+        }
+        // The child's margin adjoins only when its border box touches this
+        // box's content edge, which a used height or a line before it would
+        // prevent. Contact is measured in the flow, before relative offsets:
+        // an offset moves the box without moving its margins (CSS 2 §9.4.3).
+        let child_y = normal_flow_y(document, cascade, id, child);
+        let touches = if start {
+            child_y <= 0.001
+        } else {
+            child_y + child_layout.size.height >= layout.size.height - 0.001
+        };
+        if !touches {
             break;
         }
         // An empty box lets its margins collapse through it, so all of them,
@@ -8067,8 +8068,9 @@ fn escape_free_gap(
     }
     // The margin still collapses through while the content reaches the
     // bottom, as `escaped_end_margin_shift` measures it.
+    // A relative offset of that box does not move its margin.
     let reaches_bottom = |last: usize| {
-        document.pagination_local_y(last) + document.nodes[last].layout.size.height
+        normal_flow_bottom(document, cascade, previous, last)
             >= layout.size.height - CONTENT_END_TOLERANCE
     };
     if last_flow_box(document, cascade, previous).is_none_or(reaches_bottom) {

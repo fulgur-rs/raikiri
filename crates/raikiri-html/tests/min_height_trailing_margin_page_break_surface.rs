@@ -463,3 +463,22 @@ fn a_negative_margin_escaping_a_wrapper_keeps_the_parent_on_its_page() {
         "{body}"
     );
 }
+
+#[test]
+fn a_margin_kept_in_by_a_min_height_stays_in_when_the_last_box_is_offset_up() {
+    // Once the `min-height` holds the moved content above its bottom, the
+    // margin of the last box stays inside it, whatever the relative offset
+    // that paints the box higher.
+    for top in [-10, -5] {
+        let body = format!(
+            "<div style='width:20px;min-height:150px'><div>X X X X</div>\
+             <div style='position:relative;top:{top}px;height:30px;margin-bottom:30px'>T</div></div>\
+             <div style='margin-top:5px'>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65 + top), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
+}
