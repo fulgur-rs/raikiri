@@ -14,6 +14,13 @@
 //! no line content between, stays out of the anonymous block that holds the
 //! line beside the float, so it sits on such an empty line too.
 //!
+//! A block-level `::before` or `::after` of an element in the paragraph is
+//! placed in document order with the block children: a box without an anchor
+//! sits where the first block-level box after it starts, or at the end of the
+//! content when none follows. A run of children that holds an inline element,
+//! even one split by such a block, gets a line like the others, so the box
+//! there is aligned as a last line.
+//!
 //! The expected boxes are the ones Chromium computes for the same markup, with
 //! no body margin and `10px/10px Ahem` text: each is the box's left, top,
 //! width and height.
@@ -517,6 +524,146 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "center before a float after the block-level ::before of display contents",
         r#"<style>.t::before{content:"Z";display:block}</style><div style="text-align:center;width:100px">X<span class=t style="display:contents"><span id=q style="position:absolute">Q</span><div style="float:left;width:40px;height:20px"></div></span>T</div>"#,
         [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "last-line aligned before an element block ::before at the start",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><span id=q style="position:absolute">Q</span><span class=b></span>W<br></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "last-line aligned after an element block ::before, before a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><span class=b></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p>T<br></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "before an element block ::after with nothing else",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><span id=q style="position:absolute">Q</span><span class=a></span></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "after a block and an element block ::after at the end",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p><span class=a></span><span id=q style="position:absolute">Q</span></div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "right-aligned paragraph after an element block ::after, before a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:right;text-align-last:left;width:100px"><span class=a></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "indented first line before an element block ::before holding text",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-indent:15px;text-align:center;width:100px"><span id=q style="position:absolute">Q</span><span class=b>M</span><p style="margin:0">A</p></div>"#,
+        [57.5, 0.0, 25.0, 10.0],
+    ),
+    (
+        "after an element block ::before with margins at the end, centered",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-indent:15px;text-align:center;width:100px"><div style="border-top:1px solid"></div><span class=m></span><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 21.0, 25.0, 10.0],
+    ),
+    (
+        "between a block, an element block ::before and another, not indented",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-indent:15px;width:100px"><p style="margin:0">A</p><span class=b></span><span id=q style="position:absolute">Q</span><span class=b></span>W</div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "after two element block ::before boxes and before a third",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:center;width:100px"><span class=b></span><span class=b></span><span id=q style="position:absolute">Q</span><span class=b></span>W</div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "between an element block ::before and a block after a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:center;width:100px"><p style="margin:0">A</p><span class=b></span><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "inside an element before its block ::after",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:center;width:100px"><span class=a><span id=q style="position:absolute">Q</span></span>W</div>"#,
+        [50.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "after an element block ::before with margins, before a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><span class=m></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "between element block margins and a block with margins",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:center;width:100px"><p style="margin:0 0 6px">A</p><span class=m></span><span id=q style="position:absolute">Q</span><p style="margin:4px 0">B</p></div>"#,
+        [50.0, 33.0, 10.0, 10.0],
+    ),
+    (
+        "after a forced break following an element block ::before",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><span class=b></span>V<br><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "inside an element before its block ::after, before a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:right;width:100px"><span class=a><span id=q style="position:absolute">Q</span></span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "between two element block ::before boxes with margins",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}</style><div id=c style="text-align:right;width:100px"><span class=m></span><span id=q style="position:absolute">Q</span><span class=m></span>W</div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "after an element block ::after with a bottom margin at the end",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><span class=n></span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "after a block margin and an element block ::before at the end",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><p style="margin:0 0 5px">A</p><span class=b></span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 25.0, 10.0, 10.0],
+    ),
+    (
+        "after an element holding a block and its block ::after",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><span class=a><p style="margin:0">A</p></span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "before an element block ::before that holds a block",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:right;width:100px"><span id=q style="position:absolute">Q</span><span class=b><p style="margin:0">A</p></span></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "after an element block ::after with margins, before a block with margins",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}.m::before{display:block;content:"Z";margin:3px 0 7px}.n::after{display:block;content:"Y";margin:3px 0 7px}</style><div id=c style="text-align:left;width:100px"><span class=n></span><span id=q style="position:absolute">Q</span><p style="margin:0 0 5px">A</p></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "after an element block ::before, no first-line indent",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}</style><div id=c style="text-indent:15px;width:100px"><span class=b></span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "after a nested element block ::before",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}</style><div id=c style="text-align:left;text-align-last:right;width:100px"><span><span class=b></span></span><span id=q style="position:absolute">Q</span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "between blocks after an element block ::before, empty line",
+        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}</style><div id=c style="text-indent:15px;text-align:center;width:100px"><span class=b></span><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [65.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "after an element block ::before and an anonymous table, before a block",
+        r#"<style>.b::before{display:block;content:"Z"}</style><div id=c style="width:100px"><span class=b></span><span style="display:table-cell">C</span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "after an element block ::after and an anonymous table at the end",
+        r#"<style>.a::after{display:block;content:"Y"}</style><div id=c style="width:100px;text-align:left;text-align-last:right"><span class=a></span><span style="display:table-cell">C</span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "after the lines of an element block ::before with a bottom margin",
+        r#"<style>.b::before{display:block;content:"Z";margin-bottom:5px}</style><div id=c style="width:100px;text-align:left;text-align-last:right"><span class=b>MM<br></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 25.0, 10.0, 10.0],
+    ),
+    (
+        "start of an anonymous table cell, before a block",
+        r#"<div id=c style="display:table;width:100px"><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
     ),
 ];
 

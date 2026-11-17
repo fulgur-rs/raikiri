@@ -20,6 +20,7 @@ thread_local! {
     pub(super) static SOURCE_DUPLICATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_ANCHOR_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_FALLBACK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_ORDER_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_ANCHOR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_BOX_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static OOF_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

@@ -9,11 +9,13 @@ struct Work {
     calls: usize,
     anchor_indexes: usize,
     fallback_indexes: usize,
+    order_indexes: usize,
 }
 
 fn reset() {
     OOF_ANCHOR_INDEX_BUILDS.with(|count| count.set(0));
     OOF_FALLBACK_INDEX_BUILDS.with(|count| count.set(0));
+    OOF_ORDER_INDEX_BUILDS.with(|count| count.set(0));
     OOF_ANCHOR_VISITS.with(|count| count.set(0));
     OOF_BOX_VISITS.with(|count| count.set(0));
     OOF_METADATA_VISITS.with(|count| count.set(0));
@@ -24,6 +26,7 @@ fn read() -> Work {
     Work {
         anchor_indexes: OOF_ANCHOR_INDEX_BUILDS.with(|count| count.get()),
         fallback_indexes: OOF_FALLBACK_INDEX_BUILDS.with(|count| count.get()),
+        order_indexes: OOF_ORDER_INDEX_BUILDS.with(|count| count.get()),
         anchors: OOF_ANCHOR_VISITS.with(|count| count.get()),
         boxes: OOF_BOX_VISITS.with(|count| count.get()),
         metadata: OOF_METADATA_VISITS.with(|count| count.get()),
@@ -118,7 +121,10 @@ fn production_missing_anchors_use_one_box_and_block_index() {
         .collect();
     for (count, work) in cases {
         assert_eq!(work.anchor_indexes, work.calls);
-        assert_eq!(work.fallback_indexes, work.calls);
+        // The boxes are placed among the blocks in document order, once per
+        // paragraph.
+        assert_eq!(work.order_indexes, work.calls);
+        assert_eq!(work.fallback_indexes, 0);
         assert!(
             work.boxes + work.metadata <= 16 * count * work.calls,
             "missing-anchor fallback must scale with boxes and block metadata: count={count}, work={work:?}"

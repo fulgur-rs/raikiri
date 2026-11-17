@@ -225,6 +225,18 @@ pub(crate) struct IfcLines {
     /// block-level `::before` or `::after` of a descendant comes before it.
     /// A fragmenting layout records none.
     pub(crate) first_block_start: Option<(usize, f32)>,
+    /// Each block child and each block-level `::before` and `::after` laid
+    /// out in the paragraph, in document order: the index of its first line
+    /// (the first line after it for a block child), of the first line after
+    /// it, and the block offset where it starts, as
+    /// [`Self::first_block_start`] gives it for the first. The root's own
+    /// `::before`, which comes before every box, is left out. A fragmenting
+    /// layout records none.
+    pub(crate) block_starts: Vec<(usize, usize, f32)>,
+    /// The block offset, from the content-box block-start edge, where the
+    /// content of the paragraph ends: below its last line or block and the
+    /// margins after them, as an empty block after the content would start.
+    pub(crate) flow_end: f32,
     /// Each block child of the root with the index of the first line after it
     /// and the block offset, from the content-box block-start edge, where the
     /// content after it starts: below its border box and the margins that

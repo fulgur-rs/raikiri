@@ -20,6 +20,8 @@ fn debug_reports_fragment_box_placement_count() {
         generated_block_starts: Vec::new(),
         generated_block_lines: Vec::new(),
         first_block_start: None,
+        block_starts: Vec::new(),
+        flow_end: 0.0,
         block_ends: Vec::new(),
         shifts: Default::default(),
         fragment_box_placements: vec![IfcBoxFragment {
