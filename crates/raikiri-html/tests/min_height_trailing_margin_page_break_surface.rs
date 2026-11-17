@@ -167,3 +167,194 @@ fn a_margin_above_an_empty_box_of_set_height_zero_keeps_it_behind() {
         }
     }
 }
+
+#[test]
+fn an_empty_last_box_that_begins_past_the_page_end_moves_the_padding_on() {
+    // The empty box sits where the margins above it end. Once that is past
+    // the page end, the padding begins the next page, even when the negative
+    // margin of the empty box pulls the end of the content back up.
+    let tail = |t: i32, above: i32, below: i32| {
+        format!(
+            "<div style='height:{t}px;margin-bottom:{above}px'>T</div>\
+             <div style='margin-bottom:{below}px'></div>"
+        )
+    };
+    for (t, above, below) in [
+        (30, 20, -30),
+        (30, 20, -50),
+        (20, 40, -50),
+        (35, 10, -30),
+        (40, 10, -50),
+    ] {
+        assert_tops("", &tail(t, above, below), (1, 65), (2, 20));
+    }
+    // Where the empty box still begins on the page, the padding stays
+    // behind, or the next block follows on the same page.
+    assert_tops("", &tail(30, 10, -30), (1, 65), (2, 5));
+    for (t, above, below, z) in [(20, 5, -30, 75), (20, 20, -50, 70)] {
+        let body = moved_box("", &tail(t, above, below));
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_negative_margin_escapes_a_box_whose_moved_content_outgrew_its_min_height() {
+    // Without bottom padding, the last margin collapses through the bottom of
+    // the box only while its content fills it. When the moved content grows
+    // the box past its `min-height`, a negative margin escapes it and pulls
+    // the next block up.
+    for min_height in [170, 190] {
+        for wrapper in [false, true] {
+            for (t, margin, pages, z) in [
+                (30, -10, 3, (2, 5)),
+                (30, -20, 2, (1, 75)),
+                (30, -40, 2, (1, 55)),
+                (40, -20, 3, (2, 5)),
+                (40, -40, 2, (1, 65)),
+            ] {
+                let last = format!("<div style='height:{t}px;margin-bottom:{margin}px'>T</div>");
+                let last = if wrapper {
+                    format!("<div>{last}</div>")
+                } else {
+                    last
+                };
+                let body = format!(
+                    "<div style='width:20px;min-height:{min_height}px'><div>X X X X</div>{last}</div>\
+                     <div>Z</div>"
+                );
+                assert_eq!(
+                    pages_and_tops(&body),
+                    (pages, vec![('T', 1, 65), ('Z', z.0, z.1)]),
+                    "{body}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_escaping_margin_collapses_with_the_margins_after_the_box() {
+    // The negative margin that escapes the box collapses with the bottom
+    // margin of the box and the top margin of the next block, and moves the
+    // flow by no more than that collapsed margin changes.
+    for (own, last, z_top, z) in [
+        (-10, -40, 0, 55),
+        (-10, -20, 0, 75),
+        (-60, -40, 0, 35),
+        (-60, -20, 0, 35),
+        (0, -40, -10, 55),
+    ] {
+        let body = format!(
+            "<div style='width:20px;min-height:170px;margin-bottom:{own}px'><div>X X X X</div>\
+             <div style='height:30px;margin-bottom:{last}px'>T</div></div>\
+             <div style='margin-top:{z_top}px'>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn the_margins_inside_an_empty_last_box_place_it_below_the_page_end() {
+    // A margin of a box inside the empty box collapses into its top, and
+    // places it as far down as its own would.
+    for (t, inner, below) in [(20, 40, -50), (30, 20, -30), (30, 30, -50)] {
+        let tail = format!(
+            "<div style='height:{t}px'>T</div>\
+             <div style='margin-bottom:{below}px'><div style='margin-top:{inner}px'></div></div>"
+        );
+        assert_tops("", &tail, (1, 65), (2, 20));
+    }
+}
+
+#[test]
+fn a_negative_margin_stops_escaping_when_truncation_shrinks_the_content() {
+    // The content first outgrows the `min-height` and lets the last margin
+    // through. The page edge then truncates the top margin of `Y`, the
+    // content ends above the `min-height`, and the flow after the box
+    // follows the box again.
+    for top in [40, 60] {
+        let body = format!(
+            "<div style='width:20px;min-height:200px'><div>X X X</div>\
+             <div style='margin-top:{top}px;height:60px'>Y</div>\
+             <div style='height:30px;margin-bottom:-40px'>T</div></div><div>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn the_margins_after_the_box_reach_through_empty_boxes_and_contents_wrappers() {
+    // Empty boxes after the box let their margins through to the escaping
+    // one, and so does the top margin of a block inside a contents wrapper.
+    let head = "<div style='width:20px;min-height:170px'><div>X X X X</div>\
+                <div style='height:30px;margin-bottom:-40px'>T</div></div>";
+    for (after, z) in [
+        ("<div style='margin-bottom:-60px'></div><div>Z</div>", 35),
+        ("<div style='margin-bottom:-20px'></div><div>Z</div>", 55),
+        (
+            "<div></div><div style='margin-top:-60px'></div><div>Z</div>",
+            35,
+        ),
+        (
+            "<div style='display:contents'><div style='margin-top:-60px'>Z</div></div>",
+            35,
+        ),
+        (
+            "<div style='display:contents'><div style='margin-top:-10px'>Z</div></div>",
+            55,
+        ),
+        // A line after the box takes no margin from it.
+        ("Z", 55),
+    ] {
+        let body = format!("{head}{after}");
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn the_margins_after_the_box_reach_past_the_end_of_its_parent() {
+    // With no box after it in its parent, the escaping margin collapses
+    // with the margins past the parent's end: through a contents wrapper,
+    // and through the bottom of a block of auto height with its own margin.
+    let inner = "<div style='width:20px;min-height:170px'><div>X X X X</div>\
+                 <div style='height:30px;margin-bottom:-40px'>T</div></div>";
+    for (margin, z) in [(-60, 35), (-10, 55)] {
+        for body in [
+            format!(
+                "<div style='display:contents'>{inner}</div><div style='margin-top:{margin}px'>Z</div>"
+            ),
+            format!("<div style='margin-bottom:{margin}px'>{inner}</div><div>Z</div>"),
+            format!("<div>{inner}</div><div style='margin-top:{margin}px'>Z</div>"),
+        ] {
+            assert_eq!(
+                pages_and_tops(&body),
+                (2, vec![('T', 1, 65), ('Z', 1, z)]),
+                "{body}"
+            );
+        }
+    }
+    // Bottom padding on the parent keeps the margins past it apart.
+    let body =
+        format!("<div style='margin-bottom:-10px;padding-bottom:1px'>{inner}</div><div>Z</div>");
+    assert_eq!(
+        pages_and_tops(&body),
+        (2, vec![('T', 1, 65), ('Z', 1, 46)]),
+        "{body}"
+    );
+}

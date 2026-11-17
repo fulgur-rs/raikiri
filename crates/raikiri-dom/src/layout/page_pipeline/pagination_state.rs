@@ -1403,9 +1403,13 @@ impl PaginationState {
         // reach past the bottom of it from a content end short of that. An end
         // that is not a number fails every comparison and leaves the edges be.
         let gap = page_end - end;
+        // An empty box that ends the flow below the end of the page, where a
+        // negative margin below it pulls the content end back up, takes the
+        // edges after it to the next page even where they fit, as in
+        // Chromium.
         if !(end > page_origins.origin(page) + 0.001
             && gap > 0.001
-            && edges_break.edges > gap + 0.001)
+            && (edges_break.edges > gap + 0.001 || edges_break.margin_reach > gap + 0.001))
         {
             // The pages of a block leave out the margins in it that a page
             // edge may truncate, so edges that stay where they are reach
