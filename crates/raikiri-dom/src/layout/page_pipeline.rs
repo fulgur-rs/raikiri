@@ -7250,7 +7250,12 @@ fn adjoining_margin_extremes_with_coordinates(
     } else {
         layout.border.bottom + layout.padding.bottom
     };
-    if edges > 0.0 || !margins_may_collapse_through(document, cascade, id) {
+    // The block-end margin of the last child adjoins the box's own only when
+    // the box takes its height from its content (CSS 2 §8.3.1).
+    if edges > 0.0
+        || !margins_may_collapse_through(document, cascade, id)
+        || (!start && !document.block_axis(id).height().is_auto())
+    {
         return own;
     }
     let mut boxes = Vec::new();

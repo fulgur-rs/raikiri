@@ -210,3 +210,16 @@ fn an_empty_last_box_leaves_the_edges_to_the_box_before_it() {
         assert!(tops.contains(&(2, 'Z', 20)), "{body}: {tops:?}");
     }
 }
+
+#[test]
+fn a_last_box_of_set_height_keeps_its_child_margin_inside() {
+    // A set height ends the last box where it ends, so the negative margin of
+    // its child does not collapse through it: the box moves with the edges.
+    for (wrapper, t) in [("height:40px", (2, 5)), ("", (1, 65))] {
+        let body = format!(
+            "<div style='width:20px;padding-bottom:15px'><div>X X X X</div><div style='{wrapper}'><div style='height:40px;margin-bottom:-20px'>T</div></div></div><div>Z</div>"
+        );
+        let tops = glyph_tops(&body);
+        assert!(tops.contains(&(t.0, 'T', t.1)), "{body}: {tops:?}");
+    }
+}
