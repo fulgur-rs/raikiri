@@ -17155,9 +17155,27 @@ fn shift_rows_after(
 /// stacks its children in block flow, and the cell itself holds neither
 /// columns nor lines, so its row can grow to hold the moved content.
 fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    first_parent_off_block_flow(document, node_id).is_some_and(|(child, parent)| {
+        document.anonymous_cell_of(child).is_some()
+            || document.nodes[parent].display() == DisplayValue::TableCell
+                && document.nodes[parent].multicol.is_none()
+                && document
+                    .ifc_layout_node(parent)
+                    .is_none_or(|node| node.ifc.is_none())
+    })
+}
+
+/// The first ancestor of `node_id` that does not take a moved box's flow on
+/// in block order, with its child on the way there: the parent where the
+/// walk of [`shift_block_flow_after`] stops.
+fn first_parent_off_block_flow(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> Option<(usize, usize)> {
     let mut child = node_id;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
-    while let Some(parent) = walk.current() {
+    loop {
+        let parent = walk.current()?;
         walk.advance(document);
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
@@ -17165,16 +17183,10 @@ fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: u
         if ifc_paragraph_of_block(document, child) != Some(parent)
             && !stacks_children_in_block_flow(document, parent)
         {
-            return document.anonymous_cell_of(child).is_some()
-                || document.nodes[parent].display() == DisplayValue::TableCell
-                    && document.nodes[parent].multicol.is_none()
-                    && document
-                        .ifc_layout_node(parent)
-                        .is_none_or(|node| node.ifc.is_none());
+            return Some((child, parent));
         }
         child = parent;
     }
-    false
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it
