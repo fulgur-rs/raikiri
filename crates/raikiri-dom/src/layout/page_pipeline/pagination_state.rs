@@ -27,8 +27,8 @@ use super::{
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
     margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
-    move_box_for_transition, move_flex_line_siblings, move_line_block, move_paragraph_lines,
-    page_break_is_forced, page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
+    move_box_for_transition, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
     participates_in_margin_adjacency, place_first_table_header, place_table_footer,
     place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
     reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
@@ -207,6 +207,9 @@ pub(super) struct BoxBreak {
     pub(super) holder: Option<(usize, f32)>,
     /// The plain holder carried by this box's own new forced boundary.
     pub(super) forced_holder: Option<ForcedBreakHolder>,
+    /// The flex line of the box, as an item of a row flex container, when a
+    /// forced break or a change of the page type may move it.
+    pub(super) flex_line: Option<super::RowFlexLine>,
 }
 
 impl BoxBreak {
@@ -1860,6 +1863,9 @@ impl PaginationState {
             comparison_page_name,
             self.last_named.joins_transition(candidate),
         );
+        let flex_line = (forced_before || pending_break_applies || named_page_change)
+            .then(|| super::row_flex_line(document, cascade, body_id, node_id, raw_y))
+            .flatten();
         let continuation_offset = document
             .continuation_margin
             .filter(|&(node, offset)| node == node_id && offset > CONTINUATION_MARGIN_TOLERANCE)
@@ -2198,7 +2204,11 @@ impl PaginationState {
                 // before it on this page, which the break still leaves
                 // behind, or back over a page edge the break would share,
                 // which the break then moves the box over.
-                let margin_box_y = effective_y - relative_offset - margin_top;
+                // The break before a flex item sits at the top of its line.
+                let margin_box_y = effective_y
+                    - relative_offset
+                    - margin_top
+                    - flex_line.as_ref().map_or(0.0, |line| line.offset);
                 let starts_page = if margin_top < 0.0 {
                     (margin_box_y - page_start).abs() <= 0.001
                 } else {
@@ -2235,6 +2245,7 @@ impl PaginationState {
                 .is_some_and(|offset| (offset - margin_top).abs() <= CONTINUATION_MARGIN_TOLERANCE),
             holder,
             forced_holder,
+            flex_line,
         };
         let position = BoxPosition {
             effective_y,
@@ -2269,7 +2280,6 @@ impl PaginationState {
             relative_offset,
             ref overflow,
             fit_page,
-            forced_before,
             forced_transition,
             margins_collapse_through,
             pending_break_applies,
@@ -2395,17 +2405,14 @@ impl PaginationState {
             relative_offset
         };
         let row_tail_move = overflow.page && candidate.context.item_tail_edges() > 0.0;
-        let row_flex_parent = (forced_before || row_tail_move)
-            .then(|| row_flex_container(document, cascade, node_id))
-            .flatten();
         // A forced break moves the top of the item's flex line to the top of
         // the page, and the item keeps its place in the line below that top,
         // as alignment and the margins of the items set it.
-        let line_offset = row_flex_parent
+        let line_offset = page_break
+            .flex_line
+            .as_ref()
             .filter(|_| lands_after_forced_break)
-            .map_or(0.0, |parent| {
-                super::flex_line_offset(document, cascade, body_id, parent, node_id)
-            });
+            .map_or(0.0, |line| line.offset);
         let landing = TransitionLanding::new(
             page_origins.origin(target_page) + line_offset,
             landing_y,
@@ -2427,13 +2434,16 @@ impl PaginationState {
             }
             // Capture tail membership before this transition changes positions;
             // an earlier transition may already have shifted the whole parent.
-            let tail_line = row_flex_parent.filter(|_| row_tail_move).map(|parent| {
-                let before_y = current_abs_y(document, node_id);
-                (
-                    before_y,
-                    super::flex_line_peers(document, cascade, body_id, parent, node_id),
-                )
-            });
+            let tail_line = row_tail_move
+                .then(|| row_flex_container(document, cascade, node_id))
+                .flatten()
+                .map(|parent| {
+                    let before_y = current_abs_y(document, node_id);
+                    (
+                        before_y,
+                        super::flex_line_peers(document, cascade, body_id, parent, node_id),
+                    )
+                });
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -2451,18 +2461,22 @@ impl PaginationState {
             );
             // Forced breaks and closing-tail breaks belong to the whole
             // aligned flex line; the other lines keep their flow coordinates.
-            // The line moves by the distance of the box's margin box.
+            // After a forced break the line moves as far as the box's kept
+            // margin box; else as far as its border box, whose margin the
+            // break truncates.
             if let Some((before_y, peers)) = tail_line {
                 let delta = current_abs_y(document, node_id) - before_y;
                 super::place_flex_line_peers(document, &peers, delta);
-            } else if let Some(parent_id) = row_flex_parent {
-                move_flex_line_siblings(
+            } else if let Some(line) = &page_break.flex_line {
+                let kept_margin = if lands_after_forced_break {
+                    margin_top
+                } else {
+                    0.0
+                };
+                super::place_flex_line_peers(
                     document,
-                    cascade,
-                    body_id,
-                    parent_id,
-                    node_id,
-                    landing.shift_delta + margin_top,
+                    &line.peers,
+                    landing.shift_delta + kept_margin,
                 );
             }
             // A kept margin moves the box's descendants and its later

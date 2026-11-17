@@ -16424,8 +16424,8 @@ fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
     // A margin box at the edge of a page past the flow opens that page.
     assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, true), 2);
     assert_eq!(pages.transition_natural_page(190.0, -10.0, 0, 1, false), 1);
-    // Without a page-type change, or on a page the flow has not reached,
-    // the box keeps the page it falls on.
+    // Without a page-type change the box keeps the page it falls on, and on
+    // a page the flow has not reached its margin box does.
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, false), 2);
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 1, true), 2);
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 2, 3, true), 2);
@@ -18622,6 +18622,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         keeps_margin_at_break: false,
         holder: None,
         forced_holder: None,
+        flex_line: None,
     }
 }
 
@@ -19833,6 +19834,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         keeps_margin_at_break: forced,
         holder: None,
         forced_holder: None,
+        flex_line: None,
     }
 }
 

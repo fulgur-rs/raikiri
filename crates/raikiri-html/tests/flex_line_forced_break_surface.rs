@@ -227,3 +227,27 @@ fn a_break_in_an_aligned_line_moves_the_top_of_the_line_to_the_page_top() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_before_an_item_measures_its_line_where_the_flow_has_put_it() {
+    assert_rows(&[
+        // An earlier break in the container has moved the flow on, and the
+        // next one still moves the line of its item to the top of a page.
+        (
+            "<div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:100px;height:30px'>a</div><div style='break-before:page;width:100px;height:30px'>X</div><div style='break-before:page;width:40px;height:30px'>Q</div><div style='width:40px;height:30px'>R</div></div><div>Z</div>",
+            &[
+                (0, 'a', 5),
+                (1, 'X', 5),
+                (2, 'Q', 5),
+                (2, 'R', 5),
+                (2, 'Z', 35),
+            ],
+        ),
+        // A line that already starts the page keeps it, though alignment puts
+        // the item below the top of the line.
+        (
+            "<div style='height:100px'>a</div><div style='display:flex;flex-wrap:wrap;width:100px;align-items:flex-end'><div style='break-before:page;width:40px;height:30px'>X</div><div style='width:40px;height:50px'>Y</div></div>",
+            &[(0, 'a', 5), (1, 'X', 25), (1, 'Y', 5)],
+        ),
+    ]);
+}
