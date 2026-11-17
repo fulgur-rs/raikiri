@@ -315,6 +315,8 @@ fn the_margins_after_the_box_reach_through_empty_boxes_and_contents_wrappers() {
             "<div style='display:contents'><div style='margin-top:-10px'>Z</div></div>",
             55,
         ),
+        // A line after the box takes no margin from it.
+        ("Z", 55),
     ] {
         let body = format!("{head}{after}");
         assert_eq!(
