@@ -9575,10 +9575,15 @@ fn flow_end_box(
         return Some((last, end_margin_through(document, cascade, last)));
     }
     let parent = document.parent_of(last)?;
-    let siblings = &document.nodes[parent].children;
-    let index = siblings.iter().position(|&child| child == last)?;
+    // Walked from the end, `last` and the boxes before it are reached past
+    // only the few that follow it outside the flow.
     let (mut positive, mut negative) = (0.0_f32, 0.0_f32);
-    for &child in siblings[..=index].iter().rev() {
+    for &child in document.nodes[parent]
+        .children
+        .iter()
+        .rev()
+        .skip_while(|&&child| child != last)
+    {
         if !takes_part_in_flow(document, cascade, child) {
             continue;
         }
