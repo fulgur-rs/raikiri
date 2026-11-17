@@ -729,6 +729,12 @@ pub(super) fn refresh(
 }
 
 /// Reconstructs pre-move maxima from the already translated current geometry.
+/// The flow and the border box of `parent` end at the margin box of the box
+/// that `end_box` gives for its last in-flow child, with the margin it gives
+/// below it (CSS 2 §10.6.3), whatever the boxes before that box reach; the
+/// floats it holds reach where they reach. `None` when that box is not one
+/// of the leaves of `parent`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn extents(
     document: &crate::Document,
     parent: usize,
@@ -737,6 +743,7 @@ pub(super) fn extents(
     size_delta: f32,
     float_delta: f32,
     contains_floats: bool,
+    end_box: impl Fn(usize) -> Option<(usize, f32)>,
 ) -> Option<[(f32, f32); 3]> {
     let state = document.normal_block_shifts.as_ref()?;
     let (owner, index) = state.position(moved)?;
@@ -759,17 +766,13 @@ pub(super) fn extents(
         size_delta,
         float_delta,
     ];
-    let last = state
-        .last_flow(parent)
-        .and_then(|node| state.position(node).map(|(_, position)| (node, position)));
-    let margin = if document.nodes[parent].layout.padding.bottom
-        + document.nodes[parent].layout.border.bottom
-        > 0.0
-        || contains_floats
-    {
-        last.map_or(0.0, |(node, _)| document.nodes[node].layout.margin.bottom)
-    } else {
-        0.0
+    let (last, margin) = match state.last_flow(parent) {
+        Some(node) => {
+            let (end, margin) = end_box(node)?;
+            let (_, position) = state.position(end).filter(|&(owner, _)| owner == parent)?;
+            (Some((end, position)), margin)
+        }
+        None => (None, 0.0),
     };
     Some(std::array::from_fn(|channel| {
         if channel == 2 {
@@ -783,17 +786,6 @@ pub(super) fn extents(
         let Some((_, last_index)) = last else {
             return (f32::NEG_INFINITY, f32::NEG_INFINITY);
         };
-        let prior = state.range(parent, 0..index.min(last_index)).unwrap().0[channel];
-        let current = if index < last_index {
-            point[channel]
-        } else {
-            f32::NEG_INFINITY
-        };
-        let later = if index < last_index {
-            state.range(parent, index + 1..last_index).unwrap().0[channel]
-        } else {
-            f32::NEG_INFINITY
-        };
         let end = state.range(parent, last_index..last_index + 1).unwrap().0[channel];
         let last_delta = if last_index == index {
             delta[channel]
@@ -802,12 +794,6 @@ pub(super) fn extents(
         } else {
             0.0
         };
-        (
-            prior
-                .max(current - delta[channel])
-                .max(later - flow_delta)
-                .max((end - last_delta) + margin),
-            prior.max(current).max(later).max(end + margin),
-        )
+        ((end - last_delta) + margin, end + margin)
     }))
 }

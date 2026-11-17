@@ -7769,7 +7769,8 @@ fn grown_auto_height(
     let mut float_extent = (f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut shifted = false;
     let mut float_shifted = false;
-    let mut last = None;
+    // Each child with the ends of its flow and border box, before and after.
+    let mut child_ends: Vec<(usize, [(f32, f32); 2])> = Vec::new();
     // The ends of `moved` and of the children after it, before and after
     // the shift, from their current `end`. `moved_by` is how far `moved`'s
     // end moved.
@@ -7803,9 +7804,13 @@ fn grown_auto_height(
         range.0 = range.0.max(before);
         range.1 = range.1.max(after);
     };
-    // Contents and non-offset inline wrappers contribute their children to
-    // this box's layout, matching the layout-parent walk. A grid's items
-    // follow one another in the order of their rows.
+    // The box whose margin box ends the content, for the last child: the
+    // margin below it ends the content too when the box keeps it inside, and
+    // may pull the end up (see `flow_end_box`).
+    let end_box = |child: usize| {
+        flow_end_box(document, cascade, child)
+            .map(|(end, margin)| (end, if contains_margins { margin } else { 0.0 }))
+    };
     if let Some([cached_flow, cached_size, cached_float]) = normal_block_shifts::extents(
         document,
         parent,
@@ -7814,6 +7819,7 @@ fn grown_auto_height(
         size_delta,
         float_delta,
         contains_floats,
+        end_box,
     ) {
         flow = cached_flow;
         size = cached_size;
@@ -7821,6 +7827,9 @@ fn grown_auto_height(
         shifted = true;
         float_shifted = true;
     } else {
+        // Contents and non-offset inline wrappers contribute their children to
+        // this box's layout, matching the layout-parent walk. A grid's items
+        // follow one another in the order of their rows.
         let ordered = pagination_child_order_borrowed(document, cascade, parent);
         // The children of `display: contents` boxes found so far, last first:
         // they come before the rest of `ordered`.
@@ -7917,17 +7926,29 @@ fn grown_auto_height(
                 let end = top + child_layout.size.height - relative_offset;
                 shift(child, end, flow_delta, &mut shifted)
             };
-            if let Some(((flow_ends, size_ends), _)) =
-                last.replace(((flow_ends, size_ends), child_layout.margin.bottom))
-            {
-                extend(&mut flow, flow_ends);
-                extend(&mut size, size_ends);
-            }
+            child_ends.push((child, [flow_ends, size_ends]));
         }
-        // Only the last child's bottom margin, which may be negative, ends the
-        // content; earlier margins collapse with the boxes after them.
-        if let Some(((flow_ends, size_ends), margin)) = last {
-            let margin = if contains_margins { margin } else { 0.0 };
+        // Only the margin box of the box that ends the flow ends the content
+        // (CSS 2 §10.6.3), with its bottom margin, which may be negative,
+        // below it; what the boxes before it reach overflows the box.
+        let end = child_ends.last().map(|&(last, last_ends)| {
+            end_box(last)
+                .and_then(|(end, margin)| {
+                    child_ends
+                        .iter()
+                        .rfind(|&&(child, _)| child == end)
+                        .map(|&(_, ends)| (ends, margin))
+                })
+                .unwrap_or_else(|| {
+                    let margin = if contains_margins {
+                        end_margin_through(document, cascade, last)
+                    } else {
+                        0.0
+                    };
+                    (last_ends, margin)
+                })
+        });
+        if let Some(([flow_ends, size_ends], margin)) = end {
             extend(&mut flow, (flow_ends.0 + margin, flow_ends.1 + margin));
             extend(&mut size, (size_ends.0 + margin, size_ends.1 + margin));
         }
@@ -9516,6 +9537,73 @@ fn min_height_edges_move(
     }
 }
 
+/// Whether `node_id` is an empty box of auto height whose margins collapse
+/// through it. Chromium leaves no break before such a box: it stays with the
+/// box before it rather than moving on with the edges that close its block,
+/// and a page edge truncates the margins that collapse through it.
+pub(super) fn empty_auto_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    let computed = &cascade.computed[node_id];
+    node.kind() == NodeKind::Element
+        && node.layout.size.height.abs() <= 0.001
+        && document.block_axis(node_id).height().is_auto()
+        // Clearance keeps the margins from collapsing through it, and a
+        // forced break before or after it keeps them whole.
+        && computed.clear == ClearValue::None
+        && !page_break_is_forced(document, node_id, computed.break_before)
+        && !page_break_is_forced(document, node_id, computed.break_after)
+        && collapses_through(document, cascade, node_id, 0.0)
+}
+
+/// The box whose margin box ends the flow of its parent when `last`, the
+/// last box in that flow, is followed by nothing, and the margin below it:
+/// the last box before the empty boxes of auto height that end the flow
+/// (see [`empty_auto_box`]), whose bottom margin collapses with all of
+/// theirs into one, or `last` itself with its own bottom margin collapsed
+/// with those inside it (see [`end_margin_through`]). `None` when no box
+/// that takes part in the flow comes before those empty boxes.
+fn flow_end_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    last: usize,
+) -> Option<(usize, f32)> {
+    if !empty_auto_box(document, cascade, last) {
+        return Some((last, end_margin_through(document, cascade, last)));
+    }
+    let parent = document.parent_of(last)?;
+    // Walked from the end, `last` and the boxes before it are reached past
+    // only the few that follow it outside the flow.
+    let (mut positive, mut negative) = (0.0_f32, 0.0_f32);
+    for &child in document.nodes[parent]
+        .children
+        .iter()
+        .rev()
+        .skip_while(|&&child| child != last)
+    {
+        if !takes_part_in_flow(document, cascade, child) {
+            continue;
+        }
+        let (child_positive, child_negative) = if empty_auto_box(document, cascade, child) {
+            empty_box_margin_extremes(document, cascade, child)
+        } else {
+            // A `display: contents` element has no margin box of its own.
+            let (child_positive, child_negative) =
+                adjoining_margin_extremes(document, cascade, child, false, None);
+            return (document.nodes[child].display() != DisplayValue::Contents).then_some((
+                child,
+                positive.max(child_positive) + negative.min(child_negative),
+            ));
+        };
+        positive = positive.max(child_positive);
+        negative = negative.min(child_negative);
+    }
+    None
+}
+
 /// [`closing_edges_of`] for a block that stacks its boxes in block flow and
 /// holds no lines. The body is such a block as well.
 fn block_flow_closing_edges(
@@ -9803,8 +9891,24 @@ fn content_bottom_edges(
         && (node.is_ifc_root() || moves_later_siblings(document, node_id))
         && (height_follows_content(document, node_id)
             || min_height_left_behind(document, node_id)
-            || content_ends_above_edges(document, cascade, body_id, node_id)))
+            || content_ends_above_edges(document, cascade, body_id, node_id)
+            || ends_with_empty_auto_box(document, cascade, node_id)))
     .then_some(edges)
+}
+
+/// Whether the flow of the block `node_id`, whose height nothing caps, ends
+/// with an empty box of auto height (see [`empty_auto_box`]). That box does
+/// not move on with the edges below it, so the page breaks between the two
+/// instead, even where the block's `min-height` ends at its content.
+fn ends_with_empty_auto_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    !document.nodes[node_id].is_ifc_root()
+        && !height_is_capped(document, node_id)
+        && last_flow_box(document, cascade, node_id)
+            .is_some_and(|last| empty_auto_box(document, cascade, last))
 }
 
 /// Whether the block `node_id` of auto `height` and `max-height` has grown
@@ -9846,6 +9950,17 @@ fn margin_above_edges(
     let Some(last) = last_flow_box(document, cascade, node_id) else {
         return (0.0, 0.0);
     };
+    // Empty boxes of auto height at the end leave the margins that collapse
+    // through them below the box before them, where a page edge truncates
+    // them as one (see `flow_end_box`).
+    let (last, end_margin) = if empty_auto_box(document, cascade, last) {
+        match flow_end_box(document, cascade, last) {
+            Some((end, margin)) => (end, Some(margin.max(0.0))),
+            None => return (0.0, 0.0),
+        }
+    } else {
+        (last, None)
+    };
     let content_end = layout.size.height - layout.padding.bottom - layout.border.bottom;
     // A box inside a `display: contents` child is laid out by `node_id`, so
     // the box is located from the origins of the two.
@@ -9854,12 +9969,12 @@ fn margin_above_edges(
         - layout_relative_offset_y(document, cascade, body_id, last);
     // The space below the last box holds no more than the largest margin
     // that collapses there.
-    let mut margin = 0.0_f32;
-    let mut current = Some(last);
+    let mut margin = end_margin.unwrap_or(0.0);
+    let mut current = end_margin.is_none().then_some(last);
     while let Some(id) = current {
         let child = &document.nodes[id];
-        // The margins of an empty box collapse through it, and Chromium keeps
-        // them whole below the box before it.
+        // The margins of an empty box that a set height makes empty collapse
+        // through it, and Chromium keeps them whole below the box before it.
         if child.layout.size.height <= 0.0 {
             return (0.0, 0.0);
         }
@@ -9872,10 +9987,16 @@ fn margin_above_edges(
         }
         current = last_flow_box(document, cascade, id);
     }
-    // Content below the margin, such as a float that sticks out past it,
-    // leaves no margin above the edges.
+    // Content below the margin, such as a float that the block holds, or a
+    // used height of its own, leaves no margin above the edges. Room that
+    // `min-height` leaves below it does: the margin reaches the edges once
+    // moved content outgrows that room, and a cut then takes no more than
+    // the block's height above its `min-height` (see
+    // `PaginationState::truncate_margin_above_edges`).
     let gap = (content_end - last_bottom).max(0.0);
-    if gap > margin + 0.001 {
+    let min_height_room = border_box_height_bounds(document, node_id).0 > 0.0
+        && border_box_height_bounds(document, node_id).0 >= layout.size.height - 0.001;
+    if gap > margin + 0.001 && (!min_height_room || holds_floats(document, cascade, node_id)) {
         return (0.0, 0.0);
     }
     let margin_above = gap.min(margin);
@@ -13341,6 +13462,17 @@ impl SubtreeShifts {
                 None,
             );
         }
+    }
+
+    /// How much of the shift of the flow inside the block `node_id` the
+    /// block holds: its height kept it from growing that far, so the flow
+    /// after it gives that much back once it leaves the block.
+    fn held_by(&self, node_id: usize) -> f32 {
+        self.bounded
+            .iter()
+            .filter(|&&(ancestor_id, _, _)| ancestor_id == node_id)
+            .map(|&(_, delta, _)| delta)
+            .sum()
     }
 
     /// End the shifts of the subtrees `node_id` is outside of, applying

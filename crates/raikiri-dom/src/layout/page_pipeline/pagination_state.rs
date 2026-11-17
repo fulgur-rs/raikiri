@@ -1382,11 +1382,20 @@ impl PaginationState {
             self.current_page = page;
         }
         self.subtree_shifts.take_left_later_item();
+        // The flow inside a block that its set height or `min-height` holds
+        // moved further than the end of its content box, which keeps its
+        // place: the part the block holds is left out. Leaving a paragraph
+        // from outside it gave that part back already.
+        let held = if outside == node_id {
+            self.subtree_shifts.held_by(node_id)
+        } else {
+            0.0
+        };
         let end = self.truncate_margin_above_edges(
             document,
             env,
             edges_break,
-            edges_break.raw_y + self.flow_shift,
+            edges_break.raw_y + self.flow_shift - held,
         )?;
         let page = page_origins.page_index_for_end(end);
         let page_end = page_origins.origin(page) + page_origins.step_at(page);
@@ -2089,11 +2098,14 @@ impl PaginationState {
             });
         overflow.page |= overflow.leading_piece_with_holder;
         let grid_row = candidate.context.first_grid_row();
+        // An empty box of auto height stays with the box before it.
+        let empty_auto = || super::empty_auto_box(document, cascade, node_id);
         let grid_content_break =
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
         }) || (closing_edges_move(candidate, &fit)
+            && !empty_auto()
             && super::capped_edges_follow(
                 document,
                 cascade,
@@ -2107,15 +2119,16 @@ impl PaginationState {
             || ((grid_content_break.is_none()
                 || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
                 && leading_edges_move(candidate, &fit))
-            || run_tail_move(candidate, &fit)
-            || super::min_height_edges_move(
+            || (run_tail_move(candidate, &fit)
+                || super::min_height_edges_move(
                 document,
                 cascade,
                 body_id,
                 env.root_flow_offset,
-                candidate,
-                &fit,
-            );
+                    candidate,
+                    &fit,
+                ))
+                && !empty_auto();
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
         let potential_forced_holder = (forced_before
