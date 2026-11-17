@@ -174,3 +174,39 @@ fn a_last_paragraph_after_moved_lines_moves_with_the_edges_its_margin_leaves() {
         assert!(tops.contains(&(z.0, 'Z', z.1)), "{body}: {tops:?}");
     }
 }
+
+#[test]
+fn a_margin_collapsing_through_the_last_box_pulls_the_edges_up() {
+    // The negative bottom margin of a paragraph inside the last box collapses
+    // through that box, which has no bottom padding or border: the edges come
+    // that much closer to the paragraph, with or without a `min-height`.
+    for (style, wrappers, margin, t) in [
+        ("", 1, -20, (1, 65)),
+        ("", 2, -20, (1, 65)),
+        ("", 1, -10, (2, 5)),
+        ("min-height:170px;", 1, -20, (1, 65)),
+        ("min-height:170px;", 1, -10, (2, 5)),
+    ] {
+        let body = format!(
+            "<div style='width:20px;{style}padding-bottom:15px'><div>X X X X</div>{}<div style='height:40px;margin-bottom:{margin}px'>T</div>{}</div><div>Z</div>",
+            "<div>".repeat(wrappers),
+            "</div>".repeat(wrappers)
+        );
+        let tops = glyph_tops(&body);
+        assert!(tops.contains(&(t.0, 'T', t.1)), "{body}: {tops:?}");
+    }
+}
+
+#[test]
+fn an_empty_last_box_leaves_the_edges_to_the_box_before_it() {
+    // The empty last box takes no block space, and no margin of it reaches
+    // past the paragraph before it: the edges go to the next page alone.
+    for min_height in [170, 190] {
+        let body = format!(
+            "<div style='width:20px;min-height:{min_height}px;padding-bottom:15px'><div>X X X X</div><div style='height:30px'>T</div><div></div></div><div>Z</div>"
+        );
+        let tops = glyph_tops(&body);
+        assert!(tops.contains(&(1, 'T', 65)), "{body}: {tops:?}");
+        assert!(tops.contains(&(2, 'Z', 20)), "{body}: {tops:?}");
+    }
+}

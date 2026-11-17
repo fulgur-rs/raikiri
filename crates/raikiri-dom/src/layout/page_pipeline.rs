@@ -9373,7 +9373,7 @@ fn capped_edges_follow(
             - accumulated_relative_offset_y(document, cascade, body_id, block)
             + root_flow_offset
             + document.nodes[block].layout.size.height;
-        let margin = document.nodes[candidate.node_id].layout.margin.bottom;
+        let margin = end_margin_through(document, cascade, candidate.node_id);
         fit.flow_y + candidate.height + margin < block_end - 0.001
     })
 }
@@ -9402,9 +9402,19 @@ fn min_height_edges_move(
         + layout.size.height
         - layout.padding.bottom
         - layout.border.bottom;
-    let margin = document.nodes[candidate.node_id].layout.margin.bottom;
-    fit.flow_y + candidate.height + margin >= content_end - 0.001
-        && tail_edges_move(edges + margin, 0.0, candidate, fit)
+    // The block grew to the margin box of the box as the box lays it out,
+    // with its own bottom margin. The edges follow the margin that ends its
+    // flow, which a margin of its last child collapsing through it may pull
+    // up further.
+    let own_margin = document.nodes[candidate.node_id].layout.margin.bottom;
+    fit.flow_y + candidate.height + own_margin >= content_end - 0.001 && {
+        let end_margin = if takes_no_block_space(document, candidate.node_id) {
+            0.0
+        } else {
+            end_margin_through(document, cascade, candidate.node_id)
+        };
+        tail_edges_move(edges + end_margin, 0.0, candidate, fit)
+    }
 }
 
 /// [`closing_edges_of`] for a block that stacks its boxes in block flow and
@@ -9519,12 +9529,26 @@ fn flow_content_overflow(
             }
             Some(child) => {
                 let child_layout = &document.nodes[child].layout;
-                child_layout.location.y + child_layout.size.height + child_layout.margin.bottom
+                child_layout.location.y
+                    + child_layout.size.height
+                    + end_margin_through(document, cascade, child)
                     - layout_relative_offset_y(document, cascade, body_id, child)
             }
         }
     };
     Some(flow_end - content_end)
+}
+
+/// The bottom margin that ends the margin box of the box `node_id` in the
+/// flow: its own, collapsed with the margins of the boxes inside it that
+/// adjoin its bottom (see [`adjoining_margin_extremes`]).
+fn end_margin_through(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    let (positive, negative) = adjoining_margin_extremes(document, cascade, node_id, false, None);
+    positive + negative
 }
 
 /// The last child of the block `node_id` that takes part in its flow: an

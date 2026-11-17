@@ -11,13 +11,13 @@ use super::{
     avoids_page_break_inside, block_after_last_line, box_forces_break_after, box_is_unbreakable,
     boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
     closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
-    first_named_item_start_page, first_owned_text_line_top, has_block_leading_content,
-    has_mandatory_break_inside, height_follows_content, holds_floats, in_inset_out_of_flow_subtree,
-    is_block_level_flow_box, is_floating_box_for_pagination, is_flow_table_caption,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
-    is_plain_table_box, leading_holder, leading_piece_end, lineless_leading_piece_end,
-    lone_box_with_floats, margin_above_edges, moves_later_siblings, nested_run_units,
-    normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
+    end_margin_through, first_named_item_start_page, first_owned_text_line_top,
+    has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
+    is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
+    is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
+    lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
+    nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box, page_break_is_forced,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
@@ -2009,14 +2009,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && is_plain_block_box(document, node_id)));
                 let margin_candidate = margin_shape && can_move_nested;
                 // The last box of a block whose `min-height` leaves room below
-                // it, which moved content may still fill. A paragraph whose
-                // lines keep together moves whole, as a box does.
+                // it, which moved content may still fill. A paragraph too
+                // short to break between its lines moves whole with the
+                // edges, as a box does.
                 let min_height_edges_candidate = frame.min_height_edges.filter(|_| {
                     in_flow_block
                         && can_move_nested
                         && break_before_available()
-                        && (!node.is_ifc_root()
-                            || paragraph_lines_keep_together(document, cascade, node_id))
                         && breaks_only_around(document, cascade, node_id, self.has_named_pages)
                 });
                 let is_break_candidate = !is_body
@@ -2324,7 +2323,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && !takes_no_block_space(document, last_box)
                             })
                             .map_or(0.0, |last_box| {
-                                document.nodes[last_box].layout.margin.bottom
+                                end_margin_through(document, cascade, last_box)
                             });
                         // Something else, such as a float that the block
                         // encloses, reaches below the last box: the edges
