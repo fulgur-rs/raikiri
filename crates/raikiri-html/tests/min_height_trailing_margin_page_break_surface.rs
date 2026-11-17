@@ -293,3 +293,34 @@ fn a_negative_margin_stops_escaping_when_truncation_shrinks_the_content() {
         );
     }
 }
+
+#[test]
+fn the_margins_after_the_box_reach_through_empty_boxes_and_contents_wrappers() {
+    // Empty boxes after the box let their margins through to the escaping
+    // one, and so does the top margin of a block inside a contents wrapper.
+    let head = "<div style='width:20px;min-height:170px'><div>X X X X</div>\
+                <div style='height:30px;margin-bottom:-40px'>T</div></div>";
+    for (after, z) in [
+        ("<div style='margin-bottom:-60px'></div><div>Z</div>", 35),
+        ("<div style='margin-bottom:-20px'></div><div>Z</div>", 55),
+        (
+            "<div></div><div style='margin-top:-60px'></div><div>Z</div>",
+            35,
+        ),
+        (
+            "<div style='display:contents'><div style='margin-top:-60px'>Z</div></div>",
+            35,
+        ),
+        (
+            "<div style='display:contents'><div style='margin-top:-10px'>Z</div></div>",
+            55,
+        ),
+    ] {
+        let body = format!("{head}{after}");
+        assert_eq!(
+            pages_and_tops(&body),
+            (2, vec![('T', 1, 65), ('Z', 1, z)]),
+            "{body}"
+        );
+    }
+}

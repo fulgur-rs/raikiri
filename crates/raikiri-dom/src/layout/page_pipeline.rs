@@ -8070,32 +8070,54 @@ fn escaped_end_margin_shift(
 }
 
 /// The extremes of the margins that collapse below the box `node`: its own
-/// bottom margin and the top margins that adjoin the top of the next box
-/// that takes part in the flow of its parent (see
-/// [`adjoining_margin_extremes`]).
+/// bottom margin and the margins that adjoin it from the boxes that follow
+/// it in the flow of its parent, `display: contents` ones looked into. Empty
+/// boxes there let all of their margins through to the next box, whose top
+/// margins adjoin too (see [`adjoining_margin_extremes`]).
 fn margin_after_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node: usize,
 ) -> (f32, f32) {
     let bottom = document.nodes[node].layout.margin.bottom;
-    let (positive, negative) = (bottom.max(0.0), bottom.min(0.0));
-    let next = document.parent_of(node).and_then(|parent| {
-        document.nodes[parent]
-            .children
-            .iter()
-            .skip_while(|&&child| child != node)
-            .skip(1)
-            .copied()
-            .find(|&child| takes_part_in_flow(document, cascade, child))
-    });
-    let Some(next) = next.filter(|&next| document.nodes[next].display() != DisplayValue::Contents)
-    else {
-        return (positive, negative);
-    };
-    let (next_positive, next_negative) =
-        adjoining_margin_extremes(document, cascade, next, true, None);
-    (positive.max(next_positive), negative.min(next_negative))
+    let (mut positive, mut negative) = (bottom.max(0.0), bottom.min(0.0));
+    let siblings = document
+        .parent_of(node)
+        .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
+    let mut boxes = Vec::new();
+    for &sibling in siblings
+        .iter()
+        .rev()
+        .take_while(|&&sibling| sibling != node)
+    {
+        push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
+    }
+    for next in boxes.into_iter().rev() {
+        // Text and inline-level boxes make a line, which no margin crosses.
+        if document.nodes[next].kind() != NodeKind::Element
+            || document.nodes[next].display().is_inline_level()
+        {
+            break;
+        }
+        let empty = cascade.computed[next].clear == ClearValue::None
+            && collapses_through(
+                document,
+                cascade,
+                next,
+                document.nodes[next].layout.size.height,
+            );
+        let (next_positive, next_negative) = if empty {
+            empty_box_margin_extremes(document, cascade, next)
+        } else {
+            adjoining_margin_extremes(document, cascade, next, true, None)
+        };
+        positive = positive.max(next_positive);
+        negative = negative.min(next_negative);
+        if !empty {
+            break;
+        }
+    }
+    (positive, negative)
 }
 
 /// The furthest left or right float end in `branch`, in `parent`'s flow
