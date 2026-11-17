@@ -8080,14 +8080,25 @@ fn escape_free_gap(
     previous: usize,
     gap: f32,
 ) -> f32 {
-    if document.nodes[previous].kind() != NodeKind::Element
+    let layout = &document.nodes[previous].layout;
+    if gap <= 0.0
+        || document.nodes[previous].kind() != NodeKind::Element
+        || layout.padding.bottom + layout.border.bottom > 0.0
         || border_box_height_bounds(document, previous).0 <= 0.0
     {
         return gap;
     }
-    let (positive, negative) = adjoining_margin_extremes(document, cascade, previous, false, None);
-    let (after_positive, after_negative) = margin_after_box(document, cascade, previous);
-    gap.min(positive.max(after_positive) + negative.min(after_negative))
+    // The margin still collapses through while the content reaches the
+    // bottom, as `escaped_end_margin_shift` measures it.
+    let reaches_bottom = |last: usize| {
+        document.pagination_local_y(last) + document.nodes[last].layout.size.height
+            >= layout.size.height - CONTENT_END_TOLERANCE
+    };
+    if last_flow_box(document, cascade, previous).is_none_or(reaches_bottom) {
+        return gap;
+    }
+    let (positive, negative) = margin_after_box(document, cascade, previous);
+    gap.min(positive + negative)
 }
 
 /// The extremes of the margins that collapse below the box `node`: its own
@@ -13381,8 +13392,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
-        let gap = escape_free_gap(document, cascade, previous, gap);
+        let (previous, gap) = self.gap_after_previous(document, cascade, node_id, at.raw_y)?;
         let float_break_page = self
             .break_taken_by_float
             .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
@@ -13504,7 +13514,7 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, _) = self.gap_after_previous(document, at.node_id, at.raw_y)?;
+        let (previous, _) = self.gap_after_previous(document, cascade, at.node_id, at.raw_y)?;
         let taken_by_float = self
             .break_taken_by_float
             .is_some_and(|(source, _)| is_descendant_or_self(document, source, previous));
@@ -13523,7 +13533,7 @@ impl SiblingMargins {
         node_id: usize,
         raw_y: f32,
     ) -> bool {
-        self.gap_after_previous(document, node_id, raw_y)
+        self.gap_after_previous(document, cascade, node_id, raw_y)
             .is_some_and(|(previous, _)| {
                 self.follows_forced_break(document, cascade, previous, node_id)
                     || self.break_taken_by_float.is_some_and(|(source, _)| {
@@ -13552,10 +13562,13 @@ impl SiblingMargins {
     /// the one recorded for the parent, or, when the box before `node_id` in
     /// the flow of its parent is a block that is not a candidate, that block:
     /// the page edge cuts the margin between the two also inside a block that
-    /// no break goes before.
+    /// no break goes before. A margin that the layout let through the bottom
+    /// of the previous block and that no longer is leaves the gap (see
+    /// [`escape_free_gap`]).
     fn gap_after_previous(
         &self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
         node_id: usize,
         raw_y: f32,
     ) -> Option<(usize, f32)> {
@@ -13568,7 +13581,12 @@ impl SiblingMargins {
             .get(&node_id)
             .copied()
             .or_else(recorded)
-            .map(|(previous, bottom)| (previous, raw_y - bottom))
+            .map(|(previous, bottom)| {
+                (
+                    previous,
+                    escape_free_gap(document, cascade, previous, raw_y - bottom),
+                )
+            })
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
     }
 
@@ -16139,7 +16157,10 @@ fn shrink_ancestors_after_margin_truncation(
 /// Bounds can absorb either change before the containing flow is reached.
 /// Returns each ancestor whose height kept the flow after it from following
 /// the content inside it, with the part of the content's move, negative,
-/// that the flow after that ancestor does not take.
+/// that the flow after that ancestor does not take. The part is positive
+/// where a positive bottom margin that stops collapsing through an ancestor
+/// takes the flow after it further up than the content moved (see
+/// [`escaped_end_margin_shift`]).
 #[allow(clippy::too_many_arguments)]
 fn shrink_ancestors_after_content_change(
     document: &mut super::context::LayoutSession<'_>,
