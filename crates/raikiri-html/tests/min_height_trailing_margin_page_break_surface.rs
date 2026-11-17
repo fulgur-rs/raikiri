@@ -392,3 +392,60 @@ fn the_room_of_a_min_height_left_by_shrunk_content_stays_before_the_next_block()
         );
     }
 }
+
+#[test]
+fn a_negative_margin_escaping_a_wrapper_keeps_the_parent_on_its_page() {
+    // The last box of the wrapper ends with a negative margin that collapses
+    // through the wrapper's end with its positive one. The parent's bottom
+    // padding or border then ends above the page edge, so no empty page
+    // follows for the rest of the parent's box.
+    let wrappers = [
+        "<div><div style='height:30px;margin-bottom:{last}px'>T</div></div>",
+        "<div style='height:30px'>T</div><div style='margin-bottom:{last}px'></div>",
+        "<div style='display:contents'><div style='height:30px;margin-bottom:{last}px'>T</div></div>",
+    ];
+    for edge in ["padding-bottom:15px", "border-bottom:15px solid"] {
+        for wrapper in wrappers {
+            for (own, last, z) in [(10, -50, 70), (10, -70, 50), (20, -70, 60), (-10, -50, 60)] {
+                let inner = wrapper.replace("{last}", &last.to_string());
+                let body = format!(
+                    "<div style='width:20px;{edge}'><div>X X X X</div>\
+                     <div style='margin-bottom:{own}px'>{inner}</div></div><div>Z</div>"
+                );
+                assert_eq!(
+                    pages_and_tops(&body),
+                    (2, vec![('T', 1, 65), ('Z', 1, z)]),
+                    "{body}"
+                );
+            }
+        }
+    }
+    // A relative offset moves the box without moving its margin.
+    let body = "<div style='width:20px;padding-bottom:15px'><div>X X X X</div>\
+                <div style='margin-bottom:10px'><div style='position:relative;top:5px;height:35px;margin-bottom:-50px'>T</div></div></div><div>Z</div>";
+    assert_eq!(
+        pages_and_tops(body),
+        (2, vec![('T', 1, 70), ('Z', 1, 75)]),
+        "{body}"
+    );
+    // A flex or grid item keeps its margins, and those inside it, apart.
+    for display in ["flex;flex-direction:column", "grid"] {
+        let body = format!(
+            "<div style='width:20px;display:{display};padding-bottom:15px'><div>X X X X</div>\
+             <div style='margin-bottom:10px'><div style='height:35px;margin-bottom:-50px'>T</div></div></div><div>Z</div>"
+        );
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65), ('Z', 2, 5)]),
+            "{body}"
+        );
+    }
+    // The same with a 20px box right inside the wrapper.
+    let body = "<div style='width:20px;padding-bottom:15px'><div>X X X X</div>\
+                <div style='margin-bottom:10px'><div style='height:20px;margin-bottom:-50px'>T</div></div></div><div>Z</div>";
+    assert_eq!(
+        pages_and_tops(body),
+        (2, vec![('T', 1, 65), ('Z', 1, 60)]),
+        "{body}"
+    );
+}
