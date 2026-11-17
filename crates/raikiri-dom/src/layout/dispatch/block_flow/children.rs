@@ -16,7 +16,8 @@ use raikiri_layout_style::values::{
     AlignContent, AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, BoxGenerationMode,
     Clear, Direction, ExpandedDimension, Float, MaybeResolve, Overflow, Position,
 };
-use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
+use raikiri_style::ComputedTextIndent;
+use raikiri_style::property::{DisplayValue, TextAlign};
 
 pub(super) struct Flow {
     pub end: f32,
@@ -310,42 +311,38 @@ pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> b
         && !REPLACED_BOX_TAGS.contains(&tag)
 }
 
-pub(crate) fn static_inline_share(
-    text_align: TextAlign,
-    text_align_last: TextAlignLast,
-    direction: Direction,
-) -> f32 {
+/// Where the static position of an inline-level absolutely positioned box
+/// lies on a hypothetical line that holds nothing else: the share of the free
+/// room before it, from the left edge (0) to the right edge (1).
+///
+/// Like Chromium, such a line is aligned by `text-align` alone: it is not
+/// taken for a last line, so `text-align-last` does not apply, and with no
+/// content to justify `justify` and `justify-all` keep the start edge.
+pub(crate) fn static_inline_share(text_align: TextAlign, direction: Direction) -> f32 {
     let start = if direction == Direction::Rtl {
         1.0
     } else {
         0.0
     };
-    let end = 1.0 - start;
-    match text_align_last {
-        TextAlignLast::Start => start,
-        TextAlignLast::End => end,
-        TextAlignLast::Left => 0.0,
-        TextAlignLast::Right => 1.0,
-        TextAlignLast::Center | TextAlignLast::Justify => 0.5,
-        TextAlignLast::Auto | TextAlignLast::MatchParent => {
-            match text_align {
-                TextAlign::Start => start,
-                TextAlign::End => end,
-                TextAlign::Left => 0.0,
-                TextAlign::Right => 1.0,
-                TextAlign::Center | TextAlign::InternalCenter => 0.5,
-                // `justify-all` also justifies the last line. A hypothetical
-                // line without expandable content uses the specified center
-                // fallback for justification.
-                TextAlign::JustifyAll => 0.5,
-                // A lone hypothetical line has no text to justify, so it
-                // falls back to the line's logical start edge when only the
-                // ordinary `justify` value applies.
-                TextAlign::Justify | TextAlign::MatchParent | TextAlign::Inherit => start,
-                _ => start, // cov:ignore: non-exhaustive TextAlign may add future variants
-            }
-        }
-        _ => start, // cov:ignore: non-exhaustive TextAlignLast may add future variants
+    match text_align {
+        TextAlign::Left => 0.0,
+        TextAlign::Right => 1.0,
+        TextAlign::Center | TextAlign::InternalCenter => 0.5,
+        TextAlign::End => 1.0 - start,
+        _ => start,
+    }
+}
+
+/// How far `text-indent` moves the static position of an inline-level
+/// absolutely positioned box on a hypothetical line that holds nothing else,
+/// towards the line's end. Chromium moves the aligned point by the indent
+/// on every such line, whether or not it is the first formatted line; a
+/// `hanging` indent, which skips that line, does not move it.
+pub(crate) fn static_line_indent(indent: ComputedTextIndent, hanging: bool, width: f32) -> f32 {
+    if hanging {
+        0.0
+    } else {
+        crate::layout::ifc::flow::resolve_indent(indent, width)
     }
 }
 
@@ -354,7 +351,8 @@ struct StaticLine<'context, 'owner> {
     context: &'context BlockContext<'owner>,
     direction: Direction,
     text_align: TextAlign,
-    text_align_last: TextAlignLast,
+    /// See [`static_line_indent`].
+    indent: f32,
 }
 
 /// The static position of an inline-level absolutely positioned box that
@@ -367,17 +365,17 @@ struct StaticLine<'context, 'owner> {
 /// in the first layout opportunity at the current block offset.
 fn inline_static_position(line: StaticLine<'_, '_>) -> Point<AxisStaticPosition> {
     let slot = line.context.find_content_slot(line.from, Clear::None, None);
-    let share = static_inline_share(line.text_align, line.text_align_last, line.direction);
+    let share = static_inline_share(line.text_align, line.direction);
     // A float wider than the line leaves an opportunity with negative
     // width; the point then stays at the line's start edge.
     let room = slot.width.max(0.0);
     let (anchor, edge) = if line.direction == Direction::Rtl {
         (
-            slot.x + slot.width - room * (1.0 - share),
+            slot.x + slot.width - room * (1.0 - share) - line.indent,
             AxisStaticEdge::End,
         )
     } else {
-        (slot.x + room * share, AxisStaticEdge::Start)
+        (slot.x + room * share + line.indent, AxisStaticEdge::Start)
     };
     Point {
         x: AxisStaticPosition::from_edge(anchor, edge),
@@ -550,19 +548,17 @@ pub(super) fn layout(
                 let node_inline = tree.nodes[child_index].display().is_inline_level();
                 let resolve_inline = node_inline && supports_inline_static_position(tree, node);
                 let static_position = if resolve_inline {
-                    let (text_align, text_align_last) = {
-                        let parent_node = &tree.nodes[usize::from(node)];
-                        (
-                            parent_node.static_position_text_align,
-                            parent_node.static_position_text_align_last,
-                        )
-                    };
+                    let parent_node = &tree.nodes[usize::from(node)];
                     inline_static_position(StaticLine {
                         from: static_y,
                         context: ctx,
                         direction: container.direction,
-                        text_align,
-                        text_align_last,
+                        text_align: parent_node.static_position_text_align,
+                        indent: static_line_indent(
+                            parent_node.static_position_text_indent,
+                            parent_node.static_position_text_indent_hanging,
+                            content_width,
+                        ),
                     })
                 } else {
                     let inline_area = Line {

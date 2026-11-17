@@ -234,6 +234,10 @@ pub(crate) struct IfcLines {
     /// The forced page breaks the generated blocks ask for, in the order their
     /// end tokens were met. A fragmenting layout records none.
     pub(crate) forced_breaks: Vec<super::generated_blocks::ForcedBreak>,
+    /// The floats beside the lines of a horizontal paragraph laid out in one
+    /// piece, when there are any: the room of a line that holds nothing but
+    /// out-of-flow boxes, which is not among the lines, is asked of them.
+    pub(crate) line_floats: Option<std::sync::Arc<super::flow::LineFloats>>,
 }
 
 /// Placement of an IFC-owned box accepted in one fragmentainer.

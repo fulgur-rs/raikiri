@@ -239,11 +239,12 @@ fn apply_computed_to_style_in_session_inner(
         // Taffy does not carry CSS `order` in Style. Retain the computed value
         // on Node so flex/grid child traversal can build order-modified order.
         doc.nodes[idx].order = cv.order;
-        // Block-flow static positions use CSS text alignment, including the
-        // last-line override, which is more expressive than Taffy's legacy
-        // `text_align` field.
+        // Block-flow static positions use CSS text alignment, which is more
+        // expressive than Taffy's legacy `text_align` field, and the indent
+        // of the hypothetical line.
         doc.nodes[idx].static_position_text_align = cv.text_align;
-        doc.nodes[idx].static_position_text_align_last = cv.text_align_last;
+        doc.nodes[idx].static_position_text_indent = cv.text_indent;
+        doc.nodes[idx].static_position_text_indent_hanging = cv.text_indent_hanging;
         // Carry multicol settings into the Taffy dispatch seam. Taffy has no
         // native multicol style fields, so the custom strategy reads this
         // side-channel while the ordinary Style remains Taffy-compatible.

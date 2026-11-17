@@ -10,7 +10,7 @@ pub(crate) mod style_input;
 
 pub(crate) use children::{
     justified_offset, justified_offset_along, justify_fits_content, justify_stretches_child,
-    static_inline_share,
+    static_inline_share, static_line_indent,
 };
 pub(crate) use positioned::aligned_static_position;
 

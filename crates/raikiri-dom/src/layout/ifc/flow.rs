@@ -5,7 +5,7 @@ use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
 use crate::layout::context::LayoutSession;
-use crate::layout::dispatch::block_flow::context::BlockContext;
+use crate::layout::dispatch::block_flow::context::{BlockContext, FloatView};
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_layout_geometry::{Edges, Line};
 use raikiri_layout_style::values::Clear;
@@ -204,6 +204,67 @@ pub(crate) fn line_space(
     }
 }
 
+/// The floats beside a paragraph, kept once its lines are laid out to ask
+/// for the room of a line that holds nothing but out-of-flow boxes (see
+/// [`line_space`]). Such a line comes before the floats that follow it in the
+/// paragraph, so the floats each float of the paragraph found are kept too.
+pub(crate) struct LineFloats {
+    /// Each float of the paragraph, in the order it was placed, with the
+    /// floats placed before it (`None` when there were none).
+    before: Vec<(usize, Option<FloatView>)>,
+    /// All the floats once the lines are laid out.
+    after: Option<FloatView>,
+    /// The insets of the content box from the context's border-box origin,
+    /// along the inline and the block axis.
+    content_insets: (f32, f32),
+    content_width: f32,
+}
+
+impl LineFloats {
+    /// The floats `ctx` holds and the floats each float of the paragraph
+    /// found, `before`, beside a content box `content_width` wide.
+    pub(crate) fn new(
+        ctx: &BlockContext<'_>,
+        before: Vec<(usize, Option<FloatView>)>,
+        content_insets: (f32, f32),
+        content_width: f32,
+    ) -> Self {
+        Self {
+            before,
+            after: ctx.float_view(),
+            content_insets,
+            content_width,
+        }
+    }
+
+    /// The space of an empty line at block offset `y` from the content box,
+    /// beside the floats placed before the float `next` of the paragraph, or
+    /// beside all of them when `next` is `None` or not among them.
+    pub(crate) fn space_at(&self, y: f32, next: Option<usize>) -> LineSpace {
+        let view = next
+            .and_then(|next| self.before.iter().find(|&&(node, _)| node == next))
+            .map_or(self.after.as_ref(), |(_, view)| view.as_ref());
+        view.map_or(
+            LineSpace {
+                inline_start: 0.0,
+                inline_size: self.content_width,
+            },
+            |view| {
+                view.query(|ctx| {
+                    line_space(
+                        ctx,
+                        self.content_insets.0,
+                        self.content_insets.1,
+                        self.content_width,
+                        y,
+                        0.0,
+                    )
+                })
+            },
+        )
+    }
+}
+
 pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) -> IfcLines {
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -342,6 +403,7 @@ pub(crate) fn place_lines(
         unfragmented_tail_column: None,
         placed_blocks: Vec::new(),
         forced_breaks: Vec::new(),
+        line_floats: None,
     }
 }
 

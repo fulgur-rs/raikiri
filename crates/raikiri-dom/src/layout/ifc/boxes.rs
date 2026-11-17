@@ -12,7 +12,7 @@ use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::block_flow;
 use crate::layout::dispatch::block_flow::context::{
-    BlockContext, BlockFormattingContext, BoxProbe,
+    BlockContext, BlockFormattingContext, BoxProbe, FloatView,
 };
 use crate::layout::dispatch::{
     fit_content_room, measure_against_parent_height, pads_by_percentage_on_physical_axes,
@@ -116,6 +116,9 @@ struct FragmentedFloatOutput<'a> {
     placements: &'a mut Vec<IfcBoxFragment>,
     earliest_float_top: &'a mut f32,
     oof_candidates: &'a mut OofCandidates,
+    /// The floats each float of the paragraph found placed before it, when
+    /// they are kept (see [`super::flow::LineFloats`]).
+    float_views: &'a mut Option<Vec<(usize, Option<FloatView>)>>,
 }
 
 /// Resolve what the root's percentages refer to before its lines are laid
@@ -195,6 +198,7 @@ pub(crate) fn layout_with_boxes_in(
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
             forced_breaks: Vec::new(),
+            line_floats: None,
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -409,6 +413,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
             forced_breaks: Vec::new(),
+            line_floats: None,
         };
     };
 
@@ -592,6 +597,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         unfragmented_tail_column,
         placed_blocks: Vec::new(),
         forced_breaks: Vec::new(),
+        line_floats: None,
     };
     if perform {
         let mut atomic_candidates =
@@ -858,6 +864,14 @@ fn run_boxes_segment(
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
+    // The floats before each float of the paragraph, kept for the lines that
+    // its inline-level out-of-flow boxes may sit on alone.
+    let mut float_views = (root.writing_mode == WritingMode::HorizontalTb
+        && fragmentainer.is_none()
+        && root.boxes.iter().any(|b| {
+            b.kind == IfcBoxKind::OutOfFlow && tree.nodes[b.node].display().is_inline_level()
+        }))
+    .then(Vec::new);
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
@@ -1012,6 +1026,7 @@ fn run_boxes_segment(
                                 placements: &mut fragment_box_placements,
                                 earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
+                                float_views: &mut float_views,
                             },
                         ));
                     }
@@ -1232,6 +1247,7 @@ fn run_boxes_segment(
                                 placements: &mut fragment_box_placements,
                                 earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
+                                float_views: &mut float_views,
                             },
                         ));
                     }
@@ -1269,6 +1285,7 @@ fn run_boxes_segment(
                             placements: &mut fragment_box_placements,
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
+                            float_views: &mut float_views,
                         },
                     ));
                 }
@@ -1318,6 +1335,7 @@ fn run_boxes_segment(
                             placements: &mut fragment_box_placements,
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
+                            float_views: &mut float_views,
                         },
                     ));
                 }
@@ -1341,6 +1359,7 @@ fn run_boxes_segment(
                             placements: &mut fragment_box_placements,
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
+                            float_views: &mut float_views,
                         },
                     ));
                 }
@@ -1547,6 +1566,7 @@ fn run_boxes_segment(
                     placements: &mut fragment_box_placements,
                     earliest_float_top: &mut earliest_float_top,
                     oof_candidates: &mut oof_candidates,
+                    float_views: &mut float_views,
                 },
             );
         }
@@ -1613,6 +1633,14 @@ fn run_boxes_segment(
             unfragmented_tail_column: None,
             placed_blocks,
             forced_breaks,
+            line_floats: float_views.map(|views| {
+                std::sync::Arc::new(super::flow::LineFloats::new(
+                    ctx,
+                    views,
+                    (inline_insets.0, top_edge),
+                    width,
+                ))
+            }),
         },
         continuation,
         atomic_outputs: atomics.outputs,
@@ -1636,8 +1664,12 @@ fn commit_fragmented_float(
         placements,
         earliest_float_top,
         oof_candidates,
+        float_views,
     } = output;
     let node = float.node;
+    if let Some(views) = float_views {
+        views.push((node, ctx.float_view()));
+    }
     let (top, mut child_candidates) =
         commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
     *earliest_float_top = earliest_float_top.min(top);
@@ -5151,6 +5183,190 @@ fn vertical_static_position(
     Point { x, y }
 }
 
+/// Whether the out-of-flow box `node` of the paragraph rooted at `idx` sits
+/// in an inline box of the paragraph (an inline element or a ruby box).
+fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -> bool {
+    tree.ancestors(node)
+        .take_while(|&id| id != idx && id != owner)
+        .any(|id| tree.nodes[id].display().is_inline_level())
+}
+
+/// Where the boxes of a paragraph stand around one of its out-of-flow boxes.
+#[derive(Clone, Copy, Default)]
+struct BoxSurroundings {
+    /// A block-level box comes before it.
+    block_before: bool,
+    /// The first float after it.
+    next_float: Option<usize>,
+}
+
+/// The lines, missing from the lines of a horizontal paragraph, that its
+/// inline-level out-of-flow boxes without an anchor sit on.
+struct HypotheticalLines<'a> {
+    lines: &'a IfcLines,
+    options: LineOptions,
+    indent: raikiri_style::ComputedTextIndent,
+    rtl: bool,
+    /// The block-end edges of the lines that end with a forced break, in
+    /// line order.
+    break_ends: Vec<f32>,
+    surroundings: HashMap<usize, BoxSurroundings>,
+}
+
+impl<'a> HypotheticalLines<'a> {
+    fn new(lines: &'a IfcLines, root: &IfcRoot) -> Self {
+        let break_ends = lines
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.forced_break().is_some())
+            .map(|(index, line)| lines.line_top(index) + line.block_size())
+            .collect();
+        let mut surroundings = HashMap::new();
+        let mut next_float = None;
+        for b in root.boxes.iter().rev() {
+            match b.kind {
+                IfcBoxKind::Float => next_float = Some(b.node),
+                IfcBoxKind::OutOfFlow => {
+                    surroundings.insert(
+                        b.node,
+                        BoxSurroundings {
+                            block_before: false,
+                            next_float,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        let mut block_before = false;
+        for b in &root.boxes {
+            match b.kind {
+                IfcBoxKind::Block => block_before = true,
+                IfcBoxKind::OutOfFlow => {
+                    if let Some(around) = surroundings.get_mut(&b.node) {
+                        around.block_before = block_before;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self {
+            lines,
+            options: root.options,
+            indent: root.indent,
+            rtl: root.rtl,
+            break_ends,
+            surroundings,
+        }
+    }
+
+    /// Where the static position of the box `node` lies along its line,
+    /// `block_offset` from the content box's block-start edge: from the
+    /// content box's left edge, with the edge of the box that goes there.
+    ///
+    /// Chromium lays out two kinds of such a line. When the box follows a
+    /// forced line break, or sits in an inline box, the line holds something
+    /// and is a line like the others: it is narrowed by the indent of a first
+    /// line (CSS Text 3, 8.1) and aligned as the last line before the block or
+    /// the end that follows it (6.3). Otherwise the line holds nothing at all:
+    /// it is aligned by `text-align` alone (see
+    /// [`block_flow::static_inline_share`]) and the indent moves its aligned
+    /// point (see [`block_flow::static_line_indent`]). Either line is set in
+    /// by the floats placed before the box.
+    fn anchor(&self, node: usize, in_inline_box: bool, block_offset: f32) -> (f32, AxisStaticEdge) {
+        let lines = self.lines;
+        let around = self.surroundings.get(&node).copied().unwrap_or_default();
+        // The floats are where the lines were laid out, before `align-content`
+        // moved them.
+        let unaligned = block_offset - lines.shifts.aligned();
+        let space = lines.line_floats.as_ref().map_or(
+            LineSpace {
+                inline_start: 0.0,
+                inline_size: lines.width,
+            },
+            |floats| floats.space_at(unaligned, around.next_float),
+        );
+        let after_break = {
+            let at = self
+                .break_ends
+                .partition_point(|&end| end < block_offset - OFFSET_EPSILON);
+            self.break_ends
+                .get(at)
+                .is_some_and(|&end| (end - block_offset).abs() < OFFSET_EPSILON)
+        };
+        let text_indent = self.options.text_indent;
+        let (start, end, share, shift) = if in_inline_box || after_break {
+            let first = !around.block_before && unaligned.abs() < OFFSET_EPSILON;
+            let indented = (first || (text_indent.each_line && after_break)) != text_indent.hanging;
+            let indent = if indented {
+                resolve_indent(self.indent, lines.width)
+            } else {
+                0.0
+            };
+            let (start, end) = if self.rtl {
+                (
+                    space.inline_start,
+                    space.inline_start + space.inline_size - indent,
+                )
+            } else {
+                (
+                    space.inline_start + indent,
+                    space.inline_start + space.inline_size,
+                )
+            };
+            (start, end, self.share(true), 0.0)
+        } else {
+            let shift =
+                block_flow::static_line_indent(self.indent, text_indent.hanging, lines.width);
+            (
+                space.inline_start,
+                space.inline_start + space.inline_size,
+                self.share(false),
+                if self.rtl { -shift } else { shift },
+            )
+        };
+        // A float wider than the line leaves no room; the point then stays
+        // at the line's start edge.
+        let room = (end - start).max(0.0);
+        if self.rtl {
+            (end - room * (1.0 - share) + shift, AxisStaticEdge::End)
+        } else {
+            (start + room * share + shift, AxisStaticEdge::Start)
+        }
+    }
+
+    /// The share of the line's free room before the box, from the left edge
+    /// (0) to the right edge (1): `text-align-last` aligns a `last` line.
+    /// With nothing to justify on the line, `justify` keeps the start edge.
+    fn share(&self, last: bool) -> f32 {
+        use shodo::style::{TextAlign, TextAlignLast};
+        let start = if self.rtl { 1.0 } else { 0.0 };
+        let last_share = match self.options.text_align_last {
+            _ if !last => None,
+            TextAlignLast::Auto => None,
+            TextAlignLast::Start | TextAlignLast::Justify => Some(start),
+            TextAlignLast::End => Some(1.0 - start),
+            TextAlignLast::Left => Some(0.0),
+            TextAlignLast::Right => Some(1.0),
+            TextAlignLast::Center => Some(0.5),
+        };
+        last_share.unwrap_or(match self.options.text_align {
+            TextAlign::Left => 0.0,
+            TextAlign::Right => 1.0,
+            TextAlign::Center => 0.5,
+            TextAlign::End => 1.0 - start,
+            TextAlign::Start
+            | TextAlign::Justify
+            | TextAlign::JustifyAll
+            | TextAlign::MatchParent => start,
+        })
+    }
+}
+
+/// How far apart two block offsets may be and still be taken for the same.
+const OFFSET_EPSILON: f32 = 0.01;
+
 /// The start of a box of `size` along an axis whose static position is `axis`,
 /// with its margins inside the position.
 fn start_of(axis: AxisStaticPosition, size: f32, margin_start: f32, margin_end: f32) -> f32 {
@@ -5257,6 +5473,9 @@ pub(crate) fn place_out_of_flow(
     // The root's own style, for the boxes that take a static position.
     let mut container_style = None;
     let mut candidates = OofCandidates::new();
+    // The lines that inline-level boxes without an anchor sit on, made when a
+    // box needs them.
+    let mut hypothetical: Option<HypotheticalLines<'_>> = None;
     for node in positioned {
         let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
@@ -5366,8 +5585,21 @@ pub(crate) fn place_out_of_flow(
                         AxisStaticEdge::Start
                     },
                 ),
-                // Without an anchor the box starts at the inline-start edge
-                // of the content box: the right one in a right-to-left root.
+                // A box that was inline-level but has no anchor sits on a line
+                // of its own, which the lines do not hold.
+                None if inline_level => {
+                    let in_inline_box = has_inline_ancestor(tree, idx, owner, node);
+                    let line = hypothetical.get_or_insert_with(|| {
+                        HypotheticalLines::new(
+                            &lines,
+                            tree.nodes[idx].ifc.as_ref().expect("the paragraph's root"),
+                        )
+                    });
+                    let (at, edge) = line.anchor(node, in_inline_box, block_offset);
+                    AxisStaticPosition::from_edge(content_left + at, edge)
+                }
+                // Any other box starts at the inline-start edge of the content
+                // box: the right one in a right-to-left root.
                 None if rtl => {
                     AxisStaticPosition::from_edge(content_left + lines.width, AxisStaticEdge::End)
                 }
