@@ -14558,7 +14558,14 @@ fn move_box_for_transition(
         owner.direct_body
     });
     let nested_block = !direct_body && moves_in_flow_down;
-    if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
+    if page_overflow && nested_block && moves_reach_cell_row(document, holder) {
+        // A box moved out of a page in a table cell takes the content after
+        // it along, and its row grows to hold it, as for a forced break
+        // there; the cells beside it stay.
+        moved_in_bounded_ancestor = shift_block_flow_after(
+            document, cascade, holder, body_id, node_delta, shifts, flow_page,
+        );
+    } else if (page_overflow || (forced_transition && direct_body)) && moves_in_flow_down {
         moved_in_bounded_ancestor = grow_ancestors_for_shift(
             document,
             cascade,
@@ -17103,7 +17110,9 @@ fn collapses_with_previous_block(
 
 /// Moves the boxes after `node_id` in block flow down by `flow_delta`, up to
 /// the first ancestor below `body_id` that does not stack its children in
-/// block order, for a forced break before `node_id`. Returns whether an
+/// block order, for a forced break before `node_id` or for `node_id` moved
+/// out of a page in a table cell (see [`moves_reach_cell_row`]). Returns
+/// whether an
 /// ancestor's height kept it from holding the moved content.
 ///
 /// A `display: contents` ancestor has no box; its parent lays the moved box
@@ -17275,6 +17284,45 @@ fn shift_rows_after(
             shift_block_sibling(document, later, delta);
         }
         up = parent;
+    }
+}
+
+/// Whether a box moved down from `node_id` reaches the row of a table cell
+/// along the walk of [`shift_block_flow_after`]: every box between them
+/// stacks its children in block flow, and the cell itself holds neither
+/// columns nor lines, so its row can grow to hold the moved content.
+fn moves_reach_cell_row(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    first_parent_off_block_flow(document, node_id).is_some_and(|(child, parent)| {
+        document.anonymous_cell_of(child).is_some()
+            || document.nodes[parent].display() == DisplayValue::TableCell
+                && document.nodes[parent].multicol.is_none()
+                && document
+                    .ifc_layout_node(parent)
+                    .is_none_or(|node| node.ifc.is_none())
+    })
+}
+
+/// The first ancestor of `node_id` that does not take a moved box's flow on
+/// in block order, with its child on the way there: the parent where the
+/// walk of [`shift_block_flow_after`] stops.
+fn first_parent_off_block_flow(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> Option<(usize, usize)> {
+    let mut child = node_id;
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    loop {
+        let parent = walk.current()?;
+        walk.advance(document);
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        if ifc_paragraph_of_block(document, child) != Some(parent)
+            && !stacks_children_in_block_flow(document, parent)
+        {
+            return Some((child, parent));
+        }
+        child = parent;
     }
 }
 
