@@ -5301,7 +5301,8 @@ fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -
 /// Where the boxes of a paragraph stand around one of its out-of-flow boxes.
 #[derive(Clone, Copy, Default)]
 struct BoxSurroundings {
-    /// A block-level box comes before it.
+    /// A block-level box, or the root's block-level `::before`, comes before
+    /// it.
     block_before: bool,
     /// The forward pass reached it, so a later listing of the same node
     /// keeps what surrounds the first.
@@ -5342,8 +5343,12 @@ impl<'a> HypotheticalLines<'a> {
             }
         }
         // A node listed twice keeps what surrounds its first box, as the
-        // reverse pass did.
-        let mut block_before = false;
+        // reverse pass did. The root's block-level `::before` comes before
+        // every box.
+        let mut block_before = root
+            .generated_blocks
+            .iter()
+            .any(|block| block.of_root == Some(raikiri_style::PseudoElem::Before));
         for b in &root.boxes {
             match b.kind {
                 IfcBoxKind::Block => block_before = true,
@@ -5412,7 +5417,7 @@ impl<'a> HypotheticalLines<'a> {
         });
         let text_indent = self.options.text_indent;
         let (start, end, share, shift) = if in_inline_box || after_break {
-            let first = !around.block_before && unaligned.abs() < OFFSET_EPSILON;
+            let first = !around.block_before && preceding.is_none();
             let indented = (first || (text_indent.each_line && after_break)) != text_indent.hanging;
             let indent = if indented {
                 resolve_indent(self.indent, lines.width)
@@ -5478,9 +5483,6 @@ impl<'a> HypotheticalLines<'a> {
         })
     }
 }
-
-/// How far apart two block offsets may be and still be taken for the same.
-const OFFSET_EPSILON: f32 = 0.01;
 
 /// The start of a box of `size` along an axis whose static position is `axis`,
 /// with its margins inside the position.

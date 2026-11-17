@@ -324,6 +324,36 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<style>.b::before{display:block;content:"Z"}</style><div style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p>Y<br><span id=q style="position:absolute">Q</span><span class=b></span>W<br></div>"#,
         [100.0, 20.0, 10.0, 10.0],
     ),
+    (
+        "a line after an empty forced-break line is not the first line",
+        r#"<div style="text-align:left;text-indent:15px;line-height:0;width:100px">X<br><span id=q style="position:absolute;line-height:10px">Q</span><div></div></div>"#,
+        [0.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "a line after an empty forced-break line is not the first line in rtl",
+        r#"<div style="direction:rtl;text-align:right;text-indent:15px;line-height:0;width:100px">X<br><span id=q style="position:absolute;line-height:10px">Q</span><div></div></div>"#,
+        [75.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "an inline box that starts the paragraph is on the first line",
+        r#"<div style="text-align:left;text-indent:15px;line-height:0;width:100px"><span><span id=q style="position:absolute;line-height:10px">Q</span></span><div></div>X</div>"#,
+        [15.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "an inline box after a block-level ::before is not on the first line",
+        r#"<style>#c::before{display:block;content:"";height:20px}</style><div id=c style="text-align:left;text-indent:15px;width:100px"><span><span id=q style="position:absolute">Q</span></span><div></div>X</div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "an inline box after an empty block-level ::before is not on the first line",
+        r#"<style>#c::before{display:block;content:""}</style><div id=c style="text-indent:15px;width:100px"><span><span id=q style="position:absolute">Q</span></span><div></div>X</div>"#,
+        [0.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "an empty line after an empty block-level ::before keeps the indent shift",
+        r#"<style>#c::before{display:block;content:""}</style><div id=c style="text-indent:15px;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><div></div>X</div>"#,
+        [15.0, 0.0, 25.0, 10.0],
+    ),
 ];
 
 #[test]
