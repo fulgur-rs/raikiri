@@ -5254,8 +5254,9 @@ fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -
 /// Where the boxes of a paragraph stand around one of its out-of-flow boxes.
 #[derive(Clone, Copy, Default)]
 struct BoxSurroundings {
-    /// A block-level box comes before it.
-    block_before: bool,
+    /// The number of lines laid out before the last block-level box that
+    /// comes before it, when one does.
+    block_before: Option<usize>,
     /// The first float or block-level box after it (see
     /// [`FloatSnapshots`]).
     boundary: Option<usize>,
@@ -5268,9 +5269,9 @@ struct HypotheticalLines<'a> {
     options: LineOptions,
     indent: raikiri_style::ComputedTextIndent,
     rtl: bool,
-    /// The block-end edges of the lines that end with a forced break, in
-    /// line order.
-    break_ends: Vec<f32>,
+    /// The block-end edges of the lines that end with a forced break, with
+    /// their indices, in line order.
+    break_ends: Vec<(f32, usize)>,
     surroundings: HashMap<usize, BoxSurroundings>,
 }
 
@@ -5281,7 +5282,7 @@ impl<'a> HypotheticalLines<'a> {
             .iter()
             .enumerate()
             .filter(|(_, line)| line.forced_break().is_some())
-            .map(|(index, line)| lines.line_top(index) + line.block_size())
+            .map(|(index, line)| (lines.line_top(index) + line.block_size(), index))
             .collect();
         let mut surroundings = HashMap::new();
         let mut boundary = None;
@@ -5292,7 +5293,7 @@ impl<'a> HypotheticalLines<'a> {
                     surroundings.insert(
                         b.node,
                         BoxSurroundings {
-                            block_before: false,
+                            block_before: None,
                             boundary,
                         },
                     );
@@ -5300,10 +5301,19 @@ impl<'a> HypotheticalLines<'a> {
                 _ => {}
             }
         }
-        let mut block_before = false;
+        // The first line start of each block, as the other readers of
+        // `block_line_starts` take it. A block without one is taken to
+        // come before every line.
+        let mut starts = HashMap::new();
+        for &(node, first) in &lines.block_line_starts {
+            starts.entry(node).or_insert(first);
+        }
+        let mut block_before = None;
         for b in &root.boxes {
             match b.kind {
-                IfcBoxKind::Block => block_before = true,
+                IfcBoxKind::Block => {
+                    block_before = Some(starts.get(&b.node).copied().unwrap_or(0));
+                }
                 IfcBoxKind::OutOfFlow => {
                     if let Some(around) = surroundings.get_mut(&b.node) {
                         around.block_before = block_before;
@@ -5348,17 +5358,25 @@ impl<'a> HypotheticalLines<'a> {
             },
             |floats| floats.space_at(unaligned, around.boundary),
         );
+        // The box follows a forced break when the break's line ends where
+        // the box stands and no block-level box sits between them: an empty
+        // block after the break ends at the same offset.
         let after_break = {
+            // Several empty lines can end where the box stands; the last of
+            // them is the one right before it.
             let at = self
                 .break_ends
-                .partition_point(|&end| end < block_offset - OFFSET_EPSILON);
-            self.break_ends
-                .get(at)
-                .is_some_and(|&end| (end - block_offset).abs() < OFFSET_EPSILON)
+                .partition_point(|&(end, _)| end < block_offset + OFFSET_EPSILON);
+            at.checked_sub(1)
+                .map(|at| self.break_ends[at])
+                .is_some_and(|(end, index)| {
+                    (end - block_offset).abs() < OFFSET_EPSILON
+                        && around.block_before.is_none_or(|first| first <= index)
+                })
         };
         let text_indent = self.options.text_indent;
         let (start, end, share, shift) = if in_inline_box || after_break {
-            let first = !around.block_before && unaligned.abs() < OFFSET_EPSILON;
+            let first = around.block_before.is_none() && unaligned.abs() < OFFSET_EPSILON;
             let indented = (first || (text_indent.each_line && after_break)) != text_indent.hanging;
             let indent = if indented {
                 resolve_indent(self.indent, lines.width)

@@ -239,6 +239,41 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<div style="width:100px">X<p style="margin:0">A</p><span id=q style="position:absolute">Q</span><div><div style="float:left;width:40px;height:20px"></div>B</div>T</div>"#,
         [0.0, 20.0, 10.0, 10.0],
     ),
+    (
+        "an empty block between a forced break and the box keeps the line empty",
+        r#"<div style="text-align:left;text-align-last:right;width:100px">X<br><div></div><span id=q style="position:absolute">Q</span><p style="margin:0">A</p>T</div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "an empty block between a forced break and the box in rtl",
+        r#"<div style="direction:rtl;text-align:right;text-align-last:left;width:100px">X<br><div></div><span id=q style="position:absolute">Q</span><p style="margin:0">A</p>T</div>"#,
+        [90.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "a forced break after an empty block still takes text-align-last",
+        r#"<div style="text-align:left;text-align-last:right;width:100px"><div></div>X<br><span id=q style="position:absolute">Q</span><p style="margin:0">A</p>T</div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "a box after the last block keeps the floats beside it",
+        r#"<div style="text-align:center;width:100px"><div style="float:left;width:40px;height:30px"></div>X<div></div><span id=q style="position:absolute">Q</span></div>"#,
+        [70.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "a box after the last block keeps the floats beside it in rtl",
+        r#"<div style="text-align:right;direction:rtl;width:100px"><div style="float:right;width:40px;height:30px"></div>X<p style="margin:0">B</p><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "of empty forced-break lines at one offset the last one counts",
+        r#"<div style="text-align:left;text-align-last:right;line-height:0;width:100px">X<br><div></div><br><span id=q style="position:absolute;line-height:10px">Q</span><p style="margin:0;line-height:10px">A</p>T</div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "an empty block after empty forced-break lines keeps the line empty",
+        r#"<div style="text-align:left;text-align-last:right;line-height:0;width:100px">X<br><br><div></div><span id=q style="position:absolute;line-height:10px">Q</span><p style="margin:0;line-height:10px">A</p>T</div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
 ];
 
 #[test]

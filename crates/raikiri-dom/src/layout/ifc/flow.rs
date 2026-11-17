@@ -219,20 +219,27 @@ pub(crate) struct FloatSnapshots {
 
 impl FloatSnapshots {
     /// The boundaries of the inline-level out-of-flow boxes of a horizontal
-    /// paragraph whose `boxes` are listed, or `None` when it has none.
+    /// paragraph whose `boxes` are listed, or `None` when it has no such box.
+    /// A box after the last float or block has no boundary and reads the
+    /// floats as they stand once the lines are laid out, so the set may be
+    /// empty.
     pub(crate) fn new(boxes: &[IfcBox], inline_level: impl Fn(usize) -> bool) -> Option<Self> {
         let mut boundaries = HashSet::new();
         let mut next = None;
+        let mut any = false;
         for b in boxes.iter().rev() {
             match b.kind {
                 IfcBoxKind::Float | IfcBoxKind::Block => next = Some(b.node),
                 IfcBoxKind::OutOfFlow if inline_level(b.node) => {
+                    // A box after the last float or block has no boundary
+                    // but still needs the final floats.
+                    any = true;
                     boundaries.extend(next);
                 }
                 _ => {}
             }
         }
-        (!boundaries.is_empty()).then(|| Self {
+        any.then(|| Self {
             boundaries,
             views: Vec::new(),
         })
