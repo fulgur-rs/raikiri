@@ -2128,12 +2128,9 @@ impl PageOrigins {
         // puts that top below the border box, past content that runs on
         // beyond the border box's page.
         let margin_box_y = effective_y - margin_top;
-        let break_page = if margin_box_y.is_finite() {
-            self.page_index_in_flow(margin_box_y)
-                .map_or(page, |at| at.max(page))
-        } else {
-            page
-        };
+        let break_page = self
+            .page_index_in_flow(margin_box_y)
+            .map_or(page, |at| at.max(page));
         if forced_transition
             && break_page > current_page
             && flow_max >= break_page
