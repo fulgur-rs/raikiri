@@ -358,3 +358,37 @@ fn the_margins_after_the_box_reach_past_the_end_of_its_parent() {
         "{body}"
     );
 }
+
+#[test]
+fn the_room_of_a_min_height_left_by_shrunk_content_stays_before_the_next_block() {
+    // The truncated top margin of `Y` shrinks the content below the
+    // `min-height`, whose room then reaches past the page edge. The last
+    // margin, negative or positive, no longer collapses through the box, and
+    // the next block starts below that room on the next page, not at its top.
+    let body = |min_height: i32, top: i32, last: i32, z_top: i32| {
+        format!(
+            "<div style='width:20px;min-height:{min_height}px'><div>X X X</div>\
+             <div style='margin-top:{top}px;height:60px'>Y</div>\
+             <div style='height:30px;margin-bottom:{last}px'>T</div></div>\
+             <div style='margin-top:{z_top}px'>Z</div>"
+        )
+    };
+    for (min_height, top, last, z_top, z) in [
+        (210, 40, -20, 0, 15),
+        (210, 60, -40, 0, 15),
+        (205, 40, 10, 0, 10),
+        (210, 40, 10, 0, 15),
+        (220, 40, 10, 0, 25),
+        (210, 40, 20, 0, 15),
+        (210, 40, 40, 0, 15),
+        (210, 40, 40, 10, 25),
+        (210, 40, 20, 30, 45),
+    ] {
+        let body = body(min_height, top, last, z_top);
+        assert_eq!(
+            pages_and_tops(&body),
+            (3, vec![('T', 1, 65), ('Z', 2, z)]),
+            "{body}"
+        );
+    }
+}
