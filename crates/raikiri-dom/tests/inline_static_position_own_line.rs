@@ -354,6 +354,31 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<style>#c::before{display:block;content:""}</style><div id=c style="text-indent:15px;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><div></div>X</div>"#,
         [15.0, 0.0, 25.0, 10.0],
     ),
+    (
+        "a box inside an element after its block-level ::before is not on the first line",
+        r#"<style>.b::before{display:block;content:"";height:20px}</style><div style="text-align:left;text-indent:15px;width:100px"><span class=b><span id=q style="position:absolute">Q</span></span></div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "a box after an earlier element's block-level ::before is not on the first line",
+        r#"<style>.b::before{display:block;content:"";height:20px}</style><div style="text-align:left;text-indent:15px;width:100px"><span class=b></span><span><span id=q style="position:absolute">Q</span></span></div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "a box after an earlier element's block-level ::after is not on the first line",
+        r#"<style>.a::after{display:block;content:"";height:20px}</style><div style="text-align:left;text-indent:15px;width:100px"><span class=a></span><span><span id=q style="position:absolute">Q</span></span></div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "a box deep inside an element after its block-level ::before in rtl",
+        r#"<style>.b::before{display:block;content:"";height:20px}</style><div style="text-align:left;text-indent:15px;direction:rtl;width:100px"><span class=b><span><span id=q style="position:absolute">Q</span></span></span></div>"#,
+        [-25.0, 20.0, 25.0, 10.0],
+    ),
+    (
+        "a box after a block-level ::before in an anonymous table cell",
+        r#"<style>.b::before{display:block;content:"";height:20px}</style><div style="display:table-row;text-indent:15px;text-align:left"><span class=b><span id=q style="position:absolute">Q</span></span></div>"#,
+        [0.0, 20.0, 25.0, 10.0],
+    ),
 ];
 
 #[test]

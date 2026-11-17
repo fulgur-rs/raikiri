@@ -5298,11 +5298,66 @@ fn has_inline_ancestor(tree: &Document, idx: usize, owner: usize, node: usize) -
         .any(|id| tree.nodes[id].display().is_inline_level())
 }
 
+/// Mark the out-of-flow boxes of the paragraph rooted at `idx` (or at
+/// `owner`, the source owner of an anonymous cell's content) that come after
+/// a block-level `::before` or `::after` of an element in it, in document
+/// order: a `::before` comes before its element's content, an `::after`
+/// after it.
+fn mark_generated_blocks_before(
+    tree: &Document,
+    root: &IfcRoot,
+    (idx, owner): (usize, usize),
+    surroundings: &mut HashMap<usize, BoxSurroundings>,
+) {
+    let mut befores = HashSet::new();
+    let mut afters = HashSet::new();
+    let origins = root
+        .generated_blocks
+        .iter()
+        .filter(|block| block.of_root.is_none())
+        .filter_map(|block| crate::generated_content::generated_origin(block.start as usize));
+    for (element, pseudo) in origins {
+        if pseudo == raikiri_style::PseudoElem::Before {
+            befores.insert(element);
+        } else if pseudo == raikiri_style::PseudoElem::After {
+            afters.insert(element);
+        }
+    }
+    if befores.is_empty() && afters.is_empty() {
+        return;
+    }
+    let mut seen = false;
+    // The elements whose `::after` is still to come: their content goes on.
+    let mut open: Vec<usize> = Vec::new();
+    let mut left = surroundings.len();
+    // An anonymous cell has no children in the document; its content is
+    // its owner's.
+    for node in tree.preorder(if owner == idx { idx } else { owner }) {
+        while let Some(&element) = open.last()
+            && !tree.ancestors(node).any(|id| id == element)
+        {
+            open.pop();
+            seen = true;
+        }
+        if let Some(around) = surroundings.get_mut(&node) {
+            around.block_before |= seen;
+            left -= 1;
+        }
+        if left == 0 {
+            break;
+        }
+        seen |= befores.contains(&node);
+        if afters.contains(&node) {
+            open.push(node);
+        }
+    }
+}
+
 /// Where the boxes of a paragraph stand around one of its out-of-flow boxes.
 #[derive(Clone, Copy, Default)]
 struct BoxSurroundings {
-    /// A block-level box, or the root's block-level `::before`, comes before
-    /// it.
+    /// A block-level box comes before it: a block child, or a block-level
+    /// `::before` or `::after`, even one that holds no line.
     block_before: bool,
     /// The forward pass reached it, so a later listing of the same node
     /// keeps what surrounds the first.
@@ -5323,7 +5378,8 @@ struct HypotheticalLines<'a> {
 }
 
 impl<'a> HypotheticalLines<'a> {
-    fn new(lines: &'a IfcLines, root: &IfcRoot) -> Self {
+    fn new(lines: &'a IfcLines, tree: &Document, (idx, owner): (usize, usize)) -> Self {
+        let root = tree.nodes[idx].ifc.as_ref().expect("the paragraph's root");
         let mut surroundings = HashMap::new();
         let mut boundary = None;
         for b in root.boxes.iter().rev() {
@@ -5363,6 +5419,7 @@ impl<'a> HypotheticalLines<'a> {
                 _ => {}
             }
         }
+        mark_generated_blocks_before(tree, root, (idx, owner), &mut surroundings);
         Self {
             lines,
             options: root.options,
@@ -5706,12 +5763,8 @@ pub(crate) fn place_out_of_flow(
                 // of its own, which the lines do not hold.
                 None if inline_level => {
                     let in_inline_box = has_inline_ancestor(tree, idx, owner, node);
-                    let line = hypothetical.get_or_insert_with(|| {
-                        HypotheticalLines::new(
-                            &lines,
-                            tree.nodes[idx].ifc.as_ref().expect("the paragraph's root"),
-                        )
-                    });
+                    let line = hypothetical
+                        .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)));
                     let (at, edge) = line.anchor(node, in_inline_box, block_offset, preceding_line);
                     AxisStaticPosition::from_edge(content_left + at, edge)
                 }
