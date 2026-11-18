@@ -243,3 +243,33 @@ fn display_contents_around_the_box_lends_it_the_margins_before_it() {
     assert_eq!(place(&nested, "", ""), (2, 35.0));
     assert_eq!(place(split, "", ""), (2, 35.0));
 }
+
+#[test]
+fn white_space_between_the_box_and_the_one_before_it() {
+    // Collapsed white space lets the margins through; a line of preserved
+    // white space in its own block ends the margins above the box.
+    let tall = "<div style='height:20px;margin-bottom:40px'>T</div>";
+    let split =
+        "<div style='height:0;margin-bottom:30px'><div style='margin-bottom:10px'></div></div>";
+    let z = "<div><span id=z>Z</span></div>";
+    let pre = "white-space:pre";
+    for (body, expected) in [
+        (
+            format!("<div style='width:20px'>{LINES}<div>{tall} {split}</div>{z}</div>"),
+            (2, 35.0),
+        ),
+        (
+            format!("<div style='width:20px;{PADDED}'>{LINES}<div>{tall} {split}</div></div>{z}"),
+            (2, 50.0),
+        ),
+        (
+            format!(
+                "<div style='width:20px'>{LINES}<div style='{pre}'>{tall}</div>\
+                 <div style='{pre}'> {split}</div>{z}</div>"
+            ),
+            (2, 65.0),
+        ),
+    ] {
+        assert_eq!(place_of_z(&body), expected, "{body}");
+    }
+}

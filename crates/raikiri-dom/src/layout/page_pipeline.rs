@@ -10119,6 +10119,11 @@ fn margin_split_box(
         boxes.clear();
         push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
         for &id in &boxes {
+            // Text, preserved white space among it, forms a line between
+            // the two boxes and keeps their margins apart.
+            if document.nodes[id].kind() != NodeKind::Element {
+                return None;
+            }
             if id != previous && splits_margin(document, cascade, id) {
                 return Some((id, join_margin_extremes(below, own_bottom(id))));
             }
@@ -10208,28 +10213,29 @@ fn join_margin_extremes(
 
 /// Joins the margins that `node_id`, met walking back from a box, adds to
 /// the margin above that box (see [`margin_before_box`]). Returns whether
-/// the walk ends there: at text, which keeps the margins apart, or at a box
-/// that is not empty.
+/// the walk ends there: at text that forms a line, preserved white space
+/// among it, which keeps the margins apart, or at a box that is not empty.
 fn join_margin_before(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     extremes: &mut (f32, f32),
 ) -> bool {
-    if let crate::node::NodeData::Text(text) = &document.nodes[node_id].data
-        && !text.text_content.trim().is_empty()
-    {
-        return true;
-    }
-    if !takes_part_in_flow(document, cascade, node_id) {
-        return false;
-    }
-    if document.nodes[node_id].display() == DisplayValue::Contents {
-        return document.nodes[node_id]
-            .children
-            .iter()
-            .rev()
-            .any(|&child| join_margin_before(document, cascade, child, extremes));
+    match sibling_adjacency::flow_box(document, cascade, node_id) {
+        sibling_adjacency::FlowBox::Skip | sibling_adjacency::FlowBox::Phantom => {
+            return false;
+        }
+        sibling_adjacency::FlowBox::Contents => {
+            return document.nodes[node_id]
+                .children
+                .iter()
+                .rev()
+                .any(|&child| join_margin_before(document, cascade, child, extremes));
+        }
+        sibling_adjacency::FlowBox::Box if document.nodes[node_id].kind() != NodeKind::Element => {
+            return true;
+        }
+        sibling_adjacency::FlowBox::Box => {}
     }
     let empty = collapses_as_empty_box(document, cascade, node_id);
     let margins = if empty {
