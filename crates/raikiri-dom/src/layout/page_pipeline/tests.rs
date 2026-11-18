@@ -22011,3 +22011,58 @@ fn a_padded_block_ends_below_the_margins_kept_after_a_forced_break() {
         145.0
     );
 }
+
+#[test]
+fn margins_kept_after_a_forced_break_join_across_nodes_that_generate_no_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `body > 30px box breaking after it, empty, [separator], empty, z`.
+    let place = |separate: &dyn Fn(&mut Document, usize)| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:30px;margin-bottom:5px;break-after:page"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:0;margin-bottom:50px"),
+        );
+        separate(&mut doc, body);
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:0;margin-bottom:30px"),
+        );
+        let z = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:20px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_pages(&mut doc, &cascade, page).unwrap();
+        doc.get_node(z).unwrap().layout.location.y
+    };
+    assert_eq!(place(&|_, _| {}), 150.0);
+    assert_eq!(
+        place(&|doc, body| {
+            doc.append_text(body, "\n  ");
+        }),
+        150.0
+    );
+    assert_eq!(
+        place(&|doc, body| {
+            doc.append_element(Some(body), "div", Some("display:none"));
+        }),
+        150.0
+    );
+}

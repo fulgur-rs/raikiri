@@ -13940,12 +13940,18 @@ impl SiblingMargins {
             .iter()
             .rev()
         {
-            if !takes_part_in_flow(document, cascade, sibling)
-                || !collapses_as_empty_box(document, cascade, sibling)
-            {
-                break;
+            // Nodes that generate no box, such as collapsed white space, a
+            // comment or a box with `display: none`, leave the margins
+            // around them adjoining.
+            match sibling_adjacency::flow_box(document, cascade, sibling) {
+                sibling_adjacency::FlowBox::Skip | sibling_adjacency::FlowBox::Phantom => continue,
+                sibling_adjacency::FlowBox::Box
+                    if collapses_as_empty_box(document, cascade, sibling) =>
+                {
+                    run.push(sibling);
+                }
+                _ => break,
             }
-            run.push(sibling);
         }
         // Their margins collapse with the one above `at`. A box that splits
         // the margin right after the break keeps the margins inside it above

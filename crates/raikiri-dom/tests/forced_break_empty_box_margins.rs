@@ -353,3 +353,34 @@ fn the_block_around_empty_boxes_ends_below_their_kept_margins() {
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+#[test]
+fn nodes_that_generate_no_box_leave_the_kept_margins_joined() {
+    let mb50 = empty("height:0;margin-bottom:50px");
+    let mb30 = empty("height:0;margin-bottom:30px");
+    let cases: Vec<(String, (usize, f32))> = [
+        "",
+        "\n  ",
+        "<!-- c -->",
+        "<div style='display:none'>h</div>",
+        "<span></span>",
+    ]
+    .iter()
+    .map(|separator| {
+        (
+            sibling_case(&format!("{mb50}{separator}{mb30}"), ""),
+            (1, 55.0),
+        )
+    })
+    .chain(std::iter::once((
+        closing_case(
+            "padding-bottom:15px",
+            &breaking(5),
+            &format!("{mb50} <!-- c --> {mb30}"),
+            "",
+        ),
+        (2, 70.0),
+    )))
+    .collect();
+    assert_places(&cases);
+}
