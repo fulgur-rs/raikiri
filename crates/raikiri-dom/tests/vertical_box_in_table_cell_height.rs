@@ -10,7 +10,10 @@
 //!
 //! The expected border boxes were recorded from Chromium for the same markup in
 //! an 800px by 600px viewport with no body margin. A box taller than the page
-//! is split over pages here; its height is the sum of its fragments.
+//! is split over pages here; its height is the sum of its fragments. A row
+//! taller than the page is split too, and Chromium's print lays the cells of
+//! a split row out as if they were aligned to the top, so a box that the
+//! viewport centres in such a row starts at the top of its cell here.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -139,7 +142,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:602px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 602.0)),
-            ("o", (0.0, 1.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -155,7 +158,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="float:left;writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:602px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 602.0)),
-            ("o", (0.0, 1.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -163,7 +166,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="display:flex;writing-mode:vertical-rl"><div>{W}</div></div></td><td style="padding:0"><div style="height:602px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 602.0)),
-            ("o", (0.0, 1.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -171,7 +174,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:800px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 800.0)),
-            ("o", (0.0, 100.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -179,7 +182,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><span id=o style="display:inline-block;writing-mode:vertical-rl">{W}</span></td><td style="padding:0"><div style="height:800px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 800.0)),
-            ("o", (0.0, 99.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -187,7 +190,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="float:left;writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:800px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 800.0)),
-            ("o", (0.0, 100.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -195,7 +198,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="display:flex;writing-mode:vertical-rl"><div>{W}</div></div></td><td style="padding:0"><div style="height:800px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 800.0)),
-            ("o", (0.0, 100.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -203,7 +206,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:1200px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 1200.0)),
-            ("o", (0.0, 300.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -211,7 +214,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><span id=o style="display:inline-block;writing-mode:vertical-rl">{W}</span></td><td style="padding:0"><div style="height:1200px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 1200.0)),
-            ("o", (0.0, 299.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -219,7 +222,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="float:left;writing-mode:vertical-rl">{W}</div></td><td style="padding:0"><div style="height:1200px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 1200.0)),
-            ("o", (0.0, 300.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
@@ -227,7 +230,7 @@ const CASES: &[Case] = &[
         r#"<table style="border-spacing:0"><tr><td id=c style="padding:0"><div id=o style="display:flex;writing-mode:vertical-rl"><div>{W}</div></div></td><td style="padding:0"><div style="height:1200px;width:10px"></div></td></tr></table>"#,
         &[
             ("c", (0.0, 0.0, 50.0, 1200.0)),
-            ("o", (0.0, 300.0, 50.0, 600.0)),
+            ("o", (0.0, 0.0, 50.0, 600.0)),
         ],
     ),
     (
