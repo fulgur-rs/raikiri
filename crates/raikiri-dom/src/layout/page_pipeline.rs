@@ -7207,6 +7207,34 @@ fn forced_margin_reaches(
     true
 }
 
+/// The block-end margins of `ancestor` and of the boxes inside it down to
+/// `last`, when `last` ends each of them with no padding, border or used
+/// height to keep its block-end margin from theirs (CSS 2 §8.3.1).
+fn ends_with_bottom_margin_of(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    ancestor: usize,
+    last: usize,
+) -> Option<(f32, f32)> {
+    let mut extremes = (0.0f32, 0.0f32);
+    let mut id = last;
+    while id != ancestor {
+        let parent = BoxTree::for_layout(document).parent(id, BoxParentScope::Document)?;
+        let layout = &document.nodes[parent].layout;
+        if layout.border.bottom + layout.padding.bottom > 0.0
+            || !margins_may_collapse_through(document, cascade, parent)
+            || !document.block_axis(parent).height().is_auto()
+            || last_flow_box(document, cascade, parent) != Some(id)
+        {
+            return None;
+        }
+        let margin = layout.margin.bottom;
+        extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
+        id = parent;
+    }
+    Some(extremes)
+}
+
 /// Whether a `::before` or `::after` box of a `display: contents` element
 /// between `previous` and `node_id`, its following sibling box, keeps their
 /// margins apart. Such a box has no node of its own: it is a block or inline
@@ -13479,6 +13507,11 @@ struct SiblingMargins {
     /// break: the forced-break box itself, or an empty box right after it.
     /// A margin collapsed through it follows the break and is kept.
     forced_break_box: Option<usize>,
+    /// The margins of the empty boxes from the latest forced break down to
+    /// `forced_break_box`, as Chromium keeps them below the page top and as
+    /// the layout collapsed them with the block-end margin of the box
+    /// before the break (see `forced_empty_box_shift`).
+    forced_margins: Option<((f32, f32), (f32, f32))>,
     /// Whether truncating a margin moved a box.
     moved_boxes: bool,
     /// The box that forces a break after it, which a float took to the new
@@ -13610,7 +13643,15 @@ impl SiblingMargins {
         {
             return None;
         }
-        let (previous, gap) = self.gap_after_previous(document, cascade, node_id, at.raw_y)?;
+        let (previous, gap) = self.previous_and_gap(document, cascade, node_id, at.raw_y)?;
+        if let Some(truncation) =
+            self.margin_after_forced_empty_box(document, cascade, page_origins, previous, gap, at)
+        {
+            return truncation;
+        }
+        if !(gap.is_finite() && gap > 0.0) {
+            return None;
+        }
         let float_break_page = self
             .break_taken_by_float
             .filter(|&(source, _)| is_descendant_or_self(document, source, previous))
@@ -13814,6 +13855,19 @@ impl SiblingMargins {
         node_id: usize,
         raw_y: f32,
     ) -> Option<(usize, f32)> {
+        self.previous_and_gap(document, cascade, node_id, raw_y)
+            .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
+    }
+
+    /// The previous block and the gap that [`Self::gap_after_previous`]
+    /// finds, whatever the size of the gap.
+    fn previous_and_gap(
+        &self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node_id: usize,
+        raw_y: f32,
+    ) -> Option<(usize, f32)> {
         let recorded = || {
             BoxTree::for_layout(document)
                 .parent(node_id, BoxParentScope::Document)
@@ -13829,7 +13883,142 @@ impl SiblingMargins {
                     escape_free_gap(document, cascade, previous, raw_y - bottom),
                 )
             })
-            .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
+    }
+
+    /// Where the box `at` goes after `previous`, an empty box that a forced
+    /// break took to the top of a page, `gap` below it in the unpaginated
+    /// flow. The layout collapsed the margins of the empty box with the
+    /// bottom margin of the box before the break and left the box after it
+    /// only what was over. Chromium truncates the margin before the break and
+    /// keeps the margins after it whole below the page top: those of the
+    /// empty boxes after the break, collapsed with the top margin of `at`.
+    /// `None` when `previous` is not such a box, and `Some(None)` when the
+    /// box is already where they put it.
+    fn margin_after_forced_empty_box(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        page_origins: &PageOrigins,
+        previous: usize,
+        gap: f32,
+        at: &MarginBreak,
+    ) -> Option<Option<MarginTruncation>> {
+        // An empty box after `previous` passes the break on (see
+        // `pass_on_forced_break`): its margins join the ones kept for the
+        // box after it.
+        let owner = self.forced_break_box?;
+        // The block-end margins of the boxes that `owner` ends join it.
+        let enclosing = if owner == previous {
+            Some((0.0, 0.0))
+        } else {
+            ends_with_bottom_margin_of(document, cascade, previous, owner)
+        };
+        if at.forced_before
+            || !gap.is_finite()
+            || collapses_as_empty_box(document, cascade, at.node_id)
+            || page_break_is_forced(document, owner, cascade.computed[owner].break_after)
+            || !collapses_as_empty_box(document, cascade, owner)
+            || generated_box_separates(document, at.node_id, previous)
+            || !self
+                .adjacency
+                .adjoins(document, cascade, at.node_id, previous)
+        {
+            return None;
+        }
+        let after = join_margin_extremes(
+            enclosing?,
+            adjoining_margin_extremes(document, cascade, at.node_id, true, None),
+        );
+        let previous = owner;
+        // A box that splits the margin sits below the margins inside it and
+        // keeps its own bottom margin whole below it (see `splits_margin`).
+        let (mut kept, below) = if splits_margin(document, cascade, previous) {
+            let own = document.nodes[previous].layout.margin.bottom;
+            (
+                adjoining_margin_extremes(document, cascade, previous, true, None),
+                join_margin_extremes((own.max(0.0), own.min(0.0)), after),
+            )
+        } else {
+            (
+                join_margin_extremes(
+                    empty_box_margin_extremes(document, cascade, previous),
+                    after,
+                ),
+                (0.0, 0.0),
+            )
+        };
+        // The empty boxes between the break and `previous` pass the break on
+        // to it, and their margins collapse with its own.
+        for &sibling in self
+            .adjacency
+            .preceding_siblings(document, previous)
+            .iter()
+            .rev()
+        {
+            if !takes_part_in_flow(document, cascade, sibling)
+                || !collapses_as_empty_box(document, cascade, sibling)
+                || page_break_is_forced(document, sibling, cascade.computed[sibling].break_after)
+            {
+                break;
+            }
+            kept =
+                join_margin_extremes(kept, empty_box_margin_extremes(document, cascade, sibling));
+        }
+        let previous_y = at.effective_y - gap;
+        let page_top = page_origins.origin(page_origins.page_index_for_y(previous_y));
+        let delta = page_top + kept.0 + kept.1 + below.0 + below.1 - at.effective_y;
+        Some((delta.abs() > 0.001).then_some(MarginTruncation {
+            delta,
+            underflows: false,
+        }))
+    }
+
+    /// How far the flow after `node_id` moves on, an empty box that a forced
+    /// break took to `landed_y` at the top of the page that starts at
+    /// `page_top`, from `raw_y` in the unpaginated flow. The layout left the
+    /// flow after the box what was over of the margin it collapsed with the
+    /// bottom margin of the box before the break. Chromium truncates that
+    /// bottom margin and keeps the margins of the empty box whole below the
+    /// page top. Zero for any other box.
+    fn forced_empty_box_shift(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node_id: usize,
+        raw_y: f32,
+        landed_y: f32,
+        page_top: f32,
+    ) -> f32 {
+        self.forced_margins = None;
+        if !collapses_as_empty_box(document, cascade, node_id)
+            || page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
+        {
+            return 0.0;
+        }
+        let Some((previous, gap)) = self.previous_and_gap(document, cascade, node_id, raw_y) else {
+            return 0.0;
+        };
+        if !gap.is_finite() {
+            return 0.0;
+        }
+        let own = empty_box_margin_extremes(document, cascade, node_id);
+        let before = adjoining_margin_extremes(document, cascade, previous, false, None);
+        let (positive, negative) = join_margin_extremes(before, own);
+        // The layout put the flow after the box where the joined margin ends,
+        // `gap` of it above the box.
+        let left_after = positive + negative - gap;
+        let kept = if splits_margin(document, cascade, node_id) {
+            // A box that splits the margin sits below the margins inside it
+            // and keeps its own block-end margin whole below it (see
+            // `splits_margin`).
+            let (inner_positive, inner_negative) =
+                adjoining_margin_extremes(document, cascade, node_id, true, None);
+            inner_positive + inner_negative + document.nodes[node_id].layout.margin.bottom
+        } else {
+            self.forced_margins = Some((own, (positive, negative)));
+            own.0 + own.1
+        };
+        page_top + kept - (landed_y + left_after)
     }
 
     /// Ends the run of adjoining siblings at the in-flow text `node_id`:
@@ -13855,14 +14044,33 @@ impl SiblingMargins {
         parent_id: usize,
         node_id: usize,
         collapses_through: bool,
-    ) {
+    ) -> f32 {
         let follows_forced_box =
             self.previous_bottoms
                 .get(&parent_id)
                 .is_some_and(|&(previous, _)| {
                     self.follows_forced_break(document, cascade, previous, node_id)
                 });
-        self.forced_break_box = (follows_forced_box && collapses_through).then_some(node_id);
+        let passes_on = follows_forced_box && collapses_through;
+        self.forced_break_box = passes_on.then_some(node_id);
+        // The margins of the box join those kept below the page top, and
+        // the flow after it moves by as much more than the layout let it.
+        let forced_margins = self.forced_margins.take();
+        let Some((kept, laid_out)) = forced_margins.filter(|_| {
+            passes_on
+                && collapses_as_empty_box(document, cascade, node_id)
+                && !splits_margin(document, cascade, node_id)
+        }) else {
+            return 0.0;
+        };
+        let own = empty_box_margin_extremes(document, cascade, node_id);
+        let joined = (
+            join_margin_extremes(kept, own),
+            join_margin_extremes(laid_out, own),
+        );
+        self.forced_margins = Some(joined);
+        let size = |(positive, negative): (f32, f32)| positive + negative;
+        (size(joined.0) - size(kept)) - (size(joined.1) - size(laid_out))
     }
 
     /// Records `bottom`, the unpaginated border-box bottom of `node_id`, as

@@ -21753,3 +21753,116 @@ fn text_between_a_split_box_and_the_box_after_it_keeps_them_apart() {
     let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     assert_eq!(margin_split_box(&session, &cascade, tall, &preceding), None);
 }
+
+/// Lays out `body > [wrapper >] 30px box, 20px forced-break box with
+/// `breaking` style, empty boxes of `empties` styles`, then a 20px box `z`,
+/// on 100px pages, and returns where `z` lands. With `wrapper` set, the
+/// boxes before `z` sit in a block of that style.
+fn place_after_forced_empty_boxes(wrapper: Option<&str>, breaking: &str, empties: &[&str]) -> f32 {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let holder = wrapper.map_or(body, |style| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Some(&format!("display:block;width:100px;{style}")),
+        )
+    });
+    doc.append_element(
+        Some(holder),
+        "div",
+        Some("display:block;width:100px;height:30px"),
+    );
+    doc.append_element(
+        Some(holder),
+        "div",
+        Some(&format!(
+            "display:block;width:100px;height:20px;break-after:page;{breaking}"
+        )),
+    );
+    for style in empties {
+        let (outer, inner) = style.split_once('>').unwrap_or((style, ""));
+        let empty = doc.append_element(
+            Some(holder),
+            "div",
+            Some(&format!("display:block;width:100px;{outer}")),
+        );
+        if !inner.is_empty() {
+            doc.append_element(
+                Some(empty),
+                "div",
+                Some(&format!("display:block;width:100px;{inner}")),
+            );
+        }
+    }
+    let z = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    doc.get_node(z).unwrap().layout.location.y
+}
+
+#[test]
+fn empty_boxes_after_a_forced_break_keep_their_margins_below_the_page_top() {
+    let mb30 = "height:0;margin-bottom:30px";
+    // The 5px margin before the break is truncated, and the 30px one after
+    // it is kept whole below the page top.
+    assert_eq!(
+        place_after_forced_empty_boxes(None, "margin-bottom:5px", &[mb30]),
+        130.0
+    );
+    // A box of set height zero sits below the margin inside it and keeps
+    // its own whole below it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px>margin-bottom:10px"]
+        ),
+        140.0
+    );
+    // Empty boxes that end a block keep their margins inside its padding,
+    // also when a larger margin before the break joined them in the flow.
+    let padded = Some("padding-bottom:15px");
+    assert_eq!(
+        place_after_forced_empty_boxes(padded, "margin-bottom:5px", &[mb30]),
+        145.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:60px",
+            &["height:0;margin-bottom:10px", mb30]
+        ),
+        145.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px>margin-bottom:45px"]
+        ),
+        190.0
+    );
+    // Without padding, their margins pass on to the box after the block.
+    assert_eq!(
+        place_after_forced_empty_boxes(Some(""), "margin-bottom:5px", &[mb30]),
+        130.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(Some("margin-bottom:40px"), "margin-bottom:5px", &[mb30]),
+        140.0
+    );
+}

@@ -1531,6 +1531,15 @@ impl PaginationState {
             return Ok(end);
         }
         let node_id = edges_break.node_id;
+        // An empty box that a forced break took to the top of this page keeps
+        // its margins whole below the page top (see
+        // `forced_empty_box_shift`).
+        if let Some(forced) = self.sibling_margins.forced_break_box
+            && last_flow_box(document, env.cascade, node_id) == Some(forced)
+            && edge <= current_abs_y(document, forced) + 0.001
+        {
+            return Ok(end);
+        }
         // Cuts at the edges of blocks inside this one shrank it already, so
         // the cut stops where the block reaches its min-height now.
         let (min_height, _) = border_box_height_bounds(document, node_id);
@@ -1656,7 +1665,7 @@ impl PaginationState {
         {
             self.sibling_margins.break_taken_by_float = None;
             if !starts_after_forced_break {
-                self.sibling_margins.pass_on_forced_break(
+                self.flow_shift += self.sibling_margins.pass_on_forced_break(
                     document,
                     env.cascade,
                     parent_id,
@@ -2484,6 +2493,16 @@ impl PaginationState {
             // after a box it pulls back over the break follows the box, as
             // in Chromium.
             self.flow_shift += landing.node_delta;
+            if lands_after_forced_break && margins_collapse_through {
+                self.flow_shift += self.sibling_margins.forced_empty_box_shift(
+                    document,
+                    cascade,
+                    node_id,
+                    flow_raw_y(document, cascade, body_id, candidate),
+                    landing.target_y - landing_relative,
+                    page_origins.origin(target_page),
+                );
+            }
             if !lands_after_forced_break && (overflow.page || margin_pushes_box_on) {
                 self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
             }
@@ -2576,6 +2595,7 @@ impl PaginationState {
         let forced_before = forced_before || keeps_continuation_margin;
         if forced_before {
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
+            self.sibling_margins.forced_margins = None;
             position.starts_after_forced_break = true;
         }
         // An unforced break that falls inside the collapsed margin
