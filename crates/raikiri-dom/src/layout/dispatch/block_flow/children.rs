@@ -17,7 +17,7 @@ use raikiri_layout_style::values::{
     Clear, Direction, ExpandedDimension, Float, MaybeResolve, Overflow, Position,
 };
 use raikiri_style::ComputedTextIndent;
-use raikiri_style::property::{DisplayValue, TextAlign};
+use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 
 pub(super) struct Flow {
     pub end: f32,
@@ -289,7 +289,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
     node.ifc.is_none()
         && !crate::layout::dispatch::used_writing_mode(tree, index).is_vertical()
         && (node.multicol.is_some() || node.formatting_context == FormattingContext::Block)
-        && matches!(
+        && (matches!(
             node.display(),
             DisplayValue::Block
                 | DisplayValue::InlineBlock
@@ -297,7 +297,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
                 | DisplayValue::ListItem
                 | DisplayValue::TableCell
                 | DisplayValue::TableCaption
-        )
+        ) || super::is_inline_box(tree, parent, &child_style(tree, parent)))
 }
 
 pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
@@ -346,12 +346,262 @@ pub(crate) fn static_line_indent(indent: ComputedTextIndent, hanging: bool, widt
     }
 }
 
+/// Where the static position of an inline-level absolutely positioned box
+/// lies on the last line of an anonymous block of inline content: the share
+/// of the free room before it, as [`static_inline_share`] gives it, except
+/// that `text-align-last` aligns such a line. With nothing to justify,
+/// `justify` keeps the start edge.
+fn last_line_share(
+    text_align: TextAlign,
+    text_align_last: TextAlignLast,
+    direction: Direction,
+) -> f32 {
+    let start = static_inline_share(TextAlign::Start, direction);
+    match text_align_last {
+        TextAlignLast::Start | TextAlignLast::Justify => start,
+        TextAlignLast::End => 1.0 - start,
+        TextAlignLast::Left => 0.0,
+        TextAlignLast::Right => 1.0,
+        TextAlignLast::Center => 0.5,
+        _ => static_inline_share(text_align, direction),
+    }
+}
+
+/// How an in-flow child takes part in the anonymous blocks that wrap runs of
+/// inline content between block-level boxes (CSS 2.1 §9.2.1.1).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunItem {
+    /// Inline content, which opens an anonymous block or continues one.
+    Inline,
+    /// A block-level box, which ends the run before it.
+    Block,
+    /// A float: it joins an anonymous block already open, but keeps the
+    /// boxes before it from joining one that opens after it.
+    Float,
+    /// Nothing that opens or ends a run: an out-of-flow box or a node that
+    /// generates no box. Collapsible white space between the children is
+    /// not among them.
+    Other,
+}
+
+fn run_item(tree: &LayoutSession<'_>, child: NodeId) -> RunItem {
+    let style = child_style(tree, child);
+    if style.box_generation_mode() == BoxGenerationMode::None
+        || style.position == Position::Absolute
+    {
+        RunItem::Other
+    } else if style.float != Float::None {
+        RunItem::Float
+    } else if super::is_inline_box(tree, child, &style) {
+        RunItem::Inline
+    } else {
+        RunItem::Block
+    }
+}
+
+/// Whether `child` puts a block-level box in the flow: it is one, or it is
+/// an inline box that holds one.
+fn holds_block(tree: &LayoutSession<'_>, child: NodeId) -> bool {
+    match run_item(tree, child) {
+        RunItem::Block => true,
+        RunItem::Inline => tree.child_ids(child).any(|inner| holds_block(tree, inner)),
+        _ => false,
+    }
+}
+
+/// Whether nothing block-level comes before `node` in the paragraph of the
+/// block container around it, looking out through the inline boxes that
+/// hold it.
+fn opens_paragraph(tree: &LayoutSession<'_>, node: NodeId) -> bool {
+    layout_parent(tree, node).is_none_or(|parent| {
+        let style = child_style(tree, parent);
+        let legend = super::legend::rendered_legend(tree, parent, &style);
+        !tree
+            .child_ids(parent)
+            .take_while(|&sibling| sibling != node)
+            .any(|sibling| Some(sibling) != legend && holds_block(tree, sibling))
+            && (!super::is_inline_box(tree, parent, &style) || opens_paragraph(tree, parent))
+    })
+}
+
+fn layout_parent(tree: &LayoutSession<'_>, node: NodeId) -> Option<NodeId> {
+    use crate::layout::{BoxParentScope, box_tree::BoxTree};
+    BoxTree::for_layout(tree.document)
+        .parent(usize::from(node), BoxParentScope::LayoutRoot)
+        .map(NodeId::from)
+}
+
+/// The block container whose paragraph holds `node`: `node` itself, or the
+/// nearest ancestor of the inline boxes that hold it. Its `text-align`,
+/// `text-indent` and `direction` set up the lines of that paragraph, which
+/// those of an inline box do not change.
+fn paragraph_owner(tree: &LayoutSession<'_>, node: NodeId) -> NodeId {
+    if super::is_inline_box(tree, node, &child_style(tree, node)) {
+        layout_parent(tree, node).map_or(node, |parent| paragraph_owner(tree, parent))
+    } else {
+        node
+    }
+}
+
+/// The line, if any, that an inline-level absolutely positioned child of
+/// `parent` at each position of `children` sits on in Chromium: whether it
+/// is the last line of an anonymous block of inline content, and if so
+/// whether that line is the first one of the paragraph.
+///
+/// A child of an inline box is on a line of the paragraph around that box.
+/// A child of a block container joins the anonymous block of the inline
+/// content before it since the last block-level box, or else the one of the
+/// inline content after it, unless a float or a block-level box comes first.
+fn anonymous_lines(
+    tree: &LayoutSession<'_>,
+    parent: NodeId,
+    container: &Style,
+    children: &[NodeId],
+) -> Vec<Option<bool>> {
+    // The rendered legend of a fieldset sits over the border, out of the
+    // flow of the content that the anonymous blocks wrap.
+    let legend = super::legend::rendered_legend(tree, parent, container);
+    let items: Vec<_> = children
+        .iter()
+        .map(|&child| {
+            if Some(child) == legend {
+                RunItem::Other
+            } else {
+                run_item(tree, child)
+            }
+        })
+        .collect();
+    let in_inline_box = super::is_inline_box(tree, parent, container);
+    let mut lines = vec![in_inline_box; children.len()];
+    let mut open = false;
+    for (line, item) in lines.iter_mut().zip(&items) {
+        match item {
+            RunItem::Inline => open = true,
+            RunItem::Block => open = false,
+            _ => *line |= open,
+        }
+    }
+    let mut waiting = false;
+    for (line, item) in lines.iter_mut().zip(&items).rev() {
+        match item {
+            RunItem::Inline => waiting = true,
+            RunItem::Block | RunItem::Float => waiting = false,
+            RunItem::Other => *line |= waiting,
+        }
+    }
+    let mut first = !in_inline_box || opens_paragraph(tree, parent);
+    lines
+        .into_iter()
+        .zip(children.iter().zip(&items))
+        .map(|(line, (&child, item))| {
+            let on_first = first;
+            if first {
+                first = match item {
+                    RunItem::Block => false,
+                    RunItem::Inline => !holds_block(tree, child),
+                    _ => true,
+                };
+            }
+            line.then_some(on_first)
+        })
+        .collect()
+}
+
+/// What sets up the hypothetical lines of the inline-level absolutely
+/// positioned children of a container laid out in block flow.
+struct Paragraph {
+    /// See [`anonymous_lines`].
+    lines: Vec<Option<bool>>,
+    direction: Direction,
+    text_align: TextAlign,
+    text_align_last: TextAlignLast,
+    indent: ComputedTextIndent,
+    hanging: bool,
+}
+
+impl Paragraph {
+    fn new(
+        tree: &LayoutSession<'_>,
+        parent: NodeId,
+        container: &Style,
+        children: &[NodeId],
+    ) -> Self {
+        let owner = paragraph_owner(tree, parent);
+        let node = &tree.nodes[usize::from(owner)];
+        Self {
+            lines: anonymous_lines(tree, parent, container, children),
+            direction: child_style(tree, owner).direction,
+            text_align: node.static_position_text_align,
+            text_align_last: node.static_position_text_align_last,
+            indent: node.static_position_text_indent,
+            hanging: node.static_position_text_indent_hanging,
+        }
+    }
+
+    /// The share of the free room before the point of the child at `order`,
+    /// as [`static_inline_share`] gives it.
+    fn share(&self, order: usize) -> f32 {
+        match self.lines[order] {
+            Some(_) => last_line_share(self.text_align, self.text_align_last, self.direction),
+            None => static_inline_share(self.text_align, self.direction),
+        }
+    }
+
+    /// The hypothetical line of the child at `order`, at `from` in `context`
+    /// across a content box `width` wide.
+    fn line<'context, 'owner>(
+        &self,
+        order: usize,
+        from: f32,
+        context: &'context BlockContext<'owner>,
+        width: f32,
+    ) -> StaticLine<'context, 'owner> {
+        let (shift, indent) = match self.lines[order] {
+            Some(first) if first != self.hanging => (
+                0.0,
+                crate::layout::ifc::flow::resolve_indent(self.indent, width),
+            ),
+            Some(_) => (0.0, 0.0),
+            None => (static_line_indent(self.indent, self.hanging, width), 0.0),
+        };
+        StaticLine {
+            from,
+            context,
+            direction: self.direction,
+            share: self.share(order),
+            shift,
+            indent,
+        }
+    }
+}
+
+/// The share of the free room before the static position of each
+/// inline-level absolutely positioned child of `parent` laid out in block
+/// flow, as [`static_inline_share`] gives it: the line of an anonymous block
+/// of inline content is aligned as a last line.
+pub(crate) fn static_inline_shares(tree: &LayoutSession<'_>, parent: NodeId) -> Vec<(NodeId, f32)> {
+    let children: Vec<_> = tree.child_ids(parent).collect();
+    let container = super::style_input::container(tree, usize::from(parent));
+    let paragraph = Paragraph::new(tree, parent, &container, &children);
+    children
+        .iter()
+        .enumerate()
+        .map(|(order, &child)| (child, paragraph.share(order)))
+        .collect()
+}
+
 struct StaticLine<'context, 'owner> {
     from: f32,
     context: &'context BlockContext<'owner>,
     direction: Direction,
-    text_align: TextAlign,
-    /// See [`static_line_indent`].
+    /// The share of the free room before the point, as
+    /// [`static_inline_share`] gives it.
+    share: f32,
+    /// How far the point moves towards the line's end; see
+    /// [`static_line_indent`].
+    shift: f32,
+    /// How much the line's start edge moves in, as `text-indent` narrows the
+    /// first line of a paragraph.
     indent: f32,
 }
 
@@ -365,17 +615,19 @@ struct StaticLine<'context, 'owner> {
 /// in the first layout opportunity at the current block offset.
 fn inline_static_position(line: StaticLine<'_, '_>) -> Point<AxisStaticPosition> {
     let slot = line.context.find_content_slot(line.from, Clear::None, None);
-    let share = static_inline_share(line.text_align, line.direction);
     // A float wider than the line leaves an opportunity with negative
     // width; the point then stays at the line's start edge.
-    let room = slot.width.max(0.0);
+    let room = (slot.width - line.indent).max(0.0);
     let (anchor, edge) = if line.direction == Direction::Rtl {
         (
-            slot.x + slot.width - room * (1.0 - share) - line.indent,
+            slot.x + slot.width - line.indent - room * (1.0 - line.share) - line.shift,
             AxisStaticEdge::End,
         )
     } else {
-        (slot.x + room * share + line.indent, AxisStaticEdge::Start)
+        (
+            slot.x + line.indent + room * line.share + line.shift,
+            AxisStaticEdge::Start,
+        )
     };
     Point {
         x: AxisStaticPosition::from_edge(anchor, edge),
@@ -529,7 +781,8 @@ pub(super) fn layout(
     if !collapse_start {
         ctx.commit_strut();
     }
-    for (order, child) in children.into_iter().enumerate() {
+    let mut paragraph_cache = None;
+    for (order, &child) in children.iter().enumerate() {
         if Some(child) == legend {
             continue;
         }
@@ -548,18 +801,9 @@ pub(super) fn layout(
                 let node_inline = tree.nodes[child_index].display().is_inline_level();
                 let resolve_inline = node_inline && supports_inline_static_position(tree, node);
                 let static_position = if resolve_inline {
-                    let parent_node = &tree.nodes[usize::from(node)];
-                    inline_static_position(StaticLine {
-                        from: static_y,
-                        context: ctx,
-                        direction: container.direction,
-                        text_align: parent_node.static_position_text_align,
-                        indent: static_line_indent(
-                            parent_node.static_position_text_indent,
-                            parent_node.static_position_text_indent_hanging,
-                            content_width,
-                        ),
-                    })
+                    let paragraph = paragraph_cache
+                        .get_or_insert_with(|| Paragraph::new(tree, node, container, &children));
+                    inline_static_position(paragraph.line(order, static_y, ctx, content_width))
                 } else {
                     let inline_area = Line {
                         start: metrics.inset.left,
