@@ -13932,38 +13932,36 @@ impl SiblingMargins {
             enclosing,
             adjoining_margin_extremes(document, cascade, at.node_id, true, None),
         );
-        // The margins that collapse with the one above `at`, and those that
-        // a box splitting the margin keeps above itself (see
-        // `splits_margin`), which add to them.
-        let mut kept = after;
-        let mut above = None;
-        for &empty in std::iter::once(&owner).chain(
-            self.adjacency
-                .preceding_siblings(document, owner)
-                .iter()
-                .rev(),
-        ) {
-            if empty != owner
-                && (!takes_part_in_flow(document, cascade, empty)
-                    || !collapses_as_empty_box(document, cascade, empty))
+        // The empty boxes from the break to `owner`, the last one first.
+        let mut run = vec![owner];
+        for &sibling in self
+            .adjacency
+            .preceding_siblings(document, owner)
+            .iter()
+            .rev()
+        {
+            if !takes_part_in_flow(document, cascade, sibling)
+                || !collapses_as_empty_box(document, cascade, sibling)
             {
                 break;
             }
-            if above.is_none() && splits_margin(document, cascade, empty) {
-                let own = document.nodes[empty].layout.margin.bottom;
-                kept = join_margin_extremes(kept, (own.max(0.0), own.min(0.0)));
-                above = Some(adjoining_margin_extremes(
-                    document, cascade, empty, true, None,
-                ));
-                continue;
-            }
-            let margins = empty_box_margin_extremes(document, cascade, empty);
-            match above.as_mut() {
-                Some(above) => *above = join_margin_extremes(*above, margins),
-                None => kept = join_margin_extremes(kept, margins),
-            }
+            run.push(sibling);
         }
-        let (above_positive, above_negative) = above.unwrap_or((0.0, 0.0));
+        // Their margins collapse with the one above `at`. A box that splits
+        // the margin right after the break keeps the margins inside it above
+        // itself instead, which add to the rest (see `splits_margin`).
+        let (first, rest) = run.split_last()?;
+        let mut kept = rest.iter().fold(after, |kept, &empty| {
+            join_margin_extremes(kept, empty_box_margin_extremes(document, cascade, empty))
+        });
+        let (above_positive, above_negative) = if splits_margin(document, cascade, *first) {
+            let own = document.nodes[*first].layout.margin.bottom;
+            kept = join_margin_extremes(kept, (own.max(0.0), own.min(0.0)));
+            adjoining_margin_extremes(document, cascade, *first, true, None)
+        } else {
+            kept = join_margin_extremes(kept, empty_box_margin_extremes(document, cascade, *first));
+            (0.0, 0.0)
+        };
         let target = page_top + kept.0 + kept.1 + above_positive + above_negative;
         // The next page edge is an unforced break, which truncates the
         // margins that reach past it.
@@ -14003,12 +14001,12 @@ impl SiblingMargins {
         if !collapses_as_empty_box(document, cascade, node_id) {
             return 0.0;
         }
-        let Some((previous, gap)) = self.previous_and_gap(document, cascade, node_id, raw_y) else {
+        let Some((previous, gap)) = self
+            .previous_and_gap(document, cascade, node_id, raw_y)
+            .filter(|(_, gap)| gap.is_finite())
+        else {
             return 0.0;
         };
-        if !gap.is_finite() {
-            return 0.0;
-        }
         let own = empty_box_margin_extremes(document, cascade, node_id);
         let before = adjoining_margin_extremes(document, cascade, previous, false, None);
         let (positive, negative) = join_margin_extremes(before, own);

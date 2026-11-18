@@ -119,8 +119,8 @@ fn the_box_after_empty_boxes_keeps_their_margins_below_the_page_top() {
             ),
             (1, 45.0),
         ),
-        // Such a box splits the run: the margins after it collapse with its
-        // own and add to those inside it.
+        // Such a box right after the break splits the run: the margins after
+        // it collapse with its own and add to those inside it.
         (
             sibling_case(
                 &format!(
@@ -130,6 +130,18 @@ fn the_box_after_empty_boxes_keeps_their_margins_below_the_page_top() {
                 "",
             ),
             (1, 65.0),
+        ),
+        // After another empty box, all of them collapse into one.
+        (
+            sibling_case(
+                &format!(
+                    "{}<div style='height:0;margin-bottom:30px'><div style='margin-bottom:10px'></div></div>{}",
+                    empty("height:0;margin-bottom:20px"),
+                    empty("height:0;margin-bottom:50px")
+                ),
+                "",
+            ),
+            (1, 55.0),
         ),
         // A negative top margin collapses in too.
         (

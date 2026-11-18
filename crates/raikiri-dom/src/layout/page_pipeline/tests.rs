@@ -21904,6 +21904,19 @@ fn margins_kept_after_a_forced_break_collapse_with_negative_and_split_ones() {
         ),
         160.0
     );
+    // After another empty box it no longer splits it: all collapse into one.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &[
+                "height:0;margin-bottom:20px",
+                "height:0;margin-bottom:30px>margin-bottom:10px",
+                "height:0;margin-bottom:50px"
+            ]
+        ),
+        150.0
+    );
 }
 
 #[test]
