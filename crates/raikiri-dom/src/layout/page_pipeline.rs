@@ -4738,6 +4738,20 @@ fn paginate_flow(
     for (&node_id, &cut) in &state.margin_cuts {
         *unpaginated_overflow.entry(node_id).or_default() += cut;
     }
+    // A block that ends at a margin kept below its last box after a forced
+    // break ends where the next page edge cut that margin, above the margin
+    // box of its last box, which the margin itself does not show.
+    for &node_id in &state.kept_margin_ends {
+        let end = block_border_box_end(document, cascade, node_id, 0.0, content_height, true);
+        let overflow = unpaginated_overflow.entry(node_id).or_default();
+        let excess = end
+            - current_abs_y(document, node_id)
+            - *overflow
+            - document.nodes[node_id].layout.size.height;
+        if excess > 0.001 {
+            *overflow += excess;
+        }
+    }
     if !positioned_owner_heights.is_empty() {
         // Resolve ancestor-dependent positions from normal-flow growth before
         // positioned fragmentation and the table-box geometry finalizers.

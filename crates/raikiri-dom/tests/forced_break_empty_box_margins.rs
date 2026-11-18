@@ -342,6 +342,17 @@ fn the_block_around_empty_boxes_ends_below_their_kept_margins() {
             ),
             (2, 90.0),
         ),
+        // A margin taller than the page ends at the next page edge, and the
+        // padding of the block follows that edge.
+        (
+            closing_case(
+                padded,
+                &breaking(5),
+                &empty("height:0;margin-bottom:150px"),
+                "",
+            ),
+            (3, 15.0),
+        ),
     ];
     let wrong: Vec<String> = cases
         .iter()
