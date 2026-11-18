@@ -382,6 +382,8 @@ pub(super) struct PaginationState {
     pub(super) trailing_flex_children: TrailingFlexChildren,
     pub(super) entered_paragraphs: EnteredParagraphs,
     pub(super) table_headers: HeaderRepeats,
+    /// The table rows the flow is in, and the pages they start and end on.
+    cell_rows: super::cell_rows::CellRows,
 }
 
 impl PaginationState {
@@ -425,6 +427,7 @@ impl PaginationState {
             trailing_flex_children: TrailingFlexChildren::default(),
             entered_paragraphs: EnteredParagraphs::default(),
             table_headers,
+            cell_rows: super::cell_rows::CellRows::default(),
         }
     }
 
@@ -4304,6 +4307,16 @@ impl PaginationState {
         if self.subtree_shifts.take_reached_moved_box() {
             let page = page_origins.page_index_for_y(candidate.raw_y + self.flow_shift);
             self.current_page = self.current_page.max(page);
+        }
+        // A cell starts on the page of its row, though the cells before it
+        // ran on to later pages, and the flow after the row goes on from the
+        // last page its cells reach.
+        if in_flow {
+            self.current_page = self
+                .cell_rows
+                .enter(document, node_id, self.current_page, |row| {
+                    page_origins.page_index_for_y(super::current_abs_y(document, row))
+                });
         }
         if let Some((delta, flow_page)) = self.float_shifts.end_pending_outside(document, node_id) {
             self.flow_shift -= delta;
