@@ -18784,9 +18784,9 @@ fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
                   participates,
                   collapses,
                   starts_after_forced_break| {
-        let session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.record_box_among_siblings(
-            &session,
+            &mut session,
             &env,
             &candidate,
             &entry(participates),
@@ -21752,4 +21752,317 @@ fn text_between_a_split_box_and_the_box_after_it_keeps_them_apart() {
     let (mut doc, cascade, tall, _, preceding) = build(Some("text"));
     let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     assert_eq!(margin_split_box(&session, &cascade, tall, &preceding), None);
+}
+
+/// Lays out `body > [wrapper >] 30px box, 20px forced-break box with
+/// `breaking` style, empty boxes of `empties` styles`, then a 20px box `z`,
+/// on 100px pages, and returns where `z` lands. With `wrapper` set, the
+/// boxes before `z` sit in a block of that style.
+fn place_after_forced_empty_boxes(wrapper: Option<&str>, breaking: &str, empties: &[&str]) -> f32 {
+    layout_after_forced_empty_boxes(wrapper, breaking, empties).0
+}
+
+/// Where `z` lands in [`place_after_forced_empty_boxes`], and where the
+/// block of `wrapper` style around the boxes before it ends.
+fn layout_after_forced_empty_boxes(
+    wrapper: Option<&str>,
+    breaking: &str,
+    empties: &[&str],
+) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let holder = wrapper.map_or(body, |style| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Some(&format!("display:block;width:100px;{style}")),
+        )
+    });
+    doc.append_element(
+        Some(holder),
+        "div",
+        Some("display:block;width:100px;height:30px"),
+    );
+    doc.append_element(
+        Some(holder),
+        "div",
+        Some(&format!(
+            "display:block;width:100px;height:20px;break-after:page;{breaking}"
+        )),
+    );
+    for style in empties {
+        let (outer, inner) = style.split_once('>').unwrap_or((style, ""));
+        let empty = doc.append_element(
+            Some(holder),
+            "div",
+            Some(&format!("display:block;width:100px;{outer}")),
+        );
+        if !inner.is_empty() {
+            doc.append_element(
+                Some(empty),
+                "div",
+                Some(&format!("display:block;width:100px;{inner}")),
+            );
+        }
+    }
+    let z = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    let holder = &doc.get_node(holder).unwrap().layout;
+    (
+        doc.get_node(z).unwrap().layout.location.y,
+        holder.location.y + holder.size.height,
+    )
+}
+
+#[test]
+fn empty_boxes_after_a_forced_break_keep_their_margins_below_the_page_top() {
+    let mb30 = "height:0;margin-bottom:30px";
+    // The 5px margin before the break is truncated, and the 30px one after
+    // it is kept whole below the page top.
+    assert_eq!(
+        place_after_forced_empty_boxes(None, "margin-bottom:5px", &[mb30]),
+        130.0
+    );
+    // A box of set height zero sits below the margin inside it and keeps
+    // its own whole below it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px>margin-bottom:10px"]
+        ),
+        140.0
+    );
+    // Empty boxes that end a block keep their margins inside its padding,
+    // also when a larger margin before the break joined them in the flow.
+    let padded = Some("padding-bottom:15px");
+    assert_eq!(
+        place_after_forced_empty_boxes(padded, "margin-bottom:5px", &[mb30]),
+        145.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:60px",
+            &["height:0;margin-bottom:10px", mb30]
+        ),
+        145.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px>margin-bottom:45px"]
+        ),
+        190.0
+    );
+    // Without padding, their margins pass on to the box after the block.
+    assert_eq!(
+        place_after_forced_empty_boxes(Some(""), "margin-bottom:5px", &[mb30]),
+        130.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(Some("margin-bottom:40px"), "margin-bottom:5px", &[mb30]),
+        140.0
+    );
+}
+
+#[test]
+fn margins_kept_after_a_forced_break_stop_at_the_next_page_edge() {
+    let mb150 = "height:0;margin-bottom:150px";
+    assert_eq!(
+        place_after_forced_empty_boxes(None, "margin-bottom:5px", &[mb150]),
+        200.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(Some("padding-bottom:15px"), "margin-bottom:5px", &[mb150]),
+        215.0
+    );
+}
+
+#[test]
+fn margins_kept_after_a_forced_break_collapse_with_negative_and_split_ones() {
+    // A negative top margin joins the kept margin, which stays on the page.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &["margin-top:-20px;margin-bottom:30px"]
+        ),
+        110.0
+    );
+    // A box that splits the margin keeps the margin inside it above itself,
+    // and its own collapses with those after it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &[
+                "height:0;margin-bottom:30px>margin-bottom:10px",
+                "height:0;margin-bottom:50px"
+            ]
+        ),
+        160.0
+    );
+    // After another empty box it no longer splits it: all collapse into one.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &[
+                "height:0;margin-bottom:20px",
+                "height:0;margin-bottom:30px>margin-bottom:10px",
+                "height:0;margin-bottom:50px"
+            ]
+        ),
+        150.0
+    );
+}
+
+#[test]
+fn a_block_of_set_height_holds_the_margin_kept_after_a_forced_break() {
+    let fixed = Some("height:200px");
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            fixed,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px"]
+        ),
+        place_after_forced_empty_boxes(fixed, "margin-bottom:5px", &[])
+    );
+    // So does it hold what further empty boxes add to it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            fixed,
+            "margin-bottom:60px",
+            &["height:0;margin-bottom:10px", "height:0;margin-bottom:30px"]
+        ),
+        place_after_forced_empty_boxes(fixed, "margin-bottom:60px", &[])
+    );
+}
+
+#[test]
+fn a_float_above_an_empty_box_after_a_forced_break_is_no_kept_margin() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `body > 30px box on page b, float, empty box on page c > float`: the
+    // empty box sits below the first float in the flow, but that space is
+    // no margin to keep after the break between the named pages.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let float = "display:block;float:right;width:100px;height:100px";
+    doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:400px;height:30px;page:b"),
+    );
+    doc.append_element(Some(body), "div", Some(float));
+    let empty = doc.append_element(Some(body), "div", Some("display:block;width:400px;page:c"));
+    let inner = doc.append_element(Some(empty), "div", Some(float));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 400.0;
+    page.height = 400.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(empty).unwrap().layout.location.y
+            + doc.get_node(inner).unwrap().layout.location.y,
+        400.0
+    );
+}
+
+#[test]
+fn a_padded_block_ends_below_the_margins_kept_after_a_forced_break() {
+    // Its padding ends where the box after it starts.
+    let padded = Some("padding-bottom:15px");
+    for empties in [
+        &["height:0;margin-bottom:30px"][..],
+        &["height:0;margin-bottom:30px", "height:0;margin-bottom:50px"],
+        &["height:0;margin-bottom:30px>margin-bottom:45px"],
+    ] {
+        let (z, end) = layout_after_forced_empty_boxes(padded, "margin-bottom:5px", empties);
+        assert_eq!(end, z, "{empties:?}");
+    }
+    assert_eq!(
+        layout_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px"]
+        )
+        .1,
+        145.0
+    );
+}
+
+#[test]
+fn margins_kept_after_a_forced_break_join_across_nodes_that_generate_no_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `body > 30px box breaking after it, empty, [separator], empty, z`.
+    let place = |separate: &dyn Fn(&mut Document, usize)| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:30px;margin-bottom:5px;break-after:page"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:0;margin-bottom:50px"),
+        );
+        separate(&mut doc, body);
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:0;margin-bottom:30px"),
+        );
+        let z = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:20px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_pages(&mut doc, &cascade, page).unwrap();
+        doc.get_node(z).unwrap().layout.location.y
+    };
+    assert_eq!(place(&|_, _| {}), 150.0);
+    assert_eq!(
+        place(&|doc, body| {
+            doc.append_text(body, "\n  ");
+        }),
+        150.0
+    );
+    assert_eq!(
+        place(&|doc, body| {
+            doc.append_element(Some(body), "div", Some("display:none"));
+        }),
+        150.0
+    );
 }

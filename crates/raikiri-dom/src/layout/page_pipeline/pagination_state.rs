@@ -1505,6 +1505,72 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Moves the flow after `candidate`, an empty box after a forced break,
+    /// by `kept`, the part of its margin that the layout did not leave it,
+    /// up to an ancestor whose height does not grow with it.
+    fn follow_kept_margin(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        kept: f32,
+        flow_page: u32,
+    ) {
+        if kept.abs() <= 0.001 {
+            return;
+        }
+        self.flow_shift += kept;
+        if !candidate.context.is_direct_body_element() {
+            super::shift_block_flow_after(
+                document,
+                env.cascade,
+                candidate.node_id,
+                env.body_id,
+                kept,
+                &mut self.subtree_shifts,
+                flow_page,
+            );
+        }
+    }
+
+    /// Ends the content box of the block `node_id` at `end`, where the flow
+    /// inside it ends, when its last box kept a margin below it that the
+    /// flow follows: an empty box after a forced break (see
+    /// `forced_empty_box_shift`) or a box that splits the margin (see
+    /// `split_box_kept_margin`). The flow after the block follows that
+    /// margin, and so does the block's own height, within its min-height
+    /// and max-height.
+    fn end_block_at_kept_margin(
+        &self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        end: f32,
+    ) {
+        let cascade = env.cascade;
+        let Some(last) = last_flow_box(document, cascade, node_id) else {
+            return;
+        };
+        if !document.block_axis(node_id).height().is_auto()
+            || (self.sibling_margins.forced_break_box != Some(last)
+                && !super::splits_margin(document, cascade, last))
+        {
+            return;
+        }
+        let layout = &document.nodes[node_id].layout;
+        let content_end = current_abs_y(document, node_id) + layout.size.height
+            - layout.padding.bottom
+            - layout.border.bottom;
+        let (min_height, max_height) = border_box_height_bounds(document, node_id);
+        let height = (layout.size.height + end - content_end)
+            .min(max_height)
+            .max(min_height);
+        if (height - layout.size.height).abs() > 0.001 {
+            document.nodes[node_id].layout.size.height = height;
+            document.mark_pagination_extent_dirty(node_id);
+        }
+    }
+
     /// Truncates the margin between the last box of the block of
     /// `edges_break` and its edges, which end the content at `end` in the
     /// flow, when a page edge falls inside it (CSS Fragmentation 3 §5.2):
@@ -1520,17 +1586,28 @@ impl PaginationState {
         edges_break: &EdgesBreak,
         end: f32,
     ) -> Result<f32, Halt> {
+        self.end_block_at_kept_margin(document, env, edges_break.node_id, end);
         if edges_break.margin_above <= 0.001 {
             return Ok(end);
         }
         let page_origins = env.page_origins;
         let margin_start = end - edges_break.margin_above;
-        let edge_page = page_origins.first_edge_in_margin(margin_start, false, u32::MAX);
+        let mut edge_page = page_origins.first_edge_in_margin(margin_start, false, u32::MAX);
+        let node_id = edges_break.node_id;
+        // An empty box that a forced break took to the top of a page keeps
+        // its margins whole below the page top (see
+        // `forced_empty_box_shift`), up to the next page edge.
+        if let Some(forced) = self.sibling_margins.forced_break_box
+            && let Some(page_top) = self.sibling_margins.forced_page_top
+            && last_flow_box(document, env.cascade, node_id) == Some(forced)
+            && page_origins.origin(edge_page) <= page_top + 0.001
+        {
+            edge_page = page_origins.page_index_for_y(page_top) + 1;
+        }
         let edge = page_origins.origin(edge_page);
         if end <= edge + 0.001 {
             return Ok(end);
         }
-        let node_id = edges_break.node_id;
         // Cuts at the edges of blocks inside this one shrank it already, so
         // the cut stops where the block reaches its min-height now.
         let (min_height, _) = border_box_height_bounds(document, node_id);
@@ -1641,7 +1718,7 @@ impl PaginationState {
     /// sibling that follows it.
     pub(super) fn record_box_among_siblings(
         &mut self,
-        document: &LayoutSession<'_>,
+        document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         entry: &CandidateEntry,
@@ -1656,13 +1733,14 @@ impl PaginationState {
         {
             self.sibling_margins.break_taken_by_float = None;
             if !starts_after_forced_break {
-                self.sibling_margins.pass_on_forced_break(
+                let kept = self.sibling_margins.pass_on_forced_break(
                     document,
                     env.cascade,
                     parent_id,
                     node_id,
                     page_break.collapses_with_previous_block && page_break.margins_collapse_through,
                 );
+                self.follow_kept_margin(document, env, candidate, kept, self.current_page);
             }
             self.sibling_margins.record_bottom(
                 parent_id,
@@ -2424,6 +2502,9 @@ impl PaginationState {
             lands_after_forced_break,
             overflow,
         );
+        if forced_transition {
+            self.sibling_margins.forced_margins = None;
+        }
         if landing.is_finite() {
             if !lands_after_forced_break {
                 let consumed = self.float_gaps.discard_in_holder(
@@ -2484,6 +2565,26 @@ impl PaginationState {
             // after a box it pulls back over the break follows the box, as
             // in Chromium.
             self.flow_shift += landing.node_delta;
+            if lands_after_forced_break && margins_collapse_through {
+                let kept = self.sibling_margins.forced_empty_box_shift(
+                    document,
+                    cascade,
+                    node_id,
+                    flow_raw_y(document, cascade, body_id, candidate),
+                    landing.target_y - landing_relative,
+                    (
+                        page_origins.origin(target_page),
+                        page_origins.origin(target_page.saturating_add(1)),
+                    ),
+                );
+                self.follow_kept_margin(
+                    document,
+                    env,
+                    candidate,
+                    kept,
+                    entry.page_before_candidate,
+                );
+            }
             if !lands_after_forced_break && (overflow.page || margin_pushes_box_on) {
                 self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
             }
@@ -2520,6 +2621,8 @@ impl PaginationState {
         self.current_page = target_page;
         if forced_transition {
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
+            self.sibling_margins.forced_page_top = Some(page_origins.origin(target_page));
+
             position.starts_after_forced_break = true;
         }
         if pending_break_applies {
@@ -2576,6 +2679,8 @@ impl PaginationState {
         let forced_before = forced_before || keeps_continuation_margin;
         if forced_before {
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
+            self.sibling_margins.forced_margins = None;
+            self.sibling_margins.forced_page_top = Some(page_origins.origin(natural_page));
             position.starts_after_forced_break = true;
         }
         // An unforced break that falls inside the collapsed margin
