@@ -2298,6 +2298,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .flatten();
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
                     || min_height_room.is_some()
+                    // The boxes of a `display: contents` element follow the
+                    // box before it, one after another (see `previous_box`).
+                    || (contents && frame.previous_box.is_some())
                     || (child_order.len() > 1
                         && (moves_later_siblings(document, node_id)
                             || (self.forces_break_after
@@ -2456,15 +2459,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     Vec::new()
                 };
                 // A `display: contents` element lends its boxes to the flow
-                // of its parent: when they end that flow with the edges after
-                // them, the box before its first one is the box before the
-                // element, which a free break or one that gives way may
-                // follow. The boxes are walked in turn only then.
-                let mut previous_box = if contents && closing_chain.is_some() {
-                    frame.previous_box
-                } else {
-                    None
-                };
+                // of its parent: the box before its first one is the box
+                // before the element. A free break or one that gives way may
+                // follow it, and a page edge cuts the margin between them, as
+                // it would between siblings. The boxes are walked in turn
+                // whenever there is such a box.
+                let mut previous_box = if contents { frame.previous_box } else { None };
                 let can_inherit_column_break = column_break_before
                     && !node.has_before_or_after_content
                     && (node.display() == DisplayValue::Contents
