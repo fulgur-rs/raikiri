@@ -115,6 +115,26 @@ fn every_later_cell_starts_on_the_page_of_its_row() {
             (1, 'Y', 10, 5)
         ]
     );
+    // Cells inside `display: contents` boxes, which put them in the row.
+    for (first, second) in [
+        ("", "display:contents"),
+        ("display:contents", "display:contents"),
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="display:table"><div style="display:table-row"><div style="{first}"><div style="display:table-cell">{RUNS_ON}</div></div><div style="{second}"><div style="display:table-cell"><div style="height:50px">W</div><div style="height:70px;break-inside:avoid">Y</div></div></div></div></div><div>X</div>"#
+            )),
+            [
+                (0, 'A', 0, 5),
+                (0, 'B', 0, 35),
+                (0, 'W', 10, 5),
+                (1, 'D', 0, 5),
+                (1, 'X', 0, 75),
+                (1, 'Y', 10, 5)
+            ],
+            "{first} {second}"
+        );
+    }
     // A cell beside a nested table whose first cell runs on.
     assert_eq!(
         glyphs(&format!(
