@@ -2289,7 +2289,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // the last box that the closing edges follow. The children of
                 // other boxes that lay them out in block flow need the box
                 // before them only to take a forced break, so they get it only
-                // when the document forces one.
+                // when the document forces one. The children of a `display:
+                // contents` element stand among its parent's (see
+                // `previous_box`), so they get it as those do.
                 // The edges of a block whose `min-height` leaves room below
                 // its last box, which they follow once moved content fills it.
                 let min_height_room = own_closing_edges
@@ -2298,9 +2300,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .flatten();
                 let flow_flags: Vec<(Option<usize>, bool)> = if closing_chain.is_some()
                     || min_height_room.is_some()
-                    // The boxes of a `display: contents` element follow the
-                    // box before it, one after another (see `previous_box`).
-                    || (contents && frame.previous_box.is_some())
+                    || (contents && (frame.previous_box.is_some() || child_order.len() > 1))
                     || (child_order.len() > 1
                         && (moves_later_siblings(document, node_id)
                             || (self.forces_break_after
@@ -2464,7 +2464,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // follow it, and a page edge cuts the margin between them, as
                 // it would between siblings. The boxes are walked in turn
                 // whenever there is such a box.
-                let mut previous_box = if contents { frame.previous_box } else { None };
+                let mut previous_box = frame.previous_box.filter(|_| contents);
                 let can_inherit_column_break = column_break_before
                     && !node.has_before_or_after_content
                     && (node.display() == DisplayValue::Contents
@@ -2480,8 +2480,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // are not taken as tied to the start.
                 let mut tied_from_start = previous_box.is_none();
                 // The child that starts the run of boxes tied by avoided
-                // breaks which the box before the next child ends.
-                let mut run_head = None;
+                // breaks which the box before the next child ends. The run of
+                // the box before a `display: contents` element goes on into
+                // its boxes.
+                let mut run_head = if contents {
+                    frame.tie_head.or(frame.previous_box)
+                } else {
+                    None
+                };
                 let is_block = |id: usize| {
                     is_plain_block_box(document, id) || is_plain_container_box(document, id)
                 };

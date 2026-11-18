@@ -225,6 +225,13 @@ fn the_margin_before_a_block_inside_display_contents_is_cut() {
             format!("<div>{}{}</div>{C}", first(""), contents(&contents(&b("")))),
         ),
         (
+            "contents first in its parent",
+            format!(
+                "<div>{}</div>{C}",
+                contents(&format!("{}{}", first(""), b("")))
+            ),
+        ),
+        (
             "c in the contents",
             format!(
                 "<div>{}{}</div>",
