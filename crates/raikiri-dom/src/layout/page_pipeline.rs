@@ -14013,8 +14013,12 @@ impl SiblingMargins {
         let before = adjoining_margin_extremes(document, cascade, previous, false, None);
         let (positive, negative) = join_margin_extremes(before, own);
         // The layout put the flow after the box where the joined margin ends,
-        // `gap` of it above the box.
+        // `gap` of it above the box. A gap wider than the margin holds
+        // something else, such as a float the box went below.
         let left_after = positive + negative - gap;
+        if left_after < -0.001 {
+            return 0.0;
+        }
         let kept = if splits_margin(document, cascade, node_id) {
             // A box that splits the margin sits below the margins inside it
             // and keeps its own block-end margin whole below it (see

@@ -21918,3 +21918,37 @@ fn a_block_of_set_height_holds_the_margin_kept_after_a_forced_break() {
         place_after_forced_empty_boxes(fixed, "margin-bottom:5px", &[])
     );
 }
+
+#[test]
+fn a_float_above_an_empty_box_after_a_forced_break_is_no_kept_margin() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `body > 30px box on page b, float, empty box on page c > float`: the
+    // empty box sits below the first float in the flow, but that space is
+    // no margin to keep after the break between the named pages.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let float = "display:block;float:right;width:100px;height:100px";
+    doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:400px;height:30px;page:b"),
+    );
+    doc.append_element(Some(body), "div", Some(float));
+    let empty = doc.append_element(Some(body), "div", Some("display:block;width:400px;page:c"));
+    let inner = doc.append_element(Some(empty), "div", Some(float));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 400.0;
+    page.height = 400.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(empty).unwrap().layout.location.y
+            + doc.get_node(inner).unwrap().layout.location.y,
+        400.0
+    );
+}
