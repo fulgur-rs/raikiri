@@ -21759,6 +21759,16 @@ fn text_between_a_split_box_and_the_box_after_it_keeps_them_apart() {
 /// on 100px pages, and returns where `z` lands. With `wrapper` set, the
 /// boxes before `z` sit in a block of that style.
 fn place_after_forced_empty_boxes(wrapper: Option<&str>, breaking: &str, empties: &[&str]) -> f32 {
+    layout_after_forced_empty_boxes(wrapper, breaking, empties).0
+}
+
+/// Where `z` lands in [`place_after_forced_empty_boxes`], and where the
+/// block of `wrapper` style around the boxes before it ends.
+fn layout_after_forced_empty_boxes(
+    wrapper: Option<&str>,
+    breaking: &str,
+    empties: &[&str],
+) -> (f32, f32) {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -21811,7 +21821,11 @@ fn place_after_forced_empty_boxes(wrapper: Option<&str>, breaking: &str, empties
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    doc.get_node(z).unwrap().layout.location.y
+    let holder = &doc.get_node(holder).unwrap().layout;
+    (
+        doc.get_node(z).unwrap().layout.location.y,
+        holder.location.y + holder.size.height,
+    )
 }
 
 #[test]
@@ -21963,5 +21977,28 @@ fn a_float_above_an_empty_box_after_a_forced_break_is_no_kept_margin() {
         doc.get_node(empty).unwrap().layout.location.y
             + doc.get_node(inner).unwrap().layout.location.y,
         400.0
+    );
+}
+
+#[test]
+fn a_padded_block_ends_below_the_margins_kept_after_a_forced_break() {
+    // Its padding ends where the box after it starts.
+    let padded = Some("padding-bottom:15px");
+    for empties in [
+        &["height:0;margin-bottom:30px"][..],
+        &["height:0;margin-bottom:30px", "height:0;margin-bottom:50px"],
+        &["height:0;margin-bottom:30px>margin-bottom:45px"],
+    ] {
+        let (z, end) = layout_after_forced_empty_boxes(padded, "margin-bottom:5px", empties);
+        assert_eq!(end, z, "{empties:?}");
+    }
+    assert_eq!(
+        layout_after_forced_empty_boxes(
+            padded,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px"]
+        )
+        .1,
+        145.0
     );
 }

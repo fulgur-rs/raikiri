@@ -1505,6 +1505,44 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Ends the content box of the block `node_id` at `end`, where the flow
+    /// inside it ends, when its last box kept a margin below it that the
+    /// flow follows: an empty box after a forced break (see
+    /// `forced_empty_box_shift`) or a box that splits the margin (see
+    /// `split_box_kept_margin`). The flow after the block follows that
+    /// margin, and so does the block's own height, within its min-height
+    /// and max-height.
+    fn end_block_at_kept_margin(
+        &self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        end: f32,
+    ) {
+        let cascade = env.cascade;
+        let Some(last) = last_flow_box(document, cascade, node_id) else {
+            return;
+        };
+        if !document.block_axis(node_id).height().is_auto()
+            || (self.sibling_margins.forced_break_box != Some(last)
+                && !super::splits_margin(document, cascade, last))
+        {
+            return;
+        }
+        let layout = &document.nodes[node_id].layout;
+        let content_end = current_abs_y(document, node_id) + layout.size.height
+            - layout.padding.bottom
+            - layout.border.bottom;
+        let (min_height, max_height) = border_box_height_bounds(document, node_id);
+        let height = (layout.size.height + end - content_end)
+            .min(max_height)
+            .max(min_height);
+        if (height - layout.size.height).abs() > 0.001 {
+            document.nodes[node_id].layout.size.height = height;
+            document.mark_pagination_extent_dirty(node_id);
+        }
+    }
+
     /// Truncates the margin between the last box of the block of
     /// `edges_break` and its edges, which end the content at `end` in the
     /// flow, when a page edge falls inside it (CSS Fragmentation 3 §5.2):
@@ -1520,6 +1558,7 @@ impl PaginationState {
         edges_break: &EdgesBreak,
         end: f32,
     ) -> Result<f32, Halt> {
+        self.end_block_at_kept_margin(document, env, edges_break.node_id, end);
         if edges_break.margin_above <= 0.001 {
             return Ok(end);
         }

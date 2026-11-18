@@ -16,8 +16,9 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// The page index and the top on that page of the element `#z`.
-fn place_of_z(body: &str) -> (usize, f32) {
+/// The page index, top and bottom on that page of each fragment of the
+/// element with the id `id`.
+fn fragments_of(body: &str, id: &str) -> Vec<(usize, f32, f32)> {
     let html = format!(
         "<!DOCTYPE html><style>@page{{size:100px 100px;margin:0}}\
          body{{margin:0;font:20px/30px Ahem}}</style>{body}"
@@ -38,14 +39,32 @@ fn place_of_z(body: &str) -> (usize, f32) {
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
+    let mut fragments = Vec::new();
     for (index, page) in result.pages().enumerate() {
         for fragment in page.fragments() {
-            if page.dom().attr(fragment.node(), "id") == Some("z") {
-                return (index, fragment.rect().y);
+            if page.dom().attr(fragment.node(), "id") == Some(id) {
+                let rect = fragment.rect();
+                fragments.push((index, rect.y, rect.y + rect.height));
             }
         }
     }
-    panic!("no fragment for #z in {body}");
+    fragments
+}
+
+/// The page index and the top on that page of the element `#z`.
+fn place_of_z(body: &str) -> (usize, f32) {
+    let &(page, top, _) = fragments_of(body, "z")
+        .first()
+        .unwrap_or_else(|| panic!("no fragment for #z in {body}"));
+    (page, top)
+}
+
+/// The last page of the element `#w` and where it ends on that page.
+fn end_of_w(body: &str) -> (usize, f32) {
+    let &(page, _, bottom) = fragments_of(body, "w")
+        .last()
+        .unwrap_or_else(|| panic!("no fragment for #w in {body}"));
+    (page, bottom)
 }
 
 /// Lays out every `(wrapper style, empty boxes, z style, (page, top))` case
@@ -271,5 +290,19 @@ fn white_space_between_the_box_and_the_one_before_it() {
         ),
     ] {
         assert_eq!(place_of_z(&body), expected, "{body}");
+    }
+}
+
+#[test]
+fn the_block_around_the_box_ends_below_the_margin_it_keeps() {
+    // The padding of the block follows the kept margin on the page the box
+    // moved to, where the box after the block starts.
+    for child in ["margin-bottom:40px", "margin-bottom:10px"] {
+        let body = format!(
+            "<div id=w style='width:20px;{PADDED}'>{LINES}<div style='height:20px'>T</div>\
+             <div style='height:0;margin-bottom:30px'><div style='{child}'></div></div></div>\
+             <div>Z</div>"
+        );
+        assert_eq!(end_of_w(&body), (2, 45.0), "{body}");
     }
 }

@@ -16,8 +16,9 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// The page index and the top on that page of the element `#z`.
-fn place_of_z(body: &str) -> (usize, f32) {
+/// The page index, top and bottom on that page of each fragment of the
+/// element with the id `id`.
+fn fragments_of(body: &str, id: &str) -> Vec<(usize, f32, f32)> {
     let html = format!(
         "<!DOCTYPE html><style>@page{{size:100px 100px;margin:0}}\
          body{{margin:0;font:20px/30px Ahem}}</style>{body}"
@@ -38,14 +39,32 @@ fn place_of_z(body: &str) -> (usize, f32) {
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
+    let mut fragments = Vec::new();
     for (index, page) in result.pages().enumerate() {
         for fragment in page.fragments() {
-            if page.dom().attr(fragment.node(), "id") == Some("z") {
-                return (index, fragment.rect().y);
+            if page.dom().attr(fragment.node(), "id") == Some(id) {
+                let rect = fragment.rect();
+                fragments.push((index, rect.y, rect.y + rect.height));
             }
         }
     }
-    panic!("no fragment for #z in {body}");
+    fragments
+}
+
+/// The page index and the top on that page of the element `#z`.
+fn place_of_z(body: &str) -> (usize, f32) {
+    let &(page, top, _) = fragments_of(body, "z")
+        .first()
+        .unwrap_or_else(|| panic!("no fragment for #z in {body}"));
+    (page, top)
+}
+
+/// The last page of the element `#w` and where it ends on that page.
+fn end_of_w(body: &str) -> (usize, f32) {
+    let &(page, _, bottom) = fragments_of(body, "w")
+        .last()
+        .unwrap_or_else(|| panic!("no fragment for #w in {body}"));
+    (page, bottom)
 }
 
 /// Lays out every `(body, (page, top))` case and reports all that differ.
@@ -285,4 +304,52 @@ fn empty_boxes_that_end_a_block_pass_their_margins_on_to_the_box_after_it() {
             (2, 65.0),
         ),
     ]);
+}
+
+#[test]
+fn the_block_around_empty_boxes_ends_below_their_kept_margins() {
+    // Its padding follows the margins kept after the break, where the box
+    // after it starts.
+    let padded = "padding-bottom:15px";
+    let mb30 = empty("height:0;margin-bottom:30px");
+    let cases = [
+        (closing_case(padded, &breaking(5), &mb30, ""), (2, 45.0)),
+        (
+            closing_case(
+                padded,
+                &breaking(5),
+                &empty("margin-top:10px;margin-bottom:30px"),
+                "",
+            ),
+            (2, 45.0),
+        ),
+        (
+            closing_case(
+                padded,
+                &breaking(5),
+                &format!("{mb30}{}", empty("height:0;margin-bottom:50px")),
+                "",
+            ),
+            (2, 65.0),
+        ),
+        (closing_case(padded, &breaking(40), &mb30, ""), (2, 45.0)),
+        (
+            closing_case(
+                padded,
+                &breaking(5),
+                "<div style='height:0;margin-bottom:30px'><div style='margin-bottom:45px'></div></div>",
+                "",
+            ),
+            (2, 90.0),
+        ),
+    ];
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter_map(|(body, expected)| {
+            let body = body.replacen("<div style='width:20px;", "<div id=w style='width:20px;", 1);
+            let end = end_of_w(&body);
+            (end != *expected).then(|| format!("{body}: #w expected {expected:?}, got {end:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
