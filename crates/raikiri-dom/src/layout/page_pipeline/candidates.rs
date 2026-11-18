@@ -2206,8 +2206,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let child_order = pagination_child_order(document, cascade, node_id);
                 // The closing edges of this block, and of the blocks that it
                 // ends in turn, follow its last box in the flow: a float after
-                // a box keeps it from being the last.
-                let own_closing_edges = closing_edges_of(document, cascade, body_id, node_id);
+                // a box keeps it from being the last. A `display: contents`
+                // element has no edges of its own, but lends its boxes to the
+                // flow of its parent, so its last box carries the edges of the
+                // blocks that it ends.
+                let contents = node.display() == DisplayValue::Contents;
+                let own_closing_edges = if contents {
+                    Some(0.0)
+                } else {
+                    closing_edges_of(document, cascade, body_id, node_id)
+                };
                 // The edges of the blocks this one ends are not below a box that
                 // only starts a run of boxes tied by avoided breaks: the rest
                 // of the run lies between. Nor are they below the last box of a
@@ -2215,6 +2223,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // follow that block's border box.
                 let inherited_edges = if matches!(frame.tie, AvoidTie::RunStart { .. })
                     || (frame.closing_edges > 0.0
+                        && !contents
                         && !passes_closing_edges(document, cascade, body_id, node_id))
                 {
                     0.0
@@ -2446,7 +2455,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     Vec::new()
                 };
-                let mut previous_box = None;
+                // A `display: contents` element lends its boxes to the flow
+                // of its parent: when they end that flow with the edges after
+                // them, the box before its first one is the box before the
+                // element, which a free break or one that gives way may
+                // follow. The boxes are walked in turn only then.
+                let mut previous_box = if contents && closing_chain.is_some() {
+                    frame.previous_box
+                } else {
+                    None
+                };
                 let can_inherit_column_break = column_break_before
                     && !node.has_before_or_after_content
                     && (node.display() == DisplayValue::Contents
@@ -2455,10 +2473,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // Whether any in-flow box comes before the child, text
                 // included: `previous_box` forgets a text box, which is no box
                 // to break from for some rules but is one for this.
-                let mut box_before = false;
+                let mut box_before = previous_box.is_some();
                 // Whether avoided breaks tie each box so far to the one before
-                // it, from the first box on.
-                let mut tied_from_start = true;
+                // it, from the first box on. Boxes of the parent's flow before
+                // a `display: contents` element are not counted, so its boxes
+                // are not taken as tied to the start.
+                let mut tied_from_start = previous_box.is_none();
                 // The child that starts the run of boxes tied by avoided
                 // breaks which the box before the next child ends.
                 let mut run_head = None;
@@ -2587,7 +2607,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             capped_edges_block: (child_closing_edges > 0.0
                                 && at_chain_start.is_none())
                             .then(|| {
-                                if height_follows_content(document, node_id) {
+                                if contents || height_follows_content(document, node_id) {
                                     frame.capped_edges_block.filter(|_| inherited_edges > 0.0)
                                 } else {
                                     Some(node_id)

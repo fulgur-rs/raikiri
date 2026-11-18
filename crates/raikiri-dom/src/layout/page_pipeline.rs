@@ -9800,19 +9800,29 @@ fn flow_end_box(
             adjoining_margin_extremes(document, cascade, last, false, None),
         ));
     }
-    let parent = document.parent_of(last)?;
+    // The block whose flow `last` ends: a `display: contents` element lends
+    // the boxes inside it to the flow of its parent.
+    let mut block = document.parent_of(last)?;
+    while document.nodes[block].display() == DisplayValue::Contents {
+        block = document.parent_of(block)?;
+    }
     // The empty boxes that end the flow, `last` first, and the box before
     // them. Walked from the end, `last` is reached past only the few that
     // follow it outside the flow.
     let mut run = Vec::new();
     let mut before = None;
-    for &child in document.nodes[parent]
-        .children
-        .iter()
-        .rev()
-        .skip_while(|&&child| child != last)
-    {
+    // The children still to visit, last first, through the `display:
+    // contents` elements on the way.
+    let mut pending: Vec<usize> = document.nodes[block].children.clone();
+    while let Some(child) = pending.pop() {
         if !takes_part_in_flow(document, cascade, child) {
+            continue;
+        }
+        if document.nodes[child].display() == DisplayValue::Contents {
+            pending.extend(document.nodes[child].children.iter().copied());
+            continue;
+        }
+        if run.is_empty() && child != last {
             continue;
         }
         if !collapses_as_empty_box(document, cascade, child) {
@@ -9850,10 +9860,9 @@ fn flow_end_box(
             })
         })
         .or(before)?;
-    // A `display: contents` element has no margin box of its own.
     let (end_positive, end_negative) =
         adjoining_margin_extremes(document, cascade, end, false, None);
-    (document.nodes[end].display() != DisplayValue::Contents).then_some((
+    Some((
         end,
         (positive.max(end_positive), negative.min(end_negative)),
     ))
