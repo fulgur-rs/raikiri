@@ -697,20 +697,21 @@ fn layout_context(
         Some(height) => height,
         None => auto_height,
     };
-    // When `min-height` raises the used height above the content, the last
-    // child's bottom margin no longer adjoins the bottom edge. As in
-    // browsers, it then neither escapes nor adds to the height that
-    // `min-height` fixed.
+    // When `min-height` raises the used height above the content, or
+    // `max-height` holds it below the content, the last child's bottom
+    // margin no longer adjoins the bottom edge. As in browsers, it then
+    // neither escapes nor adds to the height those limits fixed. The floor
+    // that the padding and border set does not separate it.
     let content_height = natural_end + metrics.inset.bottom;
-    let minimum_separates = collapse_end
-        && metrics
-            .min
-            .height
-            .is_some_and(|min| min > 0.0 && min > content_height);
+    let raised =
+        height > content_height && metrics.min.height.is_some_and(|min| min > content_height);
+    let lowered =
+        height < content_height && metrics.max.height.is_some_and(|max| max < content_height);
+    let height_separates = collapse_end && (raised || lowered);
     // A filled body in quirks mode fills the root element less its margins
     // as they collapse with those that adjoin its edges. The fill is only a
     // minimum, so a taller height the aspect ratio gives is kept.
-    let (height, minimum_separates) = match body_fill {
+    let (height, height_separates) = match body_fill {
         Some((fill, ratio)) => {
             let (height, separates) = fill.height(
                 content_height,
@@ -728,7 +729,7 @@ fn layout_context(
             );
             (height, collapse_end && separates)
         }
-        None => (height, minimum_separates),
+        None => (height, height_separates),
     };
     let size = Size { width, height };
     children::align(
@@ -781,7 +782,7 @@ fn layout_context(
         } else {
             CollapsibleMarginSet::ZERO
         },
-        bottom_margin: if collapse_end && !minimum_separates {
+        bottom_margin: if collapse_end && !height_separates {
             flow.trailing
         } else {
             CollapsibleMarginSet::ZERO

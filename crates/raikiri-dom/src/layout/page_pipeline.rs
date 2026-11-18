@@ -7382,13 +7382,19 @@ fn adjoining_margin_extremes(
         }
         // The child's margin adjoins only when its border box touches this
         // box's content edge, which a used height or a line before it would
-        // prevent. Contact is measured in the flow, before relative offsets:
-        // an offset moves the box without moving its margins (CSS 2 §9.4.3).
+        // prevent, and so would a `max-height` that ends this box above the
+        // end of a child with content. An empty child that its margins
+        // collapse through may sit below that edge and still adjoin it.
+        // Contact is measured in the flow, before relative offsets: an offset
+        // moves the box without moving its margins (CSS 2 §9.4.3).
         let child_y = normal_flow_y(document, cascade, id, child);
+        let empty = collapses_through(document, cascade, child, child_layout.size.height);
         let touches = if start {
             child_y <= 0.001
         } else {
-            child_y + child_layout.size.height >= layout.size.height - 0.001
+            let child_end = child_y + child_layout.size.height;
+            child_end >= layout.size.height - 0.001
+                && (empty || child_end <= layout.size.height + 0.001)
         };
         if !touches {
             break;
@@ -7396,7 +7402,7 @@ fn adjoining_margin_extremes(
         // An empty box lets its margins collapse through it, so all of them,
         // and those of the boxes inside it, meet the margin of the box after
         // it, which adjoins this edge too.
-        if !clears && collapses_through(document, cascade, child, child_layout.size.height) {
+        if !clears && empty {
             let (child_positive, child_negative) =
                 empty_box_margin_extremes(document, cascade, child);
             positive = positive.max(child_positive);
