@@ -347,6 +347,12 @@ pub(super) struct PaginationState {
     /// truncated (see [`Self::truncate_margin_above_edges`]): the block ends
     /// that much above the margin box of its last child.
     pub(super) margin_cuts: HashMap<usize, f32>,
+    /// Where the in-flow content of each block that ends at a margin kept
+    /// below its last box ends (see [`Self::end_block_at_kept_margin`]),
+    /// below the top of its border box, when a page edge cut that margin,
+    /// which the margin itself does not show. A cut that truncates the
+    /// margin above the block's edges further is in `margin_cuts`.
+    pub(super) kept_margin_ends: HashMap<usize, f32>,
     /// For each block, the block size of the margins inside it that a page
     /// edge may truncate (see [`super::truncatable_margin_rooms`]), which the pages
     /// its run-on reaches leave out.
@@ -401,6 +407,7 @@ impl PaginationState {
             edge_pushes: HashMap::new(),
             edge_growth: HashMap::new(),
             margin_cuts: HashMap::new(),
+            kept_margin_ends: HashMap::new(),
             margin_rooms: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
@@ -1541,7 +1548,7 @@ impl PaginationState {
     /// margin, and so does the block's own height, within its min-height
     /// and max-height.
     fn end_block_at_kept_margin(
-        &self,
+        &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         node_id: usize,
@@ -1568,6 +1575,16 @@ impl PaginationState {
         if (height - layout.size.height).abs() > 0.001 {
             document.nodes[node_id].layout.size.height = height;
             document.mark_pagination_extent_dirty(node_id);
+        }
+        // Where a page edge cut the kept margin, the margin box of the last
+        // box reaches past the flow, which the height pass after pagination
+        // measures; the flow inside the block ends here all the same.
+        let last_layout = &document.nodes[last].layout;
+        let margin_end =
+            current_abs_y(document, last) + last_layout.size.height + last_layout.margin.bottom;
+        if end + 0.001 < margin_end {
+            self.kept_margin_ends
+                .insert(node_id, end - current_abs_y(document, node_id));
         }
     }
 

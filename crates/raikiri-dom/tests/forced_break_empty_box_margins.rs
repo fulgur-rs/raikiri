@@ -342,6 +342,31 @@ fn the_block_around_empty_boxes_ends_below_their_kept_margins() {
             ),
             (2, 90.0),
         ),
+        // A margin taller than the page ends at the next page edge, and the
+        // padding of the block follows that edge.
+        (
+            closing_case(
+                padded,
+                &breaking(5),
+                &empty("height:0;margin-bottom:150px"),
+                "",
+            ),
+            (3, 15.0),
+        ),
+        // A float the block encloses still takes its end further down,
+        // past the page edge that cut the margin.
+        (
+            closing_case(
+                &format!("display:flow-root;{padded}"),
+                &breaking(5),
+                &format!(
+                    "{}<div style='float:left;width:10px;height:150px'></div>",
+                    empty("height:0;margin-bottom:150px")
+                ),
+                "",
+            ),
+            (4, 65.0),
+        ),
     ];
     let wrong: Vec<String> = cases
         .iter()

@@ -309,6 +309,7 @@ fn content_overflow(
                 root_flow_offset,
                 page_area_height,
                 false,
+                None,
             )
         } else if in_columns.is_none() && node.layout.size.height > 0.0 {
             y + node.layout.size.height
@@ -765,6 +766,8 @@ fn relative_offset_is_painted(
 /// When counting overflow pages, an auto-sized root without block-end edges
 /// contributes no extra page beyond those its content already reached.
 /// `whole_box` also includes that content when extending the root's own box.
+/// `flow_end_cap`, below the top of the root's border box, is where its
+/// in-flow content ends when a page edge cut the margin it ends with.
 fn block_border_box_end(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -772,6 +775,7 @@ fn block_border_box_end(
     root_flow_offset: f32,
     page_area_height: f32,
     whole_box: bool,
+    flow_end_cap: Option<f32>,
 ) -> f32 {
     let computed = &cascade.computed[flow_root];
     // Percentages resolve against the root's used height only when it is
@@ -976,7 +980,12 @@ fn block_border_box_end(
             let table = &document.nodes[table].layout;
             border_end = border_end.max(offset + table.location.y + table.size.height);
         }
-        let end = border_end + layout.margin.bottom;
+        // A page edge may have cut the margin of a box the flow follows, down
+        // to where the flow inside the root ends (see `flow_end_cap`); no box
+        // ends above its border box.
+        let end = flow_end_cap.map_or(border_end + layout.margin.bottom, |cap| {
+            (border_end + layout.margin.bottom).min((top + cap).max(border_end))
+        });
         if end.is_finite() {
             // A reverse column flex container's source order need not end
             // with its lowest item. Its item margins never collapse.
@@ -1141,7 +1150,15 @@ fn unpaginated_content_overflow(
                 && grows_with_paginated_content(document, node_id)
         })
         .filter_map(|node_id| {
-            let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+            let end = block_border_box_end(
+                document,
+                cascade,
+                node_id,
+                0.0,
+                page_area_height,
+                true,
+                None,
+            );
             let overflow =
                 end - current_abs_y(document, node_id) - document.nodes[node_id].layout.size.height;
             (overflow.is_finite() && overflow > 0.0).then_some((node_id, overflow))
@@ -1241,13 +1258,22 @@ fn update_paginated_block_heights(
     root: usize,
     page_area_height: f32,
     overflow: &HashMap<usize, f32>,
+    flow_ends: &HashMap<usize, f32>,
 ) {
     let order: Vec<_> = document.preorder(root).collect();
     for node_id in order.into_iter().rev() {
         if !grows_with_paginated_content(document, node_id) {
             continue;
         }
-        let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+        let end = block_border_box_end(
+            document,
+            cascade,
+            node_id,
+            0.0,
+            page_area_height,
+            true,
+            flow_ends.get(&node_id).copied(),
+        );
         let height =
             end - current_abs_y(document, node_id) - overflow.get(&node_id).copied().unwrap_or(0.0);
         if height.is_finite() && height > document.nodes[node_id].layout.size.height {
@@ -4749,6 +4775,7 @@ fn paginate_flow(
             body_id,
             content_height,
             &unpaginated_overflow,
+            &state.kept_margin_ends,
         );
     }
     if let Err(halt) = state.keep_positioned_lines(document, &env, &positioned_owner_heights) {
@@ -4796,6 +4823,7 @@ fn paginate_flow(
         body_id,
         content_height,
         &unpaginated_overflow,
+        &state.kept_margin_ends,
     );
     state.table_headers.index();
     document.table_objects.headers = std::mem::take(&mut state.table_headers);

@@ -22010,6 +22010,19 @@ fn a_padded_block_ends_below_the_margins_kept_after_a_forced_break() {
         .1,
         145.0
     );
+    // A margin that the next page edge cuts ends the block at that edge,
+    // however close the box before the break came to the page end.
+    for top in ["padding-top:30px", "padding-top:40px"] {
+        assert_eq!(
+            layout_after_forced_empty_boxes(
+                Some(&format!("{top};padding-bottom:15px")),
+                "margin-bottom:5px",
+                &["height:0;margin-bottom:150px"]
+            ),
+            (215.0, 215.0),
+            "{top}"
+        );
+    }
 }
 
 #[test]
