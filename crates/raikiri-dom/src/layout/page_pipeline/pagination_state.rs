@@ -439,15 +439,40 @@ impl PaginationState {
         self.float_gaps.assign_visits(document, candidates);
     }
 
-    pub(super) fn rebase_fragmented_cell_text(&self, candidate: &mut PageCandidate) {
-        if candidate.context.is_text()
-            && let Some((root, offset)) = &mut candidate.ifc_root
-            && let Some(shift) = self.fragmented_cell_shifts.get(root)
-        {
-            // Rebase both coordinates so placing the text leaves its root at
-            // the same border-box top and does not shift following content.
-            candidate.raw_y -= shift;
-            *offset -= shift;
+    /// Moves a candidate inside cells whose alignment room a page break moved
+    /// below their content (see `table_cell_fragments`) up with that content,
+    /// by the shifts of all such cells around it. An absolutely positioned
+    /// box keeps the position the table gave it, so the cells around it no
+    /// longer move it or what it holds.
+    pub(super) fn rebase_fragmented_cell_content(
+        &self,
+        document: &LayoutSession<'_>,
+        candidate: &mut PageCandidate,
+    ) {
+        if self.fragmented_cell_shifts.is_empty() {
+            return;
+        }
+        let positioned = |id: usize| {
+            document.nodes[id].layout_position() == raikiri_layout_style::values::Position::Absolute
+        };
+        for id in document.inclusive_ancestors(candidate.node_id) {
+            if id != candidate.node_id
+                && let Some(&shift) = self.fragmented_cell_shifts.get(&id)
+            {
+                candidate.raw_y -= shift;
+                if let Some((root, offset)) = &mut candidate.ifc_root
+                    && *root == id
+                {
+                    // The cell's own lines are painted from its content box,
+                    // which the padding moved: rebase the offset below its
+                    // border-box top too, so placing the text leaves the cell
+                    // where it is and does not shift following content.
+                    *offset -= shift;
+                }
+            }
+            if positioned(id) {
+                return;
+            }
         }
     }
 
@@ -1129,18 +1154,20 @@ impl PaginationState {
         }
         self.flow_shift += header_delta;
 
-        if candidate.context.is_table_row()
-            && let Some(fragment) = super::table_cell_fragments::fitting(
+        if candidate.context.is_table_row() {
+            let page_end = page_origins.origin(self.current_page + 1);
+            // Whether a break goes through a cell is decided where the row
+            // sits in the flow; a relative offset only moves its paint.
+            for fragment in super::table_cell_fragments::split(
                 document,
-                cascade,
                 node_id,
-                effective_y,
+                effective_y - page_break.relative_offset,
                 page_start,
-                page_origins.origin(self.current_page + 1),
-            )
-        {
-            let (cell, shift) = fragment.apply(document);
-            self.fragmented_cell_shifts.insert(cell, shift);
+                page_end,
+            ) {
+                let (cell, shift) = fragment.apply(document);
+                self.fragmented_cell_shifts.insert(cell, shift);
+            }
         }
 
         if box_sets_page_name(

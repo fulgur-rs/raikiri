@@ -41,6 +41,26 @@ impl Fixture {
         self.qualified_on_axes(false)
     }
 
+    /// The cells `split` moves the alignment room of, and by how much, for
+    /// `node` placed at `top` on a page from 100 to 200.
+    fn split_at(mut self, node: usize, top: f32, transposed: bool) -> Vec<(usize, f32)> {
+        self.doc.mark_in_document_flags();
+        let cascade =
+            raikiri_style::cascade(&self.doc, &raikiri_style::build_rule_tree(&self.doc)).unwrap();
+        super::super::layout_single_page(
+            crate::layout::test_support::with_ahem(&mut self.doc),
+            &cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
+        let mut session = crate::layout::context::LayoutSession::resumed(&mut self.doc, &cascade);
+        session.context.pagination_on_transposed_axes = transposed;
+        split(&session, node, top, 100.0, 200.0)
+            .into_iter()
+            .map(|fragment| (fragment.cell, fragment.shift))
+            .collect()
+    }
+
     fn qualified_on_axes(mut self, transposed: bool) -> bool {
         self.doc.mark_in_document_flags();
         let cascade =
@@ -53,7 +73,7 @@ impl Fixture {
         .unwrap();
         let mut session = crate::layout::context::LayoutSession::resumed(&mut self.doc, &cascade);
         session.context.pagination_on_transposed_axes = transposed;
-        fitting(&session, &cascade, self.row, 160.0, 100.0, 200.0).is_some()
+        fitting(&session, &cascade, self.row, 160.0, 100.0, 200.0)
     }
 }
 
@@ -207,4 +227,53 @@ fn generated_cell_content_keeps_the_existing_path() {
 #[test]
 fn transposed_pagination_keeps_the_existing_path() {
     assert!(!Fixture::new().qualified_on_axes(true));
+}
+
+#[test]
+fn a_split_cell_moves_the_room_its_alignment_put_above_its_line() {
+    let fixture = Fixture::new();
+    let (row, cell) = (fixture.row, fixture.cell);
+    // A 30px line in the middle of 45px leaves 7.5px above it.
+    assert_eq!(fixture.split_at(row, 160.0, false), [(cell, 7.5)]);
+}
+
+#[test]
+fn cells_that_end_on_their_page_or_have_no_room_above_stay() {
+    let fixture = Fixture::new();
+    let row = fixture.row;
+    assert!(fixture.split_at(row, 120.0, false).is_empty());
+
+    let mut top = Fixture::new();
+    top.doc
+        .set_element_attribute(
+            top.cell,
+            "style",
+            "display:table-cell;height:45px;vertical-align:top",
+        )
+        .unwrap();
+    let row = top.row;
+    assert!(top.split_at(row, 160.0, false).is_empty());
+}
+
+#[test]
+fn vertical_cells_other_boxes_and_transposed_pagination_are_not_split() {
+    let mut vertical = Fixture::new();
+    vertical
+        .doc
+        .set_element_attribute(
+            vertical.cell,
+            "style",
+            "display:table-cell;height:45px;vertical-align:middle;writing-mode:vertical-rl",
+        )
+        .unwrap();
+    let row = vertical.row;
+    assert!(vertical.split_at(row, 160.0, false).is_empty());
+
+    let fixture = Fixture::new();
+    let group = fixture.group;
+    assert!(fixture.split_at(group, 160.0, false).is_empty());
+
+    let fixture = Fixture::new();
+    let row = fixture.row;
+    assert!(fixture.split_at(row, 160.0, true).is_empty());
 }
