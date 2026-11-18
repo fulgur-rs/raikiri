@@ -5877,12 +5877,15 @@ fn no_forced_break_inside_or_after(
     true
 }
 
-/// How far below the border-box top of the block `node_id` the first break
-/// forced inside it falls, when one does. A forced break before the first
-/// box at the start of the block or after the last one at its end is a
+/// How far below the border-box top of the block `node_id`, in normal flow,
+/// the first break forced inside it falls, when one does: the end of the
+/// content before it. Only the block flow inside the block is looked
+/// through, as a break inside a flex, grid or table box, an atomic inline or
+/// a box no page break goes through stays inside that box, and floats and
+/// out-of-flow boxes take their breaks with them. A forced break before the
+/// first box at the start of the block or after the last one at its end is a
 /// break before or after the block itself (CSS Fragmentation 3 §4.1), so it
-/// is left out. Floats and out-of-flow boxes take their breaks with them,
-/// and an inline box has none. A box inside that names a page other than
+/// is left out. A block-level box inside that names a page other than
 /// `page_name`, the one the block is on, forces a break before it too (CSS
 /// Paged Media 3 §6.3).
 ///
@@ -5892,15 +5895,26 @@ fn no_forced_break_inside_or_after(
 fn forced_break_inside(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     node_id: usize,
     page_name: Option<&str>,
+    transposed: bool,
 ) -> Option<f32> {
-    let top = current_abs_y(document, node_id);
+    if !looks_through_for_breaks(document, cascade, node_id, transposed) {
+        return None;
+    }
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let top = flow_top(node_id);
     let mut first: Option<f32> = None;
     let mut pending: Vec<usize> = document.nodes[node_id].children.clone();
     while let Some(id) = pending.pop() {
         let node = &document.nodes[id];
-        if node.display() == DisplayValue::None
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || node.kind() != NodeKind::Element
+            || node.display() == DisplayValue::None
             || matches!(
                 node.position(),
                 PositionValue::Absolute | PositionValue::Fixed
@@ -5909,22 +5923,27 @@ fn forced_break_inside(
         {
             continue;
         }
-        pending.extend(node.children.iter().copied());
+        if matches!(
+            node.display(),
+            DisplayValue::Contents | DisplayValue::Inline
+        ) || looks_through_for_breaks(document, cascade, id, transposed)
+        {
+            pending.extend(node.children.iter().copied());
+        }
         if node.display().is_inline_level() || node.display() == DisplayValue::Contents {
             continue;
         }
         let computed = &cascade.computed[id];
-        let border_top = current_abs_y(document, id) - top;
         let names_other_page =
             selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
         let at = if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
             && !at_block_edge(document, cascade, id, node_id, true)
         {
-            Some(border_top - node.layout.margin.top.max(0.0))
+            Some(flow_top(id) - node.layout.margin.top - top)
         } else if page_break_is_forced(document, id, computed.break_after)
             && !at_block_edge(document, cascade, id, node_id, false)
         {
-            Some(border_top + node.layout.size.height + node.layout.margin.bottom.max(0.0))
+            Some(flow_top(id) + node.layout.size.height - top)
         } else {
             None
         };
@@ -5935,8 +5954,25 @@ fn forced_break_inside(
     first
 }
 
+/// Whether the breaks inside the box `node_id` are breaks of the block flow
+/// around it: it lays its children out in block flow and a page break can go
+/// through it.
+fn looks_through_for_breaks(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    transposed: bool,
+) -> bool {
+    is_plain_block_box(document, node_id)
+        && !is_monolithic_for_pagination_with_transposed_axes(
+            document, cascade, node_id, transposed,
+        )
+}
+
 /// Whether the box `id` inside the block `block` is the first box at its
 /// start (`before`) or the last at its end, through every box between them.
+/// Generated content of a box between them comes before its first box and
+/// after its last.
 fn at_block_edge(
     document: &Document,
     cascade: &CascadeResult,
@@ -5949,6 +5985,7 @@ fn at_block_edge(
         .all(|id| {
             document
                 .parent_of(id)
+                .filter(|&parent| !document.nodes[parent].has_before_or_after_content)
                 .and_then(|parent| page_edge_child(document, cascade, parent, before, 0).ok())
                 .flatten()
                 .is_some_and(|edge| edge == id || document.ancestors(edge).any(|up| up == id))
@@ -6173,21 +6210,12 @@ impl AvoidedBreaks {
             });
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
-        // Only the content before a break forced inside the box has to fit.
         let avoided_end = avoids_break_inside.then(|| {
-            forced_break_inside(document, cascade, node_id, candidate.page_name.as_deref())
-                .map_or_else(
-                    || {
-                        flow_y
-                            + external_float_gap::fit_height(document, candidate)
-                            + trailing_margin
-                    },
-                    |offset| flow_y + offset,
-                )
+            flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin
         });
         // The blocks that a box which avoids a break inside it begins, with
         // the padding and border they keep above it, are what starts a page.
-        let moves_for_avoided_end = avoided_end.is_some_and(|end| {
+        let avoided_moves = |end: f32| {
             avoided_box_moves(
                 flow_y - avoided_lead,
                 avoided_margin_top,
@@ -6195,6 +6223,19 @@ impl AvoidedBreaks {
                 page_start,
                 page_end,
             )
+        };
+        // Only the content before a break forced inside the box has to fit.
+        let moves_for_avoided_end = avoided_end.is_some_and(|end| {
+            avoided_moves(end)
+                && forced_break_inside(
+                    document,
+                    cascade,
+                    body_id,
+                    node_id,
+                    candidate.page_name.as_deref(),
+                    document.context.pagination_on_transposed_axes,
+                )
+                .is_none_or(|offset| avoided_moves(flow_y + offset))
         });
         let page = unbreakable || moves_for_avoided_end;
         // A box inside another that moves with its run lengthens the boxes

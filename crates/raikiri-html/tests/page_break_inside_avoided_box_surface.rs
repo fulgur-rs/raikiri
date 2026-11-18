@@ -163,3 +163,74 @@ fn a_forced_break_after_the_last_box_breaks_after_the_box() {
         ]
     );
 }
+
+#[test]
+fn the_content_before_the_break_is_measured_in_the_flow() {
+    // The margin after the box that forces the break is cut at the break.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid"><div style="height:20px;margin-bottom:50px;break-after:page">Y</div><div>Q</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'W', 0, 5),
+            (0, 'Y', 0, 55),
+            (1, 'Q', 0, 5),
+            (1, 'X', 0, 25)
+        ]
+    );
+    // A relative offset of the box that forces the break only paints it
+    // elsewhere: the content before the break still crosses the page end.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid"><div style="height:60px">Y</div><div style="position:relative;top:-50px;break-before:page">Q</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'W', 0, 5),
+            (1, 'Q', 0, 55),
+            (1, 'Y', 0, 5),
+            (2, 'X', 0, 25)
+        ]
+    );
+    // Generated content before the first box puts the break inside the box.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<style>.b::before{{content:"G";display:block}}</style>{ABOVE}<div class="b" style="height:70px;break-inside:avoid"><div style="break-before:page">Q</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'G', 0, 55),
+            (0, 'W', 0, 5),
+            (1, 'Q', 0, 5),
+            (1, 'X', 0, 25)
+        ]
+    );
+}
+
+#[test]
+fn a_break_inside_a_box_that_keeps_it_is_not_a_break_of_the_avoiding_box() {
+    // The break between two flex items, and one inside an inline block, stay
+    // inside those boxes: the avoiding box moves whole.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="display:flex;break-inside:avoid;height:80px"><div>A</div><div style="break-before:page">B</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'W', 0, 5),
+            (1, 'A', 0, 5),
+            (1, 'B', 10, 5),
+            (1, 'X', 0, 85)
+        ]
+    );
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid">Y<span style="display:inline-block"><div style="height:20px">a</div><div style="break-before:page">b</div></span><div style="height:60px">T</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'W', 0, 5),
+            (1, 'T', 0, 45),
+            (1, 'Y', 0, 25),
+            (1, 'a', 10, 5),
+            (1, 'b', 10, 25),
+            (2, 'X', 0, 5)
+        ]
+    );
+}
