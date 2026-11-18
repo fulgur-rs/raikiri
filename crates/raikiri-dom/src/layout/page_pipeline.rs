@@ -9812,7 +9812,8 @@ fn flow_end_box(
     let mut run = Vec::new();
     let mut before = None;
     // The children still to visit, last first, through the `display:
-    // contents` elements on the way.
+    // contents` elements on the way. The first box in the flow met so is
+    // `last` when the flow ends with it, as it does for the callers.
     let mut pending: Vec<usize> = document.nodes[block].children.clone();
     while let Some(child) = pending.pop() {
         if !takes_part_in_flow(document, cascade, child) {
@@ -9822,15 +9823,13 @@ fn flow_end_box(
             pending.extend(document.nodes[child].children.iter().copied());
             continue;
         }
-        if run.is_empty() && child != last {
-            continue;
-        }
         if !collapses_as_empty_box(document, cascade, child) {
             before = Some(child);
             break;
         }
         run.push(child);
     }
+    run.first().filter(|&&first| first == last)?;
     // Which of them stay with the box before them, found from the first on:
     // each one adds its margins to those that collapse into the tops of the
     // boxes after it (see `collapsed_empty_box`).
