@@ -5877,6 +5877,84 @@ fn no_forced_break_inside_or_after(
     true
 }
 
+/// How far below the border-box top of the block `node_id` the first break
+/// forced inside it falls, when one does. A forced break before the first
+/// box at the start of the block or after the last one at its end is a
+/// break before or after the block itself (CSS Fragmentation 3 §4.1), so it
+/// is left out. Floats and out-of-flow boxes take their breaks with them,
+/// and an inline box has none. A box inside that names a page other than
+/// `page_name`, the one the block is on, forces a break before it too (CSS
+/// Paged Media 3 §6.3).
+///
+/// A box that avoids a break inside it still breaks there: Chromium keeps it
+/// on its page when the content before that break fits there, and moves it
+/// only when that content crosses the page end.
+fn forced_break_inside(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    page_name: Option<&str>,
+) -> Option<f32> {
+    let top = current_abs_y(document, node_id);
+    let mut first: Option<f32> = None;
+    let mut pending: Vec<usize> = document.nodes[node_id].children.clone();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        if node.display() == DisplayValue::None
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, id)
+        {
+            continue;
+        }
+        pending.extend(node.children.iter().copied());
+        if node.display().is_inline_level() || node.display() == DisplayValue::Contents {
+            continue;
+        }
+        let computed = &cascade.computed[id];
+        let border_top = current_abs_y(document, id) - top;
+        let names_other_page =
+            selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
+        let at = if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
+            && !at_block_edge(document, cascade, id, node_id, true)
+        {
+            Some(border_top - node.layout.margin.top.max(0.0))
+        } else if page_break_is_forced(document, id, computed.break_after)
+            && !at_block_edge(document, cascade, id, node_id, false)
+        {
+            Some(border_top + node.layout.size.height + node.layout.margin.bottom.max(0.0))
+        } else {
+            None
+        };
+        if let Some(at) = at {
+            first = Some(first.map_or(at, |first| first.min(at)));
+        }
+    }
+    first
+}
+
+/// Whether the box `id` inside the block `block` is the first box at its
+/// start (`before`) or the last at its end, through every box between them.
+fn at_block_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    block: usize,
+    before: bool,
+) -> bool {
+    std::iter::successors(Some(id), |&id| document.parent_of(id))
+        .take_while(|&id| id != block)
+        .all(|id| {
+            document
+                .parent_of(id)
+                .and_then(|parent| page_edge_child(document, cascade, parent, before, 0).ok())
+                .flatten()
+                .is_some_and(|edge| edge == id || document.ancestors(edge).any(|up| up == id))
+        })
+}
+
 /// Where a box and its page stand when the box is tested for moving to the
 /// next page.
 #[derive(Clone, Copy)]
@@ -6095,8 +6173,17 @@ impl AvoidedBreaks {
             });
         let avoids_break_inside =
             box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside);
+        // Only the content before a break forced inside the box has to fit.
         let avoided_end = avoids_break_inside.then(|| {
-            flow_y + external_float_gap::fit_height(document, candidate) + trailing_margin
+            forced_break_inside(document, cascade, node_id, candidate.page_name.as_deref())
+                .map_or_else(
+                    || {
+                        flow_y
+                            + external_float_gap::fit_height(document, candidate)
+                            + trailing_margin
+                    },
+                    |offset| flow_y + offset,
+                )
         });
         // The blocks that a box which avoids a break inside it begins, with
         // the padding and border they keep above it, are what starts a page.
