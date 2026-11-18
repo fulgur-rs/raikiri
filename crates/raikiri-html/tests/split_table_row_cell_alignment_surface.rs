@@ -178,3 +178,34 @@ fn rows_that_fit_keep_their_alignment() {
         ),
     ]);
 }
+
+/// An absolutely positioned box in a split cell keeps the static position the
+/// table gave it, and a split row of a table in a split cell starts at its top
+/// too.
+#[test]
+fn positioned_boxes_and_nested_split_rows_in_a_split_cell() {
+    assert_rows(&[
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:150px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div><div id='Q' style='position:absolute'>Q</div></td></tr></table><div id='X'>X</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'B', 20),
+                (0, 'C', 0),
+                (0, 'Q', 10),
+                (1, 'X', 70),
+            ],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:150px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div><table style='border-spacing:0'><tr><td style='padding:0'><div id='G' style='height:20px'>G</div><div id='H' style='height:150px'>H</div></td><td style='padding:0;vertical-align:middle'><div id='K'>K</div></td></tr></table></td></tr></table><div id='X'>X</div>",
+            &[
+                (0, 'A', 0),
+                (0, 'B', 20),
+                (0, 'C', 0),
+                (0, 'G', 10),
+                (0, 'H', 30),
+                (0, 'K', 10),
+                (1, 'X', 80),
+            ],
+        ),
+    ]);
+}

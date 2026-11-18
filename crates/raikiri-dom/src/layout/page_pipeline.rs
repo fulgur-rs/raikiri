@@ -6138,8 +6138,7 @@ impl AvoidedBreaks {
         let cell_text_fits = candidate.context.is_table_row()
             && table_cell_fragments::fitting(
                 document, cascade, node_id, flow_y, page_start, page_end,
-            )
-            .is_some();
+            );
         let table_row = candidate.context.is_table_row()
             && ((item_tail && tail_fits)
                 || (!cell_text_fits

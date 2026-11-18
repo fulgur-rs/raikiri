@@ -439,9 +439,11 @@ impl PaginationState {
         self.float_gaps.assign_visits(document, candidates);
     }
 
-    /// Moves a candidate inside a cell whose alignment room a page break
-    /// moved below its content (see `table_cell_fragments`) up with that
-    /// content.
+    /// Moves a candidate inside cells whose alignment room a page break moved
+    /// below their content (see `table_cell_fragments`) up with that content,
+    /// by the shifts of all such cells around it. An absolutely positioned
+    /// box keeps the position the table gave it, so the cells around it no
+    /// longer move it or what it holds.
     pub(super) fn rebase_fragmented_cell_content(
         &self,
         document: &LayoutSession<'_>,
@@ -450,8 +452,13 @@ impl PaginationState {
         if self.fragmented_cell_shifts.is_empty() {
             return;
         }
-        let mut ancestor = document.parent_of(candidate.node_id);
-        while let Some(id) = ancestor {
+        let positioned = |id: usize| {
+            document.nodes[id].layout_position() == raikiri_layout_style::values::Position::Absolute
+        };
+        if positioned(candidate.node_id) {
+            return;
+        }
+        for id in document.ancestors(candidate.node_id) {
             if let Some(&shift) = self.fragmented_cell_shifts.get(&id) {
                 candidate.raw_y -= shift;
                 if let Some((root, offset)) = &mut candidate.ifc_root
@@ -463,9 +470,10 @@ impl PaginationState {
                     // where it is and does not shift following content.
                     *offset -= shift;
                 }
+            }
+            if positioned(id) {
                 return;
             }
-            ancestor = document.parent_of(id);
         }
     }
 
@@ -1147,19 +1155,6 @@ impl PaginationState {
         }
         self.flow_shift += header_delta;
 
-        if candidate.context.is_table_row()
-            && let Some(fragment) = super::table_cell_fragments::fitting(
-                document,
-                cascade,
-                node_id,
-                effective_y,
-                page_start,
-                page_origins.origin(self.current_page + 1),
-            )
-        {
-            let (cell, shift) = fragment.apply(document);
-            self.fragmented_cell_shifts.insert(cell, shift);
-        }
         if candidate.context.is_table_row() {
             let page_end = page_origins.origin(self.current_page + 1);
             for fragment in super::table_cell_fragments::split(

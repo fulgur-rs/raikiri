@@ -92,8 +92,10 @@ pub(super) fn split(
         .collect()
 }
 
-/// Qualify only a real, one-cell, one-row table with one direct text line.
-/// Other table contents keep their existing row-boundary decisions.
+/// Qualify only a real, one-cell, one-row table with one direct text line,
+/// which stays on its page with the cell's spare height continuing (`split`
+/// then moves the cell's alignment room below the text). Other table contents
+/// keep their existing row-boundary decisions.
 pub(super) fn fitting(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -101,7 +103,18 @@ pub(super) fn fitting(
     top: f32,
     page_start: f32,
     page_end: f32,
-) -> Option<CellFragment> {
+) -> bool {
+    fits(document, cascade, row, top, page_start, page_end).is_some()
+}
+
+fn fits(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    top: f32,
+    page_start: f32,
+    page_end: f32,
+) -> Option<()> {
     let row_node = document.get_node(row)?;
     if document.context.pagination_on_transposed_axes
         || row_node.display() != DisplayValue::TableRow
@@ -181,13 +194,13 @@ pub(super) fn fitting(
     if !natural.is_finite() || natural <= 0.0 || top + natural > page_end + 0.001 {
         return None;
     }
-    let shift = match node.table_vertical_align {
-        VerticalAlign::Top | VerticalAlign::Middle | VerticalAlign::Bottom => {
-            layout.padding.top - padding.top
-        }
-        _ => return None,
-    };
-    (shift.is_finite() && shift >= 0.0).then_some(CellFragment { cell, shift })
+    let shift = layout.padding.top - padding.top;
+    (matches!(
+        node.table_vertical_align,
+        VerticalAlign::Top | VerticalAlign::Middle | VerticalAlign::Bottom
+    ) && shift.is_finite()
+        && shift >= 0.0)
+        .then_some(())
 }
 
 fn only_box(document: &Document, parent: usize) -> Option<usize> {
