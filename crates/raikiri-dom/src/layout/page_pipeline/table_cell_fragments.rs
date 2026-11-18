@@ -40,7 +40,8 @@ impl CellFragment {
     }
 }
 
-/// The cells of `row`, placed with its top at `top`, that a break at
+/// The cells of `row`, placed with its top at `top` in the flow (without the
+/// relative offsets that only move where it is painted), that a break at
 /// `page_end` goes through and that their block-axis alignment moved down.
 /// Chromium lays a cell that fragments out as if it were top-aligned, whether
 /// it was aligned to the middle, the bottom or the row's baseline, so the
