@@ -13461,6 +13461,8 @@ struct SiblingMargins {
 /// margin above it.
 struct MarginBreak {
     node_id: usize,
+    /// The body element, which ends the walk for relative offsets.
+    body_id: usize,
     /// The initial layout proves this clearing box has no used clearance.
     clearance_free: bool,
     /// The unpaginated top of the box.
@@ -13670,8 +13672,13 @@ impl SiblingMargins {
             && !follows_forced_break
             && let Some((split, below)) = margin_split_box(document, cascade, previous, node_id)
         {
-            let split_y = effective_y
-                - (current_abs_y(document, margin_node) - current_abs_y(document, split));
+            // Both boxes are measured where the flow put them, without the
+            // relative offsets that moved them afterwards.
+            let flow_abs_y = |id: usize| {
+                current_abs_y(document, id)
+                    - accumulated_relative_offset_y(document, cascade, at.body_id, id)
+            };
+            let split_y = effective_y - (flow_abs_y(margin_node) - flow_abs_y(split));
             if split_y >= page_top - 0.001 {
                 let (positive, negative) =
                     adjoining_margin_extremes(document, cascade, margin_node, true, None);

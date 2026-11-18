@@ -141,6 +141,13 @@ fn a_box_past_the_page_edge_keeps_its_own_bottom_margin() {
                 "",
                 (2, 45.0),
             ),
+            // A relative offset moves the box but not where the flow puts it.
+            (
+                "",
+                "<div style='height:0;margin-bottom:30px;position:relative;top:-60px'><div style='margin-bottom:40px'></div></div>",
+                "",
+                (2, 35.0),
+            ),
             (PADDED, split, "", (2, 50.0)),
             (
                 PADDED,
@@ -176,6 +183,19 @@ fn margins_around_a_box_on_the_page_or_without_inner_margins_are_truncated() {
             (
                 "",
                 "<div style='height:0;margin-bottom:30px'><div style='margin-bottom:15px'></div></div>",
+                "",
+                (2, 5.0),
+            ),
+            // Relative offsets on the box or around it do not change that.
+            (
+                "",
+                "<div style='height:0;margin-bottom:30px;position:relative;top:100px'><div style='margin-bottom:15px'></div></div>",
+                "",
+                (2, 5.0),
+            ),
+            (
+                "",
+                "<div style='position:relative;top:100px'><div style='height:0;margin-bottom:30px'><div style='margin-bottom:15px'></div></div></div>",
                 "",
                 (2, 5.0),
             ),
