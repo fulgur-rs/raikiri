@@ -2642,14 +2642,6 @@ fn append_direct_table_oof_candidates(
     candidates: &mut OofCandidates,
 ) {
     for (order, &child) in doc.nodes[table].children.iter().enumerate() {
-        // A box among the children that an anonymous cell wraps was placed
-        // by that cell, at its static position there.
-        if candidates
-            .iter()
-            .any(|candidate| usize::from(candidate.node) == child)
-        {
-            continue;
-        }
         if !doc.nodes[child].is_in_document()
             || doc.nodes[child].layout_position() != Position::Absolute
             // The table layout has always placed absolute captions at its
@@ -2657,6 +2649,11 @@ fn append_direct_table_oof_candidates(
             // fixed captions against the page area.
             || doc.nodes[child].display() == DisplayValue::TableCaption
                 && doc.nodes[child].position() == &PositionValue::Absolute
+            // A box among the children that an anonymous cell wraps was
+            // placed by that cell, at its static position there.
+            || candidates
+                .iter()
+                .any(|candidate| usize::from(candidate.node) == child)
         {
             continue;
         }

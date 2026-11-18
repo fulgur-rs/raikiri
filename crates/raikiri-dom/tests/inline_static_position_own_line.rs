@@ -968,8 +968,38 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
     ),
     (
         "anonymous table cell, before an element block ::after",
-        r#"<style>.b::before{display:block;content:"Z"}.a::after{display:block;content:"Y"}</style><div id=c style="display:table;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><span class=a></span></div>"#,
+        r#"<style>.a::after{display:block;content:"Y"}</style><div id=c style="display:table;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><span class=a></span></div>"#,
         [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after the table inline ::before, as a last line",
+        r#"<style>#c::before{content:"Z"}</style><div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after the table block ::before",
+        r#"<style>#c::before{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before the table block ::after",
+        r#"<style>#c::after{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, between blocks after the table block ::before",
+        r#"<style>#c::before{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, indent after the table inline ::before",
+        r#"<style>#c::before{content:"Z"}</style><div id=c style="display:table;width:100px;text-indent:15px;text-align:center"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [62.5, 0.0, 25.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before the table inline ::after, as a last line",
+        r#"<style>#c::after{content:"Z"}</style><div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></div>"#,
+        [90.0, 10.0, 10.0, 10.0],
     ),
 ];
 

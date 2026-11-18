@@ -5508,6 +5508,20 @@ enum ParagraphChild {
     Block(usize, PseudoElem),
 }
 
+/// The children of the paragraph rooted at `idx`, in document order, each
+/// a node or the `::before` or `::after` of an element. An anonymous table
+/// cell lists the children of its owner that it wraps, and the owner's
+/// `::before` or `::after` where the cell holds it.
+fn paragraph_top_level(
+    tree: &Document,
+    idx: usize,
+) -> Box<dyn Iterator<Item = (usize, Option<PseudoElem>)> + '_> {
+    match tree.anonymous_cell_content(idx) {
+        Some(content) => Box::new(content),
+        None => Box::new(tree.nodes[idx].children.iter().map(|&id| (id, None))),
+    }
+}
+
 /// The children of the paragraph rooted at `idx` (see [`ParagraphChild`]).
 fn paragraph_children(
     tree: &Document,
@@ -5532,20 +5546,9 @@ fn paragraph_children(
         })
     };
     let mut children = Vec::new();
-    // An anonymous cell has no children in the document: it wraps some of
-    // its owner's.
-    let mut stack: Vec<Step> = match tree.anonymous_cell_content(idx) {
-        Some(content) => content
-            .map(|(id, pseudo)| {
-                pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo))
-            })
-            .collect(),
-        None => tree.nodes[idx]
-            .children
-            .iter()
-            .map(|&id| Step::Enter(id))
-            .collect(),
-    };
+    let mut stack: Vec<Step> = paragraph_top_level(tree, idx)
+        .map(|(id, pseudo)| pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo)))
+        .collect();
     stack.reverse();
     while let Some(step) = stack.pop() {
         match step {
@@ -5745,20 +5748,9 @@ fn offsets_in_document_order(
     // The number of block-level boxes before each box, in document order.
     let mut counts = HashMap::new();
     let mut before = 0;
-    // An anonymous cell has no children in the document: it wraps some of
-    // its owner's.
-    let mut stack: Vec<Step> = match tree.anonymous_cell_content(idx) {
-        Some(content) => content
-            .map(|(id, pseudo)| {
-                pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo))
-            })
-            .collect(),
-        None => tree.nodes[idx]
-            .children
-            .iter()
-            .map(|&id| Step::Enter(id))
-            .collect(),
-    };
+    let mut stack: Vec<Step> = paragraph_top_level(tree, idx)
+        .map(|(id, pseudo)| pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo)))
+        .collect();
     stack.reverse();
     while let Some(step) = stack.pop() {
         #[cfg(test)]
