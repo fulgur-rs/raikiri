@@ -83,7 +83,7 @@ pub(super) fn split(
             );
             // A forced break inside the cell splits it too.
             let starts_on_page = cell_top >= page_start && cell_top < page_end;
-            if !runs_past && !(starts_on_page && breaks_inside(document, cascade, cell)) {
+            if !(runs_past || starts_on_page && breaks_inside(document, cascade, cell)) {
                 return None;
             }
             let padding = document
