@@ -21,6 +21,14 @@
 //! even one split by such a block, gets a line like the others, so the box
 //! there is aligned as a last line.
 //!
+//! The same holds where block flow lays out the children, for a container
+//! whose inline children hold no text: a box joins the anonymous block of the
+//! inline elements before it since the last block-level box, or else of the
+//! ones after it unless a float comes between, and a box inside an inline
+//! element is on a line of the paragraph around that element. Such a line
+//! is aligned as a last line, and the indent narrows it only when nothing
+//! block-level comes before it in the paragraph.
+//!
 //! The expected boxes are the ones Chromium computes for the same markup, with
 //! no body margin and `10px/10px Ahem` text: each is the box's left, top,
 //! width and height.
@@ -664,6 +672,151 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "start of an anonymous table cell, before a block",
         r#"<div id=c style="display:table;width:100px"><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
         [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, an empty inline element starts the run",
+        r#"<div id=c style="text-indent:15px;text-align:center;text-align-last:right;width:100px"><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, an empty inline element after a block",
+        r#"<div id=c style="text-indent:15px;text-align:left;text-align-last:right;width:100px"><p style="margin:0">B</p><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, an empty inline element after the last block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">B</p><span></span><span id=q style="position:absolute">Q</span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, before an inline element split by a block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span id=q style="position:absolute">Q</span><span><p style="margin:0">A</p></span></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, after an inline element split by a block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span><p style="margin:0">A</p></span><span id=q style="position:absolute">Q</span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, after an empty inline element at the start",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, between a block and a split inline element",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><span><p style="margin:0">B</p></span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, in an inline element after its block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></span></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, in an inline element before its block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, in an inline element between blocks",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p><span><span id=q style="position:absolute">Q</span></span><p style="margin:0">B</p></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, indent narrows a centered first run",
+        r#"<div id=c style="text-indent:15px;text-align:center;width:100px"><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [57.5, 0.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, rtl run after a block keeps no indent",
+        r#"<div id=c style="direction:rtl;text-indent:15px;width:100px"><p style="margin:0">A</p><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [75.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, indent before a split inline element",
+        r#"<div id=c style="text-indent:15px;width:100px"><span id=q style="position:absolute">Q</span><span><p style="margin:0">A</p></span></div>"#,
+        [15.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, centered run after a split inline element keeps no indent",
+        r#"<div id=c style="text-indent:15px;text-align:center;width:100px"><span><p style="margin:0">A</p></span><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, hanging indent in an inline element after its block",
+        r#"<div id=c style="text-indent:15px hanging;text-align:right;text-align-last:center;width:100px"><span><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></span></div>"#,
+        [57.5, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, rtl text-align-last end in an inline element",
+        r#"<div id=c style="direction:rtl;text-align-last:end;text-indent:10px;width:100px"><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [-20.0, 0.0, 20.0, 10.0],
+    ),
+    (
+        "block flow, nested inline element before a block",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span><span><span id=q style="position:absolute">Q</span></span><p style="margin:0">A</p></span></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, inline element after a split inline element",
+        r#"<div id=c style="text-indent:15px;text-align:center;width:100px"><span><p style="margin:0">A</p></span><span><span id=q style="position:absolute">Q</span></span></div>"#,
+        [50.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, justify last line keeps the start edge",
+        r#"<div id=c style="text-align:justify;text-align-last:justify;direction:rtl;width:100px"><span id=q style="position:absolute">Q</span><span></span></div>"#,
+        [90.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, text-align-last start after a block",
+        r#"<div id=c style="text-align:end;text-align-last:start;width:100px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><span><p style="margin:0">A</p></span></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, two boxes before an empty inline element",
+        r#"<div id=c style="text-indent:20%;text-align-last:center;width:100px"><span id=q style="position:absolute">Q</span><span id=r style="position:absolute">Q</span><span></span><p style="margin:0">A</p></div>"#,
+        [60.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, after a floated inline element",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span style="float:left">x</span><span id=q style="position:absolute">Q</span><span></span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, no inline content keeps the empty line",
+        r#"<div id=c style="text-indent:15px;text-align:center;width:100px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [65.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, a float between keeps the empty line",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:30px;height:5px"></div><p style="margin:0">A</p></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, a tall float in the run sets the line in",
+        r#"<div id=c style="text-indent:15px;width:100px"><span></span><div style="float:left;width:30px;height:50px"></div><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [45.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, rtl run beside an earlier float",
+        r#"<div id=c style="direction:rtl;text-indent:15px;width:100px"><div style="float:left;width:30px;height:50px"></div><p style="margin:0">A</p><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [75.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, the paragraph aligns a line in an inline element, not the element",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><span style="text-align:center;text-align-last:left;text-indent:30px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></span></div>"#,
+        [100.0, 10.0, 40.0, 10.0],
+    ),
+    (
+        "block flow, the paragraph direction sets the line in an inline element",
+        r#"<div id=c style="direction:rtl;text-indent:15px;width:100px"><span style="direction:ltr;text-indent:30px"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [45.0, 0.0, 40.0, 10.0],
+    ),
+    (
+        "block flow, the paragraph indent narrows the line in an inline element",
+        r#"<div id=c style="text-indent:15px;width:100px"><span style="text-indent:30px;text-align:right"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [15.0, 0.0, 40.0, 10.0],
     ),
 ];
 

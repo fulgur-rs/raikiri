@@ -20,7 +20,7 @@ use crate::layout::taffy_adapter::LayoutCache;
 
 use raikiri_style::property::{
     BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, PositionValue,
-    Sides, TableLayoutValue, TextAlign, VerticalAlign, WritingMode,
+    Sides, TableLayoutValue, TextAlign, TextAlignLast, VerticalAlign, WritingMode,
 };
 use raikiri_style::{ComputedBorder, ComputedBorderSpacing, ComputedTextIndent};
 use raikiri_traits::{IntrinsicBox, NodeKind, PaintRect};
@@ -542,6 +542,9 @@ pub struct BoxState {
     /// Computed line alignment used for the hypothetical inline static
     /// position of out-of-flow children in block flow.
     pub(crate) static_position_text_align: TextAlign,
+    /// Computed `text-align-last`, which aligns the hypothetical line of an
+    /// out-of-flow child that sits in an anonymous block of inline content.
+    pub(crate) static_position_text_align_last: TextAlignLast,
     /// Computed `text-indent` and whether it is `hanging`, used for the
     /// hypothetical inline static position of out-of-flow children in block
     /// flow.
@@ -784,6 +787,7 @@ impl BoxState {
     fn initial() -> Self {
         Self {
             static_position_text_align: TextAlign::Start,
+            static_position_text_align_last: TextAlignLast::Auto,
             static_position_text_indent: ComputedTextIndent::Px(0.0),
             static_position_text_indent_hanging: false,
             table_layout: TableLayoutValue::Auto,
