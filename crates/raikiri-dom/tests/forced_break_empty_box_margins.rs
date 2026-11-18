@@ -119,6 +119,46 @@ fn the_box_after_empty_boxes_keeps_their_margins_below_the_page_top() {
             ),
             (1, 45.0),
         ),
+        // Such a box splits the run: the margins after it collapse with its
+        // own and add to those inside it.
+        (
+            sibling_case(
+                &format!(
+                    "<div style='height:0;margin-bottom:30px'><div style='margin-bottom:10px'></div></div>{}",
+                    empty("height:0;margin-bottom:50px")
+                ),
+                "",
+            ),
+            (1, 65.0),
+        ),
+        // A negative top margin collapses in too.
+        (
+            sibling_case(&empty("margin-top:-20px;margin-bottom:30px"), ""),
+            (1, 15.0),
+        ),
+        (
+            sibling_case(&empty("height:0;margin-top:-20px;margin-bottom:30px"), ""),
+            (1, 15.0),
+        ),
+    ]);
+}
+
+#[test]
+fn the_next_page_edge_truncates_the_kept_margin() {
+    assert_places(&[
+        (
+            sibling_case(&empty("height:0;margin-bottom:150px"), ""),
+            (2, 5.0),
+        ),
+        (
+            closing_case(
+                "padding-bottom:15px",
+                &breaking(5),
+                &empty("height:0;margin-bottom:150px"),
+                "",
+            ),
+            (3, 20.0),
+        ),
     ]);
 }
 
@@ -223,6 +263,10 @@ fn empty_boxes_that_end_a_block_pass_their_margins_on_to_the_box_after_it() {
             ),
             (2, 55.0),
         ),
+        // A block of set height holds the kept margin, and so does one
+        // whose min-height ends it below the empty box.
+        (closing_case("height:200px", &t5, &mb30, ""), (2, 5.0)),
+        (closing_case("min-height:200px", &t5, &mb30, ""), (2, 35.0)),
         // A line after the empty box keeps the margin above it.
         (
             closing_case("", &t5, &format!("{mb30}<div>W</div>"), ""),

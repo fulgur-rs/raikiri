@@ -13512,6 +13512,8 @@ struct SiblingMargins {
     /// the layout collapsed them with the block-end margin of the box
     /// before the break (see `forced_empty_box_shift`).
     forced_margins: Option<((f32, f32), (f32, f32))>,
+    /// The top of the page that the latest forced break opened.
+    forced_page_top: Option<f32>,
     /// Whether truncating a margin moved a box.
     moved_boxes: bool,
     /// The box that forces a break after it, which a float took to the new
@@ -13886,12 +13888,13 @@ impl SiblingMargins {
     }
 
     /// Where the box `at` goes after `previous`, an empty box that a forced
-    /// break took to the top of a page, `gap` below it in the unpaginated
-    /// flow. The layout collapsed the margins of the empty box with the
-    /// bottom margin of the box before the break and left the box after it
-    /// only what was over. Chromium truncates the margin before the break and
-    /// keeps the margins after it whole below the page top: those of the
-    /// empty boxes after the break, collapsed with the top margin of `at`.
+    /// break took to the top of a page, or a box that ends with one, `gap`
+    /// below it in the unpaginated flow. The layout collapsed the margins of
+    /// the empty box with the bottom margin of the box before the break and
+    /// left the box after it only what was over. Chromium truncates the
+    /// margin before the break and keeps the margins after it whole below the
+    /// page top: those of the empty boxes after the break, collapsed with the
+    /// top margin of `at`, up to the next page edge, which cuts them.
     /// `None` when `previous` is not such a box, and `Some(None)` when the
     /// box is already where they put it.
     fn margin_after_forced_empty_box(
@@ -13903,20 +13906,14 @@ impl SiblingMargins {
         gap: f32,
         at: &MarginBreak,
     ) -> Option<Option<MarginTruncation>> {
-        // An empty box after `previous` passes the break on (see
+        // An empty box after the break passes it on (see
         // `pass_on_forced_break`): its margins join the ones kept for the
         // box after it.
         let owner = self.forced_break_box?;
-        // The block-end margins of the boxes that `owner` ends join it.
-        let enclosing = if owner == previous {
-            Some((0.0, 0.0))
-        } else {
-            ends_with_bottom_margin_of(document, cascade, previous, owner)
-        };
+        let page_top = self.forced_page_top?;
         if at.forced_before
             || !gap.is_finite()
             || collapses_as_empty_box(document, cascade, at.node_id)
-            || page_break_is_forced(document, owner, cascade.computed[owner].break_after)
             || !collapses_as_empty_box(document, cascade, owner)
             || generated_box_separates(document, at.node_id, previous)
             || !self
@@ -13925,51 +13922,63 @@ impl SiblingMargins {
         {
             return None;
         }
+        // The block-end margins of the boxes that `owner` ends join it.
+        let enclosing = if owner == previous {
+            (0.0, 0.0)
+        } else {
+            ends_with_bottom_margin_of(document, cascade, previous, owner)?
+        };
         let after = join_margin_extremes(
-            enclosing?,
+            enclosing,
             adjoining_margin_extremes(document, cascade, at.node_id, true, None),
         );
-        let previous = owner;
-        // A box that splits the margin sits below the margins inside it and
-        // keeps its own bottom margin whole below it (see `splits_margin`).
-        let (mut kept, below) = if splits_margin(document, cascade, previous) {
-            let own = document.nodes[previous].layout.margin.bottom;
-            (
-                adjoining_margin_extremes(document, cascade, previous, true, None),
-                join_margin_extremes((own.max(0.0), own.min(0.0)), after),
-            )
-        } else {
-            (
-                join_margin_extremes(
-                    empty_box_margin_extremes(document, cascade, previous),
-                    after,
-                ),
-                (0.0, 0.0),
-            )
-        };
-        // The empty boxes between the break and `previous` pass the break on
-        // to it, and their margins collapse with its own.
-        for &sibling in self
-            .adjacency
-            .preceding_siblings(document, previous)
-            .iter()
-            .rev()
-        {
-            if !takes_part_in_flow(document, cascade, sibling)
-                || !collapses_as_empty_box(document, cascade, sibling)
-                || page_break_is_forced(document, sibling, cascade.computed[sibling].break_after)
+        // The margins that collapse with the one above `at`, and those that
+        // a box splitting the margin keeps above itself (see
+        // `splits_margin`), which add to them.
+        let mut kept = after;
+        let mut above = None;
+        for &empty in std::iter::once(&owner).chain(
+            self.adjacency
+                .preceding_siblings(document, owner)
+                .iter()
+                .rev(),
+        ) {
+            if empty != owner
+                && (!takes_part_in_flow(document, cascade, empty)
+                    || !collapses_as_empty_box(document, cascade, empty))
             {
                 break;
             }
-            kept =
-                join_margin_extremes(kept, empty_box_margin_extremes(document, cascade, sibling));
+            if above.is_none() && splits_margin(document, cascade, empty) {
+                let own = document.nodes[empty].layout.margin.bottom;
+                kept = join_margin_extremes(kept, (own.max(0.0), own.min(0.0)));
+                above = Some(adjoining_margin_extremes(
+                    document, cascade, empty, true, None,
+                ));
+                continue;
+            }
+            let margins = empty_box_margin_extremes(document, cascade, empty);
+            match above.as_mut() {
+                Some(above) => *above = join_margin_extremes(*above, margins),
+                None => kept = join_margin_extremes(kept, margins),
+            }
         }
-        let previous_y = at.effective_y - gap;
-        let page_top = page_origins.origin(page_origins.page_index_for_y(previous_y));
-        let delta = page_top + kept.0 + kept.1 + below.0 + below.1 - at.effective_y;
+        let (above_positive, above_negative) = above.unwrap_or((0.0, 0.0));
+        let target = page_top + kept.0 + kept.1 + above_positive + above_negative;
+        // The next page edge is an unforced break, which truncates the
+        // margins that reach past it.
+        let next_top = page_origins.origin(page_origins.page_index_for_y(page_top) + 1);
+        let target = if target > next_top + 0.001 {
+            next_top
+        } else {
+            target
+        };
+        let delta = target - at.effective_y;
         Some((delta.abs() > 0.001).then_some(MarginTruncation {
             delta,
-            underflows: false,
+            // A negative margin pulls the box above the page top, and the
+            // box stays on the page that the break opened.
+            underflows: target < page_top - 0.001,
         }))
     }
 
@@ -13979,7 +13988,8 @@ impl SiblingMargins {
     /// flow after the box what was over of the margin it collapsed with the
     /// bottom margin of the box before the break. Chromium truncates that
     /// bottom margin and keeps the margins of the empty box whole below the
-    /// page top. Zero for any other box.
+    /// page top, up to `next_top`, the next page edge, which cuts them. Zero
+    /// for any other box.
     fn forced_empty_box_shift(
         &mut self,
         document: &super::context::LayoutSession<'_>,
@@ -13987,12 +13997,10 @@ impl SiblingMargins {
         node_id: usize,
         raw_y: f32,
         landed_y: f32,
-        page_top: f32,
+        (page_top, next_top): (f32, f32),
     ) -> f32 {
         self.forced_margins = None;
-        if !collapses_as_empty_box(document, cascade, node_id)
-            || page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
-        {
+        if !collapses_as_empty_box(document, cascade, node_id) {
             return 0.0;
         }
         let Some((previous, gap)) = self.previous_and_gap(document, cascade, node_id, raw_y) else {
@@ -14018,7 +14026,9 @@ impl SiblingMargins {
             self.forced_margins = Some((own, (positive, negative)));
             own.0 + own.1
         };
-        page_top + kept - (landed_y + left_after)
+        // The next page edge is an unforced break, which truncates the
+        // margins that reach past it.
+        (page_top + kept).min(next_top) - (landed_y + left_after)
     }
 
     /// Ends the run of adjoining siblings at the in-flow text `node_id`:

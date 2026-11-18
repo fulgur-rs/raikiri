@@ -21866,3 +21866,55 @@ fn empty_boxes_after_a_forced_break_keep_their_margins_below_the_page_top() {
         140.0
     );
 }
+
+#[test]
+fn margins_kept_after_a_forced_break_stop_at_the_next_page_edge() {
+    let mb150 = "height:0;margin-bottom:150px";
+    assert_eq!(
+        place_after_forced_empty_boxes(None, "margin-bottom:5px", &[mb150]),
+        200.0
+    );
+    assert_eq!(
+        place_after_forced_empty_boxes(Some("padding-bottom:15px"), "margin-bottom:5px", &[mb150]),
+        215.0
+    );
+}
+
+#[test]
+fn margins_kept_after_a_forced_break_collapse_with_negative_and_split_ones() {
+    // A negative top margin joins the kept margin, which stays on the page.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &["margin-top:-20px;margin-bottom:30px"]
+        ),
+        110.0
+    );
+    // A box that splits the margin keeps the margin inside it above itself,
+    // and its own collapses with those after it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            None,
+            "margin-bottom:5px",
+            &[
+                "height:0;margin-bottom:30px>margin-bottom:10px",
+                "height:0;margin-bottom:50px"
+            ]
+        ),
+        160.0
+    );
+}
+
+#[test]
+fn a_block_of_set_height_holds_the_margin_kept_after_a_forced_break() {
+    let fixed = Some("height:200px");
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            fixed,
+            "margin-bottom:5px",
+            &["height:0;margin-bottom:30px"]
+        ),
+        place_after_forced_empty_boxes(fixed, "margin-bottom:5px", &[])
+    );
+}
