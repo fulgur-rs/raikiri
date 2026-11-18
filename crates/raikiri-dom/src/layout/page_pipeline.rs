@@ -10026,15 +10026,12 @@ fn margin_below_split_box(
         return None;
     }
     let above = margin_before_box(document, cascade, node_id);
-    let join = |(positive, negative): (f32, f32), (other_positive, other_negative): (f32, f32)| {
-        (positive.max(other_positive), negative.min(other_negative))
-    };
     let resolve = |(positive, negative): (f32, f32)| positive + negative;
-    let top = join(
+    let top = join_margin_extremes(
         above,
         adjoining_margin_extremes(document, cascade, node_id, true, None),
     );
-    let all = join(above, empty_box_margin_extremes(document, cascade, node_id));
+    let all = join_margin_extremes(above, empty_box_margin_extremes(document, cascade, node_id));
     Some(resolve(all) - resolve(top))
 }
 
@@ -10109,40 +10106,38 @@ fn margin_split_box(
         let margin = document.nodes[id].layout.margin.bottom;
         (margin.max(0.0), margin.min(0.0))
     };
-    let join = |(positive, negative): (f32, f32), (other_positive, other_negative): (f32, f32)| {
-        (positive.max(other_positive), negative.min(other_negative))
-    };
     let mut below = (0.0_f32, 0.0_f32);
+    let mut current = previous;
+    // The boxes before `node_id`, last first, with those that `display:
+    // contents` elements lend to the flow.
+    let mut boxes = Vec::new();
     let siblings = document
         .parent_of(node_id)
         .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
-    let mut current = previous;
-    for &sibling in siblings
+    'before: for &sibling in siblings
         .iter()
         .rev()
         .skip_while(|&&child| child != node_id)
         .skip(1)
     {
-        if sibling == previous {
-            break;
+        boxes.clear();
+        push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
+        for &id in &boxes {
+            if id != previous && splits_margin(document, cascade, id) {
+                return Some((id, join_margin_extremes(below, own_bottom(id))));
+            }
+            if id == previous || !collapses_as_empty_box(document, cascade, id) {
+                current = id;
+                break 'before;
+            }
+            below = join_margin_extremes(below, empty_box_margin_extremes(document, cascade, id));
         }
-        if !takes_part_in_flow(document, cascade, sibling) {
-            continue;
-        }
-        if splits_margin(document, cascade, sibling) {
-            return Some((sibling, join(below, own_bottom(sibling))));
-        }
-        if !collapses_as_empty_box(document, cascade, sibling) {
-            current = sibling;
-            break;
-        }
-        below = join(below, empty_box_margin_extremes(document, cascade, sibling));
     }
     loop {
         if splits_margin(document, cascade, current) {
-            return Some((current, join(below, own_bottom(current))));
+            return Some((current, join_margin_extremes(below, own_bottom(current))));
         }
-        below = join(below, own_bottom(current));
+        below = join_margin_extremes(below, own_bottom(current));
         let layout = &document.nodes[current].layout;
         if layout.padding.bottom + layout.border.bottom > 0.0
             || !document.block_axis(current).height().is_auto()
@@ -10167,53 +10162,87 @@ fn margin_split_box(
                 next = Some(child);
                 break;
             }
-            below = join(below, empty_box_margin_extremes(document, cascade, child));
+            below =
+                join_margin_extremes(below, empty_box_margin_extremes(document, cascade, child));
         }
         current = next?;
     }
 }
 
-/// The extremes of the margin that ends the flow before `node_id` among its
-/// siblings: the bottom margin of the box before it, collapsed with those of
-/// the empty boxes between the two (see [`empty_box_margin_extremes`]). Zero
-/// when no box comes before it.
+/// The extremes of the margin that ends the flow before `node_id`: the
+/// bottom margin of the box before it, collapsed with those of the empty
+/// boxes between the two (see [`empty_box_margin_extremes`]). A `display:
+/// contents` element lends its boxes to the flow of its parent, so the walk
+/// goes through those around and before `node_id`. Zero when no box comes
+/// before it.
 fn margin_before_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> (f32, f32) {
-    let siblings = document
-        .parent_of(node_id)
-        .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
-    let (mut positive, mut negative) = (0.0_f32, 0.0_f32);
-    for &sibling in siblings
-        .iter()
-        .rev()
-        .skip_while(|&&child| child != node_id)
-        .skip(1)
-    {
-        // Text between the two keeps their margins apart.
-        if let crate::node::NodeData::Text(text) = &document.nodes[sibling].data
-            && !text.text_content.trim().is_empty()
+    let mut extremes = (0.0_f32, 0.0_f32);
+    let mut current = node_id;
+    while let Some(parent) = document.parent_of(current) {
+        for &sibling in document.nodes[parent]
+            .children
+            .iter()
+            .rev()
+            .skip_while(|&&child| child != current)
+            .skip(1)
         {
+            if join_margin_before(document, cascade, sibling, &mut extremes) {
+                return extremes;
+            }
+        }
+        if document.nodes[parent].display() != DisplayValue::Contents {
             break;
         }
-        if !takes_part_in_flow(document, cascade, sibling) {
-            continue;
-        }
-        let empty = collapses_as_empty_box(document, cascade, sibling);
-        let (sibling_positive, sibling_negative) = if empty {
-            empty_box_margin_extremes(document, cascade, sibling)
-        } else {
-            adjoining_margin_extremes(document, cascade, sibling, false, None)
-        };
-        positive = positive.max(sibling_positive);
-        negative = negative.min(sibling_negative);
-        if !empty {
-            break;
-        }
+        current = parent;
     }
-    (positive, negative)
+    extremes
+}
+
+/// The extremes of two sets of margins that collapse into one.
+fn join_margin_extremes(
+    (positive, negative): (f32, f32),
+    (other_positive, other_negative): (f32, f32),
+) -> (f32, f32) {
+    (positive.max(other_positive), negative.min(other_negative))
+}
+
+/// Joins the margins that `node_id`, met walking back from a box, adds to
+/// the margin above that box (see [`margin_before_box`]). Returns whether
+/// the walk ends there: at text, which keeps the margins apart, or at a box
+/// that is not empty.
+fn join_margin_before(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    extremes: &mut (f32, f32),
+) -> bool {
+    if let crate::node::NodeData::Text(text) = &document.nodes[node_id].data
+        && !text.text_content.trim().is_empty()
+    {
+        return true;
+    }
+    if !takes_part_in_flow(document, cascade, node_id) {
+        return false;
+    }
+    if document.nodes[node_id].display() == DisplayValue::Contents {
+        return document.nodes[node_id]
+            .children
+            .iter()
+            .rev()
+            .any(|&child| join_margin_before(document, cascade, child, extremes));
+    }
+    let empty = collapses_as_empty_box(document, cascade, node_id);
+    let margins = if empty {
+        empty_box_margin_extremes(document, cascade, node_id)
+    } else {
+        adjoining_margin_extremes(document, cascade, node_id, false, None)
+    };
+    *extremes = join_margin_extremes(*extremes, margins);
+    !empty
 }
 
 /// The last child of the block `node_id` that takes part in its flow: an

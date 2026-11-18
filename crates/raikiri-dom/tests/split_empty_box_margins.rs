@@ -222,3 +222,24 @@ fn margins_around_a_box_on_the_page_or_without_inner_margins_are_truncated() {
         ],
     );
 }
+
+#[test]
+fn display_contents_around_the_box_lends_it_the_margins_before_it() {
+    // The 40px margin below the box before the split box collapses with the
+    // margins inside it, whether or not `display: contents` elements hold it.
+    let split =
+        "<div style='height:0;margin-bottom:30px'><div style='margin-bottom:10px'></div></div>";
+    let place = |boxes: &str, wrapper: &str, z: &str| {
+        place_of_z(&format!(
+            "<div style='width:20px;{wrapper}'>{LINES}\
+             <div style='height:20px;margin-bottom:40px'>T</div>{boxes}</div>\
+             <div style='{z}'><span id=z>Z</span></div>"
+        ))
+    };
+    let contents = format!("<div style='display:contents'>{split}</div>");
+    let nested = format!("<div style='display:contents'>{contents}</div>");
+    assert_eq!(place(split, PADDED, "margin-top:-10px"), (2, 40.0));
+    assert_eq!(place(&contents, PADDED, "margin-top:-10px"), (2, 40.0));
+    assert_eq!(place(&nested, "", ""), (2, 35.0));
+    assert_eq!(place(split, "", ""), (2, 35.0));
+}
