@@ -281,9 +281,9 @@ pub(super) fn realign_beside(
 /// Whether a forced page break falls between content inside `cell`: a box in
 /// its block flow forces a break before itself after content of the cell, or
 /// after itself before more of it. A break at the start or the end of the
-/// cell passes to the row and does not split the cell, and one inside a box
-/// that does not stack its children in block flow, or out of the flow, does
-/// not reach it.
+/// cell passes to the row and does not split the cell. Only block-level boxes
+/// break pages, so a break on an inline box, or inside a box that does not
+/// stack its children in block flow, or out of the flow, does not reach it.
 fn breaks_inside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -311,6 +311,7 @@ fn breaks_between(
     children.iter().enumerate().any(|(index, &child)| {
         let node = &document.nodes[child];
         if node.kind() != NodeKind::Element
+            || !is_block_level_flow_box(node.display())
             || matches!(
                 node.position(),
                 PositionValue::Absolute | PositionValue::Fixed
@@ -324,8 +325,7 @@ fn breaks_between(
         let after = after || index + 1 < children.len();
         page_break_is_forced(document, child, computed.break_before) && before
             || page_break_is_forced(document, child, computed.break_after) && after
-            || is_block_level_flow_box(node.display())
-                && stacks_children_in_block_flow(document, child)
+            || stacks_children_in_block_flow(document, child)
                 && breaks_between(document, cascade, child, before, after)
     })
 }
