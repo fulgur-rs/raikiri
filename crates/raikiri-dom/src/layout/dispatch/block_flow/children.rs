@@ -378,18 +378,13 @@ enum RunItem {
     /// A float: it joins an anonymous block already open, but keeps the
     /// boxes before it from joining one that opens after it.
     Float,
-    /// Nothing that opens or ends a run: an out-of-flow box, a node that
-    /// generates no box, or white space.
+    /// Nothing that opens or ends a run: an out-of-flow box or a node that
+    /// generates no box. Collapsible white space between the children is
+    /// not among them.
     Other,
 }
 
 fn run_item(tree: &LayoutSession<'_>, child: NodeId) -> RunItem {
-    let node = &tree.nodes[usize::from(child)];
-    // Text in a container laid out here is collapsible white space: other
-    // text puts the container's inline content in a paragraph of its own.
-    if node.text_content().is_some() {
-        return RunItem::Other;
-    }
     let style = child_style(tree, child);
     if style.box_generation_mode() == BoxGenerationMode::None
         || style.position == Position::Absolute
@@ -418,25 +413,15 @@ fn holds_block(tree: &LayoutSession<'_>, child: NodeId) -> bool {
 /// block container around it, looking out through the inline boxes that
 /// hold it.
 fn opens_paragraph(tree: &LayoutSession<'_>, node: NodeId) -> bool {
-    let mut current = node;
-    loop {
-        let Some(parent) = layout_parent(tree, current) else {
-            return true;
-        };
-        let parent_style = child_style(tree, parent);
-        let legend = super::legend::rendered_legend(tree, parent, &parent_style);
-        if tree
+    layout_parent(tree, node).is_none_or(|parent| {
+        let style = child_style(tree, parent);
+        let legend = super::legend::rendered_legend(tree, parent, &style);
+        !tree
             .child_ids(parent)
-            .take_while(|&sibling| sibling != current)
+            .take_while(|&sibling| sibling != node)
             .any(|sibling| Some(sibling) != legend && holds_block(tree, sibling))
-        {
-            return false;
-        }
-        if !super::is_inline_box(tree, parent, &parent_style) {
-            return true;
-        }
-        current = parent;
-    }
+            && (!super::is_inline_box(tree, parent, &style) || opens_paragraph(tree, parent))
+    })
 }
 
 fn layout_parent(tree: &LayoutSession<'_>, node: NodeId) -> Option<NodeId> {
@@ -451,14 +436,11 @@ fn layout_parent(tree: &LayoutSession<'_>, node: NodeId) -> Option<NodeId> {
 /// `text-indent` and `direction` set up the lines of that paragraph, which
 /// those of an inline box do not change.
 fn paragraph_owner(tree: &LayoutSession<'_>, node: NodeId) -> NodeId {
-    let mut current = node;
-    while super::is_inline_box(tree, current, &child_style(tree, current)) {
-        match layout_parent(tree, current) {
-            Some(parent) => current = parent,
-            None => break,
-        }
+    if super::is_inline_box(tree, node, &child_style(tree, node)) {
+        layout_parent(tree, node).map_or(node, |parent| paragraph_owner(tree, parent))
+    } else {
+        node
     }
-    current
 }
 
 /// The line, if any, that an inline-level absolutely positioned child of

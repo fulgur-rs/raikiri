@@ -848,6 +848,21 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<fieldset id=c style="margin:0;padding:0;border:0;text-indent:15px;width:100px"><legend>L</legend><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></fieldset>"#,
         [15.0, 10.0, 25.0, 10.0],
     ),
+    (
+        "block flow, white space between blocks is no line content",
+        r#"<div id=c style="text-align:left;text-align-last:right;width:100px"><p style="margin:0">B</p> <span id=q style="position:absolute">Q</span> <p style="margin:0">A</p></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, a float before an inline element keeps its first line",
+        r#"<div id=c style="text-indent:15px;width:100px"><div style="float:left;width:30px;height:50px"></div><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [45.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, a float in an inline element keeps the next one on the first line",
+        r#"<div id=c style="text-indent:15px;width:100px"><span><span style="float:right;width:5px;height:50px"></span></span><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [15.0, 0.0, 25.0, 10.0],
+    ),
 ];
 
 #[test]
