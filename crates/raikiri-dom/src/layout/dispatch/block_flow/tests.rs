@@ -807,6 +807,52 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
     assert_eq!(tree.nodes[next].layout.location.y, 120.0);
 }
 
+#[test]
+fn a_maximum_height_below_the_content_keeps_the_last_child_margin_in() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    let parent = plain(&mut tree, root);
+    restyle(&mut tree, parent, "max-height:20px;margin-bottom:10px");
+    let child = block(&mut tree, parent, 100.0, 35.0);
+    restyle(&mut tree, child, "margin-bottom:-50px");
+    let next = block(&mut tree, root, 100.0, 10.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    // The child overflows the box, so its margin no longer adjoins the box's
+    // bottom edge: only the box's own margin separates the next block.
+    assert_eq!(tree.nodes[parent].layout.size.height, 20.0);
+    assert_eq!(tree.nodes[next].layout.location.y, 30.0);
+}
+
+#[test]
+fn a_last_child_margin_escapes_when_max_height_holds_the_content() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    let parent = plain(&mut tree, root);
+    restyle(&mut tree, parent, "max-height:40px;margin-bottom:10px");
+    let child = block(&mut tree, parent, 100.0, 35.0);
+    restyle(&mut tree, child, "margin-bottom:-30px");
+    let next = block(&mut tree, root, 100.0, 10.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    assert_eq!(tree.nodes[parent].layout.size.height, 35.0);
+    // 35 + max(10, 0) + min(-30, 0)
+    assert_eq!(tree.nodes[next].layout.location.y, 15.0);
+}
+
+#[test]
+fn a_last_child_margin_escapes_when_min_height_overrides_a_lower_max_height() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    let parent = plain(&mut tree, root);
+    restyle(&mut tree, parent, "min-height:20px;max-height:10px");
+    let child = block(&mut tree, parent, 100.0, 20.0);
+    restyle(&mut tree, child, "margin-bottom:-15px");
+    let next = block(&mut tree, root, 100.0, 10.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    // `min-height` wins, which gives the box the height of its content.
+    assert_eq!(tree.nodes[parent].layout.size.height, 20.0);
+    assert_eq!(tree.nodes[next].layout.location.y, 5.0);
+}
+
 fn flow_root_container(tree: &mut Document) -> usize {
     tree.append_element(
         Some(0),
