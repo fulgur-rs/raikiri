@@ -439,15 +439,33 @@ impl PaginationState {
         self.float_gaps.assign_visits(document, candidates);
     }
 
-    pub(super) fn rebase_fragmented_cell_text(&self, candidate: &mut PageCandidate) {
-        if candidate.context.is_text()
-            && let Some((root, offset)) = &mut candidate.ifc_root
-            && let Some(shift) = self.fragmented_cell_shifts.get(root)
-        {
-            // Rebase both coordinates so placing the text leaves its root at
-            // the same border-box top and does not shift following content.
-            candidate.raw_y -= shift;
-            *offset -= shift;
+    /// Moves a candidate inside a cell whose alignment room a page break
+    /// moved below its content (see `table_cell_fragments`) up with that
+    /// content.
+    pub(super) fn rebase_fragmented_cell_content(
+        &self,
+        document: &LayoutSession<'_>,
+        candidate: &mut PageCandidate,
+    ) {
+        if self.fragmented_cell_shifts.is_empty() {
+            return;
+        }
+        let mut ancestor = document.parent_of(candidate.node_id);
+        while let Some(id) = ancestor {
+            if let Some(&shift) = self.fragmented_cell_shifts.get(&id) {
+                candidate.raw_y -= shift;
+                if let Some((root, offset)) = &mut candidate.ifc_root
+                    && *root == id
+                {
+                    // The cell's own lines are painted from its content box,
+                    // which the padding moved: rebase the offset below its
+                    // border-box top too, so placing the text leaves the cell
+                    // where it is and does not shift following content.
+                    *offset -= shift;
+                }
+                return;
+            }
+            ancestor = document.parent_of(id);
         }
     }
 
@@ -1141,6 +1159,19 @@ impl PaginationState {
         {
             let (cell, shift) = fragment.apply(document);
             self.fragmented_cell_shifts.insert(cell, shift);
+        }
+        if candidate.context.is_table_row() {
+            let page_end = page_origins.origin(self.current_page + 1);
+            for fragment in super::table_cell_fragments::split(
+                document,
+                node_id,
+                effective_y,
+                page_start,
+                page_end,
+            ) {
+                let (cell, shift) = fragment.apply(document);
+                self.fragmented_cell_shifts.insert(cell, shift);
+            }
         }
 
         if box_sets_page_name(

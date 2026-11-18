@@ -1,4 +1,5 @@
-//! A single-line cell can keep its text while its spare height continues.
+//! A single-line cell can keep its text while its spare height continues,
+//! and a cell that a page break splits drops its block-axis alignment.
 
 use super::*;
 use raikiri_layout_style::values::ResolveOrZero;
@@ -13,7 +14,9 @@ pub(super) struct CellFragment {
 }
 
 impl CellFragment {
-    /// Retain the cell's height, moving only its alignment room below the text.
+    /// Retain the cell's height, moving only its alignment room below the
+    /// content: the padding that carried it and the children in flow that the
+    /// table moved by it.
     pub(super) fn apply(
         self,
         document: &mut super::super::context::LayoutSession<'_>,
@@ -22,8 +25,71 @@ impl CellFragment {
         layout.padding.top -= self.shift;
         layout.padding.bottom += self.shift;
         document.store_layout(self.cell, &layout);
+        let children = document
+            .ifc_layout_node(self.cell)
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        for child in children {
+            if document.nodes[child].layout_position() != Position::Absolute {
+                let mut child_layout = document.nodes[child].layout;
+                child_layout.location.y -= self.shift;
+                document.store_layout(child, &child_layout);
+            }
+        }
         (self.cell, self.shift)
     }
+}
+
+/// The cells of `row`, placed with its top at `top`, that a break at
+/// `page_end` goes through and that their block-axis alignment moved down.
+/// Chromium lays a cell that fragments out as if it were top-aligned, whether
+/// it was aligned to the middle, the bottom or the row's baseline, so the
+/// room the alignment put above the content moves below it. A cell that
+/// spans rows is split the same way when its rows cross the page end.
+pub(super) fn split(
+    document: &super::super::context::LayoutSession<'_>,
+    row: usize,
+    top: f32,
+    page_start: f32,
+    page_end: f32,
+) -> Vec<CellFragment> {
+    let Some(row_node) = document.get_node(row) else {
+        return Vec::new();
+    };
+    if document.context.pagination_on_transposed_axes
+        || row_node.display() != DisplayValue::TableRow
+    {
+        return Vec::new();
+    }
+    row_node
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            let node = &document.nodes[cell];
+            node.display() == DisplayValue::TableCell
+                && sibling_renders(document, cell)
+                && !node.used_writing_mode.is_vertical()
+        })
+        .filter_map(|cell| {
+            let layout = &document.nodes[cell].layout;
+            let cell_top = top + layout.location.y;
+            if !starts_on_page_and_runs_past_it(
+                cell_top,
+                cell_top + layout.size.height,
+                page_start,
+                page_end,
+            ) {
+                return None;
+            }
+            let padding = document
+                .physical_style(cell)
+                .padding()
+                .resolve_or_zero(Some(layout.size.width));
+            let shift = layout.padding.top - padding.top;
+            (shift.is_finite() && shift > 0.001).then_some(CellFragment { cell, shift })
+        })
+        .collect()
 }
 
 /// Qualify only a real, one-cell, one-row table with one direct text line.

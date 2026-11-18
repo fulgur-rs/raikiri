@@ -4735,7 +4735,7 @@ fn paginate_flow(
                 break;
             }
             done += 1;
-            state.rebase_fragmented_cell_text(&mut candidate);
+            state.rebase_fragmented_cell_content(document, &mut candidate);
             let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
                 continue;
             };
