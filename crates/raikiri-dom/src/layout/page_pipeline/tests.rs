@@ -21670,3 +21670,39 @@ fn a_block_formatting_context_holds_only_the_floats_of_its_own_flow() {
     floats.sort_unstable();
     assert_eq!(floats, vec![own, through]);
 }
+
+#[test]
+fn the_margin_before_a_box_collapses_through_empty_and_contents_boxes() {
+    // `body > tall, float, contents > (empty), [text], wrapper > target`.
+    let build = |with_text: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let tall = doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+        doc.append_element(Some(body), "div", Some("display:block;float:left"));
+        let contents = doc.append_element(Some(body), "div", Some("display:contents"));
+        let empty = doc.append_element(Some(contents), "div", Some("display:block"));
+        if with_text {
+            doc.append_text(body, "text");
+        }
+        let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+        let target = doc.append_element(Some(wrapper), "div", Some("display:block"));
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        doc.nodes[tall].layout.size.height = 30.0;
+        doc.nodes[tall].layout.margin.bottom = 10.0;
+        doc.nodes[empty].layout.margin.bottom = 15.0;
+        doc.nodes[empty].layout.margin.top = -5.0;
+        (doc, cascade, tall, target)
+    };
+    let (mut doc, cascade, tall, target) = build(false);
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    assert_eq!(margin_before_box(&session, &cascade, target), (15.0, -5.0));
+    // Nothing comes before the first box.
+    assert_eq!(margin_before_box(&session, &cascade, tall), (0.0, 0.0));
+    // Text between them keeps the margins apart.
+    let (mut doc, cascade, _, target) = build(true);
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    assert_eq!(margin_before_box(&session, &cascade, target), (0.0, 0.0));
+}

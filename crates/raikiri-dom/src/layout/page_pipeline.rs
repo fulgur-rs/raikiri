@@ -10061,17 +10061,20 @@ fn splits_margin(
         .any(|id| non_zero_margin(empty_box_margin_extremes(document, cascade, id)))
 }
 
-/// Whether a positive margin collapses into the top of `node_id`: one of its
-/// own or of the boxes inside it, or the margin before it (see
-/// [`margin_before_box`]). A page edge right above the box then falls in
-/// that margin.
+/// Whether `node_id` splits the margin (see [`splits_margin`]) and a
+/// positive margin collapses into its top: one of its own or of the boxes
+/// inside it, or the margin before it (see [`margin_before_box`]). A page
+/// edge right above the box then falls in that margin. The box is checked
+/// first, so that ordinary boxes at a page top skip the walk over the
+/// siblings before them.
 pub(super) fn margin_above_page_edge(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    margin_before_box(document, cascade, node_id).0 > 0.0
-        || adjoining_margin_extremes(document, cascade, node_id, true, None).0 > 0.0
+    splits_margin(document, cascade, node_id)
+        && (margin_before_box(document, cascade, node_id).0 > 0.0
+            || adjoining_margin_extremes(document, cascade, node_id, true, None).0 > 0.0)
 }
 
 /// How much further the flow after `node_id` moves when a page edge takes
