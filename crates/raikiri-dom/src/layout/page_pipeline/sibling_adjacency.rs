@@ -30,17 +30,7 @@ impl SiblingAdjacency {
         super::tests::record_sibling_adjacency_work([1, 0, 0]);
         let mut current = node_id;
         for parent in document.ancestors(node_id) {
-            let positions = self.positions.entry(parent).or_insert_with(|| {
-                let children = &document.nodes[parent].children;
-                #[cfg(test)]
-                super::tests::record_sibling_adjacency_work([0, children.len(), 0]);
-                children
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &id)| (id, i))
-                    .collect()
-            });
-            let Some(&index) = positions.get(&current) else {
+            let Some(index) = self.index_in(document, parent, current) else {
                 return false;
             };
             for &id in document.nodes[parent].children[..index].iter().rev() {
@@ -54,6 +44,39 @@ impl SiblingAdjacency {
             current = parent;
         }
         false
+    }
+
+    /// The siblings that come before `node_id` among the children of its
+    /// parent, found from the cached positions instead of a walk over the
+    /// children.
+    pub(super) fn preceding_siblings<'d>(
+        &mut self,
+        document: &'d Document,
+        node_id: usize,
+    ) -> &'d [usize] {
+        document
+            .parent_of(node_id)
+            .and_then(|parent| {
+                self.index_in(document, parent, node_id)
+                    .map(|index| &document.nodes[parent].children[..index])
+            })
+            .unwrap_or(&[])
+    }
+
+    /// The position of `child` among the children of `parent`, from the
+    /// positions cached for `parent` the first time they are asked for.
+    fn index_in(&mut self, document: &Document, parent: usize, child: usize) -> Option<usize> {
+        let positions = self.positions.entry(parent).or_insert_with(|| {
+            let children = &document.nodes[parent].children;
+            #[cfg(test)]
+            super::tests::record_sibling_adjacency_work([0, children.len(), 0]);
+            children
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| (id, i))
+                .collect()
+        });
+        positions.get(&child).copied()
     }
 }
 

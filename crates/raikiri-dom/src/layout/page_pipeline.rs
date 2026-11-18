@@ -9696,7 +9696,8 @@ pub(super) fn collapsed_empty_box(
 ) -> bool {
     collapses_as_empty_box(document, cascade, node_id)
         && (document.block_axis(node_id).height().is_auto()
-            || margin_collapses_into_top(document, cascade, node_id))
+            || (margin_collapses_into_top(document, cascade, node_id)
+                && !splits_margin(document, cascade, node_id)))
 }
 
 /// Whether `node_id` is an empty element whose margins collapse through it,
@@ -9839,8 +9840,8 @@ fn flow_end_box(
         .is_some_and(|&first| margin_above_box(document, cascade, first));
     for (index, &child) in run.iter().enumerate().rev() {
         stays[index] = document.block_axis(child).height().is_auto()
-            || document.nodes[child].layout.margin.top != 0.0
-            || above;
+            || ((document.nodes[child].layout.margin.top != 0.0 || above)
+                && !splits_margin(document, cascade, child));
         above |= non_zero_margin(empty_box_margin_extremes(document, cascade, child));
     }
     // The last box that does not stay ends the flow, with the margins of
@@ -10002,8 +10003,248 @@ fn end_margin_through(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> f32 {
+    if let Some(below) = margin_below_split_box(document, cascade, node_id) {
+        return below;
+    }
     let (positive, negative) = adjoining_margin_extremes(document, cascade, node_id, false, None);
     positive + negative
+}
+
+/// The part of the collapsed margin around `node_id` that lies below its
+/// border box, when `node_id` is an empty box of set height whose margins
+/// collapse through it (see [`collapses_as_empty_box`]). The margins of the
+/// boxes inside it collapse through its top, so the box sits below them and
+/// only what its own bottom margin adds to the margin they collapse into
+/// with the margin above it lies below the box (CSS 2 §8.3.1). `None` for
+/// any other box.
+fn margin_below_split_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<f32> {
+    if !splits_margin(document, cascade, node_id) {
+        return None;
+    }
+    let above = margin_before_box(document, cascade, node_id);
+    let resolve = |(positive, negative): (f32, f32)| positive + negative;
+    let top = join_margin_extremes(
+        above,
+        adjoining_margin_extremes(document, cascade, node_id, true, None),
+    );
+    let all = join_margin_extremes(above, empty_box_margin_extremes(document, cascade, node_id));
+    Some(resolve(all) - resolve(top))
+}
+
+/// Whether `node_id` is an empty box of set height whose margins collapse
+/// through it (see [`collapses_as_empty_box`]) with a margin other than zero
+/// inside it, which collapses through its top (see
+/// [`margin_below_split_box`]). Chromium takes such a box to the next page
+/// once the margins above it reach past a page edge: the edge truncates them,
+/// but the box keeps its bottom margin whole below it. An empty box with no
+/// such margin inside it is truncated with the margins around it instead.
+fn splits_margin(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    if document.block_axis(node_id).height().is_auto()
+        || !collapses_as_empty_box(document, cascade, node_id)
+    {
+        return false;
+    }
+    let mut boxes = Vec::new();
+    for &child in &document.nodes[node_id].children {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    boxes
+        .into_iter()
+        .any(|id| non_zero_margin(empty_box_margin_extremes(document, cascade, id)))
+}
+
+/// Whether `node_id` splits the margin (see [`splits_margin`]) and a
+/// positive margin collapses into its top: one of its own or of the boxes
+/// inside it, or the margin before it (see [`margin_before_box`]). A page
+/// edge right above the box then falls in that margin. The box is checked
+/// first, so that ordinary boxes at a page top skip the walk over the
+/// siblings before them.
+pub(super) fn margin_above_page_edge(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    splits_margin(document, cascade, node_id)
+        && (margin_before_box(document, cascade, node_id).0 > 0.0
+            || adjoining_margin_extremes(document, cascade, node_id, true, None).0 > 0.0)
+}
+
+/// How much further the flow after `node_id` moves when a page edge takes
+/// the box to the top of a page, for a box that [`splits_margin`]: the box
+/// then keeps its own bottom margin whole below it, where the layout left
+/// only what that margin added to the margins above the box.
+pub(super) fn split_box_kept_margin(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    if !splits_margin(document, cascade, node_id) {
+        return 0.0;
+    }
+    let below = margin_below_split_box(document, cascade, node_id).unwrap_or(0.0);
+    document.nodes[node_id].layout.margin.bottom - below
+}
+
+/// The box that splits the margin between `previous` and the box after it
+/// in the flow (see [`splits_margin`]), whose siblings before it are
+/// `preceding_siblings`, with the extremes of the margins below its border
+/// box up to that box: its own bottom margin, and those of the empty boxes
+/// after it and of the boxes it ends. The split box is among the empty
+/// siblings before the box, or ends the flow of `previous`, or is
+/// `previous`.
+fn margin_split_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    previous: usize,
+    preceding_siblings: &[usize],
+) -> Option<(usize, (f32, f32))> {
+    let own_bottom = |id: usize| {
+        let margin = document.nodes[id].layout.margin.bottom;
+        (margin.max(0.0), margin.min(0.0))
+    };
+    let mut below = (0.0_f32, 0.0_f32);
+    let mut current = previous;
+    // The boxes before `node_id`, last first, with those that `display:
+    // contents` elements lend to the flow.
+    let mut boxes = Vec::new();
+    'before: for &sibling in preceding_siblings.iter().rev() {
+        boxes.clear();
+        push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
+        for &id in &boxes {
+            // Text, preserved white space among it, forms a line between
+            // the two boxes and keeps their margins apart.
+            if document.nodes[id].kind() != NodeKind::Element {
+                return None;
+            }
+            if id != previous && splits_margin(document, cascade, id) {
+                return Some((id, join_margin_extremes(below, own_bottom(id))));
+            }
+            if id == previous || !collapses_as_empty_box(document, cascade, id) {
+                current = id;
+                break 'before;
+            }
+            below = join_margin_extremes(below, empty_box_margin_extremes(document, cascade, id));
+        }
+    }
+    loop {
+        if splits_margin(document, cascade, current) {
+            return Some((current, join_margin_extremes(below, own_bottom(current))));
+        }
+        below = join_margin_extremes(below, own_bottom(current));
+        let layout = &document.nodes[current].layout;
+        if layout.padding.bottom + layout.border.bottom > 0.0
+            || !document.block_axis(current).height().is_auto()
+            || !margins_may_collapse_through(document, cascade, current)
+        {
+            return None;
+        }
+        let mut boxes = Vec::new();
+        for &child in document.nodes[current].children.iter().rev() {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        let mut next = None;
+        for child in boxes {
+            if document.nodes[child].kind() != NodeKind::Element
+                || document.nodes[child].display().is_inline_level()
+            {
+                return None;
+            }
+            if splits_margin(document, cascade, child)
+                || !collapses_as_empty_box(document, cascade, child)
+            {
+                next = Some(child);
+                break;
+            }
+            below =
+                join_margin_extremes(below, empty_box_margin_extremes(document, cascade, child));
+        }
+        current = next?;
+    }
+}
+
+/// The extremes of the margin that ends the flow before `node_id`: the
+/// bottom margin of the box before it, collapsed with those of the empty
+/// boxes between the two (see [`empty_box_margin_extremes`]). A `display:
+/// contents` element lends its boxes to the flow of its parent, so the walk
+/// goes through those around and before `node_id`. Zero when no box comes
+/// before it.
+fn margin_before_box(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> (f32, f32) {
+    let mut extremes = (0.0_f32, 0.0_f32);
+    let mut current = node_id;
+    while let Some(parent) = document.parent_of(current) {
+        for &sibling in document.nodes[parent]
+            .children
+            .iter()
+            .rev()
+            .skip_while(|&&child| child != current)
+            .skip(1)
+        {
+            if join_margin_before(document, cascade, sibling, &mut extremes) {
+                return extremes;
+            }
+        }
+        if document.nodes[parent].display() != DisplayValue::Contents {
+            break;
+        }
+        current = parent;
+    }
+    extremes
+}
+
+/// The extremes of two sets of margins that collapse into one.
+fn join_margin_extremes(
+    (positive, negative): (f32, f32),
+    (other_positive, other_negative): (f32, f32),
+) -> (f32, f32) {
+    (positive.max(other_positive), negative.min(other_negative))
+}
+
+/// Joins the margins that `node_id`, met walking back from a box, adds to
+/// the margin above that box (see [`margin_before_box`]). Returns whether
+/// the walk ends there: at text that forms a line, preserved white space
+/// among it, which keeps the margins apart, or at a box that is not empty.
+fn join_margin_before(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    extremes: &mut (f32, f32),
+) -> bool {
+    match sibling_adjacency::flow_box(document, cascade, node_id) {
+        sibling_adjacency::FlowBox::Skip | sibling_adjacency::FlowBox::Phantom => {
+            return false;
+        }
+        sibling_adjacency::FlowBox::Contents => {
+            return document.nodes[node_id]
+                .children
+                .iter()
+                .rev()
+                .any(|&child| join_margin_before(document, cascade, child, extremes));
+        }
+        sibling_adjacency::FlowBox::Box if document.nodes[node_id].kind() != NodeKind::Element => {
+            return true;
+        }
+        sibling_adjacency::FlowBox::Box => {}
+    }
+    let empty = collapses_as_empty_box(document, cascade, node_id);
+    let margins = if empty {
+        empty_box_margin_extremes(document, cascade, node_id)
+    } else {
+        adjoining_margin_extremes(document, cascade, node_id, false, None)
+    };
+    *extremes = join_margin_extremes(*extremes, margins);
+    !empty
 }
 
 /// The last child of the block `node_id` that takes part in its flow: an
@@ -13251,6 +13492,8 @@ struct SiblingMargins {
 /// margin above it.
 struct MarginBreak {
     node_id: usize,
+    /// The body element, which ends the walk for relative offsets.
+    body_id: usize,
     /// The initial layout proves this clearing box has no used clearance.
     clearance_free: bool,
     /// The unpaginated top of the box.
@@ -13454,6 +13697,30 @@ impl SiblingMargins {
             },
             follows_forced_break,
         );
+        // An empty box of set height that the margins inside it pushed past
+        // the page edge starts the page and keeps the margin below it.
+        if !forced_before
+            && !follows_forced_break
+            && let Some((split, below)) = margin_split_box(
+                document,
+                cascade,
+                previous,
+                self.adjacency.preceding_siblings(document, node_id),
+            )
+        {
+            // Both boxes are measured where the flow put them, without the
+            // relative offsets that moved them afterwards.
+            let flow_abs_y = |id: usize| {
+                current_abs_y(document, id)
+                    - accumulated_relative_offset_y(document, cascade, at.body_id, id)
+            };
+            let split_y = effective_y - (flow_abs_y(margin_node) - flow_abs_y(split));
+            if split_y >= page_top - 0.001 {
+                let (positive, negative) =
+                    adjoining_margin_extremes(document, cascade, margin_node, true, None);
+                target_y = target_y.max(page_top + below.0.max(positive) + below.1.min(negative));
+            }
+        }
         if let Some(page) = float_break_page {
             // A relayout may already place the box at the next edge. Keep
             // the margin from the float's forced boundary, not that edge.

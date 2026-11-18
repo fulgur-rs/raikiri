@@ -2484,6 +2484,9 @@ impl PaginationState {
             // after a box it pulls back over the break follows the box, as
             // in Chromium.
             self.flow_shift += landing.node_delta;
+            if !lands_after_forced_break && (overflow.page || margin_pushes_box_on) {
+                self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
+            }
             self.float_shifts.settle_transition(
                 document,
                 cascade,
@@ -2582,6 +2585,7 @@ impl PaginationState {
         // that crossed the page edge.
         let at = MarginBreak {
             node_id,
+            body_id,
             clearance_free: avoided_breaks.clearance_free.contains(node_id),
             raw_y: flow_raw_y(document, cascade, body_id, candidate),
             effective_y: flow_y,
@@ -2637,6 +2641,18 @@ impl PaginationState {
                 held.into_iter()
                     .map(|(ancestor, held)| (ancestor, held, natural_page)),
             );
+        }
+        // A box that the margins inside it took to the top of a page keeps
+        // its bottom margin whole below it there (see
+        // `split_box_kept_margin`).
+        if !forced_before
+            && self.sibling_margins.forced_break_box.is_none()
+            && natural_page > 0
+            && (position.effective_y - relative_offset - page_origins.origin(natural_page)).abs()
+                <= 0.001
+            && super::margin_above_page_edge(document, cascade, node_id)
+        {
+            self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
         }
         reach_page(control, natural_page)?;
         self.current_page = self.current_page.max(natural_page);

@@ -17663,6 +17663,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     margins.record_bottom(body, first, true, 90.0);
     let at = MarginBreak {
         node_id: second,
+        body_id: body,
         clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
@@ -17757,6 +17758,7 @@ fn a_page_edge_cuts_the_margins_around_an_empty_box_where_the_next_box_starts() 
     };
     let at = MarginBreak {
         node_id: empty,
+        body_id: body,
         clearance_free: false,
         raw_y: 120.0,
         effective_y: 120.0,
@@ -21667,4 +21669,87 @@ fn a_block_formatting_context_holds_only_the_floats_of_its_own_flow() {
     let mut floats = own_floats(&session, &cascade, root);
     floats.sort_unstable();
     assert_eq!(floats, vec![own, through]);
+}
+
+#[test]
+fn the_margin_before_a_box_collapses_through_empty_and_contents_boxes() {
+    // `body > tall, float, contents > (empty), [text], wrapper > target`.
+    let build = |text: Option<&str>, body_style: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some(body_style));
+        let tall = doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+        doc.append_element(Some(body), "div", Some("display:block;float:left"));
+        let contents = doc.append_element(Some(body), "div", Some("display:contents"));
+        let empty = doc.append_element(Some(contents), "div", Some("display:block"));
+        if let Some(text) = text {
+            doc.append_text(body, text);
+        }
+        let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+        let target = doc.append_element(Some(wrapper), "div", Some("display:block"));
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        doc.nodes[tall].layout.size.height = 30.0;
+        doc.nodes[tall].layout.margin.bottom = 10.0;
+        doc.nodes[empty].layout.margin.bottom = 15.0;
+        doc.nodes[empty].layout.margin.top = -5.0;
+        (doc, cascade, tall, target)
+    };
+    let (mut doc, cascade, tall, target) = build(None, "display:block");
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    assert_eq!(margin_before_box(&session, &cascade, target), (15.0, -5.0));
+    // Nothing comes before the first box.
+    assert_eq!(margin_before_box(&session, &cascade, tall), (0.0, 0.0));
+    // Text between them keeps the margins apart, and so does white space
+    // that the style preserves, which forms a line; collapsed white space
+    // does not.
+    for (text, body_style, expected) in [
+        ("text", "display:block", (0.0, 0.0)),
+        (" ", "display:block;white-space:pre", (0.0, 0.0)),
+        (" ", "display:block", (15.0, -5.0)),
+    ] {
+        let (mut doc, cascade, _, target) = build(Some(text), body_style);
+        let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+        assert_eq!(
+            margin_before_box(&session, &cascade, target),
+            expected,
+            "{text:?} {body_style}"
+        );
+    }
+}
+
+#[test]
+fn text_between_a_split_box_and_the_box_after_it_keeps_them_apart() {
+    // `body > tall, split > inner, [text], target`: the split box holds a
+    // margin, and only without the text does the target find it.
+    let build = |text: Option<&str>| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let tall = doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+        let split = doc.append_element(Some(body), "div", Some("display:block;height:0"));
+        let inner = doc.append_element(Some(split), "div", Some("display:block"));
+        if let Some(text) = text {
+            doc.append_text(body, text);
+        }
+        doc.append_element(Some(body), "div", Some("display:block"));
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        doc.nodes[tall].layout.size.height = 30.0;
+        doc.nodes[split].layout.margin.bottom = 30.0;
+        doc.nodes[inner].layout.margin.bottom = 10.0;
+        let preceding = doc.nodes[body].children[..doc.nodes[body].children.len() - 1].to_vec();
+        (doc, cascade, tall, split, preceding)
+    };
+    let (mut doc, cascade, tall, split, preceding) = build(None);
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    assert_eq!(
+        margin_split_box(&session, &cascade, tall, &preceding).map(|(id, _)| id),
+        Some(split)
+    );
+    let (mut doc, cascade, tall, _, preceding) = build(Some("text"));
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    assert_eq!(margin_split_box(&session, &cascade, tall, &preceding), None);
 }
