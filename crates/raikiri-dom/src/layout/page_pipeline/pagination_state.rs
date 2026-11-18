@@ -445,10 +445,13 @@ impl PaginationState {
     /// box keeps the position the table gave it, so the cells around it no
     /// longer move it or what it holds.
     pub(super) fn rebase_fragmented_cell_content(
-        &self,
+        &mut self,
         document: &LayoutSession<'_>,
         candidate: &mut PageCandidate,
     ) {
+        for (cell, shift) in self.subtree_shifts.realigned_cells.drain(..) {
+            *self.fragmented_cell_shifts.entry(cell).or_default() += shift;
+        }
         if self.fragmented_cell_shifts.is_empty() {
             return;
         }
@@ -1160,6 +1163,7 @@ impl PaginationState {
             // sits in the flow; a relative offset only moves its paint.
             for fragment in super::table_cell_fragments::split(
                 document,
+                cascade,
                 node_id,
                 effective_y - page_break.relative_offset,
                 page_start,

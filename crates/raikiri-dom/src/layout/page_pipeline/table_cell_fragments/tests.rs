@@ -55,7 +55,7 @@ impl Fixture {
         .unwrap();
         let mut session = crate::layout::context::LayoutSession::resumed(&mut self.doc, &cascade);
         session.context.pagination_on_transposed_axes = transposed;
-        split(&session, node, top, 100.0, 200.0)
+        split(&session, &cascade, node, top, 100.0, 200.0)
             .into_iter()
             .map(|fragment| (fragment.cell, fragment.shift))
             .collect()

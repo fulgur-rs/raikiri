@@ -2,7 +2,10 @@
 //! splits. Chromium lays such a cell out as if it were aligned to the top:
 //! the room that `vertical-align: middle`, `bottom` or `baseline` puts above
 //! its content stays below it, so the content starts on the page the row
-//! starts on. Where each glyph falls is what Chromium prints for the same
+//! starts on. A row that a forced break in one of its cells grows is laid
+//! out at the height of its part on the page the break leaves instead: the
+//! cells beside the breaking one keep their alignment within that part.
+//! Where each glyph falls is what Chromium prints for the same
 //! documents on pages 200px wide and 100px tall, with Ahem lines of 10px.
 
 use raikiri_html::{
@@ -215,6 +218,91 @@ fn positioned_boxes_and_nested_split_rows_in_a_split_cell() {
                 (0, 'K', 10),
                 (1, 'X', 80),
             ],
+        ),
+    ]);
+}
+
+/// A forced break in a cell grows its row past the page end. The cells beside
+/// it keep a middle or bottom alignment within the part of the row on the
+/// page the break leaves, which ends at the page end, inside their padding;
+/// one aligned to the baseline starts at its top. This holds whatever side of
+/// the breaking cell they are on, after another row, with border spacing, for
+/// a break after a box, a break in a nested block, a moved box that keeps its
+/// margin, and further breaks in the same cell.
+#[test]
+fn cells_beside_a_forced_break_align_within_the_rows_part_on_its_page() {
+    assert_rows(&[
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:middle'><div id='C'>C</div></td><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 45), (1, 'X', 50)],
+        ),
+        (
+            "<div style='height:30px'>P</div><table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 30), (0, 'C', 90), (0, 'P', 0), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:5px;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 85), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:4px'><tr><td style='padding:0'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 4), (0, 'C', 90), (1, 'X', 54)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C' style='height:40px'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 60), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div>A</div><div style='break-before:page'>B</div><div style='break-before:page'>D</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (2, 'X', 10)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div id='A' style='height:20px;break-after:page'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div><div id='A' style='height:20px'>A</div><div style='padding-top:5px'><div id='B' style='break-before:page;height:50px'>B</div></div></div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'B', 5), (1, 'X', 55)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;margin-top:15px;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'B', 15), (1, 'X', 65)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:baseline'><div style='font-size:30px;line-height:30px'>G</div></td><td style='padding:0;vertical-align:baseline'><div>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 0), (0, 'G', 0), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0;vertical-align:middle'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 45), (1, 'X', 50)],
+        ),
+    ]);
+}
+
+/// A cell that a forced break splits itself starts at its top, whatever its
+/// alignment, while the cells beside it align within the part on the page.
+#[test]
+fn a_cell_with_a_forced_break_of_its_own_starts_at_its_top() {
+    assert_rows(&[
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:middle'><div id='D'>D</div><div id='E' style='break-before:page'>E</div></td><td style='padding:0'><div id='F' style='height:60px'>F</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'D', 0), (0, 'F', 20), (1, 'X', 10)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:bottom'><div id='D'>D</div><div id='E' style='break-before:page'>E</div></td><td style='padding:0'><div id='F' style='height:60px'>F</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'D', 0), (0, 'F', 20), (1, 'X', 10)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;height:50px'>B</div></td><td style='padding:0'><div id='D' style='height:40px'>D</div><div id='E' style='break-before:page'>E</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (0, 'D', 0), (1, 'X', 50)],
         ),
     ]);
 }

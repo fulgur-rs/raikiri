@@ -45,9 +45,11 @@ impl CellFragment {
 /// Chromium lays a cell that fragments out as if it were top-aligned, whether
 /// it was aligned to the middle, the bottom or the row's baseline, so the
 /// room the alignment put above the content moves below it. A cell that
-/// spans rows is split the same way when its rows cross the page end.
+/// spans rows is split the same way when its rows cross the page end, and so
+/// is a cell with a forced break inside it.
 pub(super) fn split(
     document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     row: usize,
     top: f32,
     page_start: f32,
@@ -72,12 +74,15 @@ pub(super) fn split(
         .filter_map(|cell| {
             let layout = &document.nodes[cell].layout;
             let cell_top = top + layout.location.y;
-            if !starts_on_page_and_runs_past_it(
+            let runs_past = starts_on_page_and_runs_past_it(
                 cell_top,
                 cell_top + layout.size.height,
                 page_start,
                 page_end,
-            ) {
+            );
+            // A forced break inside the cell splits it too.
+            let starts_on_page = cell_top >= page_start && cell_top < page_end;
+            if !runs_past && !(starts_on_page && breaks_inside(document, cascade, cell)) {
                 return None;
             }
             let padding = document
@@ -209,4 +214,108 @@ fn only_box(document: &Document, parent: usize) -> Option<usize> {
         .filter(|&child| sibling_renders(document, child));
     let child = boxes.next()?;
     boxes.next().is_none().then_some(child)
+}
+
+/// The cells of `row` beside `grown`, a cell that a forced break grew, aligned
+/// again within the part of the row on the page the break leaves, which ends
+/// `end` below the top of the row. Chromium lays such a row out at the height
+/// its fragment on that page has, so a cell aligned to the middle or the bottom
+/// keeps that alignment within the fragment, and one aligned to the baseline
+/// starts at its top. A cell that ends past `end` itself, or that has a forced
+/// break of its own, is split and already aligned to its top (see `split`).
+pub(super) fn realign_beside(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    grown: usize,
+    end: f32,
+) -> Vec<CellFragment> {
+    if document.context.pagination_on_transposed_axes
+        || document.nodes[row].display() != DisplayValue::TableRow
+    {
+        return Vec::new();
+    }
+    document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            let node = &document.nodes[cell];
+            cell != grown
+                && node.display() == DisplayValue::TableCell
+                && sibling_renders(document, cell)
+                && !node.used_writing_mode.is_vertical()
+                && !breaks_inside(document, cascade, cell)
+        })
+        .filter_map(|cell| {
+            let layout = &document.nodes[cell].layout;
+            let top = layout.location.y;
+            if top + layout.size.height > end + 0.001 {
+                return None;
+            }
+            let padding = document
+                .physical_style(cell)
+                .padding()
+                .resolve_or_zero(Some(layout.size.width));
+            let shift = layout.padding.top - padding.top;
+            let room = shift + layout.padding.bottom - padding.bottom;
+            let fragment_room = (room + end - top - layout.size.height).max(0.0);
+            let aligned = match document.ifc_layout_node(cell)?.table_vertical_align {
+                VerticalAlign::Middle => fragment_room / 2.0,
+                VerticalAlign::Bottom => fragment_room,
+                _ => 0.0,
+            };
+            let moved = shift - aligned;
+            (moved.is_finite() && moved.abs() > 0.001)
+                .then_some(CellFragment { cell, shift: moved })
+        })
+        .collect()
+}
+
+/// Whether a forced page break falls between content inside `cell`: a box in
+/// it forces a break before itself after content of the cell, or after
+/// itself before more of it. A break at the start or the end of the cell
+/// passes to the row and does not split the cell.
+fn breaks_inside(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    cell: usize,
+) -> bool {
+    let renders_beside = |id: usize, before: bool| -> bool {
+        let mut id = id;
+        while let Some(parent) = document.parent_of(id).filter(|&parent| parent != cell) {
+            let siblings = &document.nodes[parent].children;
+            let index = siblings.iter().position(|&child| child == id).unwrap_or(0);
+            let mut beside = if before {
+                siblings[..index].iter()
+            } else {
+                siblings[index + 1..].iter()
+            };
+            if beside.any(|&sibling| sibling_renders(document, sibling)) {
+                return true;
+            }
+            id = parent;
+        }
+        let siblings = &document.nodes[cell].children;
+        let index = siblings.iter().position(|&child| child == id).unwrap_or(0);
+        if before {
+            siblings[..index]
+                .iter()
+                .any(|&sibling| sibling_renders(document, sibling))
+        } else {
+            siblings[index + 1..]
+                .iter()
+                .any(|&sibling| sibling_renders(document, sibling))
+        }
+    };
+    document.preorder(cell).skip(1).any(|id| {
+        let Some(computed) = cascade.computed.get(id) else {
+            return false;
+        };
+        document.nodes[id].kind() == NodeKind::Element
+            && (page_break_is_forced(document, id, computed.break_before)
+                && renders_beside(id, true)
+                || page_break_is_forced(document, id, computed.break_after)
+                    && renders_beside(id, false))
+    })
 }
