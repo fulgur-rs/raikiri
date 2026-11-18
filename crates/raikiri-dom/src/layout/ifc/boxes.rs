@@ -5356,12 +5356,7 @@ fn boxes_before_floats_after_a_block(
     // The root's block-level `::before` comes before every child.
     let root_before = generated_block_end(root, lines, idx, PseudoElem::Before);
     let has = |kind| root.boxes.iter().any(|b| b.kind == kind);
-    // The content of an anonymous cell is only some of its owner's
-    // children, and is left alone.
-    if tree.ifc_source_owner(idx) != idx
-        || !has(IfcBoxKind::Float)
-        || (!has(IfcBoxKind::Block) && root.generated_blocks.is_empty())
-    {
+    if !has(IfcBoxKind::Float) || (!has(IfcBoxKind::Block) && root.generated_blocks.is_empty()) {
         return found;
     }
     let cascade = tree.style_views.cascade();
@@ -5537,12 +5532,21 @@ fn paragraph_children(
         })
     };
     let mut children = Vec::new();
-    let mut stack: Vec<Step> = tree.nodes[idx]
-        .children
-        .iter()
-        .rev()
-        .map(|&id| Step::Enter(id))
-        .collect();
+    // An anonymous cell has no children in the document: it wraps some of
+    // its owner's.
+    let mut stack: Vec<Step> = match tree.anonymous_cell_content(idx) {
+        Some(content) => content
+            .map(|(id, pseudo)| {
+                pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo))
+            })
+            .collect(),
+        None => tree.nodes[idx]
+            .children
+            .iter()
+            .map(|&id| Step::Enter(id))
+            .collect(),
+    };
+    stack.reverse();
     while let Some(step) = stack.pop() {
         match step {
             Step::Generated(element, pseudo) => children.extend(generated(element, pseudo)),
@@ -5618,17 +5622,10 @@ fn mark_generated_blocks_before(
 /// out-of-flow boxes right before the content join it, unless a float comes
 /// between them (see [`boxes_before_floats_after_a_block`]). A box in the
 /// block that has no anchor sits on a line like the others there; a box out
-/// of it sits on a line that holds nothing at all. The content of an
-/// anonymous cell (`owner`, its source owner, is not `idx`) is only some of
-/// its owner's children, and is left alone.
-fn boxes_in_anonymous_line_blocks(
-    tree: &LayoutSession<'_>,
-    (idx, owner): (usize, usize),
-) -> HashSet<usize> {
+/// of it sits on a line that holds nothing at all. An anonymous cell holds
+/// the children of its owner that it wraps.
+fn boxes_in_anonymous_line_blocks(tree: &LayoutSession<'_>, idx: usize) -> HashSet<usize> {
     let mut found = HashSet::new();
-    if owner != idx {
-        return found;
-    }
     let cascade = tree.style_views.cascade();
     // The run's anonymous block has started.
     let mut started = false;
@@ -5705,10 +5702,8 @@ fn generated_block_origins(root: &IfcRoot) -> (HashSet<usize>, HashSet<usize>) {
 
 /// The static block offsets of the out-of-flow boxes of the paragraph rooted
 /// at `idx`, for the boxes without an anchor, with the line each box follows
-/// (see [`static_block_offset`]). Empty for the content of an anonymous cell
-/// (`owner`, its source owner, is not `idx`), which is only some of its
-/// owner's children, and for a fragmenting layout, which records no block
-/// starts.
+/// (see [`static_block_offset`]). Empty for a fragmenting layout, which
+/// records no block starts.
 ///
 /// Such a box sits where an empty block would: at the start of the first
 /// block-level box after it in document order, a block child or a block-level
@@ -5720,14 +5715,18 @@ fn generated_block_origins(root: &IfcRoot) -> (HashSet<usize>, HashSet<usize>) {
 fn offsets_in_document_order(
     tree: &Document,
     lines: &IfcLines,
-    (idx, owner): (usize, usize),
+    idx: usize,
 ) -> HashMap<usize, (f32, Option<usize>)> {
     enum Step {
         Enter(usize),
         /// The element's `::after` block comes here.
         After,
+        /// The `::before` or `::after` of the element that an anonymous cell
+        /// wraps comes here, a block-level box if it is one of the
+        /// paragraph's.
+        Generated(usize, PseudoElem),
     }
-    if owner != idx || lines.block_starts.is_empty() {
+    if lines.block_starts.is_empty() {
         return HashMap::new();
     }
     #[cfg(test)]
@@ -5746,18 +5745,36 @@ fn offsets_in_document_order(
     // The number of block-level boxes before each box, in document order.
     let mut counts = HashMap::new();
     let mut before = 0;
-    let mut stack: Vec<Step> = tree.nodes[idx]
-        .children
-        .iter()
-        .rev()
-        .map(|&id| Step::Enter(id))
-        .collect();
+    // An anonymous cell has no children in the document: it wraps some of
+    // its owner's.
+    let mut stack: Vec<Step> = match tree.anonymous_cell_content(idx) {
+        Some(content) => content
+            .map(|(id, pseudo)| {
+                pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo))
+            })
+            .collect(),
+        None => tree.nodes[idx]
+            .children
+            .iter()
+            .map(|&id| Step::Enter(id))
+            .collect(),
+    };
+    stack.reverse();
     while let Some(step) = stack.pop() {
         #[cfg(test)]
         tests::OOF_BOX_VISITS.with(|count| count.set(count.get() + 1));
         let id = match step {
             Step::After => {
                 before += 1;
+                continue;
+            }
+            Step::Generated(id, pseudo) => {
+                let blocks = if pseudo == PseudoElem::Before {
+                    &befores
+                } else {
+                    &afters
+                };
+                before += usize::from(blocks.contains(&id));
                 continue;
             }
             Step::Enter(id) => id,
@@ -6186,7 +6203,7 @@ pub(crate) fn place_out_of_flow(
             .is_none()
             .then(|| {
                 among_generated
-                    .get_or_insert_with(|| offsets_in_document_order(tree, &lines, (idx, owner)))
+                    .get_or_insert_with(|| offsets_in_document_order(tree, &lines, idx))
                     .get(&node)
                     .copied()
             })
@@ -6275,9 +6292,7 @@ pub(crate) fn place_out_of_flow(
                 None if inline_level => {
                     let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
                         || beside_inline
-                            .get_or_insert_with(|| {
-                                boxes_in_anonymous_line_blocks(tree, (idx, owner))
-                            })
+                            .get_or_insert_with(|| boxes_in_anonymous_line_blocks(tree, idx))
                             .contains(&node);
                     let line = hypothetical
                         .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)));
