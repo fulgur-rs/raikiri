@@ -164,10 +164,19 @@ fn split_rows_after_others_taller_than_a_page_or_spanned_start_at_their_top() {
     ]);
 }
 
-/// A row that ends on its page keeps the alignment of its cells.
+/// A row that ends on its page keeps the alignment of its cells, also
+/// when a relative offset paints it past the page end.
 #[test]
 fn rows_that_fit_keep_their_alignment() {
     assert_rows(&[
+        (
+            "<table style='border-spacing:0;position:relative;top:50px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 50), (0, 'B', 70), (0, 'X', 70), (1, 'C', 10)],
+        ),
+        (
+            "<div style='position:relative;top:50px'><table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table></div><div id='X'>X</div>",
+            &[(0, 'A', 50), (0, 'B', 70), (0, 'X', 70), (1, 'C', 10)],
+        ),
         (
             "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
             &[(0, 'A', 0), (0, 'B', 20), (0, 'C', 60), (0, 'X', 70)],

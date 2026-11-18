@@ -1156,10 +1156,12 @@ impl PaginationState {
 
         if candidate.context.is_table_row() {
             let page_end = page_origins.origin(self.current_page + 1);
+            // Whether a break goes through a cell is decided where the row
+            // sits in the flow; a relative offset only moves its paint.
             for fragment in super::table_cell_fragments::split(
                 document,
                 node_id,
-                effective_y,
+                effective_y - page_break.relative_offset,
                 page_start,
                 page_end,
             ) {
