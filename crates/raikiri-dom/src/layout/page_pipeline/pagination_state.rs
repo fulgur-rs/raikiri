@@ -349,8 +349,9 @@ pub(super) struct PaginationState {
     pub(super) margin_cuts: HashMap<usize, f32>,
     /// Where the in-flow content of each block that ends at a margin kept
     /// below its last box ends (see [`Self::end_block_at_kept_margin`]),
-    /// below the top of its border box: a page edge may have cut that
-    /// margin, which the margin itself does not show.
+    /// below the top of its border box, when a page edge cut that margin,
+    /// which the margin itself does not show. A cut that truncates the
+    /// margin above the block's edges further is in `margin_cuts`.
     pub(super) kept_margin_ends: HashMap<usize, f32>,
     /// For each block, the block size of the margins inside it that a page
     /// edge may truncate (see [`super::truncatable_margin_rooms`]), which the pages
@@ -1575,8 +1576,16 @@ impl PaginationState {
             document.nodes[node_id].layout.size.height = height;
             document.mark_pagination_extent_dirty(node_id);
         }
-        self.kept_margin_ends
-            .insert(node_id, end - current_abs_y(document, node_id));
+        // Where a page edge cut the kept margin, the margin box of the last
+        // box reaches past the flow, which the height pass after pagination
+        // measures; the flow inside the block ends here all the same.
+        let last_layout = &document.nodes[last].layout;
+        let margin_end =
+            current_abs_y(document, last) + last_layout.size.height + last_layout.margin.bottom;
+        if end + 0.001 < margin_end {
+            self.kept_margin_ends
+                .insert(node_id, end - current_abs_y(document, node_id));
+        }
     }
 
     /// Truncates the margin between the last box of the block of

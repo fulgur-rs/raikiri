@@ -766,6 +766,8 @@ fn relative_offset_is_painted(
 /// When counting overflow pages, an auto-sized root without block-end edges
 /// contributes no extra page beyond those its content already reached.
 /// `whole_box` also includes that content when extending the root's own box.
+/// `flow_end_cap`, below the top of the root's border box, is where its
+/// in-flow content ends when a page edge cut the margin it ends with.
 fn block_border_box_end(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -978,7 +980,12 @@ fn block_border_box_end(
             let table = &document.nodes[table].layout;
             border_end = border_end.max(offset + table.location.y + table.size.height);
         }
-        let end = border_end + layout.margin.bottom;
+        // A page edge may have cut the margin of a box the flow follows, down
+        // to where the flow inside the root ends (see `flow_end_cap`); no box
+        // ends above its border box.
+        let end = flow_end_cap.map_or(border_end + layout.margin.bottom, |cap| {
+            (border_end + layout.margin.bottom).min((top + cap).max(border_end))
+        });
         if end.is_finite() {
             // A reverse column flex container's source order need not end
             // with its lowest item. Its item margins never collapse.
@@ -1024,7 +1031,6 @@ fn block_border_box_end(
         } else {
             end
         };
-        let end = flow_end_cap.map_or(end, |cap| end.min(top + cap));
         content_end = content_end.max(end);
     } else if encloses_margins && (edges_top > 0.0 || encloses_floats) {
         content_end = content_end.max((top + edges_top + trailing.resolve()).min(last_margin_end));

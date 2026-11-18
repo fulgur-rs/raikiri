@@ -353,6 +353,20 @@ fn the_block_around_empty_boxes_ends_below_their_kept_margins() {
             ),
             (3, 15.0),
         ),
+        // A float the block encloses still takes its end further down,
+        // past the page edge that cut the margin.
+        (
+            closing_case(
+                &format!("display:flow-root;{padded}"),
+                &breaking(5),
+                &format!(
+                    "{}<div style='float:left;width:10px;height:150px'></div>",
+                    empty("height:0;margin-bottom:150px")
+                ),
+                "",
+            ),
+            (4, 65.0),
+        ),
     ];
     let wrong: Vec<String> = cases
         .iter()
