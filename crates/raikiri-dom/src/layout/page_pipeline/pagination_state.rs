@@ -2645,9 +2645,11 @@ impl PaginationState {
         // its bottom margin whole below it there (see
         // `split_box_kept_margin`).
         if !forced_before
+            && self.sibling_margins.forced_break_box.is_none()
             && natural_page > 0
             && (position.effective_y - relative_offset - page_origins.origin(natural_page)).abs()
                 <= 0.001
+            && super::margin_above_page_edge(document, cascade, node_id)
         {
             self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
         }
