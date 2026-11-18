@@ -306,3 +306,26 @@ fn a_cell_with_a_forced_break_of_its_own_starts_at_its_top() {
         ),
     ]);
 }
+
+/// A relative offset on the box a forced break moves does not change where
+/// the row's part on the page ends. A forced break inside an inline-block
+/// does not split its cell, which keeps its alignment.
+#[test]
+fn relative_offsets_and_breaks_outside_the_cells_block_flow() {
+    assert_rows(&[
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div id='A' style='height:20px'>A</div><div id='B' style='break-before:page;position:relative;top:10px;height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 0), (0, 'C', 90), (1, 'B', 10), (1, 'X', 50)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:middle'><div id='A'>A</div><div style='display:inline-block'><div>Q</div><div style='break-before:page'>R</div></div></td><td style='padding:0'><div id='F' style='height:60px'>F</div></td></tr></table><div id='X'>X</div>",
+            &[
+                (0, 'A', 15),
+                (0, 'F', 0),
+                (0, 'Q', 25),
+                (0, 'R', 35),
+                (0, 'X', 60),
+            ],
+        ),
+    ]);
+}

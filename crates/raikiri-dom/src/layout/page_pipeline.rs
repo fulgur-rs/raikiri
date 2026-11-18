@@ -14200,6 +14200,9 @@ struct SubtreeShifts {
     /// content moved up (down when negative). Their content that is still
     /// to be placed moves with it.
     realigned_cells: Vec<(usize, f32)>,
+    /// Cells that a page end or a forced break inside them split, which keep
+    /// their content at their top.
+    split_cells: HashSet<usize>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -18394,11 +18397,23 @@ fn shift_block_flow_after(
                 {
                     // The break ends the row's fragment on this page where
                     // the margin box of the moved box now starts, at the top
-                    // of the next page.
-                    let end = offset_in_cell(document, node_id, parent)
+                    // of the next page. A break below the row, in a cell
+                    // that spans the rows after it, leaves the row whole.
+                    let end = offset_in_cell(document, cascade, body_id, node_id, parent)
                         - document.nodes[node_id].layout.margin.top;
-                    for fragment in
-                        table_cell_fragments::realign_beside(document, cascade, row, parent, end)
+                    let breaks_row = end - flow_delta < document.nodes[row].layout.size.height;
+                    for fragment in breaks_row
+                        .then(|| {
+                            table_cell_fragments::realign_beside(
+                                document,
+                                cascade,
+                                row,
+                                parent,
+                                end,
+                                &shifts.split_cells,
+                            )
+                        })
+                        .unwrap_or_default()
                     {
                         let realigned = fragment.apply(document);
                         shifts.realigned_cells.push(realigned);
@@ -18607,21 +18622,30 @@ fn growing_cell(
     .then_some(cell)
 }
 
+/// How far below the border-box top of `cell` the border box of `node_id`, a
+/// box in it, now lies in the flow, without the relative offsets that only
+/// move where the boxes between them are painted.
+fn offset_in_cell(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    cell: usize,
+) -> f32 {
+    let laid_out: f32 = document
+        .inclusive_ancestors(node_id)
+        .take_while(|&id| id != cell)
+        .map(|id| document.nodes[id].layout.location.y)
+        .sum();
+    laid_out - accumulated_relative_offset_y(document, cascade, body_id, node_id)
+        + accumulated_relative_offset_y(document, cascade, body_id, cell)
+}
+
 /// The box that holds the row of the table cell `cell`, the index in it
 /// after which the boxes follow the row, and the table around them. The row
 /// is the cell's parent, or the anonymous row that wraps the run of cells in
 /// a table or row group (CSS 2.1 §17.2.1). `None` when the cell is not in a
 /// table.
-/// How far below the border-box top of `cell` the border box of `node_id`, a
-/// box in it, is now.
-fn offset_in_cell(document: &Document, node_id: usize, cell: usize) -> f32 {
-    document
-        .inclusive_ancestors(node_id)
-        .take_while(|&id| id != cell)
-        .map(|id| document.nodes[id].layout.location.y)
-        .sum()
-}
-
 fn cell_row_end(document: &Document, cell: usize) -> Option<(usize, usize, usize)> {
     let mut branch = cell;
     let mut up = document.parent_of(cell)?;

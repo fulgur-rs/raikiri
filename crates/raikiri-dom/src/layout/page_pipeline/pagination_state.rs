@@ -1171,6 +1171,7 @@ impl PaginationState {
             ) {
                 let (cell, shift) = fragment.apply(document);
                 self.fragmented_cell_shifts.insert(cell, shift);
+                self.subtree_shifts.split_cells.insert(cell);
             }
         }
 

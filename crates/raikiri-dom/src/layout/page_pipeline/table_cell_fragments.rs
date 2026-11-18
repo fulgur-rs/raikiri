@@ -230,9 +230,12 @@ pub(super) fn realign_beside(
     row: usize,
     grown: usize,
     end: f32,
+    split_cells: &std::collections::HashSet<usize>,
 ) -> Vec<CellFragment> {
+    // Only a forced break in the cell's own block flow splits the row there.
     if document.context.pagination_on_transposed_axes
         || document.nodes[row].display() != DisplayValue::TableRow
+        || !breaks_inside(document, cascade, grown)
     {
         return Vec::new();
     }
@@ -243,17 +246,16 @@ pub(super) fn realign_beside(
         .filter(|&cell| {
             let node = &document.nodes[cell];
             cell != grown
+                && !split_cells.contains(&cell)
                 && node.display() == DisplayValue::TableCell
                 && sibling_renders(document, cell)
                 && !node.used_writing_mode.is_vertical()
+                && node.layout.location.y + node.layout.size.height <= end + 0.001
                 && !breaks_inside(document, cascade, cell)
         })
         .filter_map(|cell| {
             let layout = &document.nodes[cell].layout;
             let top = layout.location.y;
-            if top + layout.size.height > end + 0.001 {
-                return None;
-            }
             let padding = document
                 .physical_style(cell)
                 .padding()
@@ -274,49 +276,55 @@ pub(super) fn realign_beside(
 }
 
 /// Whether a forced page break falls between content inside `cell`: a box in
-/// it forces a break before itself after content of the cell, or after
-/// itself before more of it. A break at the start or the end of the cell
-/// passes to the row and does not split the cell.
+/// its block flow forces a break before itself after content of the cell, or
+/// after itself before more of it. A break at the start or the end of the
+/// cell passes to the row and does not split the cell, and one inside a box
+/// that does not stack its children in block flow, or out of the flow, does
+/// not reach it.
 fn breaks_inside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     cell: usize,
 ) -> bool {
-    let renders_beside = |id: usize, before: bool| -> bool {
-        let mut id = id;
-        while let Some(parent) = document.parent_of(id).filter(|&parent| parent != cell) {
-            let siblings = &document.nodes[parent].children;
-            let index = siblings.iter().position(|&child| child == id).unwrap_or(0);
-            let mut beside = if before {
-                siblings[..index].iter()
-            } else {
-                siblings[index + 1..].iter()
-            };
-            if beside.any(|&sibling| sibling_renders(document, sibling)) {
-                return true;
-            }
-            id = parent;
+    breaks_between(document, cascade, cell, false, false)
+}
+
+/// Whether a forced break falls between content among the children of
+/// `parent` or inside them, with whether content of the cell comes before and
+/// after `parent`.
+fn breaks_between(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    parent: usize,
+    before: bool,
+    after: bool,
+) -> bool {
+    let children: Vec<usize> = document.nodes[parent]
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| sibling_renders(document, child))
+        .collect();
+    children.iter().enumerate().any(|(index, &child)| {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
+            return false;
         }
-        let siblings = &document.nodes[cell].children;
-        let index = siblings.iter().position(|&child| child == id).unwrap_or(0);
-        if before {
-            siblings[..index]
-                .iter()
-                .any(|&sibling| sibling_renders(document, sibling))
-        } else {
-            siblings[index + 1..]
-                .iter()
-                .any(|&sibling| sibling_renders(document, sibling))
-        }
-    };
-    document.preorder(cell).skip(1).any(|id| {
-        let Some(computed) = cascade.computed.get(id) else {
+        let Some(computed) = cascade.computed.get(child) else {
             return false;
         };
-        document.nodes[id].kind() == NodeKind::Element
-            && (page_break_is_forced(document, id, computed.break_before)
-                && renders_beside(id, true)
-                || page_break_is_forced(document, id, computed.break_after)
-                    && renders_beside(id, false))
+        let before = before || index > 0;
+        let after = after || index + 1 < children.len();
+        page_break_is_forced(document, child, computed.break_before) && before
+            || page_break_is_forced(document, child, computed.break_after) && after
+            || is_block_level_flow_box(node.display())
+                && stacks_children_in_block_flow(document, child)
+                && breaks_between(document, cascade, child, before, after)
     })
 }
