@@ -18402,18 +18402,14 @@ fn shift_block_flow_after(
                     let end = offset_in_cell(document, cascade, body_id, node_id, parent)
                         - document.nodes[node_id].layout.margin.top;
                     let breaks_row = end - flow_delta < document.nodes[row].layout.size.height;
-                    let realigned = if breaks_row {
-                        table_cell_fragments::realign_beside(
-                            document,
-                            cascade,
-                            row,
-                            parent,
-                            end,
-                            &shifts.split_cells,
-                        )
-                    } else {
-                        Vec::new()
-                    };
+                    let realigned = table_cell_fragments::realign_beside(
+                        document,
+                        cascade,
+                        row,
+                        parent,
+                        breaks_row.then_some(end),
+                        &shifts.split_cells,
+                    );
                     for fragment in realigned {
                         let realigned = fragment.apply(document);
                         shifts.realigned_cells.push(realigned);

@@ -219,7 +219,8 @@ fn only_box(document: &Document, parent: usize) -> Option<usize> {
 
 /// The cells of `row` beside `grown`, a cell that a forced break grew, aligned
 /// again within the part of the row on the page the break leaves, which ends
-/// `end` below the top of the row. Chromium lays such a row out at the height
+/// `end` below the top of the row; `None` when the break falls below the row,
+/// in a cell that spans the rows after it, and leaves the row whole. Chromium lays such a row out at the height
 /// its fragment on that page has, so a cell aligned to the middle or the bottom
 /// keeps that alignment within the fragment, and one aligned to the baseline
 /// starts at its top. A cell that ends past `end` itself, or that has a forced
@@ -229,16 +230,18 @@ pub(super) fn realign_beside(
     cascade: &CascadeResult,
     row: usize,
     grown: usize,
-    end: f32,
+    end: Option<f32>,
     split_cells: &std::collections::HashSet<usize>,
 ) -> Vec<CellFragment> {
     // Only a forced break in the cell's own block flow splits the row there.
     if document.context.pagination_on_transposed_axes
         || document.nodes[row].display() != DisplayValue::TableRow
+        || end.is_none()
         || !breaks_inside(document, cascade, grown)
     {
         return Vec::new();
     }
+    let end = end.unwrap_or_default();
     document.nodes[row]
         .children
         .iter()
