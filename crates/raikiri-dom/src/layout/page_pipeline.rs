@@ -10090,17 +10090,18 @@ pub(super) fn split_box_kept_margin(
     document.nodes[node_id].layout.margin.bottom - below
 }
 
-/// The box that splits the margin between `previous` and `node_id`, the box
-/// after it in the flow (see [`splits_margin`]), with the extremes of the
-/// margins below its border box up to `node_id`: its own bottom margin, and
-/// those of the empty boxes after it and of the boxes it ends. The box is
-/// among the empty siblings before `node_id`, or ends the flow of `previous`,
-/// or is `previous`.
+/// The box that splits the margin between `previous` and the box after it
+/// in the flow (see [`splits_margin`]), whose siblings before it are
+/// `preceding_siblings`, with the extremes of the margins below its border
+/// box up to that box: its own bottom margin, and those of the empty boxes
+/// after it and of the boxes it ends. The split box is among the empty
+/// siblings before the box, or ends the flow of `previous`, or is
+/// `previous`.
 fn margin_split_box(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     previous: usize,
-    node_id: usize,
+    preceding_siblings: &[usize],
 ) -> Option<(usize, (f32, f32))> {
     let own_bottom = |id: usize| {
         let margin = document.nodes[id].layout.margin.bottom;
@@ -10111,15 +10112,7 @@ fn margin_split_box(
     // The boxes before `node_id`, last first, with those that `display:
     // contents` elements lend to the flow.
     let mut boxes = Vec::new();
-    let siblings = document
-        .parent_of(node_id)
-        .map_or(&[][..], |parent| &document.nodes[parent].children[..]);
-    'before: for &sibling in siblings
-        .iter()
-        .rev()
-        .skip_while(|&&child| child != node_id)
-        .skip(1)
-    {
+    'before: for &sibling in preceding_siblings.iter().rev() {
         boxes.clear();
         push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
         for &id in &boxes {
@@ -13699,7 +13692,12 @@ impl SiblingMargins {
         // the page edge starts the page and keeps the margin below it.
         if !forced_before
             && !follows_forced_break
-            && let Some((split, below)) = margin_split_box(document, cascade, previous, node_id)
+            && let Some((split, below)) = margin_split_box(
+                document,
+                cascade,
+                previous,
+                self.adjacency.preceding_siblings(document, node_id),
+            )
         {
             // Both boxes are measured where the flow put them, without the
             // relative offsets that moved them afterwards.
