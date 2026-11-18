@@ -53,9 +53,7 @@ pub(super) fn split(
     page_start: f32,
     page_end: f32,
 ) -> Vec<CellFragment> {
-    let Some(row_node) = document.get_node(row) else {
-        return Vec::new();
-    };
+    let row_node = &document.nodes[row];
     if document.context.pagination_on_transposed_axes
         || row_node.display() != DisplayValue::TableRow
     {

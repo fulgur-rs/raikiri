@@ -455,11 +455,10 @@ impl PaginationState {
         let positioned = |id: usize| {
             document.nodes[id].layout_position() == raikiri_layout_style::values::Position::Absolute
         };
-        if positioned(candidate.node_id) {
-            return;
-        }
-        for id in document.ancestors(candidate.node_id) {
-            if let Some(&shift) = self.fragmented_cell_shifts.get(&id) {
+        for id in document.inclusive_ancestors(candidate.node_id) {
+            if id != candidate.node_id
+                && let Some(&shift) = self.fragmented_cell_shifts.get(&id)
+            {
                 candidate.raw_y -= shift;
                 if let Some((root, offset)) = &mut candidate.ifc_root
                     && *root == id
