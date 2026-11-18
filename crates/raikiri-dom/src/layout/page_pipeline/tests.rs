@@ -18784,9 +18784,9 @@ fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
                   participates,
                   collapses,
                   starts_after_forced_break| {
-        let session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.record_box_among_siblings(
-            &session,
+            &mut session,
             &env,
             &candidate,
             &entry(participates),
@@ -21943,6 +21943,15 @@ fn a_block_of_set_height_holds_the_margin_kept_after_a_forced_break() {
             &["height:0;margin-bottom:30px"]
         ),
         place_after_forced_empty_boxes(fixed, "margin-bottom:5px", &[])
+    );
+    // So does it hold what further empty boxes add to it.
+    assert_eq!(
+        place_after_forced_empty_boxes(
+            fixed,
+            "margin-bottom:60px",
+            &["height:0;margin-bottom:10px", "height:0;margin-bottom:30px"]
+        ),
+        place_after_forced_empty_boxes(fixed, "margin-bottom:60px", &[])
     );
 }
 

@@ -1505,6 +1505,34 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Moves the flow after `candidate`, an empty box after a forced break,
+    /// by `kept`, the part of its margin that the layout did not leave it,
+    /// up to an ancestor whose height does not grow with it.
+    fn follow_kept_margin(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        kept: f32,
+        flow_page: u32,
+    ) {
+        if kept.abs() <= 0.001 {
+            return;
+        }
+        self.flow_shift += kept;
+        if !candidate.context.is_direct_body_element() {
+            super::shift_block_flow_after(
+                document,
+                env.cascade,
+                candidate.node_id,
+                env.body_id,
+                kept,
+                &mut self.subtree_shifts,
+                flow_page,
+            );
+        }
+    }
+
     /// Ends the content box of the block `node_id` at `end`, where the flow
     /// inside it ends, when its last box kept a margin below it that the
     /// flow follows: an empty box after a forced break (see
@@ -1690,7 +1718,7 @@ impl PaginationState {
     /// sibling that follows it.
     pub(super) fn record_box_among_siblings(
         &mut self,
-        document: &LayoutSession<'_>,
+        document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         entry: &CandidateEntry,
@@ -1705,13 +1733,14 @@ impl PaginationState {
         {
             self.sibling_margins.break_taken_by_float = None;
             if !starts_after_forced_break {
-                self.flow_shift += self.sibling_margins.pass_on_forced_break(
+                let kept = self.sibling_margins.pass_on_forced_break(
                     document,
                     env.cascade,
                     parent_id,
                     node_id,
                     page_break.collapses_with_previous_block && page_break.margins_collapse_through,
                 );
+                self.follow_kept_margin(document, env, candidate, kept, self.current_page);
             }
             self.sibling_margins.record_bottom(
                 parent_id,
@@ -2548,22 +2577,13 @@ impl PaginationState {
                         page_origins.origin(target_page.saturating_add(1)),
                     ),
                 );
-                // The flow after the box follows the margin it keeps, up to
-                // an ancestor whose height does not grow with it.
-                if kept.abs() > 0.001 {
-                    self.flow_shift += kept;
-                    if !candidate.context.is_direct_body_element() {
-                        super::shift_block_flow_after(
-                            document,
-                            cascade,
-                            node_id,
-                            body_id,
-                            kept,
-                            &mut self.subtree_shifts,
-                            entry.page_before_candidate,
-                        );
-                    }
-                }
+                self.follow_kept_margin(
+                    document,
+                    env,
+                    candidate,
+                    kept,
+                    entry.page_before_candidate,
+                );
             }
             if !lands_after_forced_break && (overflow.page || margin_pushes_box_on) {
                 self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
