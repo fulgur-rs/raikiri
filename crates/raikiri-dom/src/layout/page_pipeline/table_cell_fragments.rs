@@ -316,9 +316,7 @@ fn breaks_between(
         {
             return false;
         }
-        let Some(computed) = cascade.computed.get(child) else {
-            return false;
-        };
+        let computed = &cascade.computed[child];
         let before = before || index > 0;
         let after = after || index + 1 < children.len();
         page_break_is_forced(document, child, computed.break_before) && before
