@@ -409,11 +409,7 @@ fn run_item(tree: &LayoutSession<'_>, child: NodeId) -> RunItem {
 fn holds_block(tree: &LayoutSession<'_>, child: NodeId) -> bool {
     match run_item(tree, child) {
         RunItem::Block => true,
-        RunItem::Inline => tree
-            .child_ids(child)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .any(|inner| holds_block(tree, inner)),
+        RunItem::Inline => tree.child_ids(child).any(|inner| holds_block(tree, inner)),
         _ => false,
     }
 }
@@ -427,15 +423,16 @@ fn opens_paragraph(tree: &LayoutSession<'_>, node: NodeId) -> bool {
         let Some(parent) = layout_parent(tree, current) else {
             return true;
         };
-        let siblings: Vec<_> = tree.child_ids(parent).collect();
-        let before = siblings.iter().take_while(|&&sibling| sibling != current);
-        if before
-            .into_iter()
-            .any(|&sibling| holds_block(tree, sibling))
+        let parent_style = child_style(tree, parent);
+        let legend = super::legend::rendered_legend(tree, parent, &parent_style);
+        if tree
+            .child_ids(parent)
+            .take_while(|&sibling| sibling != current)
+            .any(|sibling| Some(sibling) != legend && holds_block(tree, sibling))
         {
             return false;
         }
-        if !super::is_inline_box(tree, parent, &child_style(tree, parent)) {
+        if !super::is_inline_box(tree, parent, &parent_style) {
             return true;
         }
         current = parent;
@@ -479,9 +476,18 @@ fn anonymous_lines(
     container: &Style,
     children: &[NodeId],
 ) -> Vec<Option<bool>> {
+    // The rendered legend of a fieldset sits over the border, out of the
+    // flow of the content that the anonymous blocks wrap.
+    let legend = super::legend::rendered_legend(tree, parent, container);
     let items: Vec<_> = children
         .iter()
-        .map(|&child| run_item(tree, child))
+        .map(|&child| {
+            if Some(child) == legend {
+                RunItem::Other
+            } else {
+                run_item(tree, child)
+            }
+        })
         .collect();
     let in_inline_box = super::is_inline_box(tree, parent, container);
     let mut lines = vec![in_inline_box; children.len()];
@@ -504,12 +510,101 @@ fn anonymous_lines(
     let mut first = !in_inline_box || opens_paragraph(tree, parent);
     lines
         .into_iter()
-        .zip(children)
-        .map(|(line, &child)| {
+        .zip(children.iter().zip(&items))
+        .map(|(line, (&child, item))| {
             let on_first = first;
-            first &= !holds_block(tree, child);
+            if first {
+                first = match item {
+                    RunItem::Block => false,
+                    RunItem::Inline => !holds_block(tree, child),
+                    _ => true,
+                };
+            }
             line.then_some(on_first)
         })
+        .collect()
+}
+
+/// What sets up the hypothetical lines of the inline-level absolutely
+/// positioned children of a container laid out in block flow.
+struct Paragraph {
+    /// See [`anonymous_lines`].
+    lines: Vec<Option<bool>>,
+    direction: Direction,
+    text_align: TextAlign,
+    text_align_last: TextAlignLast,
+    indent: ComputedTextIndent,
+    hanging: bool,
+}
+
+impl Paragraph {
+    fn new(
+        tree: &LayoutSession<'_>,
+        parent: NodeId,
+        container: &Style,
+        children: &[NodeId],
+    ) -> Self {
+        let owner = paragraph_owner(tree, parent);
+        let node = &tree.nodes[usize::from(owner)];
+        Self {
+            lines: anonymous_lines(tree, parent, container, children),
+            direction: child_style(tree, owner).direction,
+            text_align: node.static_position_text_align,
+            text_align_last: node.static_position_text_align_last,
+            indent: node.static_position_text_indent,
+            hanging: node.static_position_text_indent_hanging,
+        }
+    }
+
+    /// The share of the free room before the point of the child at `order`,
+    /// as [`static_inline_share`] gives it.
+    fn share(&self, order: usize) -> f32 {
+        match self.lines[order] {
+            Some(_) => last_line_share(self.text_align, self.text_align_last, self.direction),
+            None => static_inline_share(self.text_align, self.direction),
+        }
+    }
+
+    /// The hypothetical line of the child at `order`, at `from` in `context`
+    /// across a content box `width` wide.
+    fn line<'context, 'owner>(
+        &self,
+        order: usize,
+        from: f32,
+        context: &'context BlockContext<'owner>,
+        width: f32,
+    ) -> StaticLine<'context, 'owner> {
+        let (shift, indent) = match self.lines[order] {
+            Some(first) if first != self.hanging => (
+                0.0,
+                crate::layout::ifc::flow::resolve_indent(self.indent, width),
+            ),
+            Some(_) => (0.0, 0.0),
+            None => (static_line_indent(self.indent, self.hanging, width), 0.0),
+        };
+        StaticLine {
+            from,
+            context,
+            direction: self.direction,
+            share: self.share(order),
+            shift,
+            indent,
+        }
+    }
+}
+
+/// The share of the free room before the static position of each
+/// inline-level absolutely positioned child of `parent` laid out in block
+/// flow, as [`static_inline_share`] gives it: the line of an anonymous block
+/// of inline content is aligned as a last line.
+pub(crate) fn static_inline_shares(tree: &LayoutSession<'_>, parent: NodeId) -> Vec<(NodeId, f32)> {
+    let children: Vec<_> = tree.child_ids(parent).collect();
+    let container = super::style_input::container(tree, usize::from(parent));
+    let paragraph = Paragraph::new(tree, parent, &container, &children);
+    children
+        .iter()
+        .enumerate()
+        .map(|(order, &child)| (child, paragraph.share(order)))
         .collect()
 }
 
@@ -704,7 +799,7 @@ pub(super) fn layout(
     if !collapse_start {
         ctx.commit_strut();
     }
-    let mut anonymous_lines_cache = None;
+    let mut paragraph_cache = None;
     for (order, &child) in children.iter().enumerate() {
         if Some(child) == legend {
             continue;
@@ -724,43 +819,9 @@ pub(super) fn layout(
                 let node_inline = tree.nodes[child_index].display().is_inline_level();
                 let resolve_inline = node_inline && supports_inline_static_position(tree, node);
                 let static_position = if resolve_inline {
-                    let owner = paragraph_owner(tree, node);
-                    let direction = child_style(tree, owner).direction;
-                    let parent_node = &tree.nodes[usize::from(owner)];
-                    let text_align = parent_node.static_position_text_align;
-                    let indent = parent_node.static_position_text_indent;
-                    let hanging = parent_node.static_position_text_indent_hanging;
-                    let lines = anonymous_lines_cache
-                        .get_or_insert_with(|| anonymous_lines(tree, node, container, &children));
-                    let (share, shift, indent) = match lines[order] {
-                        Some(first) => (
-                            last_line_share(
-                                text_align,
-                                parent_node.static_position_text_align_last,
-                                direction,
-                            ),
-                            0.0,
-                            if first != hanging {
-                                crate::layout::ifc::flow::resolve_indent(indent, content_width)
-                            } else {
-                                0.0
-                            },
-                        ),
-                        None => (
-                            static_inline_share(text_align, direction),
-                            static_line_indent(indent, hanging, content_width),
-                            0.0,
-                        ),
-                    };
-                    let line = StaticLine {
-                        from: static_y,
-                        context: ctx,
-                        direction: direction,
-                        share,
-                        shift,
-                        indent,
-                    };
-                    inline_static_position(line)
+                    let paragraph = paragraph_cache
+                        .get_or_insert_with(|| Paragraph::new(tree, node, container, &children));
+                    inline_static_position(paragraph.line(order, static_y, ctx, content_width))
                 } else {
                     let inline_area = Line {
                         start: metrics.inset.left,

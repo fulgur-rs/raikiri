@@ -699,6 +699,9 @@ impl FlowPass {
                     direction,
                 )
             };
+            // A box in an anonymous block of inline content is on a last
+            // line, which `text-align-last` aligns.
+            let shares = crate::layout::dispatch::block_flow::static_inline_shares(tree, node_id);
             output.oof_candidates.for_each_mut(|candidate| {
                 // A box on the lines of a paragraph goes where the columns
                 // put its line.
@@ -722,6 +725,10 @@ impl FlowPass {
                     &mut candidate.static_position.y,
                 );
                 let (line, column) = (moved.line, moved.column);
+                let share = shares
+                    .iter()
+                    .find(|&&(child, _)| child == candidate.node)
+                    .map_or(share, |&(_, share)| share);
                 x.area = if x.area.start == x.area.end {
                     // The aligned point on the line: it keeps its share of the
                     // line, which narrows to the width of the column.

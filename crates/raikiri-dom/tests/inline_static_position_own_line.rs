@@ -818,6 +818,36 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         r#"<div id=c style="text-indent:15px;width:100px"><span style="text-indent:30px;text-align:right"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
         [15.0, 0.0, 40.0, 10.0],
     ),
+    (
+        "block flow, columns align a last line after a block",
+        r#"<div id=c style="columns:3;column-gap:0;text-align:left;text-align-last:right;width:90px"><p style="margin:0">B</p><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [30.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, columns narrow an indented first line",
+        r#"<div id=c style="columns:3;column-gap:0;text-align:center;text-indent:6px;width:90px"><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p><p style="margin:0">A</p><p style="margin:0">A</p></div>"#,
+        [18.0, 0.0, 16.0, 10.0],
+    ),
+    (
+        "block flow, columns align a last line before an inline element",
+        r#"<div id=c style="columns:2;column-gap:0;text-align:right;text-align-last:left;width:90px"><p style="margin:0">B</p><p style="margin:0">B</p><span id=q style="position:absolute">Q</span><span></span></div>"#,
+        [45.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, columns keep an empty line between blocks",
+        r#"<div id=c style="columns:2;column-gap:0;text-align:right;width:90px"><p style="margin:0">B</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [45.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "block flow, a rendered legend is not a block before the first line",
+        r#"<fieldset id=c style="margin:0;padding:0;border:0;text-indent:15px;width:100px"><legend>L</legend><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></fieldset>"#,
+        [15.0, 10.0, 25.0, 10.0],
+    ),
+    (
+        "block flow, a rendered legend is not a block before an inline element",
+        r#"<fieldset id=c style="margin:0;padding:0;border:0;text-indent:15px;width:100px"><legend>L</legend><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></fieldset>"#,
+        [15.0, 10.0, 25.0, 10.0],
+    ),
 ];
 
 #[test]
