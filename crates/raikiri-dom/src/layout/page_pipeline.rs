@@ -309,6 +309,7 @@ fn content_overflow(
                 root_flow_offset,
                 page_area_height,
                 false,
+                None,
             )
         } else if in_columns.is_none() && node.layout.size.height > 0.0 {
             y + node.layout.size.height
@@ -772,6 +773,7 @@ fn block_border_box_end(
     root_flow_offset: f32,
     page_area_height: f32,
     whole_box: bool,
+    flow_end_cap: Option<f32>,
 ) -> f32 {
     let computed = &cascade.computed[flow_root];
     // Percentages resolve against the root's used height only when it is
@@ -1022,6 +1024,7 @@ fn block_border_box_end(
         } else {
             end
         };
+        let end = flow_end_cap.map_or(end, |cap| end.min(top + cap));
         content_end = content_end.max(end);
     } else if encloses_margins && (edges_top > 0.0 || encloses_floats) {
         content_end = content_end.max((top + edges_top + trailing.resolve()).min(last_margin_end));
@@ -1141,7 +1144,15 @@ fn unpaginated_content_overflow(
                 && grows_with_paginated_content(document, node_id)
         })
         .filter_map(|node_id| {
-            let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+            let end = block_border_box_end(
+                document,
+                cascade,
+                node_id,
+                0.0,
+                page_area_height,
+                true,
+                None,
+            );
             let overflow =
                 end - current_abs_y(document, node_id) - document.nodes[node_id].layout.size.height;
             (overflow.is_finite() && overflow > 0.0).then_some((node_id, overflow))
@@ -1241,13 +1252,22 @@ fn update_paginated_block_heights(
     root: usize,
     page_area_height: f32,
     overflow: &HashMap<usize, f32>,
+    flow_ends: &HashMap<usize, f32>,
 ) {
     let order: Vec<_> = document.preorder(root).collect();
     for node_id in order.into_iter().rev() {
         if !grows_with_paginated_content(document, node_id) {
             continue;
         }
-        let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+        let end = block_border_box_end(
+            document,
+            cascade,
+            node_id,
+            0.0,
+            page_area_height,
+            true,
+            flow_ends.get(&node_id).copied(),
+        );
         let height =
             end - current_abs_y(document, node_id) - overflow.get(&node_id).copied().unwrap_or(0.0);
         if height.is_finite() && height > document.nodes[node_id].layout.size.height {
@@ -4738,20 +4758,6 @@ fn paginate_flow(
     for (&node_id, &cut) in &state.margin_cuts {
         *unpaginated_overflow.entry(node_id).or_default() += cut;
     }
-    // A block that ends at a margin kept below its last box after a forced
-    // break ends where the next page edge cut that margin, above the margin
-    // box of its last box, which the margin itself does not show.
-    for &node_id in &state.kept_margin_ends {
-        let end = block_border_box_end(document, cascade, node_id, 0.0, content_height, true);
-        let overflow = unpaginated_overflow.entry(node_id).or_default();
-        let excess = end
-            - current_abs_y(document, node_id)
-            - *overflow
-            - document.nodes[node_id].layout.size.height;
-        if excess > 0.001 {
-            *overflow += excess;
-        }
-    }
     if !positioned_owner_heights.is_empty() {
         // Resolve ancestor-dependent positions from normal-flow growth before
         // positioned fragmentation and the table-box geometry finalizers.
@@ -4763,6 +4769,7 @@ fn paginate_flow(
             body_id,
             content_height,
             &unpaginated_overflow,
+            &state.kept_margin_ends,
         );
     }
     if let Err(halt) = state.keep_positioned_lines(document, &env, &positioned_owner_heights) {
@@ -4810,6 +4817,7 @@ fn paginate_flow(
         body_id,
         content_height,
         &unpaginated_overflow,
+        &state.kept_margin_ends,
     );
     state.table_headers.index();
     document.table_objects.headers = std::mem::take(&mut state.table_headers);

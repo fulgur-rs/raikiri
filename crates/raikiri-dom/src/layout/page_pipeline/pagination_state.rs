@@ -347,10 +347,11 @@ pub(super) struct PaginationState {
     /// truncated (see [`Self::truncate_margin_above_edges`]): the block ends
     /// that much above the margin box of its last child.
     pub(super) margin_cuts: HashMap<usize, f32>,
-    /// The blocks that end at a margin kept below their last box (see
-    /// [`Self::end_block_at_kept_margin`]), which their content does not
-    /// extend past that end once pagination is over.
-    pub(super) kept_margin_ends: Vec<usize>,
+    /// Where the in-flow content of each block that ends at a margin kept
+    /// below its last box ends (see [`Self::end_block_at_kept_margin`]),
+    /// below the top of its border box: a page edge may have cut that
+    /// margin, which the margin itself does not show.
+    pub(super) kept_margin_ends: HashMap<usize, f32>,
     /// For each block, the block size of the margins inside it that a page
     /// edge may truncate (see [`super::truncatable_margin_rooms`]), which the pages
     /// its run-on reaches leave out.
@@ -405,7 +406,7 @@ impl PaginationState {
             edge_pushes: HashMap::new(),
             edge_growth: HashMap::new(),
             margin_cuts: HashMap::new(),
-            kept_margin_ends: Vec::new(),
+            kept_margin_ends: HashMap::new(),
             margin_rooms: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
@@ -1574,7 +1575,8 @@ impl PaginationState {
             document.nodes[node_id].layout.size.height = height;
             document.mark_pagination_extent_dirty(node_id);
         }
-        self.kept_margin_ends.push(node_id);
+        self.kept_margin_ends
+            .insert(node_id, end - current_abs_y(document, node_id));
     }
 
     /// Truncates the margin between the last box of the block of
