@@ -1215,17 +1215,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
-                    // Preserved white space that shows up on no line, such as
-                    // a lone line feed that only ends the line before it,
-                    // has nothing to place.
-                    if node.in_ifc_subtree()
-                        && self.text_lines.get(node_id).is_none()
-                        && matches!(&node.data, crate::node::NodeData::Text(text)
-                        if crate::generated_content::is_collapsed_white_space(
-                            &text.text_content,
-                            raikiri_style::property::WhiteSpaceCollapse::Collapse,
-                        ))
-                    {
+                    // White space alone, preserved or a no-break space. When
+                    // it shows up on no line, such as a lone line feed that
+                    // only ends the line before it, it has nothing to place.
+                    let blank = matches!(&node.data, crate::node::NodeData::Text(text)
+                        if text.text_content.trim().is_empty());
+                    if blank && node.in_ifc_subtree() && self.text_lines.get(node_id).is_none() {
                         return Ok(());
                     }
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
@@ -1299,7 +1294,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             context: BoxContext::text(CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
-                                page_name_in_flow: !inside_float && !inside_out_of_flow,
+                                // White space gives the flow no page value
+                                // (Chromium).
+                                page_name_in_flow: !inside_float && !inside_out_of_flow && !blank,
                                 lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),
