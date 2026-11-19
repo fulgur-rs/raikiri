@@ -200,3 +200,67 @@ fn a_contents_element_that_puts_nothing_on_the_page_passes_no_value() {
         (first, div(doc, body, "display:block"))
     }));
 }
+
+#[test]
+fn the_own_names_of_flex_items_pass_to_no_container() {
+    for container in [
+        "display:flex",
+        "display:flex;flex-direction:column",
+        "display:grid",
+    ] {
+        let flex = container != "display:grid";
+        // A flex item's own value does not start the container; a grid
+        // item's does.
+        assert_eq!(
+            flex,
+            meet("", |doc, body| {
+                let first = div(doc, body, "display:block");
+                let second = empty(doc, body, container);
+                div(doc, second, "display:block;page:x");
+                (first, second)
+            })
+        );
+        // Nor does it end it.
+        assert_eq!(
+            flex,
+            meet("", |doc, body| {
+                let first = empty(doc, body, container);
+                div(doc, first, "display:block;page:x");
+                (first, div(doc, body, "display:block"))
+            })
+        );
+        // A box nested in an item still passes its value up.
+        assert!(!meet("", |doc, body| {
+            let first = div(doc, body, "display:block");
+            let second = empty(doc, body, container);
+            let item = empty(doc, second, "display:block");
+            div(doc, item, "display:block;page:x");
+            (first, second)
+        }));
+    }
+}
+
+#[test]
+fn generated_content_puts_a_contents_element_on_the_page() {
+    // A `display: contents` element whose `::before` lays out a box starts
+    // the page value of its parent, unnamed.
+    assert!(meet(
+        "span::before{content:'M';display:block}",
+        |doc, body| {
+            let first = div(doc, body, "display:block");
+            let second = empty(doc, body, "display:block");
+            doc.append_element(Some(second), "span", Some("display:contents"));
+            div(doc, second, "display:block;page:x");
+            (first, second)
+        }
+    ));
+    // A comment holds nothing for the page.
+    assert!(!meet("", |doc, body| {
+        let first = div(doc, body, "display:block");
+        let second = empty(doc, body, "display:block");
+        let contents = empty(doc, second, "display:contents");
+        doc.append_comment(Some(contents), "note");
+        div(doc, second, "display:block;page:x");
+        (first, second)
+    }));
+}

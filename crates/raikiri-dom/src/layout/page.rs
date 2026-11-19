@@ -1375,6 +1375,18 @@ pub(crate) fn page_applies_to_box(document: &Document, node_id: usize) -> bool {
     page_applies_with_boxes(BoxTree::for_layout(document), node_id)
 }
 
+/// Whether `node_id` is an item of a container that matches `container`.
+fn is_item_of(
+    boxes: BoxTree<'_>,
+    node_id: usize,
+    container: impl FnOnce(DisplayValue) -> bool,
+) -> bool {
+    boxes
+        .parent(node_id, BoxParentScope::Document)
+        .and_then(|parent| boxes.display(parent))
+        .is_some_and(container)
+}
+
 fn page_applies_with_boxes(boxes: BoxTree<'_>, node_id: usize) -> bool {
     let blockified = boxes
         .parent(node_id, BoxParentScope::Document)
@@ -1617,7 +1629,7 @@ pub(crate) fn first_named_item_start_page<'name>(
                 inherited_page_name,
                 true,
                 pagination_on_transposed_axes,
-                true,
+                IgnoredNames::Root,
             )
             .1
         })
@@ -1638,7 +1650,7 @@ fn propagated_start_page_name_with_order<'name>(
         inherited_page_name,
         resolved_layout,
         pagination_on_transposed_axes,
-        false,
+        IgnoredNames::None,
     )
 }
 
@@ -1651,7 +1663,10 @@ fn propagated_start_page_name_with_order<'name>(
 /// Pagination leaves `page` alone where Chromium ignores it: on the items of
 /// a flex or grid container, and inside a multicol container, a float or an
 /// absolutely positioned box. Names there force no break, so they meet. The
-/// own value of a multicol container still counts.
+/// own value of a flex item does not pass to the start or end value of its
+/// container either, while boxes nested inside it still pass theirs, and a
+/// grid item's own value does. The own value of a multicol container still
+/// counts.
 pub(crate) fn page_names_meet(
     document: &Document,
     cascade: &CascadeResult,
@@ -1661,10 +1676,7 @@ pub(crate) fn page_names_meet(
 ) -> bool {
     let boxes = BoxTree::for_layout(document);
     let ignores_names = |id: usize| {
-        boxes
-            .parent(id, BoxParentScope::Document)
-            .and_then(|parent| boxes.display(parent))
-            .is_some_and(DisplayValue::is_flex_or_grid_container)
+        is_item_of(boxes, id, DisplayValue::is_flex_or_grid_container)
             || document.ancestors(id).any(|ancestor| {
                 document.nodes[ancestor].multicol.is_some()
                     || floating_box_with_boxes(cascade, ancestor, boxes)
@@ -1700,7 +1712,7 @@ pub(crate) fn page_names_meet(
         inherited(after),
         true,
         pagination_on_transposed_axes,
-        false,
+        IgnoredNames::FlexItems,
     );
     end == start
 }
@@ -1734,7 +1746,7 @@ fn end_page_name<'name>(
                 page_name,
                 true,
                 pagination_on_transposed_axes,
-                false,
+                IgnoredNames::FlexItems,
             )
             .1;
         }
@@ -1794,8 +1806,8 @@ fn is_page_child(
     is_in_flow_page_child(cascade, boxes, id) && !is_boxless_contents(document, cascade, boxes, id)
 }
 
-/// Whether `id` is a `display: contents` element that holds no in-flow box or
-/// page content, at any depth: it puts nothing on the page, so it neither
+/// Whether `id` is a `display: contents` element that holds no in-flow box,
+/// page content or generated content, at any depth: it puts nothing on the page, so it neither
 /// starts nor ends the page value of the box around it.
 fn is_boxless_contents(
     document: &Document,
@@ -1804,6 +1816,12 @@ fn is_boxless_contents(
     id: usize,
 ) -> bool {
     boxes.identity(id).display() == DisplayValue::Contents
+        && [
+            raikiri_style::PseudoElem::Before,
+            raikiri_style::PseudoElem::After,
+        ]
+        .into_iter()
+        .all(|pseudo| !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo))
         && document.nodes[id]
             .children
             .iter()
@@ -1846,9 +1864,18 @@ pub(crate) fn text_is_page_content(boxes: BoxTree<'_>, cascade: &CascadeResult, 
     })
 }
 
-/// The start page value of `node_id`. With `ignore_root_page_name`, the
-/// `page` value of `node_id` itself is not used, while its descendants' values
-/// still are.
+/// Which `page` values [`start_page_name`] leaves out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IgnoredNames {
+    None,
+    /// The value of the box itself, while its descendants' values still
+    /// count.
+    Root,
+    /// The own values of flex items, which pagination leaves alone.
+    FlexItems,
+}
+
+/// The start page value of `node_id`, leaving out the values `ignored` names.
 fn start_page_name<'name>(
     document: &Document,
     cascade: &'name CascadeResult,
@@ -1856,7 +1883,7 @@ fn start_page_name<'name>(
     inherited_page_name: Option<&'name str>,
     resolved_layout: bool,
     pagination_on_transposed_axes: bool,
-    ignore_root_page_name: bool,
+    ignored: IgnoredNames,
 ) -> (bool, Option<&'name str>) {
     let node_id = root_id;
     let boxes = if resolved_layout {
@@ -1917,7 +1944,13 @@ fn start_page_name<'name>(
         }
 
         let page_applies = page_applies_with_boxes(boxes, node_id)
-            && (!ignore_root_page_name || node_id != root_id);
+            && match ignored {
+                IgnoredNames::None => true,
+                IgnoredNames::Root => node_id != root_id,
+                IgnoredNames::FlexItems => {
+                    !is_item_of(boxes, node_id, DisplayValue::is_flex_container)
+                }
+            };
         let explicit_page_name = if page_applies {
             selected_page_name(cascade, node_id)
         } else {
