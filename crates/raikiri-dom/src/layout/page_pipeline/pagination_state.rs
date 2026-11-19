@@ -5265,16 +5265,30 @@ impl PaginationState {
                 // flow shift places the box itself later, but the walk measures
                 // its end where the clearance puts it.
                 document.translate_pagination_y(node_id, clearance.shift);
-                grow_ancestors_for_shift(
-                    document,
-                    cascade,
-                    node_id,
-                    clearance.shift,
-                    body_id,
-                    &mut self.subtree_shifts,
-                    self.current_page,
-                    &IfcBoxShifts::default(),
-                );
+                // In a table cell, the boxes after it move down with it and
+                // its row grows, as for a box moved to a later page there.
+                if super::moves_reach_cell_row(document, node_id) {
+                    super::shift_block_flow_after(
+                        document,
+                        cascade,
+                        node_id,
+                        body_id,
+                        clearance.shift,
+                        &mut self.subtree_shifts,
+                        self.current_page,
+                    );
+                } else {
+                    grow_ancestors_for_shift(
+                        document,
+                        cascade,
+                        node_id,
+                        clearance.shift,
+                        body_id,
+                        &mut self.subtree_shifts,
+                        self.current_page,
+                        &IfcBoxShifts::default(),
+                    );
+                }
                 document.translate_pagination_y(node_id, -clearance.shift);
             }
             // The box may now start on a later page than the flow.

@@ -1668,6 +1668,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && inside_table
                     && avoids_by_property
                     && moves_reach_cell_row(document, node_id);
+                // A block in the flow of a table cell that clears floats goes
+                // below a float that pagination moves to a later page, as in
+                // any block flow, and its row grows to hold it.
+                let cell_clear_base = nested_flow_base
+                    && inside_table
+                    && clears_float
+                    && moves_reach_cell_row(document, node_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1982,6 +1989,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             || is_float
                             || clears_float))
                     || (cell_avoid_base && !inline_level && is_block_flow_box)
+                    || cell_clear_base
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -2028,8 +2036,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && avoids_break
                     && !side_by_side_ancestor
                     && (!bounded_clipping_ancestor || unbreakable_box);
-                let nested_float_candidate =
-                    nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                let nested_float_candidate = (nested_candidate_base && (is_float || clears_float)
+                    || cell_clear_base)
+                    && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
