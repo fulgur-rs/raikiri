@@ -14360,6 +14360,12 @@ struct SubtreeShifts {
     /// Table rows, or cells outside a table, that forced breaks in their
     /// cells grew, with how far.
     grown_rows: Vec<((usize, usize), f32)>,
+    /// Table rows, or cells outside a table, that floats moved in their
+    /// cells grew, with how far, and the cells with how far each grew to
+    /// hold its floats. A cell's stored height takes that growth in, but a
+    /// row's growth is measured from the height the cell was laid out with.
+    float_rows: Vec<((usize, usize), f32)>,
+    float_cells: Vec<(usize, f32)>,
     /// Boxes that forced breaks inside them grew, with how far in all:
     /// their stored heights leave that growth out.
     grown_boxes: Vec<(usize, f32)>,
@@ -14423,21 +14429,48 @@ impl SubtreeShifts {
             .map_or(0.0, |&(_, grown)| grown)
     }
 
+    /// How far `row` has grown in all, for forced breaks and for moved
+    /// floats in its cells.
+    fn row_growth(&self, row: (usize, usize)) -> f32 {
+        let grown = |rows: &[((usize, usize), f32)]| {
+            rows.iter()
+                .find(|(id, _)| *id == row)
+                .map_or(0.0, |&(_, grown)| grown)
+        };
+        grown(&self.grown_rows).max(grown(&self.float_rows))
+    }
+
+    /// How far the cell `cell` grew to hold the floats that moved in it.
+    fn float_growth(&self, cell: usize) -> f32 {
+        self.float_cells
+            .iter()
+            .find(|(id, _)| *id == cell)
+            .map_or(0.0, |&(_, grown)| grown)
+    }
+
+    /// Records that the cell `cell` of `row` grew `growth` more to hold a
+    /// float that moved in it, and returns how much more that grows the
+    /// row.
+    fn grow_row_for_float(&mut self, row: (usize, usize), cell: usize, growth: f32) -> f32 {
+        let total = self.float_growth(cell) + growth;
+        self.float_cells.retain(|(id, _)| *id != cell);
+        self.float_cells.push((cell, total));
+        let before = self.row_growth(row);
+        match self.float_rows.iter_mut().find(|(id, _)| *id == row) {
+            Some((_, grown)) => *grown = grown.max(total),
+            None => self.float_rows.push((row, total)),
+        }
+        self.row_growth(row) - before
+    }
+
     /// Records that a cell of `row` needs it `growth` taller than it was
-    /// laid out, and returns how much more that is than it grew already.
-    /// `row` is the box that holds the row with the index after it, which
-    /// tells the anonymous rows of one table apart.
-    fn grow_row(&mut self, row: (usize, usize), growth: f32) -> f32 {
+    /// laid out for a forced break in it. `row` is the box that holds the
+    /// row with the index after it, which tells the anonymous rows of one
+    /// table apart.
+    fn grow_row(&mut self, row: (usize, usize), growth: f32) {
         match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
-            Some((_, grown)) => {
-                let added = (growth - *grown).max(0.0);
-                *grown = grown.max(growth);
-                added
-            }
-            None => {
-                self.grown_rows.push((row, growth));
-                growth
-            }
+            Some((_, grown)) => *grown = grown.max(growth),
+            None => self.grown_rows.push((row, growth)),
         }
     }
 
@@ -15906,8 +15939,12 @@ fn grow_float_context_to_moved_float(
     flow_page: u32,
 ) {
     let context = float_context_root(document, cascade, node_id, body_id);
+    // A table cell's `height` is a minimum: it grows with its content
+    // whatever its value (CSS 2.1 §17.5.3).
+    let cell = document.nodes[context].display() == DisplayValue::TableCell;
     if context != body_id
-        && (document.block_axis(context).height().is_auto()
+        && (cell
+            || document.block_axis(context).height().is_auto()
             || definite_content_height(document, context).is_none())
     {
         let context_top = current_abs_y(document, context);
@@ -15915,12 +15952,26 @@ fn grow_float_context_to_moved_float(
             + height
             + document.nodes[node_id].layout.margin.bottom;
         let layout = &document.nodes[context].layout;
-        let grown = (float_bottom - context_top + layout.padding.bottom + layout.border.bottom)
+        let grown = (float_bottom - context_top + edges_below(document, context))
             .min(max_border_box_height(document, cascade, context).unwrap_or(f32::INFINITY));
         let growth = grown - layout.size.height;
         if growth > 0.001 {
             document.nodes[context].layout.size.height += growth;
             document.mark_pagination_extent_dirty(context);
+            // A row grows as far as its cell that grows most: only the part
+            // of a cell's growth past what the row grew already moves the
+            // boxes after the row. The cells beside it sit beside it, not
+            // below it, so the flow follows past the row.
+            let row_end = cell.then(|| cell_row_end(document, context)).flatten();
+            let growth = if cell {
+                let holder = row_end.map_or((context, 0), |(row, end, _)| (row, end));
+                shifts.grow_row_for_float(holder, context, growth)
+            } else {
+                growth
+            };
+            if growth <= 0.001 {
+                return;
+            }
             grow_ancestors_for_shift(
                 document,
                 cascade,
@@ -15931,7 +15982,10 @@ fn grow_float_context_to_moved_float(
                 flow_page,
                 &IfcBoxShifts::default(),
             );
-            shifts.growth.push((context, growth));
+            match row_end {
+                Some((row, end, _)) => shifts.from_box.push((row, end, growth)),
+                None => shifts.growth.push((context, growth)),
+            }
         }
     }
 }
@@ -18558,7 +18612,11 @@ fn shift_block_flow_after(
                 // rest of the growth moves what follows.
                 let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
                 let first_growth = !shifts.grown_rows.iter().any(|(id, _)| *id == holder);
-                let added = shifts.grow_row(holder, passed);
+                // A float that moved in the cell grew its stored height
+                // already, which `passed` is measured from.
+                let before = shifts.row_growth(holder);
+                shifts.grow_row(holder, passed + shifts.float_growth(parent));
+                let added = shifts.row_growth(holder) - before;
                 if first_growth
                     && added > 0.001
                     && let Some((row, _, _)) = row_end
@@ -18892,20 +18950,11 @@ fn forced_break_growth(
     )
 }
 
-/// How far `block` grows, up to the border-box height `max`, to hold its
-/// in-flow content once its child `child` has grown by `child_growth`.
-fn moved_content_growth(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body_id: usize,
-    block: usize,
-    (child, child_growth): (usize, f32),
-    max: f32,
-) -> f32 {
-    let old = document.nodes[block].layout.size.height;
+/// The padding and border below the content of `block`. A table cell keeps
+/// the room its vertical alignment leaves in its padding; only its own
+/// padding and border lie below its content.
+fn edges_below(document: &super::context::LayoutSession<'_>, block: usize) -> f32 {
     let layout = &document.nodes[block].layout;
-    // A table cell keeps the room its vertical alignment leaves in its
-    // padding; only its own padding and border lie below its content.
     let padding_below = if document.nodes[block].display() == DisplayValue::TableCell {
         // Percentages resolve against the table's width.
         let basis = cell_row_end(document, block)
@@ -18920,7 +18969,21 @@ fn moved_content_growth(
     } else {
         layout.padding.bottom
     };
-    let edges_below = padding_below + layout.border.bottom;
+    padding_below + layout.border.bottom
+}
+
+/// How far `block` grows, up to the border-box height `max`, to hold its
+/// in-flow content once its child `child` has grown by `child_growth`.
+fn moved_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    max: f32,
+) -> f32 {
+    let old = document.nodes[block].layout.size.height;
+    let edges_below = edges_below(document, block);
     let child_end = if child_growth > 0.0 {
         let node = &document.nodes[child];
         let margin = if edges_below > 0.0 || encloses_child_margins(document, cascade, block) {
