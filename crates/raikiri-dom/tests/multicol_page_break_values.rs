@@ -283,6 +283,15 @@ fn a_page_break_at_a_spanner_moves_what_follows_it() {
         2,
         &[("s", 1, 0.0, 0.0), ("c", 1, 0.0, 10.0), ("x", 1, 0.0, 20.0)],
     );
+    check(
+        &format!(
+            "<div>P</div><div style='{COLUMNS}'><div style='display:contents'>\
+             <div id=s style='{spanner};break-before:page'>S</div></div><div id=c>C</div></div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("c", 1, 0.0, 10.0), ("x", 1, 0.0, 20.0)],
+    );
     // Lines before and after the spanner: the box after the container
     // starts below the lines that follow the break.
     for (lines, x) in [("C", 20.0), ("C<br>E", 30.0), ("C<br>E<br>F", 30.0)] {

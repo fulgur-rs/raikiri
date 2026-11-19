@@ -4131,7 +4131,9 @@ fn starts_with_forced_spanner(
         return false;
     }
     let mut id = node_id;
-    for depth in 0..128 {
+    // `page_edge_child` stops the walk below 128 levels.
+    let mut depth = 0;
+    loop {
         if generated_on_side(cascade, id, true) {
             return false;
         }
@@ -4150,8 +4152,8 @@ fn starts_with_forced_spanner(
             );
         }
         id = child;
+        depth += 1;
     }
-    false
 }
 
 /// Whether `id` is a block container whose first and last boxes start and
