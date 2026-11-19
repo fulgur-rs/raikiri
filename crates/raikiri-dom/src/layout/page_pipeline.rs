@@ -10522,7 +10522,13 @@ fn flex_margins_move(
     let mut break_after = false;
     let mut items = 0;
     let mut items_end = flow_y;
-    let mut line_end = f32::NEG_INFINITY;
+    // An item starts a new flex line of a wrapping row when it starts back
+    // before the end of the item before it along the main axis, as in
+    // `flex_line_of`; the items of a line can sit at different heights.
+    let computed = &cascade.computed[node_id];
+    let forward = (computed.flex_direction == FlexDirectionValue::Row)
+        == (computed.direction == raikiri_style::property::Direction::Ltr);
+    let mut previous_span: Option<(f32, f32)> = None;
     let mut end = flow_y;
     for item in crate::layout::page::pagination_child_order(document, cascade, node_id) {
         if !crate::layout::page::is_in_flow_flex_child_for_pagination(document, node_id, item) {
@@ -10532,7 +10538,20 @@ fn flex_margins_move(
         let item_layout = &document.nodes[item].layout;
         let top = flow_y + item_layout.location.y
             - layout_relative_offset_y(document, cascade, body_id, item);
-        let starts_line = !row || top - item_layout.margin.top >= line_end - 0.001;
+        let x = item_layout.location.x - layout_relative_offset(document, cascade, body_id, item).0;
+        let span = (
+            x - item_layout.margin.left,
+            x + item_layout.size.width + item_layout.margin.right,
+        );
+        let starts_line = !row
+            || previous_span.is_none_or(|(start, end)| {
+                if forward {
+                    span.0 < end - 0.001
+                } else {
+                    span.1 > start + 0.001
+                }
+            });
+        previous_span = Some(span);
         if lines_break
             && items > 0
             && starts_line
@@ -10544,11 +10563,6 @@ fn flex_margins_move(
         let bottom = top + item_layout.size.height;
         items += 1;
         items_end = items_end.max(bottom);
-        line_end = if starts_line {
-            bottom + item_layout.margin.bottom
-        } else {
-            line_end.max(bottom + item_layout.margin.bottom)
-        };
         if bottom <= page_end + 0.001 {
             end = end.max((bottom + item_layout.margin.bottom).min(content_end));
         }
