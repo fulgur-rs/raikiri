@@ -176,21 +176,18 @@ impl Plan {
         // that still starts the later page, keeps that place: the lines it
         // lets move down may carry it along.
         let mut kept = Vec::new();
-        for &float in &document.context.pushed_floats {
-            if plan.floats.contains_key(&float)
-                || plan.pushed.contains_key(&float)
-                || kept.iter().any(|&(id, _)| id == float)
-            {
-                continue;
-            }
+        let mut seen = HashSet::new();
+        let pushed = document.context.pushed_floats.iter().copied();
+        for float in pushed.filter(|float| !plan.floats.contains_key(float) && seen.insert(*float))
+        {
             if let Some(top) = document.context.float_resumptions.pushed_float_top(float) {
                 kept.push((float, top));
-                continue;
+            } else {
+                let border_top = current_abs_y(document, float);
+                plan.pushed
+                    .insert(float, border_top - document.nodes[float].layout.margin.top);
+                origins.insert(float, border_top);
             }
-            let border_top = current_abs_y(document, float);
-            plan.pushed
-                .insert(float, border_top - document.nodes[float].layout.margin.top);
-            origins.insert(float, border_top);
         }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
