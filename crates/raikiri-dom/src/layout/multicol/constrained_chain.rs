@@ -289,22 +289,28 @@ pub(super) fn layout(
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut top = leaf_top;
-    // Whether the first piece left the column the chain starts in.
-    let mut moved = false;
+    // The depth of the button that left the column the chain starts in,
+    // with how far up the move took it.
+    let mut moved = None;
     // A button is monolithic: a column end never breaks between its lines.
-    // One that fits a column but not below the space above it goes whole to
-    // the next column, which truncates that space; one taller than a column
-    // stays whole where it is, past the column end.
+    // One whose border box fits a column but not below the space above it
+    // goes whole to the next column, which truncates that space; one taller
+    // than a column stays whole where it is, past the column end. What is
+    // inside it keeps its place in it.
     if !extents.is_empty()
-        && chain
+        && let Some(button) = chain
             .iter()
-            .any(|&id| layout_node(tree, id).is_html_button())
+            .position(|&id| layout_node(tree, id).is_html_button())
     {
         let size = extents[extents.len() - 1].1 - extents[0].0;
-        let next = top > 0.0 && top + size > height + f32::EPSILON && size <= height;
+        let button_top = positions[button].y - origin.y;
+        let button_height = tree.nodes[chain[button]].layout.size.height;
+        let next = button_top > 0.0
+            && button_top + button_height > height + f32::EPSILON
+            && button_height <= height;
         if next {
-            top = 0.0;
-            moved = true;
+            top -= button_top;
+            moved = Some((button, button_top));
         }
         pieces.push(Piece {
             start,
@@ -432,10 +438,11 @@ pub(super) fn layout(
         let mut parent_position = Point::ZERO;
         for (depth, &id) in chain.iter().enumerate() {
             let source = tree.nodes[id].layout;
-            let y = if order == 0 && !moved {
-                positions[depth].y
-            } else {
-                origin.y + if id == leaf { piece.top } else { 0.0 }
+            let y = match moved {
+                Some((button, shift)) if depth >= button => positions[depth].y - shift,
+                Some(_) => origin.y,
+                None if order == 0 => positions[depth].y,
+                None => origin.y + if id == leaf { piece.top } else { 0.0 },
             };
             let x = positions[depth].x + dx;
             let bottom = if order + 1 < pieces.len() {

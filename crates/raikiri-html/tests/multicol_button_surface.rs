@@ -383,3 +383,70 @@ fn balanced_columns_are_at_least_as_tall_as_a_button() {
         ]
     );
 }
+
+/// The margin of a block inside a button stays inside the button, which
+/// fits a column or not by its border box: one taller than the column stays
+/// whole in it, and one that moves keeps that margin above its lines.
+#[test]
+fn a_button_keeps_the_margins_inside_it() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><button style='all:unset;display:block;width:20px;overflow:hidden'><div style='margin-top:20px'>ab cd ef gh</div></button></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 8, 28),
+            (0, 'b', 18, 28),
+            (0, 'c', 8, 38),
+            (0, 'd', 18, 38),
+            (0, 'e', 8, 48),
+            (0, 'f', 18, 48),
+            (0, 'g', 8, 58),
+            (0, 'h', 18, 58)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><button style='all:unset;display:block;width:20px'><div style='margin-top:20px'>ab cd ef gh</div></button></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 8, 28),
+            (0, 'b', 18, 28),
+            (0, 'c', 8, 38),
+            (0, 'd', 18, 38),
+            (0, 'e', 8, 48),
+            (0, 'f', 18, 48),
+            (0, 'g', 8, 58),
+            (0, 'h', 18, 58)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div>xy</div><button style='all:unset;display:block;width:20px;overflow:hidden'><div style='margin-top:20px'>ab cd ef</div></button></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 108, 28),
+            (0, 'b', 118, 28),
+            (0, 'c', 108, 38),
+            (0, 'd', 118, 38),
+            (0, 'e', 108, 48),
+            (0, 'f', 118, 48),
+            (0, 'x', 8, 8),
+            (0, 'y', 18, 8)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><button style='all:unset;display:block;width:20px;overflow:hidden'><div style='margin-top:20px'>ab cd</div></button></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 8, 28),
+            (0, 'b', 18, 28),
+            (0, 'c', 8, 38),
+            (0, 'd', 18, 38)
+        ]
+    );
+}
