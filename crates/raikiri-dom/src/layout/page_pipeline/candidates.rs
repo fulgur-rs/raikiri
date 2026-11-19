@@ -227,7 +227,8 @@ pub(super) struct ElementContext {
     pub(super) closing_edges_span: f32,
     /// For the first box of such a run: the last box of the run, which the
     /// edges in `closing_edges` follow.
-    pub(super) closing_edges_last_box: Option<usize>,
+    /// Kept as `u32` to keep the context small.
+    pub(super) closing_edges_last_box: Option<u32>,
     /// How far below the border-box top the run of boxes tied by avoided
     /// breaks ends that the box starts among the boxes of its parent, or that
     /// it holds at the start of its own boxes. The box moves to the next page
@@ -423,6 +424,7 @@ impl BoxContext {
     pub(super) fn closing_edges_last_box(self) -> Option<usize> {
         self.element_attributes()
             .and_then(|attributes| attributes.closing_edges_last_box)
+            .map(|last| last as usize)
     }
 
     pub(super) fn avoided_unit(self) -> Option<f32> {
@@ -2220,7 +2222,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 },
                                 closing_edges_last_box: match frame.tie {
                                     AvoidTie::RunStart { last, .. } if closing_edges_candidate => {
-                                        Some(last)
+                                        u32::try_from(last).ok()
                                     }
                                     _ => None,
                                 },

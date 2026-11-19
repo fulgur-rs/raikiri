@@ -126,6 +126,24 @@ fn a_last_box_whose_lines_run_past_the_page_end_stays_on_its_page() {
             [(2, 85.0), (3, 20.0)],
         ),
         (
+            "a block whose content reaches its min-height",
+            block(
+                "min-height:150px;padding-bottom:15px",
+                T,
+                "<div style=\"height:10px\">U</div>",
+            ),
+            [(2, 85.0), (3, 20.0)],
+        ),
+        (
+            "a block whose min-height leaves room below the content",
+            block(
+                "min-height:160px;padding-bottom:15px",
+                T,
+                "<div style=\"height:10px\">U</div>",
+            ),
+            [(2, 85.0), (3, 20.0)],
+        ),
+        (
             "a last box whose line ends inside it moves with the padding",
             block(
                 "padding-bottom:15px",
