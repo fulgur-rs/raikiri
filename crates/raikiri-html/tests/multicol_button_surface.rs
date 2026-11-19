@@ -258,3 +258,128 @@ fn a_button_that_fits_a_column_but_not_below_its_margin_moves_to_the_next() {
         ]
     );
 }
+
+/// A button that fits a column, but not below its top margin, goes to the
+/// next column even from an empty first one, and the break there cuts the
+/// margin. Balanced columns place it the same way.
+#[test]
+fn a_button_below_its_top_margin_moves_even_from_an_empty_column() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><button style='all:unset;display:block;width:20px;margin-top:20px'>ab cd ef gh</button><div>xy</div></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 108, 8),
+            (0, 'b', 118, 8),
+            (0, 'c', 108, 18),
+            (0, 'd', 118, 18),
+            (0, 'e', 108, 28),
+            (0, 'f', 118, 28),
+            (0, 'g', 108, 38),
+            (0, 'h', 118, 38),
+            (0, 'x', 108, 48),
+            (0, 'y', 118, 48)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div>xy</div><button style='all:unset;display:block;width:20px;margin-top:20px'>ab cd ef gh</button></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 108, 8),
+            (0, 'b', 118, 8),
+            (0, 'c', 108, 18),
+            (0, 'd', 118, 18),
+            (0, 'e', 108, 28),
+            (0, 'f', 118, 28),
+            (0, 'g', 108, 38),
+            (0, 'h', 118, 38),
+            (0, 'x', 8, 8),
+            (0, 'y', 18, 8)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px'><button style='all:unset;display:block;width:20px;margin-top:20px'>ab cd ef gh</button><div>xy</div></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 108, 8),
+            (0, 'b', 118, 8),
+            (0, 'c', 108, 18),
+            (0, 'd', 118, 18),
+            (0, 'e', 108, 28),
+            (0, 'f', 118, 28),
+            (0, 'g', 108, 38),
+            (0, 'h', 118, 38),
+            (0, 'x', 108, 48),
+            (0, 'y', 118, 48)
+        ]
+    );
+}
+
+/// Balanced columns are at least as tall as a button in them, which never
+/// overflows a shorter trial column.
+#[test]
+fn balanced_columns_are_at_least_as_tall_as_a_button() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px'><button style='all:unset;display:block;width:20px'>ab cd ef gh</button><div>xy</div></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 58),
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 18),
+            (0, 'd', 18, 18),
+            (0, 'e', 8, 28),
+            (0, 'f', 18, 28),
+            (0, 'g', 8, 38),
+            (0, 'h', 18, 38),
+            (0, 'x', 108, 8),
+            (0, 'y', 118, 8)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0'><button style='all:unset;display:block;width:20px'>ab cd ef gh</button><div>xy</div></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 48),
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 18),
+            (0, 'd', 18, 18),
+            (0, 'e', 8, 28),
+            (0, 'f', 18, 28),
+            (0, 'g', 8, 38),
+            (0, 'h', 18, 38),
+            (0, 'x', 108, 8),
+            (0, 'y', 118, 8)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0'><button style='all:unset;display:block;width:20px'>ab cd ef gh</button><div style='width:20px'>pq rs tu</div></div><div>Z</div>"
+        ),
+        [
+            (0, 'Z', 8, 48),
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 18),
+            (0, 'd', 18, 18),
+            (0, 'e', 8, 28),
+            (0, 'f', 18, 28),
+            (0, 'g', 8, 38),
+            (0, 'h', 18, 38),
+            (0, 'p', 108, 8),
+            (0, 'q', 118, 8),
+            (0, 'r', 108, 18),
+            (0, 's', 118, 18),
+            (0, 't', 108, 28),
+            (0, 'u', 118, 28)
+        ]
+    );
+}
