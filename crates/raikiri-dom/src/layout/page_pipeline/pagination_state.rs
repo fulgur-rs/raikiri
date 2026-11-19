@@ -3658,6 +3658,7 @@ impl PaginationState {
         let FlowEnv {
             cascade,
             body_id,
+            control,
             page_origins,
             text_lines,
             ..
@@ -3724,7 +3725,7 @@ impl PaginationState {
                 text,
                 (root, first_owned_line),
                 (run.start, page_start - run_top, page),
-            )?;
+            );
             if let Some(next) = run_metrics(document) {
                 metrics = next;
             }
@@ -3795,6 +3796,7 @@ impl PaginationState {
                 }
             };
             for (line, shift, move_page) in moves {
+                reach_page(control, move_page)?;
                 self.move_run_lines(
                     document,
                     env,
@@ -3803,7 +3805,7 @@ impl PaginationState {
                     text,
                     (root, first_owned_line),
                     (run.start + line, shift, move_page),
-                )?;
+                );
             }
             if !repeat {
                 break;
@@ -3821,7 +3823,8 @@ impl PaginationState {
     /// Moves the lines of the paragraph `root` from `line` on by `shift` to
     /// `page`, for the text `candidate`, whose first line is
     /// `first_owned_line`, and keeps the split for the shifts that settle
-    /// later (see [`Self::keep_lines_after_block`]).
+    /// later (see [`Self::keep_lines_after_block`]). The flow has reached
+    /// `page`.
     #[allow(clippy::too_many_arguments)]
     fn move_run_lines(
         &mut self,
@@ -3832,15 +3835,13 @@ impl PaginationState {
         text: &mut TextPosition,
         (root, first_owned_line): (usize, usize),
         (line, shift, page): LineBreakMove,
-    ) -> Result<(), Halt> {
+    ) {
         let FlowEnv {
             cascade,
             body_id,
-            control,
             text_lines,
             ..
         } = *env;
-        reach_page(control, page)?;
         let growth = move_paragraph_lines(
             document,
             cascade,
@@ -3870,7 +3871,6 @@ impl PaginationState {
             growth,
             page,
         });
-        Ok(())
     }
 
     /// Remembers the absolute owner of the paragraph holding `candidate` for
