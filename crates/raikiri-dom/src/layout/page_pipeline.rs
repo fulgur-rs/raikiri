@@ -14360,6 +14360,12 @@ struct SubtreeShifts {
     /// Table rows, or cells outside a table, that forced breaks in their
     /// cells grew, with how far.
     grown_rows: Vec<((usize, usize), f32)>,
+    /// Table rows, or cells outside a table, that floats moved in their
+    /// cells grew, with how far, and the cells with how far each grew to
+    /// hold its floats. A cell's stored height takes that growth in, but a
+    /// row's growth is measured from the height the cell was laid out with.
+    float_rows: Vec<((usize, usize), f32)>,
+    float_cells: Vec<(usize, f32)>,
     /// Boxes that forced breaks inside them grew, with how far in all:
     /// their stored heights leave that growth out.
     grown_boxes: Vec<(usize, f32)>,
@@ -14423,21 +14429,50 @@ impl SubtreeShifts {
             .map_or(0.0, |&(_, grown)| grown)
     }
 
+    /// How far `row` has grown in all, for forced breaks and for moved
+    /// floats in its cells.
+    fn row_growth(&self, row: (usize, usize)) -> f32 {
+        let grown = |rows: &[((usize, usize), f32)]| {
+            rows.iter()
+                .find(|(id, _)| *id == row)
+                .map_or(0.0, |&(_, grown)| grown)
+        };
+        grown(&self.grown_rows).max(grown(&self.float_rows))
+    }
+
+    /// How far the cell `cell` grew to hold the floats that moved in it.
+    fn float_growth(&self, cell: usize) -> f32 {
+        self.float_cells
+            .iter()
+            .find(|(id, _)| *id == cell)
+            .map_or(0.0, |&(_, grown)| grown)
+    }
+
+    /// Records that the cell `cell` of `row` grew `growth` more to hold a
+    /// float that moved in it, and returns how much more that grows the
+    /// row.
+    fn grow_row_for_float(&mut self, row: (usize, usize), cell: usize, growth: f32) -> f32 {
+        let total = self.float_growth(cell) + growth;
+        match self.float_cells.iter_mut().find(|(id, _)| *id == cell) {
+            Some((_, grown)) => *grown = total,
+            None => self.float_cells.push((cell, total)),
+        }
+        let before = self.row_growth(row);
+        match self.float_rows.iter_mut().find(|(id, _)| *id == row) {
+            Some((_, grown)) => *grown = grown.max(total),
+            None => self.float_rows.push((row, total)),
+        }
+        self.row_growth(row) - before
+    }
+
     /// Records that a cell of `row` needs it `growth` taller than it was
-    /// laid out, and returns how much more that is than it grew already.
-    /// `row` is the box that holds the row with the index after it, which
-    /// tells the anonymous rows of one table apart.
-    fn grow_row(&mut self, row: (usize, usize), growth: f32) -> f32 {
+    /// laid out for a forced break in it. `row` is the box that holds the
+    /// row with the index after it, which tells the anonymous rows of one
+    /// table apart.
+    fn grow_row(&mut self, row: (usize, usize), growth: f32) {
         match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
-            Some((_, grown)) => {
-                let added = (growth - *grown).max(0.0);
-                *grown = grown.max(growth);
-                added
-            }
-            None => {
-                self.grown_rows.push((row, growth));
-                growth
-            }
+            Some((_, grown)) => *grown = grown.max(growth),
+            None => self.grown_rows.push((row, growth)),
         }
     }
 
@@ -15931,9 +15966,8 @@ fn grow_float_context_to_moved_float(
             // below it, so the flow follows past the row.
             let row_end = cell.then(|| cell_row_end(document, context)).flatten();
             let growth = if cell {
-                let total = shifts.grow_box(context, growth);
                 let holder = row_end.map_or((context, 0), |(row, end, _)| (row, end));
-                shifts.grow_row(holder, total)
+                shifts.grow_row_for_float(holder, context, growth)
             } else {
                 growth
             };
@@ -18580,7 +18614,11 @@ fn shift_block_flow_after(
                 // rest of the growth moves what follows.
                 let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
                 let first_growth = !shifts.grown_rows.iter().any(|(id, _)| *id == holder);
-                let added = shifts.grow_row(holder, passed);
+                // A float that moved in the cell grew its stored height
+                // already, which `passed` is measured from.
+                let before = shifts.row_growth(holder);
+                shifts.grow_row(holder, passed + shifts.float_growth(parent));
+                let added = shifts.row_growth(holder) - before;
                 if first_growth
                     && added > 0.001
                     && let Some((row, _, _)) = row_end

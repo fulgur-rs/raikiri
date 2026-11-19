@@ -194,3 +194,25 @@ fn a_cell_with_a_height_grows_too() {
         ]
     );
 }
+
+#[test]
+fn floats_that_move_one_after_another_in_a_cell_grow_the_row_to_the_last() {
+    // The second float clears the first, which moved, and moves on to the
+    // third page; a cell beside them that ends below both keeps the row's
+    // end there.
+    for beside in [60, 250] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<table><tr><td><div style="height:50px">W</div><div style="float:left;height:70px;break-inside:avoid">Y</div><div style="float:left;clear:left;height:50px;break-inside:avoid">Z</div></td><td><div style="height:{beside}px">D</div></td></tr></table><div>X</div>"#
+            )),
+            [
+                (0, 'D', 10, 5),
+                (0, 'W', 0, 5),
+                (1, 'Y', 0, 5),
+                (2, 'X', 0, 55),
+                (2, 'Z', 0, 5)
+            ],
+            "cell beside {beside}px tall"
+        );
+    }
+}
