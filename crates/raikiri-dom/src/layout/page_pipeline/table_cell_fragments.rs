@@ -482,6 +482,7 @@ fn cell_breaks(
             document,
             cascade,
             cell,
+            cell,
             tops.0 - current_abs_y(document, cell),
             page_end,
         )
@@ -504,14 +505,22 @@ fn starts_with_forced_break(
     })
 }
 
-/// Whether a float inside `parent` that no break goes through, that does not
-/// stack its content in block flow, or whose content does not break where it
-/// is (see [`float_breaks`]), runs past `page_end`. `offset` takes
-/// a box from where it is in the document to where it is in the flow.
-/// Pagination does not move such a float down inside a table cell.
+/// Whether a float inside `parent` whose content does not break where it is
+/// runs past `page_end`: one that does not stack its content in block flow,
+/// or whose lines or boxes do not break cleanly there (see
+/// [`float_breaks`]). `offset` takes a box from where it is in the document
+/// to where it is in the flow, and `cell` is the cell the floats are in.
+///
+/// A float that avoids a break inside it moves down to the next page inside
+/// the cell, as a block that avoids a break does, and the row grows with it
+/// (Chromium splits the row there). Pagination does not lay out again the
+/// lines beside such a float, nor clear a box below it once it moves, so a
+/// float in a paragraph, or one that a box with `clear` follows, still
+/// crosses, as does a replaced or other box that no break goes through.
 fn float_crosses(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    cell: usize,
     parent: usize,
     offset: f32,
     page_end: f32,
@@ -523,14 +532,24 @@ fn float_crosses(
                 let top = offset + current_abs_y(document, child);
                 top < page_end - 0.001
                     && top + node.layout.size.height > page_end + 0.001
-                    && (box_avoids_page_break_inside(
-                        document,
-                        child,
-                        cascade.computed[child].break_inside,
-                    ) || box_is_unbreakable(document, cascade, child, false)
-                        || !plain_block(document, child)
-                        || !float_breaks(document, cascade, child, top, page_end))
-            } || float_crosses(document, cascade, child, offset, page_end))
+                    && (box_is_unbreakable(document, cascade, child, false)
+                        || if box_avoids_page_break_inside(
+                            document,
+                            child,
+                            cascade.computed[child].break_inside,
+                        ) {
+                            line_bounds(document, parent).is_some()
+                                || super::clearance_follows(
+                                    document,
+                                    cascade,
+                                    super::float_context_root(document, cascade, child, cell),
+                                    child,
+                                )
+                        } else {
+                            !plain_block(document, child)
+                                || !float_breaks(document, cascade, child, top, page_end)
+                        })
+            } || float_crosses(document, cascade, cell, child, offset, page_end))
     })
 }
 

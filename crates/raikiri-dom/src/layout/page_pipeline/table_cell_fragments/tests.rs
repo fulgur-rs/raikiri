@@ -311,3 +311,51 @@ fn floats_positioned_and_contents_boxes_are_not_content_a_break_falls_after() {
     assert!(!breaks_after("display:contents", " "));
     assert!(breaks_after("display:contents", "Q"));
 }
+
+/// Whether a float that avoids a break inside it, after a block of 40px at
+/// the top of a cell placed at 30px in the flow, crosses a page end at
+/// 100px, with `text` beside it in the cell and a box styled `after` below.
+fn avoided_float_crosses(text: &str, after: &str) -> bool {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let table = doc.append_element(Some(body), "div", Some("display:table"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
+    doc.append_element(Some(cell), "div", Some("display:block;height:40px"));
+    doc.append_element(
+        Some(cell),
+        "div",
+        Some("display:block;float:left;width:20px;height:40px;break-inside:avoid"),
+    );
+    if !text.is_empty() {
+        doc.append_text(cell, text);
+    }
+    if !after.is_empty() {
+        let box_after = doc.append_element(Some(cell), "div", Some(after));
+        doc.append_text(box_after, "Y");
+    }
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    super::super::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let offset = 30.0 - current_abs_y(&session, cell);
+    float_crosses(&session, &cascade, cell, cell, offset, 100.0)
+}
+
+#[test]
+fn an_avoided_float_moves_in_its_cell_unless_lines_or_clearance_go_with_it() {
+    assert!(!avoided_float_crosses("", ""));
+    assert!(!avoided_float_crosses("", "display:block"));
+    assert!(avoided_float_crosses("T", ""));
+    assert!(avoided_float_crosses("", "display:block;clear:left"));
+}

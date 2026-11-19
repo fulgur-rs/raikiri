@@ -18975,6 +18975,29 @@ fn floats_or_clearance_follow(
     root: usize,
     float: usize,
 ) -> bool {
+    later_in_float_context(document, cascade, root, float, true)
+}
+
+/// Whether a block with `clear` comes after the float `float` in the float
+/// context `root`, as in [`floats_or_clearance_follow`].
+fn clearance_follows(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    float: usize,
+) -> bool {
+    later_in_float_context(document, cascade, root, float, false)
+}
+
+/// Whether a block with `clear`, or with `floats` also a float, comes after
+/// the float `float` in the float context `root`.
+fn later_in_float_context(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    float: usize,
+    floats: bool,
+) -> bool {
     let mut stack: Vec<usize> = document.nodes[root]
         .children
         .iter()
@@ -18988,7 +19011,7 @@ fn floats_or_clearance_follow(
             continue;
         }
         if after
-            && (is_floating_box_for_pagination(document, cascade, id)
+            && (floats && is_floating_box_for_pagination(document, cascade, id)
                 || cascade.computed.get(id).is_some_and(|computed| {
                     computed.clear != ClearValue::None
                         && !document.nodes[id].display().is_inline_flow()
