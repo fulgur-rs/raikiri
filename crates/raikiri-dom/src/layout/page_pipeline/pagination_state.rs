@@ -2104,10 +2104,9 @@ impl PaginationState {
                     // holder than the edges and margins between them, follows
                     // something there and moves alone.
                     holder != node_id
-                        && (replaced_piece.is_some()
-                            || lead
-                                <= super::leading_space_between(document, cascade, node_id, holder)
-                                    + 0.01)
+                        && lead
+                            <= super::leading_space_between(document, cascade, node_id, holder)
+                                + 0.01
                         && (lead <= 0.0
                             // A container goes on with its leading piece even
                             // when the piece is taller than the next page (see
