@@ -8,20 +8,20 @@ use super::{
     FlexDirectionValue, FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind,
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
-    avoids_page_break_inside, block_after_last_line, box_forces_break_after, box_is_unbreakable,
-    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
-    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
-    end_margin_through, first_named_item_start_page, first_owned_text_line_top,
+    avoids_page_break_inside, block_after_last_line, box_is_unbreakable, boxes_are_tied,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
+    container_item_tail, content_bottom_edges, edges_break_container, end_margin_through,
+    first_named_item_start_page, first_owned_text_line_top, forces_page_break,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
     is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
     moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, paragraph_lines_keep_together, passes_closing_edges,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, unplaced_line, unplaced_line_after_block,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    unplaced_line, unplaced_line_after_block,
 };
 use std::collections::HashMap;
 
@@ -1982,8 +1982,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // `clip_holds_breaks`).
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
-                    || page_break_is_forced(document, node_id, computed.break_before)
-                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
+                    || forces_page_break(document, cascade, node_id, true)
+                    || forces_page_break(document, cascade, node_id, false);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that
