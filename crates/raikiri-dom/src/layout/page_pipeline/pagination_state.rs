@@ -2348,6 +2348,7 @@ impl PaginationState {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
         }) || (closing_edges_move(candidate, &fit)
             && !stays_empty()
+            && !super::lines_cross_page_end(candidate, &fit)
             && super::capped_edges_follow(
                 document,
                 cascade,
@@ -2361,7 +2362,7 @@ impl PaginationState {
             || ((grid_content_break.is_none()
                 || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
                 && leading_edges_move(candidate, &fit))
-            || (run_tail_move(candidate, &fit)
+            || ((run_tail_move(candidate, &fit) && !super::lines_cross_page_end(candidate, &fit))
                 || super::min_height_edges_move(
                 document,
                 cascade,
