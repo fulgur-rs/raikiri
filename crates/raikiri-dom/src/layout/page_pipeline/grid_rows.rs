@@ -220,7 +220,6 @@ fn plain_block_ancestors(
         let node = &document.nodes[id];
         if node.display() != DisplayValue::Contents
             && (!is_plain_block_box(document, id)
-                || node.is_ifc_root()
                 || node.multicol.is_some()
                 || !height_follows_content(document, id)
                 || is_floating_box_for_pagination(document, cascade, id)
