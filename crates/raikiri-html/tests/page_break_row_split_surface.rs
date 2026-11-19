@@ -465,3 +465,24 @@ fn a_float_that_breaks_lets_its_row_break_with_it() {
         ]
     );
 }
+
+#[test]
+fn a_float_whose_lines_break_at_the_page_end_lets_the_row_break() {
+    // The float's lines break between themselves at the page end, where
+    // they are, so the row breaks with them rather than moving whole.
+    assert_eq!(
+        glyphs(
+            "<div style=\"height:40px\">W</div><table><tr><td><div style=\"float:left;width:20px\">F<br>G<br>H<br>I<br>J</div>A</td></tr></table><div>X</div>"
+        ),
+        [
+            (0, 'A', 20, 45),
+            (0, 'F', 0, 45),
+            (0, 'G', 0, 65),
+            (0, 'H', 0, 85),
+            (0, 'W', 0, 5),
+            (1, 'I', 0, 5),
+            (1, 'J', 0, 25),
+            (1, 'X', 0, 45),
+        ]
+    );
+}

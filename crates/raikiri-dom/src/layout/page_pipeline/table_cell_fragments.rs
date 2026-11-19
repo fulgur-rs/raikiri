@@ -471,8 +471,9 @@ fn starts_with_forced_break(
     })
 }
 
-/// Whether a float inside `parent` that no break goes through, or that does
-/// not stack its content in block flow, runs past `page_end`. `offset` takes
+/// Whether a float inside `parent` that no break goes through, that does not
+/// stack its content in block flow, or whose content does not break where it
+/// is (see [`float_breaks`]), runs past `page_end`. `offset` takes
 /// a box from where it is in the document to where it is in the flow.
 /// Pagination does not move such a float down inside a table cell.
 fn float_crosses(
@@ -494,9 +495,27 @@ fn float_crosses(
                         child,
                         cascade.computed[child].break_inside,
                     ) || box_is_unbreakable(document, cascade, child, false)
-                        || !plain_block(document, child))
+                        || !plain_block(document, child)
+                        || !float_breaks(document, cascade, child, top, page_end))
             } || float_crosses(document, cascade, child, offset, page_end))
     })
+}
+
+/// Whether the content of the float `float`, with its border box at `top` in
+/// the flow, breaks at `page_end` where it is, as the content of a cell has
+/// to (see `content_fits` and `breaks_cleanly`): its lines do not move.
+fn float_breaks(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    float: usize,
+    top: f32,
+    page_end: f32,
+) -> bool {
+    let layout = &document.nodes[float].layout;
+    let tops = (top, top + layout.border.top + layout.padding.top);
+    let closing = layout.padding.bottom + layout.border.bottom;
+    content_fits(document, cascade, float, tops, closing, page_end)
+        && breaks_cleanly(document, cascade, float, tops, closing, page_end)
 }
 
 /// Whether some content of the block `block` goes before a break at
