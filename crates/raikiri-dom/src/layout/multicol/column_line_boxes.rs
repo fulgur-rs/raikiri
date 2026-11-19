@@ -227,7 +227,7 @@ enum Split {
 /// The range of the columns that holds the line the box `node` of the
 /// paragraph `root` sits on.
 fn line_fragment(tree: &Document, root: &IfcRoot, node: usize) -> Option<MulticolTextFragment> {
-    let (line, _) = crate::layout::ifc::boxes::find_oof_anchor(tree, root.lines.as_ref()?, node)?;
+    let (line, ..) = crate::layout::ifc::boxes::find_oof_anchor(tree, root.lines.as_ref()?, node)?;
     root.multicol_fragments
         .as_ref()?
         .iter()

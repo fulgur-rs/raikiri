@@ -13944,7 +13944,7 @@ fn follows_line_of_paragraph(
                     .oof_coordinates
                     .get(&block)
                     .is_some_and(|coordinate| coordinate.follow_static_y)
-                    && find_oof_anchor(document, lines, block).is_some_and(|(anchor, _)| anchor >= line)
+                    && find_oof_anchor(document, lines, block).is_some_and(|(anchor, ..)| anchor >= line)
         })
 }
 
@@ -15896,7 +15896,7 @@ fn out_of_flow_moves(
                                     .map(|lines| first_anchors(document, lines))
                                     .unwrap_or_default()
                             });
-                            let (line, _) = anchors.get(&b.node)?;
+                            let (line, ..) = anchors.get(&b.node)?;
                             (*line >= moved.line).then_some(moved.shift)?
                         }
                         OutOfFlowFollow::WithHeight => {

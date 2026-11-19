@@ -4896,14 +4896,11 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     }
 }
 
-pub(crate) fn find_oof_anchor(
-    doc: &Document,
-    lines: &IfcLines,
-    node: usize,
-) -> Option<(usize, f32)> {
+pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> Option<OofAnchor> {
     let mut places = AnchorPlaces::new(doc, &lines.lines);
     for (index, line) in lines.lines.iter().enumerate() {
         let mut leading = true;
+        let leading_in_text = anchors_lead_in_text(line);
         for (at, fragment) in line.fragments().enumerate() {
             #[cfg(test)]
             tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
@@ -4912,6 +4909,7 @@ pub(crate) fn find_oof_anchor(
                     let trailing = (at + 1..line.fragments().len())
                         .filter_map(|later| line.fragment(later))
                         .all(|later| !holds_content(&later));
+                    let leading = leading_in_text.unwrap_or(leading);
                     return Some(places.place(index, leading, trailing, anchor));
                 }
                 fragment => leading &= !starts_content(&fragment),
@@ -4919,6 +4917,40 @@ pub(crate) fn find_oof_anchor(
         }
     }
     None
+}
+
+/// Whether the anchors of `line` come before all of its content in logical
+/// order, when the order of its fragments does not tell: on a line that reads
+/// right to left in part or throughout, the fragments are in visual order.
+/// `None` when the fragments tell, or when the text cannot: some anchors come
+/// first and some later, an atomic inline shares their object replacement
+/// character, or an inline box starts on the line.
+fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
+    let mut anchors = 0;
+    let mut mixed = line.used_direction() == Direction::Rtl;
+    for fragment in line.fragments() {
+        match fragment {
+            shodo::Fragment::OutOfFlowAnchor(_) => anchors += 1,
+            shodo::Fragment::GlyphRun(run) => mixed |= run.bidi_level() % 2 == 1,
+            shodo::Fragment::Atomic(_) => return None,
+            shodo::Fragment::InlineBox(piece) if piece.has_start_edge => return None,
+            _ => {}
+        }
+    }
+    if !mixed || anchors == 0 {
+        return None;
+    }
+    let text = line.text().get(line.text_range()).unwrap_or_default();
+    let first = text
+        .chars()
+        .take_while(|&c| c.is_whitespace() || c == '\u{FFFC}')
+        .filter(|&c| c == '\u{FFFC}')
+        .count();
+    match first {
+        0 => Some(false),
+        first if first == anchors => Some(true),
+        _ => None,
+    }
 }
 
 /// Whether `fragment` ends the run of anchors and inline boxes that go on
@@ -4981,16 +5013,17 @@ impl<'a> AnchorPlaces<'a> {
     }
 
     /// The line and inline position where `anchor`, on line `index`, puts its
-    /// box. `leading` tells that nothing but anchors and inline boxes that
-    /// started on an earlier line come before it on its line, and `trailing`
-    /// that no text or atomic inline comes after it.
+    /// box, with the bidi level parity of the anchor when the place sets it
+    /// (see [`OofAnchor`]). `leading` tells that nothing but anchors and
+    /// inline boxes that started on an earlier line come before it on its
+    /// line, and `trailing` that no text or atomic inline comes after it.
     pub(super) fn place(
         &mut self,
         index: usize,
         leading: bool,
         trailing: bool,
         anchor: shodo::AnchorFragment,
-    ) -> (usize, f32) {
+    ) -> OofAnchor {
         // Positions are snapped to 1/64 px by the line engine.
         const SLACK: f32 = 1.0 / 32.0;
         let position = anchor.inline_position;
@@ -5002,7 +5035,7 @@ impl<'a> AnchorPlaces<'a> {
                 .get(node)
                 .is_some_and(|node| node.display().is_inline_level());
         if !inline_level {
-            return (index, position);
+            return (index, position, None);
         }
         let before = index.checked_sub(1).filter(|&before| {
             let line = &self.lines[before];
@@ -5010,8 +5043,23 @@ impl<'a> AnchorPlaces<'a> {
                 && line.break_reason() == shodo::BreakReason::Regular
                 && line.remaining_inline_size() + SLACK >= hanging_spaces(line)
         });
-        if let Some(end) = before.and_then(|before| Some((before, self.end(before)?.content))) {
-            return end;
+        if let Some(before) = before
+            && let Some(end) = self.end(before)
+        {
+            // The anchor takes the direction of the text on both sides of it
+            // when they agree (UAX #9, rule N1). Text against the line's
+            // direction then ends at the start of its run, the anchor with it.
+            let line = &self.lines[before];
+            let rtl = line.used_direction() == Direction::Rtl;
+            return match (last_text_run(line), first_text_run(&self.lines[index])) {
+                (Some(last), Some(next))
+                    if last.bidi_level() % 2 == next.bidi_level() % 2
+                        && (last.bidi_level() % 2 == 1) != rtl =>
+                {
+                    (before, last.inline_start(), Some(!rtl))
+                }
+                _ => (before, end.content, None),
+            };
         }
         // Only the spaces before the anchor are taken out: an end margin
         // after them stays, and has no fragment that would tell its end.
@@ -5019,8 +5067,9 @@ impl<'a> AnchorPlaces<'a> {
             Some(end) => (
                 index,
                 position - (position - end.spaces).clamp(0.0, end.hang),
+                None,
             ),
-            None => (index, position),
+            None => (index, position, None),
         }
     }
 
@@ -5032,6 +5081,42 @@ impl<'a> AnchorPlaces<'a> {
             .entry(index)
             .or_insert_with(|| content_end(&lines[index]))
     }
+}
+
+/// The line and inline position where an out-of-flow box is anchored, and,
+/// when its place sets it, whether the anchor has an odd bidi level (see
+/// [`anchor_has_odd_level`] for the others).
+pub(crate) type OofAnchor = (usize, f32, Option<bool>);
+
+/// The run of `line` that holds the last text in logical order, past the
+/// white space at its end.
+fn last_text_run<'l>(line: &'l shodo::Line) -> Option<shodo::GlyphRunView<'l>> {
+    text_runs(line).max_by_key(|run| run.text_range().end)
+}
+
+/// The run of `line` that holds its first text in logical order.
+fn first_text_run<'l>(line: &'l shodo::Line) -> Option<shodo::GlyphRunView<'l>> {
+    text_runs(line).min_by_key(|run| run.text_range().start)
+}
+
+/// The runs of `line` that hold more than white space and the controls of
+/// bidirectional embeddings and isolates.
+fn text_runs<'l>(line: &'l shodo::Line) -> impl Iterator<Item = shodo::GlyphRunView<'l>> {
+    let text = line.text();
+    let blank = |c: char| {
+        c.is_whitespace()
+            || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    };
+    line.fragments().filter_map(move |fragment| match fragment {
+        shodo::Fragment::GlyphRun(run)
+            if text
+                .get(run.text_range())
+                .is_some_and(|text| !text.chars().all(blank)) =>
+        {
+            Some(run)
+        }
+        _ => None,
+    })
 }
 
 /// The advance of the spaces that hang at the end of `line`, without the
@@ -5058,7 +5143,6 @@ fn content_end(line: &shodo::Line) -> Option<LineEnd> {
     let mut boxes = None::<f32>;
     for fragment in line.fragments() {
         match fragment {
-            shodo::Fragment::GlyphRun(run) if run.bidi_level() % 2 == 1 => return None,
             shodo::Fragment::GlyphRun(run) => {
                 let end = run.inline_start() + run.inline_size();
                 text = Some(text.map_or(end, |text| text.max(end)));
@@ -5098,7 +5182,7 @@ fn content_end(line: &shodo::Line) -> Option<LineEnd> {
             hang,
             content,
         })
-        .filter(|_| line.used_direction() == Direction::Ltr && !trailing_tab)
+        .filter(|_| !trailing_tab)
 }
 
 /// How far the columns moved the line `line`: the range of `fragments` that
@@ -6239,7 +6323,7 @@ pub(crate) fn place_out_of_flow(
                 &lines,
                 box_order.as_deref().unwrap_or_default(),
                 node,
-                anchor,
+                anchor.map(|(index, position, _)| (index, position)),
                 inline_level,
             )
         };
@@ -6258,17 +6342,19 @@ pub(crate) fn place_out_of_flow(
         let block_offset = out_of_lines.unwrap_or(block_offset);
         // The columns move a box with the line it sits on.
         let (dx, dy) = match (column_fragments.as_deref(), anchor) {
-            (Some(fragments), Some((line, _))) => column_shift(&lines, fragments, line),
+            (Some(fragments), Some((line, ..))) => column_shift(&lines, fragments, line),
             _ => (0.0, 0.0),
         };
         // A box that was inline-level extends from its anchor the way the
         // text there reads. One out of the lines sits on a line of its own.
         let inline_anchor = anchor
             .filter(|_| inline_level && out_of_lines.is_none())
-            .map(|(index, position)| {
+            .map(|(index, position, odd_level)| {
                 (
                     position,
-                    anchor_has_odd_level(&lines.lines[index], position, rtl),
+                    odd_level.unwrap_or_else(|| {
+                        anchor_has_odd_level(&lines.lines[index], position, rtl)
+                    }),
                 )
             });
         let static_spot = if vertical_root {
