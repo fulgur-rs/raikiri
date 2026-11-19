@@ -183,7 +183,11 @@ impl Plan {
             if let Some(top) = document.context.float_resumptions.pushed_float_top(float) {
                 kept.push((float, top));
             } else {
-                let border_top = current_abs_y(document, float);
+                // Layout adds the offsets of relatively positioned inline
+                // ancestors after it places the float; keep them out of the
+                // place it starts from, or the relayout adds them twice.
+                let border_top =
+                    current_abs_y(document, float) - relative_inline_offset_y(document, float);
                 plan.pushed
                     .insert(float, border_top - document.nodes[float].layout.margin.top);
                 origins.insert(float, border_top);
@@ -287,6 +291,21 @@ fn plain_flow_margin(
         return None;
     }
     Some(margin)
+}
+
+/// The vertical offsets of the relatively positioned inline elements
+/// between `float` and its layout parent, the paragraph root, added up.
+fn relative_inline_offset_y(document: &LayoutSession<'_>, float: usize) -> f32 {
+    let parent = document.layout_parent_of(float);
+    let offsets = parent.map_or(&[][..], |parent| {
+        document.nodes[parent].ifc_relative_offsets()
+    });
+    document
+        .ancestors(float)
+        .take_while(|&id| Some(id) != parent)
+        .filter_map(|id| offsets.iter().find(|&&(node, _)| node == id))
+        .map(|&(_, (_, dy))| dy)
+        .sum()
 }
 
 fn hidden_or_positioned(document: &LayoutSession<'_>, id: usize) -> bool {

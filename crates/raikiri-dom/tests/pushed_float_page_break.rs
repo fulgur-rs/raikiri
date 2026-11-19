@@ -137,3 +137,20 @@ fn a_moved_right_float_leaves_the_lines_where_they_were() {
         ],
     );
 }
+
+#[test]
+fn a_moved_float_in_a_relative_inline_takes_its_offset_once() {
+    check(
+        &format!(
+            "<div><span style='position:relative;top:10px'>\
+             <div style='{AVOID};width:30px'>Y</div>Q</span> R<br>S<br>T</div><div>X</div>"
+        ),
+        &[
+            (0, "Q", 0.0, 65.0),
+            (0, "S", 0.0, 75.0),
+            (1, "Y", 0.0, 15.0),
+            (1, "T", 30.0, 5.0),
+            (1, "X", 30.0, 25.0),
+        ],
+    );
+}
