@@ -3931,7 +3931,10 @@ fn page_break_is_forced(
     // after it stays in the columns and on the page. A spanner leaves the
     // columns of its own container, and so does everything inside it, so
     // only a container above that one turns the page value into a column
-    // break. A float or an out-of-flow box spans nothing.
+    // break. A float or an out-of-flow box spans nothing, and neither does
+    // a spanner with a box between it and the container, such as a
+    // `flow-root`: only boxes that layout leaves out, `display: contents` and
+    // the plain wrappers it lays out like it, let a spanner reach the columns.
     let mut spanned = super::is_spanner_in(document, cascade, node_id);
     for id in document.layout_ancestors(node_id) {
         let node = &document.nodes[id];
@@ -3939,6 +3942,8 @@ fn page_break_is_forced(
             if !spanned {
                 return false;
             }
+            spanned = false;
+        } else if node.display() != DisplayValue::Contents {
             spanned = false;
         }
         spanned |= super::is_spanner_in(document, cascade, id);

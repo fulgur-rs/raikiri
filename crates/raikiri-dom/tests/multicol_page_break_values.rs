@@ -382,3 +382,27 @@ fn a_page_value_before_rendered_white_space_changes_nothing() {
         );
     }
 }
+
+/// A spanner inside a `flow-root` in the columns spans nothing, so its page
+/// value falls in the columns; inside a plain block it reaches the columns
+/// and breaks the page (Chromium). Chromium also puts B at the top of the
+/// second page there, which the column layout does not match yet.
+#[test]
+fn a_page_value_on_a_spanner_that_cannot_span_changes_nothing() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div style='display:flow-root'><div>A</div>\
+             <div id=b style='column-span:all;break-before:page'>B</div></div></div><div id=x>X</div>"
+        ),
+        1,
+        &[],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div><div>A</div>\
+             <div id=b style='column-span:all;break-before:page'>B</div></div></div><div id=x>X</div>"
+        ),
+        2,
+        &[],
+    );
+}
