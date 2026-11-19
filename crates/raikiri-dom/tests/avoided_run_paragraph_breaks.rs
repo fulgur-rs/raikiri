@@ -577,3 +577,153 @@ fn a_tied_paragraph_among_the_boxes_of_the_body_breaks_between_its_lines() {
         assert_places(body, expected);
     }
 }
+
+#[test]
+fn the_boxes_tied_before_a_tied_paragraph_move_with_its_first_lines() {
+    let cases: &[Case] = &[
+        (
+            "<div><div style='height:10px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 0, 15.0),
+                ("a", 0, 35.0),
+                ("b", 0, 55.0),
+                ("c", 1, 5.0),
+                ("d", 1, 25.0),
+                ("L", 1, 45.0),
+                ("Z", 1, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:50px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("d", 2, 25.0),
+                ("L", 2, 45.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:70px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("d", 2, 25.0),
+                ("L", 2, 45.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:20px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 1, 65.0),
+                ("L", 1, 85.0),
+                ("Z", 2, 15.0),
+            ],
+        ),
+        (
+            "<div><div style='height:60px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid;orphans:1;widows:1'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 0, 65.0),
+                ("a", 0, 85.0),
+                ("b", 1, 5.0),
+                ("c", 1, 25.0),
+                ("d", 1, 45.0),
+                ("L", 1, 65.0),
+                ("Z", 2, 5.0),
+            ],
+        ),
+        (
+            "<div style='height:50px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("d", 2, 25.0),
+                ("L", 2, 45.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:70px'><span id=S>S</span></div><div style='break-after:avoid;height:20px'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("d", 2, 25.0),
+                ("L", 2, 45.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:50px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px;break-after:avoid'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("d", 2, 25.0),
+                ("L", 2, 45.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div><div style='height:10px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 0, 15.0),
+                ("a", 0, 35.0),
+                ("b", 0, 55.0),
+                ("c", 1, 5.0),
+                ("d", 1, 25.0),
+                ("L", 1, 45.0),
+                ("Z", 1, 75.0),
+            ],
+        ),
+        (
+            "<div style='height:10px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 0, 15.0),
+                ("a", 0, 35.0),
+                ("b", 0, 55.0),
+                ("c", 1, 5.0),
+                ("d", 1, 25.0),
+                ("L", 1, 45.0),
+                ("Z", 1, 75.0),
+            ],
+        ),
+        (
+            "<div style='height:20px'><span id=S>S</span></div><div style='break-after:avoid'><span id=H>H</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("H", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 1, 65.0),
+                ("L", 1, 85.0),
+                ("Z", 2, 15.0),
+            ],
+        ),
+    ];
+    for &(body, expected) in cases {
+        assert_places(body, expected);
+    }
+}

@@ -749,6 +749,10 @@ struct CandidateFrame<'name> {
     /// The block size of the bottom padding and border that follow the last
     /// line of the paragraph the node is in or is the text of.
     lines_closing_edges: f32,
+    /// Whether the node is a paragraph whose `closing_edges` are the boxes
+    /// that avoided breaks tie to its last lines: it breaks between its lines
+    /// for them, whatever ties it to the boxes before it.
+    lines_tail: bool,
     /// How the node is tied to the boxes around it by avoided breaks, when it
     /// ends its block or starts the run of boxes that does.
     tie: AvoidTie,
@@ -834,6 +838,7 @@ impl CandidateFrame<'_> {
             lone_in_edges: true,
             tied_to_start: false,
             lines_closing_edges: 0.0,
+            lines_tail: false,
             tie: AvoidTie::None,
             run_unit: None,
             run_tail: false,
@@ -1728,7 +1733,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // breaks between them.
                 let lines_shape = closing_edges_shape
                     || (closing_edges_base_shape
-                        && (frame.previous_box.is_none() || frame.tied_to_start)
+                        && (frame.previous_box.is_none()
+                            || frame.tied_to_start
+                            || frame.lines_tail)
                         && node.is_ifc_root());
                 // Nothing may break inside it at a better place than before
                 // it. A paragraph with lines enough to break between moves
@@ -2754,6 +2761,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 && child_scope_is_lone,
                             tied_to_start: child_tied_to_start,
                             lines_closing_edges,
+                            lines_tail: lines_tail.is_some() || run_line_tail > 0.0,
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,
