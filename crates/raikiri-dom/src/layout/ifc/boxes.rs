@@ -5724,10 +5724,10 @@ fn offsets_in_document_order(
         Enter(usize),
         /// The element's `::after` block comes here.
         After,
-        /// The `::before` or `::after` of the element that an anonymous cell
+        /// The `::before` of the element whose content an anonymous cell
         /// wraps comes here, a block-level box if it is one of the
         /// paragraph's.
-        Generated(usize, PseudoElem),
+        Before(usize),
     }
     if lines.block_starts.is_empty() {
         return HashMap::new();
@@ -5748,8 +5748,14 @@ fn offsets_in_document_order(
     // The number of block-level boxes before each box, in document order.
     let mut counts = HashMap::new();
     let mut before = 0;
+    // The `::after` of the element whose content an anonymous cell wraps
+    // comes after every box in the cell, so it moves none of them.
     let mut stack: Vec<Step> = paragraph_top_level(tree, idx)
-        .map(|(id, pseudo)| pseudo.map_or(Step::Enter(id), |pseudo| Step::Generated(id, pseudo)))
+        .filter_map(|(id, pseudo)| match pseudo {
+            None => Some(Step::Enter(id)),
+            Some(PseudoElem::Before) => Some(Step::Before(id)),
+            Some(_) => None,
+        })
         .collect();
     stack.reverse();
     while let Some(step) = stack.pop() {
@@ -5760,13 +5766,8 @@ fn offsets_in_document_order(
                 before += 1;
                 continue;
             }
-            Step::Generated(id, pseudo) => {
-                let blocks = if pseudo == PseudoElem::Before {
-                    &befores
-                } else {
-                    &afters
-                };
-                before += usize::from(blocks.contains(&id));
+            Step::Before(id) => {
+                before += usize::from(befores.contains(&id));
                 continue;
             }
             Step::Enter(id) => id,
