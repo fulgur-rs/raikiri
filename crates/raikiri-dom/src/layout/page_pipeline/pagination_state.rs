@@ -2257,16 +2257,18 @@ impl PaginationState {
         // they start the page, the box stays below that edge and breaks
         // inside, as browsers do, rather than leave it alone at the top of
         // the page. Only a box that runs past the page end moves, so the walk
-        // over its ancestors is left to those.
+        // over its ancestors is left to those. A flex container that moves
+        // whole for what follows its items (see `flex_margins_move`) goes
+        // with them the same way.
         let avoided_holder = if crosses_page_end
             && !candidate.context.is_unbreakable()
             && !keeps_margin_at_break
             && !document.context.pagination_on_transposed_axes
-            && box_avoids_page_break_inside(
+            && (box_avoids_page_break_inside(
                 document,
                 node_id,
                 cascade.computed[node_id].break_inside,
-            )
+            ) || super::has_flex_trailing_space(document, node_id))
             && is_block_flow_box(document, cascade, candidate)
             && !candidate.context.is_float_descendant()
             && !candidate.context.is_out_of_flow_descendant()
@@ -2549,6 +2551,7 @@ impl PaginationState {
             (owner.node, owner.lead)
         } else if (overflow.unbreakable
             || overflow.moved_for_avoided_break
+            || overflow.moved_for_flex_margins
             || overflow.leading_piece_with_holder)
             && !forced_transition
             && is_block_flow_box(document, cascade, candidate)
@@ -2559,6 +2562,9 @@ impl PaginationState {
                 .holder
                 .filter(|_| overflow.unbreakable || overflow.leading_piece_with_holder)
                 .unwrap_or_else(|| {
+                    if overflow.moved_for_flex_margins && !overflow.moved_for_avoided_break {
+                        return leading_holder(document, cascade, body_id, node_id, true);
+                    }
                     if !overflow.moved_for_avoided_break || overflow.unbreakable {
                         return leading_holder(document, cascade, body_id, node_id, false);
                     }
