@@ -4046,7 +4046,9 @@ fn layout_pages_core(
     // Each container whose columns are filled page by page may take one
     // more attempt, to fill them from where the walk moved it.
     let mut attempts = 0;
-    while attempts < 3 + page_filled_origins.len() {
+    // Floats moved whole to a later page take one more attempt to lay the
+    // content beside them out without them.
+    while attempts < 3 + page_filled_origins.len() + usize::from(resumptions.has_pushed_floats()) {
         attempts += 1;
         let next = layout_pages_attempt(
             document,
@@ -15627,10 +15629,13 @@ fn move_paragraph_lines(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> f32 {
+    // A float an earlier walk moved whole to a later page stands where it
+    // went, as one this walk moves does.
     let went_ahead: Vec<usize> = shifts
         .floats_ahead
         .iter()
         .map(|&(float, _)| float)
+        .chain(document.context.float_resumptions.pushed_floats())
         .collect();
     let (growth, floats) = shift_paragraph_lines(document, cascade, moved, Some(&went_ahead));
     if let Some((item, container)) = moved.flex_line {
@@ -18141,6 +18146,44 @@ impl FloatShifts {
         let context = float_context_root(document, cascade, node_id, body_id);
         self.drop_edges_above(context, flow_top);
     }
+}
+
+/// Whether a float or a block with `clear` comes after the float `float` in
+/// the float context `root`, outside the float itself. Independent
+/// formatting contexts inside `root` place their own floats and are skipped.
+fn floats_or_clearance_follow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    float: usize,
+) -> bool {
+    let mut stack: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut after = false;
+    while let Some(id) = stack.pop() {
+        if id == float {
+            after = true;
+            continue;
+        }
+        if after
+            && (is_floating_box_for_pagination(document, cascade, id)
+                || cascade.computed.get(id).is_some_and(|computed| {
+                    computed.clear != ClearValue::None
+                        && !document.nodes[id].display().is_inline_flow()
+                }))
+        {
+            return true;
+        }
+        if after && holds_floats(document, cascade, id) {
+            continue;
+        }
+        stack.extend(document.nodes[id].children.iter().rev().copied());
+    }
+    false
 }
 
 /// The box whose block formatting context places the floats and clearance

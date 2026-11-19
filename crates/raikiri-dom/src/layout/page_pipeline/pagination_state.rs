@@ -2520,14 +2520,34 @@ impl PaginationState {
             reach_page(control, target_page)?;
         }
         let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
-        if pending_break_applies && is_floating_box_for_pagination(document, cascade, node_id) {
-            document.context.float_resumption_boundaries.insert(
-                node_id,
-                super::float_resumption::Boundary {
-                    page_origin: page_origins.origin(target_page),
-                    relative_offset,
-                },
-            );
+        if is_floating_box_for_pagination(document, cascade, node_id) {
+            if pending_break_applies {
+                document.context.float_resumption_boundaries.insert(
+                    node_id,
+                    super::float_resumption::Boundary {
+                        page_origin: page_origins.origin(target_page),
+                        relative_offset,
+                    },
+                );
+            } else if !forced_transition
+                && matches!(document.nodes[node_id].position(), PositionValue::Static)
+                && !document.nodes[node_id].used_writing_mode.is_vertical()
+                && !document
+                    .layout_ancestors(node_id)
+                    .any(|id| document.nodes[id].multicol.is_some())
+                && !super::floats_or_clearance_follow(
+                    document,
+                    cascade,
+                    super::float_context_root(document, cascade, node_id, env.body_id),
+                    node_id,
+                )
+            {
+                // The content beside the float on the page it leaves lays
+                // out again without it (see `float_resumption`). Later
+                // floats and clearance stay with the walk, which moves them
+                // below this float.
+                document.context.pushed_floats.push(node_id);
+            }
         }
         // A negative block-start margin can pull a forced-break box back
         // into the preceding page (the `underflow-from-next-page` case from
@@ -2819,6 +2839,24 @@ impl PaginationState {
             self.flow_shift += super::split_box_kept_margin(document, cascade, node_id);
         }
         reach_page(control, natural_page)?;
+        // A float that an earlier walk moved whole to a later page, and that
+        // layout now puts there, stands below the content after it in the
+        // source, beside it: that content starts on the page the flow is on,
+        // as it does after a float that this walk moves.
+        if natural_page > self.current_page
+            && document
+                .context
+                .float_resumptions
+                .pushed_float_top(node_id)
+                .is_some()
+        {
+            // It still starts the later page, and keeps its place there.
+            document.context.pushed_floats.push(node_id);
+            if self.float_shifts.pending.is_none() {
+                self.float_shifts
+                    .add_to_pending(node_id, 0.0, self.current_page);
+            }
+        }
         self.current_page = self.current_page.max(natural_page);
         Ok(())
     }

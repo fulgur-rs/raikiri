@@ -34,6 +34,7 @@ pub(crate) struct Boundary {
 pub(crate) struct Plan {
     groups: HashMap<(usize, usize), FlowStart>,
     floats: HashMap<usize, f32>,
+    pushed: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
@@ -42,11 +43,25 @@ pub(crate) struct Plan {
 
 impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
-        self.floats.is_empty() && self.margin_flows.is_empty()
+        self.floats.is_empty() && self.pushed.is_empty() && self.margin_flows.is_empty()
     }
 
     pub(crate) fn float_top(&self, node: usize) -> Option<f32> {
         self.floats.get(&node).copied()
+    }
+
+    /// Where a float that the page walk moved whole to a later page goes.
+    pub(crate) fn pushed_float_top(&self, node: usize) -> Option<f32> {
+        self.pushed.get(&node).copied()
+    }
+
+    /// The floats that the page walk moved whole to a later page.
+    pub(crate) fn pushed_floats(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pushed.keys().copied()
+    }
+
+    pub(crate) fn has_pushed_floats(&self) -> bool {
+        !self.pushed.is_empty()
     }
 
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
@@ -155,10 +170,33 @@ impl Plan {
             }
             plan.groups.insert((float, flow), start);
         }
+        // A float the walk moved whole to a later page, as Chromium places
+        // it: at the top it took there, so the lines and boxes beside it on
+        // the page it left take the whole width again. One placed so before,
+        // that still starts the later page, keeps that place: the lines it
+        // lets move down may carry it along.
+        let mut kept = Vec::new();
+        for &float in &document.context.pushed_floats {
+            if plan.floats.contains_key(&float)
+                || plan.pushed.contains_key(&float)
+                || kept.iter().any(|&(id, _)| id == float)
+            {
+                continue;
+            }
+            if let Some(top) = document.context.float_resumptions.pushed_float_top(float) {
+                kept.push((float, top));
+                continue;
+            }
+            let border_top = current_abs_y(document, float);
+            plan.pushed
+                .insert(float, border_top - document.nodes[float].layout.margin.top);
+            origins.insert(float, border_top);
+        }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
         for placements in [
             &mut plan.floats,
+            &mut plan.pushed,
             &mut plan.flows,
             &mut plan.completed,
             &mut plan.completed_containers,
@@ -173,6 +211,7 @@ impl Plan {
                 *top -= parent_top;
             }
         }
+        plan.pushed.extend(kept);
         plan
     }
 

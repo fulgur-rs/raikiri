@@ -1036,7 +1036,8 @@ fn run_boxes_segment(
                     || (float.clear != Clear::None
                         && ctx
                             .cleared_threshold(float.clear)
-                            .is_some_and(|bottom| bottom > top_edge + line_y));
+                            .is_some_and(|bottom| bottom > top_edge + line_y))
+                    || pushed_below_line(tree, node, top_edge + line_y);
                 // A float with nothing of the line before it does not wait
                 // for the next line: it goes below the floats it does not
                 // fit beside, and the content after it in the source wraps
@@ -1198,7 +1199,8 @@ fn run_boxes_segment(
                         || tentative.iter().any(|f| clears(float.clear, f.direction))
                         || ctx
                             .cleared_threshold(float.clear)
-                            .is_some_and(|bottom| bottom > top_edge + line_y);
+                            .is_some_and(|bottom| bottom > top_edge + line_y)
+                        || pushed_below_line(tree, node, top_edge + line_y);
                     if !below && content + float.margin_box.width <= space.inline_size + 0.01 {
                         float.late = true;
                         first_late =
@@ -2089,6 +2091,15 @@ fn has_edge_along_the_line(tree: &LayoutSession<'_>, node: usize, basis: f32) ->
     ]
     .iter()
     .any(|&edge| edge != 0.0)
+}
+
+/// Whether the page walk moved the float `node` whole to a page below the
+/// line at `line_top`, so the line takes its space without it.
+fn pushed_below_line(tree: &LayoutSession<'_>, node: usize, line_top: f32) -> bool {
+    tree.context
+        .float_resumptions
+        .pushed_float_top(node)
+        .is_some_and(|top| top > line_top + 0.01)
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left
@@ -4712,9 +4723,13 @@ pub(crate) fn commit_float(
         ctx.record_page_start_float_floor(float.clear);
     }
     // The context measures block offsets from the border-box top.
+    let line_top = geometry.top_edge + y;
     let position = ctx.place_floated_box(
         float.margin_box,
-        geometry.top_edge + y,
+        tree.context
+            .float_resumptions
+            .pushed_float_top(float.node)
+            .map_or(line_top, |top| top.max(line_top)),
         float.direction,
         float.clear,
         adjoins_top_margin,
