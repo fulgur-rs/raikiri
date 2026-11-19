@@ -2768,7 +2768,12 @@ fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> 
             lines
                 .forced_breaks
                 .iter()
-                .filter(|forced| page_break_is_forced(document, root, forced.value))
+                // Generated content of a multicol container sits in its
+                // columns, where a page value breaks nothing.
+                .filter(|forced| {
+                    document.nodes[root].multicol.is_none()
+                        && page_break_is_forced(document, root, forced.value)
+                })
                 .filter_map(move |forced| {
                     let lead = match forced.box_top {
                         Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
@@ -3793,6 +3798,48 @@ fn clear_floats_at_forced_breaks<'name>(
 }
 
 /// Whether `value`, the `break-after` of the box `node_id`, forces a page
+/// break after it, before any float rule. A spanner's `break-after` sits
+/// between it and what follows: when that is column content, the break
+/// falls in the columns, so Chromium ignores a page value there. It breaks
+/// the page before another spanner, or after the last spanner of the
+/// multicol container where the container's own edge follows.
+fn page_break_after_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
+    if !page_break_is_forced(document, node_id, value) {
+        return false;
+    }
+    if !document.nodes[node_id].column_span_all {
+        return true;
+    }
+    // Source order: column text after a spanner in an inline formatting
+    // context is no layout child of its own.
+    let Some(parent) = document.parent_of(node_id) else {
+        return true;
+    };
+    let next = document.nodes[parent]
+        .children
+        .iter()
+        .copied()
+        .skip_while(|&child| child != node_id)
+        .skip(1)
+        .find(|&child| {
+            let node = &document.nodes[child];
+            node.display() != DisplayValue::None
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && match &node.data {
+                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                    _ => true,
+                }
+        });
+    match next {
+        Some(next) => document.nodes[next].column_span_all,
+        None => document.nodes[parent].multicol.is_some(),
+    }
+}
+
+/// Whether `value`, the `break-after` of the box `node_id`, forces a page
 /// break after it. A float has no break after it: Chromium keeps the content
 /// after a float with it whatever the float names. The `break-before` of a
 /// float still applies, as the reftests for floats under CSS2 pagination
@@ -3803,7 +3850,7 @@ fn box_forces_break_after(
     node_id: usize,
     value: BreakBetween,
 ) -> bool {
-    page_break_is_forced(document, node_id, value)
+    page_break_after_is_forced(document, node_id, value)
         && (matches!(cascade.computed[node_id].float, FloatValue::None)
             || !is_floating_box_for_pagination(document, cascade, node_id))
 }
@@ -3814,10 +3861,15 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
     }
     // A break inside a multicol container falls in its column context.
     // Chromium also ignores a page value there when it prints: the content
-    // after it stays in the columns and on the page.
-    !document
+    // after it stays in the columns and on the page. A spanner leaves the
+    // columns of its own container, so only the containers above that one
+    // turn its page value into a column break.
+    let spanner = document.nodes[node_id].column_span_all;
+    document
         .layout_ancestors(node_id)
-        .any(|id| document.nodes[id].multicol.is_some())
+        .filter(|&id| document.nodes[id].multicol.is_some())
+        .nth(usize::from(spanner))
+        .is_none()
 }
 
 // Find the first/last generated child box, eliding Contents without cloning
@@ -5974,7 +6026,7 @@ fn forced_break_inside(
             {
                 return Some(flow_top(id) - node.layout.margin.top - top);
             }
-            if page_break_is_forced(document, id, computed.break_after) {
+            if page_break_after_is_forced(document, id, computed.break_after) {
                 pending.push((id, true));
             }
         }
@@ -9949,7 +10001,7 @@ fn collapses_as_empty_box(
         // forced break before or after it keeps them whole.
         && computed.clear == ClearValue::None
         && !page_break_is_forced(document, node_id, computed.break_before)
-        && !page_break_is_forced(document, node_id, computed.break_after)
+        && !page_break_after_is_forced(document, node_id, computed.break_after)
         && collapses_through(document, cascade, node_id, 0.0)
 }
 
@@ -9992,7 +10044,7 @@ fn margin_above_box(
             push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
             for &id in &boxes {
                 if document.nodes[id].kind() != NodeKind::Element
-                    || page_break_is_forced(document, id, cascade.computed[id].break_after)
+                    || page_break_after_is_forced(document, id, cascade.computed[id].break_after)
                 {
                     return false;
                 }

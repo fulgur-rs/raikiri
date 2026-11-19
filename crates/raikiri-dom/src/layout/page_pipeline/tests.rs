@@ -10086,6 +10086,9 @@ fn breaks_inside_columns_never_force_a_page_break() {
     let mut doc = Document::new();
     let columns = doc.append_element(Some(0), "div", Some("columns:2"));
     let child = doc.append_element(Some(columns), "div", None::<&str>);
+    let spanner = doc.append_element(Some(columns), "div", Some("column-span:all"));
+    let inner = doc.append_element(Some(columns), "div", Some("columns:2"));
+    let inner_spanner = doc.append_element(Some(inner), "div", Some("column-span:all"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -10098,6 +10101,12 @@ fn breaks_inside_columns_never_force_a_page_break() {
     ] {
         assert!(!page_break_is_forced(&doc, child, value), "{value:?}");
         assert!(page_break_is_forced(&doc, columns, value), "{value:?}");
+        // A spanner leaves only its own container's columns.
+        assert!(page_break_is_forced(&doc, spanner, value), "{value:?}");
+        assert!(
+            !page_break_is_forced(&doc, inner_spanner, value),
+            "{value:?}"
+        );
     }
     assert!(!page_break_is_forced(&doc, columns, BreakBetween::Column));
 }

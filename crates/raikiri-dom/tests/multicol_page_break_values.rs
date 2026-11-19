@@ -157,3 +157,76 @@ fn a_page_value_in_columns_across_pages_changes_nothing() {
         );
     }
 }
+
+const COLUMNS: &str = "columns:2;column-gap:0;width:100px";
+
+/// A spanner leaves the columns of its container, so a page value on its
+/// edge with the page context still breaks the page: before it, between it
+/// and another spanner, and after the container's last spanner.
+#[test]
+fn a_page_value_on_a_spanner_breaks_the_page() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div id=s style='column-span:all;break-before:page'>S</div>\
+             C</div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div id=s style='column-span:all;break-after:page'>S</div>\
+             <div id=t style='column-span:all'>T</div>C</div>"
+        ),
+        2,
+        &[("s", 0, 0.0, 10.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<br>B<div id=s style='column-span:all;break-after:page'>S</div>\
+             </div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 0, 0.0, 20.0), ("x", 1, 0.0, 0.0)],
+    );
+}
+
+/// A page value between a spanner and the column content after it falls in
+/// the columns, and so does one on a spanner of a multicol container that
+/// itself sits in columns.
+#[test]
+fn a_page_value_from_a_spanner_into_columns_changes_nothing() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div id=s style='column-span:all;break-after:page'>S</div>\
+             C</div><div id=x>X</div>"
+        ),
+        1,
+        &[("s", 0, 0.0, 10.0), ("x", 0, 0.0, 30.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='{COLUMNS}'>B\
+             <div id=s style='column-span:all;break-before:page'>S</div>C</div></div>\
+             <div id=x>X</div>"
+        ),
+        1,
+        &[],
+    );
+}
+
+/// An empty box with a page value inside columns leaves the content after
+/// it on the page too.
+#[test]
+fn a_page_value_on_an_empty_box_in_columns_changes_nothing() {
+    for edge in ["before", "after"] {
+        check(
+            &format!(
+                "<div style='{COLUMNS}'><div style='break-{edge}:page'></div>C<br>D</div>\
+                 <div id=x>X</div>"
+            ),
+            1,
+            &[],
+        );
+    }
+}
