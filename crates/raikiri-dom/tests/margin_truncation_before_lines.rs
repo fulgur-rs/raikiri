@@ -251,3 +251,28 @@ fn a_margin_that_escapes_the_box_before_a_paragraph_is_truncated_above_its_lines
         ),
     ]);
 }
+
+#[test]
+fn margins_that_collapse_through_an_empty_box_are_truncated_before_the_box_after_it() {
+    // The empty box sits below the margins collapsed through it: only those
+    // margins lie between it and the block with `T`.
+    let case = |z: &str| {
+        format!(
+            "<div style=\"width:20px\"><div>X X X X</div><div style=\"height:20px\">{T}</div>\
+             <div style=\"height:0;margin-bottom:30px\"><div style=\"margin-bottom:40px\"></div></div>{z}</div>"
+        )
+    };
+    assert_places(&[
+        (
+            case(&format!("<div style=\"display:contents\">{Z}</div>")),
+            [(1, 65.0), (2, 35.0)],
+        ),
+        (
+            case(
+                "<div style=\"display:contents\"><div style=\"display:contents\">\
+                 <div style=\"margin-top:20px\"><span id=z>Z</span></div></div></div>",
+            ),
+            [(1, 65.0), (2, 35.0)],
+        ),
+    ]);
+}

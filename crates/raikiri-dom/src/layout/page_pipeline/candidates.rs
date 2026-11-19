@@ -1220,7 +1220,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     // has nothing to place.
                     if node.in_ifc_subtree()
                         && self.text_lines.get(node_id).is_none()
-                        && matches!(&node.data, crate::node::NodeData::Text(text) if text.text_content.trim().is_empty())
+                        && matches!(&node.data, crate::node::NodeData::Text(text)
+                        if crate::generated_content::is_collapsed_white_space(
+                            &text.text_content,
+                            raikiri_style::property::WhiteSpaceCollapse::Collapse,
+                        ))
                     {
                         return Ok(());
                     }
@@ -1907,9 +1911,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
                                 // A margin of a box inside the one before it
-                                // that collapses through that box's bottom
-                                // leaves a gap between the two.
+                                // that collapses through that box's bottom.
+                                || super::adjoining_margin_extremes(
+                                    document, cascade, previous, false, None,
+                                )
+                                .0 > 0.0
+                                // Margins that collapse through an empty box
+                                // put it below them. With no clearance, only
+                                // margins lie between two siblings.
                                 || (document.nodes[previous].parent == node.parent
+                                    && matches!(
+                                        computed.clear,
+                                        raikiri_style::property::ClearValue::None
+                                    )
                                     && normal_flow_y(document, cascade, body_id, node_id)
                                         - normal_flow_bottom(document, cascade, body_id, previous)
                                         > 0.001)

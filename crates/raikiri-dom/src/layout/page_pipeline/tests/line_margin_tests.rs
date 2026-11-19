@@ -132,3 +132,69 @@ fn only_white_space_that_the_style_collapses_places_no_line() {
     ));
     drop(doc);
 }
+
+#[test]
+fn an_empty_box_below_the_margins_collapsed_through_it_is_a_margin_candidate() {
+    let mut z = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:20px;font-family:Ahem;font-size:20px;line-height:30px"),
+        );
+        let lines = doc.append_element(Some(outer), "div", Some("display:block"));
+        doc.append_text(lines, "X X X X");
+        let t = doc.append_element(Some(outer), "div", Some("display:block;height:20px"));
+        doc.append_text(t, "T");
+        let empty = doc.append_element(
+            Some(outer),
+            "div",
+            Some("display:block;height:0;margin-bottom:30px"),
+        );
+        doc.append_element(Some(empty), "div", Some("display:block;margin-bottom:40px"));
+        let contents = doc.append_element(Some(outer), "div", Some("display:contents"));
+        z = doc.append_element(Some(contents), "div", Some("display:block"));
+        doc.append_text(z, "Z");
+    });
+    // The page edge at 200 truncates the margins above the empty box, which
+    // keeps its own bottom margin below it on the third page.
+    assert_eq!(page_flow_y(&doc, z), 230.0);
+}
+
+#[test]
+fn a_margin_above_a_line_that_no_page_edge_cuts_is_kept() {
+    // The paragraph starts the second page; the 10px margin above its line
+    // stays, beside a float or in a flex item alike.
+    let ys = |paragraph_css: &str, float: bool| {
+        let mut z = 0;
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let outer = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:40px;font-family:Ahem;font-size:20px;line-height:30px"),
+            );
+            doc.append_element(Some(outer), "div", Some("display:block;height:100px"));
+            let holder = doc.append_element(Some(outer), "div", Some(paragraph_css));
+            let paragraph = doc.append_element(Some(holder), "div", Some("display:block"));
+            let t = doc.append_element(
+                Some(paragraph),
+                "div",
+                Some("display:block;height:20px;margin-bottom:10px"),
+            );
+            doc.append_text(t, "T");
+            if float {
+                doc.append_element(
+                    Some(paragraph),
+                    "div",
+                    Some("float:right;width:10px;height:10px"),
+                );
+            }
+            doc.append_text(paragraph, "Y");
+            z = doc.append_element(Some(outer), "div", Some("display:block"));
+            doc.append_text(z, "Z");
+        });
+        page_flow_y(&doc, z)
+    };
+    assert_eq!(ys("display:block", true), 160.0);
+    assert_eq!(ys("display:flex", false), 160.0);
+}

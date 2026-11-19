@@ -3658,7 +3658,6 @@ impl PaginationState {
         let FlowEnv {
             cascade,
             body_id,
-            control,
             page_origins,
             text_lines,
             ..
@@ -3717,30 +3716,15 @@ impl PaginationState {
             && margin_above_line(document, cascade, body_id, root, run.start)
                 .is_some_and(|gap| run_top - gap <= page_start + 0.001)
         {
-            let shift = page_start - run_top;
-            let growth = move_paragraph_lines(
+            self.move_run_lines(
                 document,
-                cascade,
-                body_id,
-                &LineMove {
-                    block_id: root,
-                    flex_line: None,
-                    line: run.start,
-                    shift,
-                    page,
-                },
-                &mut self.subtree_shifts,
-                entry.page_before_candidate,
-            );
-            text.effective_y += shift;
-            text.first_line_shift += shift;
-            self.deferred_shifts.line_splits.push(LineSplit {
-                root,
-                first_moved: run.start,
-                shift,
-                growth,
-                page,
-            });
+                env,
+                candidate,
+                entry,
+                text,
+                (root, first_owned_line),
+                (run.start, page_start - run_top, page),
+            )?;
             if let Some(next) = run_metrics(document) {
                 metrics = next;
             }
@@ -3811,37 +3795,15 @@ impl PaginationState {
                 }
             };
             for (line, shift, move_page) in moves {
-                reach_page(control, move_page)?;
-                let line = run.start + line;
-                let growth = move_paragraph_lines(
+                self.move_run_lines(
                     document,
-                    cascade,
-                    body_id,
-                    &LineMove {
-                        block_id: root,
-                        flex_line: None,
-                        line,
-                        shift,
-                        page: move_page,
-                    },
-                    &mut self.subtree_shifts,
-                    entry.page_before_candidate,
-                );
-                self.float_shifts
-                    .record_grown_floats(document, cascade, body_id, candidate, root, growth);
-                if line <= first_owned_line {
-                    text.effective_y += shift;
-                    text.first_line_shift += shift;
-                } else if reaches_line(text_lines.get(node_id), line) {
-                    text.height += shift;
-                }
-                self.deferred_shifts.line_splits.push(LineSplit {
-                    root,
-                    first_moved: line,
-                    shift,
-                    growth,
-                    page: move_page,
-                });
+                    env,
+                    candidate,
+                    entry,
+                    text,
+                    (root, first_owned_line),
+                    (run.start + line, shift, move_page),
+                )?;
             }
             if !repeat {
                 break;
@@ -3853,6 +3815,61 @@ impl PaginationState {
                 metrics = next;
             }
         }
+        Ok(())
+    }
+
+    /// Moves the lines of the paragraph `root` from `line` on by `shift` to
+    /// `page`, for the text `candidate`, whose first line is
+    /// `first_owned_line`, and keeps the split for the shifts that settle
+    /// later (see [`Self::keep_lines_after_block`]).
+    #[allow(clippy::too_many_arguments)]
+    fn move_run_lines(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        text: &mut TextPosition,
+        (root, first_owned_line): (usize, usize),
+        (line, shift, page): LineBreakMove,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            text_lines,
+            ..
+        } = *env;
+        reach_page(control, page)?;
+        let growth = move_paragraph_lines(
+            document,
+            cascade,
+            body_id,
+            &LineMove {
+                block_id: root,
+                flex_line: None,
+                line,
+                shift,
+                page,
+            },
+            &mut self.subtree_shifts,
+            entry.page_before_candidate,
+        );
+        self.float_shifts
+            .record_grown_floats(document, cascade, body_id, candidate, root, growth);
+        if line <= first_owned_line {
+            text.effective_y += shift;
+            text.first_line_shift += shift;
+        } else if reaches_line(text_lines.get(candidate.node_id), line) {
+            text.height += shift;
+        }
+        self.deferred_shifts.line_splits.push(LineSplit {
+            root,
+            first_moved: line,
+            shift,
+            growth,
+            page,
+        });
         Ok(())
     }
 
