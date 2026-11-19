@@ -740,6 +740,26 @@ fn collect(
             paragraph_count += 1;
             continue;
         }
+        // A button is monolithic, so it goes whole to a column, with its
+        // lines, wherever they are.
+        if boxes.is_some() && is_whole_button(tree, child) {
+            (output.size.height > 0.0 && margin_top.is_finite() && margin_bottom.is_finite())
+                .then_some(())?;
+            let lines = layout_node(tree, child)
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .map(|lines| lines.lines.len());
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph::whole_box(
+                output.size.height,
+                margin_top,
+                margin_bottom,
+                lines,
+            )));
+            paragraph_count += 1;
+            continue;
+        }
         // A box that makes a formatting context of its own and holds one row
         // of lines has nowhere to break, so it goes whole to a column, with
         // what it holds. One that a column end could break inside is left to

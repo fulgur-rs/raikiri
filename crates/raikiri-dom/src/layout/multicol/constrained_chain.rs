@@ -289,6 +289,22 @@ pub(super) fn layout(
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut top = leaf_top;
+    // A button is monolithic: a column end never breaks between its lines,
+    // so it stays whole in its column, past the column end if it is taller.
+    if !extents.is_empty()
+        && chain
+            .iter()
+            .any(|&id| layout_node(tree, id).is_html_button())
+    {
+        pieces.push(Piece {
+            start,
+            end: extents.len(),
+            column: context.column_index,
+            top,
+            bottom: top + extents[extents.len() - 1].1 - extents[0].0,
+        });
+        start = extents.len();
+    }
     while start < extents.len() {
         let source_top = extents[start].0;
         let mut end = start
