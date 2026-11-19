@@ -1,4 +1,4 @@
-use super::box_tree::BoxTree;
+use super::box_tree::{BoxParentScope, BoxTree};
 use super::*;
 use crate::node::FormattingContext;
 use raikiri_layout_style::values::Position;
@@ -631,13 +631,8 @@ pub(crate) fn first_page_name_with_transposed_axes(
             continue;
         }
         match node.kind() {
-            NodeKind::Text => {
-                if let crate::node::NodeData::Text(text) = &node.data
-                    && !text.text_content.trim().is_empty()
-                {
-                    return None;
-                }
-            }
+            NodeKind::Text if text_is_page_content(boxes, cascade, child_id) => return None,
+            NodeKind::Text => {}
             NodeKind::Element => {
                 // An absolutely positioned box left at its static position
                 // keeps the page names of its in-flow descendants, so a named
@@ -1647,6 +1642,34 @@ fn propagated_start_page_name_with_order<'name>(
     )
 }
 
+/// Whether the text node `id` is content of the page flow: text other than
+/// white space, or white space that the style preserves, which lays out a
+/// line as Chromium prints it. White space between flex or grid items, or
+/// among table parts, lays out none. `boxes` gives the display of the parent
+/// box, so the check also holds before layout.
+pub(crate) fn text_is_page_content(boxes: BoxTree<'_>, cascade: &CascadeResult, id: usize) -> bool {
+    let document = boxes.document();
+    document.nodes[id].text_content().is_some_and(|text| {
+        !text.trim().is_empty()
+            || (super::ifc::text_lines::places_lines(cascade, id, text)
+                && !boxes
+                    .parent(id, BoxParentScope::Document)
+                    .and_then(|parent| boxes.display(parent))
+                    .is_some_and(|display| {
+                        display.is_flex_or_grid_container()
+                            || matches!(
+                                display,
+                                DisplayValue::Table
+                                    | DisplayValue::InlineTable
+                                    | DisplayValue::TableRowGroup
+                                    | DisplayValue::TableHeaderGroup
+                                    | DisplayValue::TableFooterGroup
+                                    | DisplayValue::TableRow
+                            )
+                    }))
+    })
+}
+
 /// The start page value of `node_id`. With `ignore_root_page_name`, the
 /// `page` value of `node_id` itself is not used, while its descendants' values
 /// still are.
@@ -1711,11 +1734,7 @@ fn start_page_name<'name>(
             continue;
         }
         if matches!(node.kind(), NodeKind::Text) {
-            let has_text = matches!(
-                &node.data,
-                crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
-            );
-            if has_text {
+            if text_is_page_content(boxes, cascade, node_id) {
                 return (true, inherited_page_name);
             }
             continue;

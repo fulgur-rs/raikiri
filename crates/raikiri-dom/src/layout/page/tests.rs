@@ -1723,3 +1723,26 @@ fn resolved_grid_row_ranges_are_discarded_when_order_or_tree_changes() {
         assert!(doc.nodes[grid].grid_item_row_starts.is_empty());
     }
 }
+
+#[test]
+fn first_page_name_skips_preserved_white_space_among_table_parts_before_layout() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // Before layout the nodes keep their default display, so the parent of
+    // the white space is read from the cascade: a table, where white space
+    // renders nothing, whatever the style.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("white-space:pre"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    doc.append_text(table, "\n");
+    let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display:table-cell;page:a"));
+    doc.append_text(cell, "A");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("table cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("a"));
+}

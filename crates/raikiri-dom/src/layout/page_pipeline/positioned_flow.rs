@@ -766,7 +766,7 @@ fn keep_run(
                             .unwrap_or_default()
                     })
                     .get(&item.node)
-                    .is_some_and(|&(anchor, _)| anchor >= line)
+                    .is_some_and(|&(anchor, ..)| anchor >= line)
             })
             .map(|item| item.node)
             .collect();

@@ -3474,8 +3474,14 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             };
             let node = &document.nodes[child];
-            if let crate::node::NodeData::Text(text) = &node.data {
-                if node.is_in_document() && !text.text_content.trim().is_empty() {
+            if node.kind() == NodeKind::Text {
+                if node.is_in_document()
+                    && super::page::text_is_page_content(
+                        BoxTree::for_layout(document),
+                        cascade,
+                        child,
+                    )
+                {
                     boxes.push(None);
                 }
             } else if node.kind() == NodeKind::Element
@@ -7421,7 +7427,7 @@ fn follow_moved_ifc_text(
 
 /// Whether `a` comes before `b` in tree order. An ancestor comes before its
 /// descendants.
-fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
+pub(crate) fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
     let a_chain: Vec<usize> = document.inclusive_ancestors(a).collect();
     let mut b_child = None;
     for id in document.inclusive_ancestors(b) {
@@ -10222,6 +10228,83 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
+/// Where the lines in the flow of the box `node_id` end, from the top of its
+/// border box, in normal-flow positions: its own last line, or the lowest end
+/// of the lines inside a box in its flow. A box that clips its overflow keeps
+/// them. `None` when the flow holds no lines.
+fn lines_end_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    if element_clips_overflow(document, cascade, node_id) {
+        return None;
+    }
+    if document.nodes[node_id].is_ifc_root() {
+        return content_bottom(document, node_id);
+    }
+    let mut end: Option<f32> = None;
+    let mut stack: Vec<usize> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(child) = stack.pop() {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element || node.is_display_none() {
+            continue;
+        }
+        // The children of a box without one of its own are in the flow
+        // that holds it.
+        if node.display() == DisplayValue::Contents {
+            stack.extend(node.children.iter().rev().copied());
+            continue;
+        }
+        let style = document.physical_style(child);
+        if style.float().is_floated() || style.position().is_out_of_flow() {
+            continue;
+        }
+        if let Some(child_end) = lines_end_in_flow(document, cascade, body_id, child) {
+            // A relative offset moves the box after the page breaks.
+            let top = pagination_child_parent_y(
+                document,
+                node_id,
+                child,
+                document.pagination_local_y(child),
+            ) - layout_relative_offset_y(document, cascade, body_id, child);
+            let child_end = top + child_end;
+            end = Some(end.map_or(child_end, |end: f32| end.max(child_end)));
+        }
+    }
+    end
+}
+
+/// Whether the lines of the box that the closing edges of the candidate follow
+/// (the box itself, or the last of the run it starts) run past the end of that
+/// box and of the page that holds it. Such a box breaks inside its
+/// overflowing content, as Chromium does: it stays on its page, and the
+/// padding and border that close the block around it go on to the next page
+/// alone (see [`closing_edges_move`]).
+fn lines_cross_page_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    let last = candidate
+        .context
+        .closing_edges_last_box()
+        .unwrap_or(candidate.node_id);
+    let box_end = fit.flow_y + candidate.height + candidate.context.closing_edges_span();
+    lines_end_in_flow(document, cascade, body_id, last).is_some_and(|end| {
+        let overflow = end - document.nodes[last].layout.size.height;
+        overflow > 0.001 && box_end + overflow > fit.page_end + 0.001
+    })
+}
+
 /// Whether the last box of a run of boxes tied by avoided breaks moves to the
 /// next page with the edges that close its block, the avoided break before it
 /// giving way.
@@ -11124,15 +11207,15 @@ fn ends_with_collapsed_empty_box(
 }
 
 /// Whether the block `node_id` of auto `height` and `max-height` has grown
-/// past its `min-height` with its content, so that its height follows that
-/// content as if it had none.
+/// to or past its `min-height` with its content, so that its height follows
+/// that content as if it had none.
 fn min_height_left_behind(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
     let block_axis = document.block_axis(node_id);
     let (min_height, _) = border_box_height_bounds(document, node_id);
     block_axis.height().is_auto()
         && block_axis.max_height().is_auto()
         && !document.nodes[node_id].size_containment.height
-        && document.nodes[node_id].layout.size.height > min_height + 0.001
+        && document.nodes[node_id].layout.size.height > min_height - 0.001
 }
 
 /// The block size of the margin between the last box in the flow of the
@@ -13817,6 +13900,26 @@ fn first_line_judged_height(
     }
 }
 
+/// Whether the border box of `block` ends where its content does: its height
+/// follows the content, or a `min-height` or `max-height` that the content
+/// passes or stays below does not set it. A `height` ends it elsewhere.
+pub(super) fn box_ends_at_content(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> bool {
+    if height_follows_content(document, block) {
+        return true;
+    }
+    if !document.block_axis(block).height().is_auto()
+        || document.nodes[block].size_containment.height
+    {
+        return false;
+    }
+    let (min, max) = border_box_height_bounds(document, block);
+    let height = document.nodes[block].layout.size.height;
+    height > min + 0.5 && height < max - 0.5
+}
+
 /// Whether the box of the paragraph `block_id` leaves the lines that pass its
 /// end to pagination: its height follows its lines, or it does not clip them.
 /// A box with a set height that clips its block-axis overflow hides the lines
@@ -13854,9 +13957,12 @@ fn lines_can_shift_inside(
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
-/// children can move down inside it: its height grows with them, it is in one
-/// column, and the only boxes it lays out are atomic inlines, floats, block
-/// children and out-of-flow boxes. The block children move with the lines
+/// children can move down inside it: no size containment ignores them, it is
+/// in one column, and the only boxes it lays out are atomic inlines, floats,
+/// block children and out-of-flow boxes. Its box grows with the moved lines
+/// as far as its height allows (see [`lines_shift_growth`]): as in Chromium,
+/// a `height`, `min-height` or `max-height` does not keep the lines in
+/// place, and lines past a set height overflow the box. The block children move with the lines
 /// before them (see [`blocks_after_line`]). An out-of-flow box is one that a block-axis
 /// inset places away from the lines or that follows them (see
 /// [`out_of_flow_follow`]). A float is a page candidate of its own, placed
@@ -13866,7 +13972,7 @@ fn lines_can_shift_between_blocks(
     cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
-    height_follows_content(document, block_id)
+    !document.nodes[block_id].size_containment.height
         && content_follows_block_children(document, cascade, block_id)
 }
 
@@ -14363,7 +14469,7 @@ fn follows_line_of_paragraph(
                     .oof_coordinates
                     .get(&block)
                     .is_some_and(|coordinate| coordinate.follow_static_y)
-                    && find_oof_anchor(document, lines, block).is_some_and(|(anchor, _)| anchor >= line)
+                    && find_oof_anchor(document, lines, block).is_some_and(|(anchor, ..)| anchor >= line)
         })
 }
 
@@ -16318,7 +16424,7 @@ fn out_of_flow_moves(
                                     .map(|lines| first_anchors(document, lines))
                                     .unwrap_or_default()
                             });
-                            let (line, _) = anchors.get(&b.node)?;
+                            let (line, ..) = anchors.get(&b.node)?;
                             (*line >= moved.line).then_some(moved.shift)?
                         }
                         OutOfFlowFollow::WithHeight => {

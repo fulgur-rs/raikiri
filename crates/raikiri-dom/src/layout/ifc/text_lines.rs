@@ -28,7 +28,8 @@ pub struct IfcTextLines {
     pub root: usize,
     /// Content width the lines were broken at.
     pub width: f32,
-    /// The lines the node has glyphs on, in paragraph order.
+    /// The lines the node has glyphs on, or preserved white space alone, in
+    /// paragraph order.
     pub lines: Vec<IfcTextLine>,
 }
 
@@ -75,6 +76,25 @@ fn glyph_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
     let mut owners = Vec::new();
     collect(line, &mut owners);
     owners
+}
+
+/// The text owners of `line`: the owners of its glyph runs, or, for a line
+/// with no glyph and no atomic inline, the text whose preserved line feed
+/// ends it. Such a line is the line of a preserved line feed alone, and it
+/// moves with that text. A `br` ends its line too, but it is no text.
+fn line_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
+    let owners = glyph_owners_counted::<COUNT>(line);
+    if !owners.is_empty()
+        || line
+            .fragments()
+            .any(|fragment| matches!(fragment, Fragment::Atomic(_)))
+    {
+        return owners;
+    }
+    line.forced_break()
+        .map(|forced| forced.node.0 as usize)
+        .into_iter()
+        .collect()
 }
 
 /// Whether `owner`, the node a glyph run comes from, is a text node of an ifc
@@ -150,13 +170,13 @@ pub(crate) fn single_unplaced_line(
     let [line] = lines.lines.as_slice() else {
         return None;
     };
-    let owners = glyph_owners(line);
-    if owners
+    if line_owners_counted::<false>(line)
         .iter()
         .any(|&owner| is_placing_text_owner(doc, cascade, owner))
     {
         return None;
     }
+    let owners = glyph_owners(line);
     // The ids of generated text name no node of the document.
     let has_generated_text = owners.iter().any(|&owner| doc.nodes.get(owner).is_none());
     let atomic = !has_generated_text
@@ -182,7 +202,8 @@ pub(crate) fn single_unplaced_line(
     })
 }
 
-/// The lines `node` has a glyph run on. A line is owned by every text node
+/// The lines `node` has a glyph run on, and the lines of its preserved white
+/// space (see [`line_owners_counted`]). A line is owned by every text node
 /// one of its glyph runs comes from, so a line shared by two text nodes
 /// belongs to both, and a line of atomic boxes only belongs to none.
 pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
@@ -210,7 +231,7 @@ fn lines_of_counted<const COUNT: bool>(doc: &Document, node: usize) -> Option<If
             if COUNT {
                 crate::continuation_diagnostics::text_line_visit();
             }
-            glyph_owners_counted::<COUNT>(line).contains(&node)
+            line_owners_counted::<COUNT>(line).contains(&node)
         })
         .map(|(index, line)| {
             let top = lines.line_top(index);
@@ -276,7 +297,7 @@ impl Document {
             if COUNT {
                 crate::continuation_diagnostics::text_line_visit();
             }
-            for owner in glyph_owners_counted::<COUNT>(line) {
+            for owner in line_owners_counted::<COUNT>(line) {
                 check()?;
                 if !is_text_line_owner(self, owner) {
                     continue;
