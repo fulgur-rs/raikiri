@@ -901,14 +901,13 @@ fn run_boxes_segment(
     let mut oof_candidates = OofCandidates::new();
     // The floats kept for the lines that the paragraph's inline-level
     // out-of-flow boxes may sit on alone.
-    let mut float_views =
-        if root.writing_mode == WritingMode::HorizontalTb && fragmentainer.is_none() {
-            FloatSnapshots::new(&root.boxes, |node| {
-                tree.nodes[node].display().is_inline_level()
-            })
-        } else {
-            None
-        };
+    let mut float_views = if fragmentainer.is_none() {
+        FloatSnapshots::new(&root.boxes, |node| {
+            tree.nodes[node].display().is_inline_level()
+        })
+    } else {
+        None
+    };
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
@@ -5291,9 +5290,12 @@ fn leading_static_offset(lines: &IfcLines) -> (f32, Option<usize>) {
 /// inline-start edge of the content box, and extends the way the text around
 /// it reads: downwards for left-to-right text and upwards for right-to-left
 /// text (`anchor.1`), but the other way round in `sideways-lr`, which lays
-/// the lines out upwards. Any other box starts on the inline-start edge of the
-/// content box. The inline direction is reversed, so that its start is the
-/// bottom edge, by `direction: rtl` or by `sideways-lr`.
+/// the lines out upwards. One without an anchor that sits on a line of its
+/// own lies at `own_line.0` from the line-left edge of that line, the top
+/// edge, or the bottom one in `sideways-lr`, with its edge `own_line.1` there.
+/// Any other box starts on the inline-start edge of the content box. The
+/// inline direction is reversed, so that its start is the bottom edge, by
+/// `direction: rtl` or by `sideways-lr`.
 fn vertical_static_position(
     writing_mode: WritingMode,
     rtl: bool,
@@ -5333,9 +5335,12 @@ fn vertical_static_position(
         // or the bottom in `sideways-lr` (CSS Writing Modes 4 §6.4).
         None => match own_line {
             Some((at, edge)) if writing_mode == WritingMode::SidewaysLr => {
-                let flipped = match edge {
-                    AxisStaticEdge::End => AxisStaticEdge::Start,
-                    _ => AxisStaticEdge::End,
+                // The line gives the box its start or its end edge, never
+                // its center.
+                let flipped = if edge == AxisStaticEdge::End {
+                    AxisStaticEdge::Start
+                } else {
+                    AxisStaticEdge::End
                 };
                 AxisStaticPosition::from_edge(content_top + inline_extent - at, flipped)
             }
@@ -5879,8 +5884,9 @@ struct BoxSurroundings {
     boundary: Option<usize>,
 }
 
-/// The lines, missing from the lines of a horizontal paragraph, that its
-/// inline-level out-of-flow boxes without an anchor sit on.
+/// The lines, missing from the lines of a paragraph, that its inline-level
+/// out-of-flow boxes without an anchor sit on. They are measured along the
+/// line from its line-left edge, in every writing mode.
 struct HypotheticalLines<'a> {
     lines: &'a IfcLines,
     options: LineOptions,
@@ -5943,8 +5949,9 @@ impl<'a> HypotheticalLines<'a> {
 
     /// Where the static position of the box `node` lies along its line,
     /// `block_offset` from the content box's block-start edge and after the
-    /// line `preceding` (see [`static_block_offset`]): from the content box's
-    /// left edge, with the edge of the box that goes there.
+    /// line `preceding` (see [`static_block_offset`]): from the line-left edge
+    /// of the content box, the left one in a horizontal paragraph, with the
+    /// edge of the box that goes there.
     ///
     /// Chromium lays out two kinds of such a line. When the box follows a
     /// forced line break, or sits in an inline box, the line holds something

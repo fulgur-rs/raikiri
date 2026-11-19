@@ -1005,7 +1005,7 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
 
 /// The same lines in vertical writing modes, inside 20px of padding: the
 /// line runs along the y axis, from its line-left edge at the top, or at the
-/// bottom in `sideways-lr`.
+/// bottom in `sideways-lr`, and is set in by the floats beside it.
 const VERTICAL_CASES: &[(&str, &str, [f32; 4])] = &[
     (
         "vertical-rl ltr center between blocks",
@@ -1146,6 +1146,36 @@ const VERTICAL_CASES: &[(&str, &str, [f32; 4])] = &[
         "sideways-lr rtl center with an indent",
         "<div style='padding-top:20px'><div style='writing-mode:sideways-lr;direction:rtl;text-align:center;text-indent:7px;height:100px'><span id=q style='position:absolute'>Q</span><p style='margin:0;width:20px'>B</p>T</div></div>",
         [0.0, 77.0, 10.0, 17.0],
+    ),
+    (
+        "vertical-rl ltr center after a block, before a float, below a float left",
+        "<div style='padding-top:20px'><div style='writing-mode:vertical-rl;direction:ltr;text-align:center;height:100px'><span style='float:left;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><span style='float:left;width:5px;height:5px'></span>T</div></div>",
+        [30.0, 85.0, 10.0, 10.0],
+    ),
+    (
+        "vertical-rl ltr center after a block, before a float, below a float right",
+        "<div style='padding-top:20px'><div style='writing-mode:vertical-rl;direction:ltr;text-align:center;height:100px'><span style='float:right;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><span style='float:left;width:5px;height:5px'></span>T</div></div>",
+        [30.0, 55.0, 10.0, 10.0],
+    ),
+    (
+        "vertical-rl ltr left between blocks, beside a float right",
+        "<div style='padding-top:20px'><div style='writing-mode:vertical-rl;direction:ltr;text-align:left;height:100px'><span style='float:right;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><p style='margin:0;width:20px'>B</p>T</div></div>",
+        [30.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "vertical-lr rtl right after a block, before a float, below a float left",
+        "<div style='padding-top:20px'><div style='writing-mode:vertical-lr;direction:rtl;text-align:right;height:100px'><span style='float:left;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><span style='float:left;width:5px;height:5px'></span>T</div></div>",
+        [20.0, 110.0, 10.0, 10.0],
+    ),
+    (
+        "sideways-lr ltr center after a block, before a float, below a float left",
+        "<div style='padding-top:20px'><div style='writing-mode:sideways-lr;direction:ltr;text-align:center;height:100px'><span style='float:left;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><span style='float:left;width:5px;height:5px'></span>T</div></div>",
+        [20.0, 45.0, 10.0, 10.0],
+    ),
+    (
+        "sideways-lr rtl right between blocks, beside a float right",
+        "<div style='padding-top:20px'><div style='writing-mode:sideways-lr;direction:rtl;text-align:right;height:100px'><span style='float:right;width:60px;height:30px'></span><p style='margin:0;width:20px'>A</p><span id=q style='position:absolute'>Q</span><p style='margin:0;width:20px'>B</p>T</div></div>",
+        [20.0, 50.0, 10.0, 10.0],
     ),
 ];
 
