@@ -230,3 +230,14 @@ fn a_page_value_on_an_empty_box_in_columns_changes_nothing() {
         );
     }
 }
+
+/// `column-span: all` outside a multicol container spans nothing, and its
+/// page value breaks the page as any other box's does.
+#[test]
+fn a_page_value_on_column_span_outside_columns_breaks_the_page() {
+    check(
+        "<div id=a style='column-span:all;break-after:page'>A</div><div id=b>B</div>",
+        2,
+        &[("a", 0, 0.0, 0.0), ("b", 1, 0.0, 0.0)],
+    );
+}

@@ -3807,7 +3807,12 @@ fn page_break_after_is_forced(document: &Document, node_id: usize, value: BreakB
     if !page_break_is_forced(document, node_id, value) {
         return false;
     }
-    if !document.nodes[node_id].column_span_all {
+    // `column-span: all` outside a multicol container spans nothing.
+    if !document.nodes[node_id].column_span_all
+        || !document
+            .layout_ancestors(node_id)
+            .any(|id| document.nodes[id].multicol.is_some())
+    {
         return true;
     }
     // Source order: column text after a spanner in an inline formatting
