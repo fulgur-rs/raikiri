@@ -1655,29 +1655,18 @@ pub(crate) fn text_is_page_content(
         !text.trim().is_empty()
             || (super::ifc::text_lines::places_lines(cascade, id, text)
                 && !super::page_pipeline::in_flex_or_grid_container(document, id)
-                && !in_table_part(document, id))
-    })
-}
-
-/// Whether the parent box of `id`, looking through `display: contents`, is a
-/// table, row group or row, among which white space renders nothing.
-fn in_table_part(document: &Document, id: usize) -> bool {
-    let mut parent = document.parent_of(id);
-    while let Some(node) =
-        parent.filter(|&node| document.nodes[node].display() == DisplayValue::Contents)
-    {
-        parent = document.parent_of(node);
-    }
-    parent.is_some_and(|node| {
-        matches!(
-            document.nodes[node].display(),
-            DisplayValue::Table
-                | DisplayValue::InlineTable
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableRow
-        )
+                && !super::page_pipeline::parent_box_is(document, id, |display| {
+                    // White space among table parts renders nothing.
+                    matches!(
+                        display,
+                        DisplayValue::Table
+                            | DisplayValue::InlineTable
+                            | DisplayValue::TableRowGroup
+                            | DisplayValue::TableHeaderGroup
+                            | DisplayValue::TableFooterGroup
+                            | DisplayValue::TableRow
+                    )
+                }))
     })
 }
 

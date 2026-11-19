@@ -22,7 +22,7 @@ mod page_start;
 mod pagination_state;
 mod positioned_flow;
 mod sibling_adjacency;
-pub(crate) use sibling_adjacency::in_flex_or_grid_container;
+pub(crate) use sibling_adjacency::{in_flex_or_grid_container, parent_box_is};
 mod sibling_shifts;
 mod source_walk;
 mod table_cell_fragments;
