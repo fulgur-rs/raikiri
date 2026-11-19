@@ -13861,12 +13861,36 @@ fn block_after_lines(document: &Document, root: usize, end: usize) -> Option<(us
         .block_line_starts
         .iter()
         .find(|&&(_, after)| after == end)?;
-    let in_inline_box = std::iter::successors(document.nodes[block].parent, |&id| {
+    Some((block, in_inline_box(document, root, block)))
+}
+
+/// Whether the block `block` of the paragraph `root` sits inside an inline
+/// box of the paragraph, in the tree of elements.
+fn in_inline_box(document: &Document, root: usize, block: usize) -> bool {
+    std::iter::successors(document.nodes[block].parent, |&id| {
         document.nodes[id].parent
     })
     .take_while(|&ancestor| ancestor != root)
-    .any(|ancestor| document.nodes[ancestor].display().is_inline_level());
-    Some((block, in_inline_box))
+    .any(|ancestor| document.nodes[ancestor].display().is_inline_level())
+}
+
+/// The blocks laid out among the lines of the paragraph `root`, once each
+/// and in order, each with the index of the line after it and whether it
+/// sits inside an inline box of the paragraph.
+fn paragraph_blocks(document: &Document, root: usize) -> Vec<(usize, usize, bool)> {
+    let Some(lines) = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref()?.lines.as_ref())
+    else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    lines
+        .block_line_starts
+        .iter()
+        .filter(|&&(block, _)| seen.insert(block))
+        .map(|&(block, after)| (block, after, in_inline_box(document, root, block)))
+        .collect()
 }
 
 /// The lines of the paragraph `root` before its run of lines from `start`
@@ -13876,10 +13900,12 @@ fn block_after_lines(document: &Document, root: usize, end: usize) -> Option<(us
 /// inside an inline box and the run's first line does not start the page,
 /// Chromium counts each block of the paragraph inside an inline box as one
 /// line (see [`inline_block_after_lines`]), and every line of the paragraph
-/// on the page before the run counts too; a block that goes on from the
-/// page before counts as a line from the top of the page. A block's line
-/// ends where the line after it starts. `bounds` holds every line of the
-/// paragraph, offset by `y`.
+/// on the page before the run counts too, back to a block straight in the
+/// paragraph, which ends the lines before it; a block that goes on from
+/// the page before counts as a line there too, and keeps its top above
+/// the page. Blocks end where the line after them starts, one above the
+/// other. `bounds` holds
+/// every line of the paragraph, offset by `y`.
 fn inline_lines_before_run(
     document: &Document,
     root: usize,
@@ -13888,36 +13914,42 @@ fn inline_lines_before_run(
     y: f32,
     page_start: f32,
 ) -> Vec<(f32, f32)> {
-    let Some(lines) = inline_block_after_lines(document, root, start)
-        .and_then(|_| document.ifc_layout_node(root)?.ifc.as_ref()?.lines.as_ref())
-        .filter(|_| {
-            bounds
-                .get(start)
-                .is_some_and(|&(top, _)| y + top > page_start + 0.5)
-        })
-    else {
+    if inline_block_after_lines(document, root, start).is_none()
+        || bounds
+            .get(start)
+            .is_none_or(|&(top, _)| y + top <= page_start + 0.5)
+    {
         return Vec::new();
-    };
+    }
     let page_top = page_start - y;
-    let blocks = lines
-        .block_line_starts
-        .iter()
-        .map(|&(_, after)| after)
-        .filter(|&after| after <= start)
-        .filter_map(|after| {
-            let block = inline_block_after_lines(document, root, after)?;
-            let bottom = bounds.get(after)?.0;
-            Some((bottom - document.nodes[block].layout.size.height, bottom))
-        });
-    let mut ahead: Vec<(f32, f32)> = bounds
-        .get(..start)
-        .unwrap_or_default()
-        .iter()
-        .copied()
-        .chain(blocks)
-        .filter(|&(_, bottom)| bottom > page_top + 0.5)
-        .map(|(top, bottom)| (top.max(page_top), bottom))
+    let blocks: Vec<_> = paragraph_blocks(document, root)
+        .into_iter()
+        .filter(|&(_, after, _)| after <= start)
         .collect();
+    // A block straight in the paragraph ends the lines before it.
+    let first = blocks
+        .iter()
+        .filter(|&&(_, _, inline)| !inline)
+        .map(|&(_, after, _)| after)
+        .max()
+        .unwrap_or(0);
+    let mut ahead: Vec<(f32, f32)> = bounds.get(first..start).unwrap_or_default().to_vec();
+    let mut bottom = None;
+    for &(block, after, inline) in blocks.iter().rev() {
+        if !inline || after < first {
+            break;
+        }
+        let Some(&(next_top, _)) = bounds.get(after) else {
+            continue;
+        };
+        let end = bottom
+            .filter(|&(line, _)| line == after)
+            .map_or(next_top, |(_, top)| top);
+        let top = end - document.nodes[block].layout.size.height;
+        ahead.push((top, end));
+        bottom = Some((after, top));
+    }
+    ahead.retain(|&(_, bottom)| bottom > page_top + 0.5);
     ahead.sort_by(|a, b| a.0.total_cmp(&b.0));
     ahead
 }

@@ -387,3 +387,81 @@ fn every_block_inside_an_inline_box_is_a_line_of_the_paragraph() {
         ),
     ]);
 }
+
+#[test]
+fn every_block_and_line_of_the_paragraph_on_the_page_is_an_orphan() {
+    assert_places(&[
+        // The line and the block before the run count with it.
+        (
+            paragraph(0, "orphans:1;widows:2", &two_blocks(1, 10, 1, 10, 1)),
+            [(1, 5.0), (1, 45.0)],
+        ),
+        (
+            paragraph(0, "orphans:1;widows:3", &two_blocks(1, 10, 1, 10, 1)),
+            [(1, 35.0), (1, 75.0)],
+        ),
+        // Blocks next to each other are a line each.
+        (
+            paragraph(
+                50,
+                "orphans:1;widows:2",
+                &format!(
+                    "<span>A<div style=\"height:40px\"><span>Q</span></div>{}C<br>C</span>",
+                    block(10)
+                ),
+            ),
+            [(1, 45.0), (2, 65.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_block_straight_in_the_paragraph_ends_the_lines_around_it() {
+    assert_places(&[
+        (
+            paragraph(
+                0,
+                "orphans:1;widows:2",
+                &format!("X<br>X<div>P</div>A<span>{}C<br>C</span>", block(20)),
+            ),
+            [(1, 35.0), (2, 65.0)],
+        ),
+        (
+            paragraph(
+                30,
+                "orphans:1;widows:2",
+                &format!("<span>A{}C</span><div>P</div>X", block(20)),
+            ),
+            [(1, 5.0), (2, 35.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_block_that_opens_the_paragraph_opens_it_on_its_page() {
+    let content = |height| format!("<span>{}C<br>C<br>C</span>", block(height));
+    assert_places(&[
+        (
+            paragraph(0, "orphans:1;widows:3", &content(40)),
+            [(0, 5.0), (2, 5.0)],
+        ),
+        // A block that goes on from the page before keeps the line after
+        // it on its page.
+        (
+            paragraph(70, "orphans:1;widows:3", &content(80)),
+            [(0, 75.0), (2, 65.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn the_padding_below_breaks_among_the_lines_after_the_block() {
+    assert_places(&[(
+        paragraph(
+            0,
+            "orphans:1;widows:2;padding-bottom:30px",
+            &around(1, 20, 2),
+        ),
+        [(0, 35.0), (2, 5.0)],
+    )]);
+}

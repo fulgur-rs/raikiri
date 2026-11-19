@@ -3881,7 +3881,13 @@ impl PaginationState {
             // before that block on the page, are lines before the break
             // too: they stand ahead of the run for the fit, and only the
             // run's own lines move.
-            // The paragraph opens on the page when its first line does.
+            // The paragraph opens on the page when its first line does, with
+            // the blocks that come before that line.
+            let leading: f32 = super::paragraph_blocks(document, root)
+                .iter()
+                .filter(|&&(_, after, _)| after == 0)
+                .map(|&(block, _, _)| document.nodes[block].layout.size.height)
+                .sum();
             let (ahead, opens_on_page) = paragraph_line_bounds(document, node_id, text_lines)
                 .map(|bounds| {
                     (
@@ -3893,13 +3899,21 @@ impl PaginationState {
                             text.effective_y,
                             page_start,
                         ),
-                        bounds[0].0 + text.effective_y >= page_start - 0.001,
+                        bounds[0].0 - leading + text.effective_y >= page_start - 0.001,
                     )
                 })
                 .unwrap_or_default();
             let lines_before = ahead.len();
-            let fit_metrics: Vec<(f32, f32)> =
-                ahead.into_iter().chain(metrics.iter().copied()).collect();
+            // Only blocks that go on from the page before are ahead of the
+            // run: Chromium leaves the run's first line with them.
+            let page_top = page_start - text.effective_y;
+            let only_continued_blocks =
+                lines_before > 0 && ahead.iter().all(|&(top, _)| top < page_top - 0.5);
+            let fit_metrics: Vec<(f32, f32)> = ahead
+                .into_iter()
+                .map(|(top, bottom)| (top.max(page_top), bottom))
+                .chain(metrics.iter().copied())
+                .collect();
             let mut fit = ParagraphLineFit::measure(
                 &fit_metrics,
                 text.effective_y,
@@ -3929,9 +3943,11 @@ impl PaginationState {
             // block that holds them has a break before the lines, between
             // them and the box above, and Chromium takes that one instead.
             // Judged once more from the next page, the lines break there
-            // inside as the edges ask when they still do not fit.
-            let edges_leave_too_few_lines =
-                fit.edges_leave_too_few_lines() && run_top > page_start + 0.001;
+            // inside as the edges ask when they still do not fit. With lines
+            // ahead of the run, that break is one between lines too.
+            let edges_leave_too_few_lines = fit.edges_leave_too_few_lines()
+                && run_top > page_start + 0.001
+                && lines_before == 0;
             let fix = if edges_leave_too_few_lines {
                 LineBreakFix::MoveBlock
             } else if lines_before > 0 && fit.leaves_too_few_orphans() {
@@ -3966,7 +3982,9 @@ impl PaginationState {
             // the natural break is kept without it.
             let fix = match fix {
                 LineBreakFix::MoveLines(moves)
-                    if moves.iter().any(|&(line, _, _)| line < lines_before) =>
+                    if moves.iter().any(|&(line, _, _)| {
+                        line < lines_before || (only_continued_blocks && line == lines_before)
+                    }) =>
                 {
                     LineBreakFix::Keep
                 }
@@ -4346,42 +4364,51 @@ impl PaginationState {
         } = run;
         let page_start = page_origins.origin(page);
         let page_end = page_start + page_origins.step_at(page);
+        let y = text.effective_y;
+        let Some(bounds) = paragraph_line_bounds(document, candidate.node_id, text_lines) else {
+            return Ok(());
+        };
+        let total = bounds.len();
+        let paragraph_blocks = super::paragraph_blocks(document, root);
+        // The blocks inside inline boxes between the run and the lines
+        // after it, each one line.
+        let here = paragraph_blocks
+            .iter()
+            .filter(|&&(_, after, inline)| inline && after == lines.end)
+            .count()
+            .max(1);
         // The lines up to the next block, and how many lines of the
-        // paragraph come after them, the later blocks inside inline boxes
-        // among them.
-        let Some((next, later)) = document
-            .ifc_layout_node(root)
-            .and_then(|node| node.ifc.as_ref())
-            .and_then(|ifc| ifc.lines.as_ref())
-            .map(|ifc_lines| {
-                let total = ifc_lines.lines.len();
-                let later_blocks: Vec<usize> = ifc_lines
-                    .block_line_starts
-                    .iter()
-                    .map(|&(_, after)| after)
-                    .filter(|&after| after > lines.end)
-                    .collect();
-                let next_end = later_blocks.iter().copied().min().unwrap_or(total);
-                let later = total - next_end
-                    + later_blocks
-                        .iter()
-                        .filter(|&&after| {
-                            super::inline_block_after_lines(document, root, after).is_some()
-                        })
-                        .count();
-                (lines.end..next_end, later)
-            })
-            .and_then(|(next, later)| {
-                let next = paragraph_line_bounds(document, candidate.node_id, text_lines)?
-                    .get(next)?
-                    .to_vec();
-                Some((next, later))
-            })
-            .filter(|(next, _)| !next.is_empty())
+        // paragraph come after them, up to a block straight in the
+        // paragraph: the later blocks inside inline boxes count among them.
+        let next_end = paragraph_blocks
+            .iter()
+            .map(|&(_, after, _)| after)
+            .filter(|&after| after > lines.end)
+            .min()
+            .unwrap_or(total);
+        let mut later = 0;
+        let mut last_line = total;
+        for &(_, after, inline) in paragraph_blocks
+            .iter()
+            .filter(|&&(_, after, _)| after > lines.end)
+        {
+            if !inline {
+                last_line = after;
+                break;
+            }
+            later += 1;
+        }
+        later += last_line.saturating_sub(next_end);
+        let Some(next) = bounds
+            .get(lines.end..next_end)
+            .filter(|next| !next.is_empty())
         else {
             return Ok(());
         };
-        let y = text.effective_y;
+        // The lines and blocks of the paragraph on the page before the run.
+        let ahead =
+            super::inline_lines_before_run(document, root, lines.start, &bounds, y, page_start)
+                .len();
         let Some(broken) = next
             .iter()
             .position(|&(_, bottom)| y + bottom > page_end + 0.001)
@@ -4392,7 +4419,8 @@ impl PaginationState {
             .iter()
             .position(|&(top, _)| y + top >= page_start - 0.001)
             .unwrap_or(metrics.len());
-        let before = metrics.len() - first_on_page + 1 + broken;
+        let on_page = metrics.len() - first_on_page;
+        let before = ahead + on_page + here + broken;
         let after = next.len() - broken + later;
         let orphans = cascade.computed[root].orphans.max(1) as usize;
         let widows = cascade.computed[root].widows.max(1) as usize;
@@ -4414,19 +4442,23 @@ impl PaginationState {
             .chain(next.iter().map(|&(top, _)| y + top))
             .collect();
         let first_widow = tops.len() - widows.min(tops.len());
-        let widows_fit =
-            y + next[next.len() - 1].1 - tops[first_widow] <= page_origins.step_at(page) + 0.001;
+        let next_page = page.saturating_add(1);
+        let widows_fit = y + next[next.len() - 1].1 - tops[first_widow]
+            <= page_origins.step_at(next_page) + 0.001;
         let pulled = widows
             .saturating_sub(after)
             .min(before - orphans)
             .min(if widows_fit { usize::MAX } else { 0 });
-        // The lines after the block are the first to go.
-        let Some(beyond) = pulled.checked_sub(broken).filter(|&beyond| beyond > 0) else {
+        // The lines after the block are the first to go, then the blocks,
+        // then the run's lines on the page; the lines ahead of the run stay.
+        let Some(beyond) = pulled
+            .checked_sub(broken)
+            .filter(|&beyond| beyond > 0 && beyond <= here + on_page)
+        else {
             return Ok(());
         };
-        let next_page = page.saturating_add(1);
         reach_page(env.control, next_page)?;
-        if beyond == 1 {
+        if beyond <= here {
             // The block goes with the lines after it.
             self.move_run_lines(
                 document,
@@ -4443,7 +4475,7 @@ impl PaginationState {
                 true,
             );
         } else {
-            let line = metrics.len() - (beyond - 1);
+            let line = metrics.len() - (beyond - here);
             self.move_run_lines(
                 document,
                 env,
