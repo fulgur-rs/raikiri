@@ -3840,20 +3840,15 @@ fn at_table_cell_edge(
     }
     let mut id = node_id;
     loop {
-        let Some(mut parent) = document.parent_of(id) else {
+        let parent = document.ancestors(id).find(|&ancestor| {
+            document.nodes[ancestor].display() != DisplayValue::Contents
+                || document.nodes[ancestor].has_before_or_after_content
+        });
+        let Some(parent) = parent.filter(|&parent| {
+            page_edge_child(document, cascade, parent, before, 0) == Ok(Some(id))
+        }) else {
             return false;
         };
-        while document.nodes[parent].display() == DisplayValue::Contents
-            && !document.nodes[parent].has_before_or_after_content
-        {
-            let Some(next) = document.parent_of(parent) else {
-                return false;
-            };
-            parent = next;
-        }
-        if page_edge_child(document, cascade, parent, before, 0) != Ok(Some(id)) {
-            return false;
-        }
         if document.nodes[parent].display() == DisplayValue::TableCell {
             return !document.nodes[parent].has_before_or_after_content
                 && document
