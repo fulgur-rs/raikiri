@@ -1588,12 +1588,20 @@ impl PaginationState {
         // A forced break in the block left its height where the layout put
         // it: the pass after pagination grows it to its content, which would
         // end the edges back on this page. The block reaches below the gap.
-        let edges_end = end + gap + super::edges_below(document, node_id);
-        let flow_top = current_abs_y(document, node_id)
-            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let (_, max_height) = border_box_height_bounds(document, node_id);
+        // That catch-up is content the flow already followed, not growth of
+        // the edges. In a flex or grid item the item's own growth decides
+        // how the container grows, so it keeps to the gap there.
         let grown = document.nodes[node_id].layout.size.height + gap;
-        let height = grown.max((edges_end - flow_top).min(max_height));
+        let height = if beside.is_none() {
+            let edges_end = end + gap + super::edges_below(document, node_id);
+            let flow_top = current_abs_y(document, node_id)
+                - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+            let (_, max_height) = border_box_height_bounds(document, node_id);
+            grown.max((edges_end - flow_top).min(max_height))
+        } else {
+            grown
+        };
+        let caught_up = height - grown;
         document.nodes[node_id].layout.size.height = height;
         document.mark_pagination_extent_dirty(node_id);
         if let Some((container, item, before)) = beside {
@@ -1643,7 +1651,8 @@ impl PaginationState {
         // Bounds and float extents can absorb part of the gap. Record each
         // box's actual growth rather than subtracting the raw gap everywhere.
         for (owner, height) in heights {
-            let growth = document.nodes[owner].layout.size.height - height;
+            let caught_up = if owner == node_id { caught_up } else { 0.0 };
+            let growth = document.nodes[owner].layout.size.height - height - caught_up;
             if growth > 0.001 {
                 *self.edge_growth.entry(owner).or_default() += growth;
             }

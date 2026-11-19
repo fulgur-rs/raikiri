@@ -65,7 +65,7 @@ fn assert_places(cases: &[(String, (usize, f32))]) {
         .iter()
         .filter_map(|(body, expected)| {
             let (page, y) = place_of_z(body);
-            (page != expected.0 || (y - expected.1).abs() >= 0.01)
+            (page != expected.0 || !((y - expected.1).abs() < 0.01))
                 .then(|| format!("{body}: #z expected {expected:?}, got ({page}, {y})"))
         })
         .collect();
@@ -117,6 +117,17 @@ fn the_flow_after_a_flow_root_follows_the_floats_a_forced_break_moved() {
         ),
         (
             case(PADDED, &format!("{BOX}{}", float("left", "height:20px"))),
+            (1, 50.0),
+        ),
+        // A relative offset moves where the float paints, not the flow.
+        (
+            case(
+                PADDED,
+                &format!(
+                    "{BOX}{}",
+                    float("left", "height:20px;position:relative;top:40px")
+                ),
+            ),
             (1, 50.0),
         ),
         // Its bottom margin, a float inside a block of the same context and
@@ -205,7 +216,12 @@ fn bottom_edges_that_a_forced_break_left_short_of_a_page_end_move_whole() {
     ] {
         let w = body.replacen("<div style=", "<div id=w style=", 1);
         let last = fragments_of(&w, "w").last().copied();
-        assert_eq!(last, Some((3, 0.0, 15.0)), "{w}");
-        assert_eq!(place_of_z(&w), (3, 20.0), "{w}");
+        assert!(
+            last.is_some_and(|(page, top, bottom)| page == 3
+                && top.abs() < 0.01
+                && (bottom - 15.0).abs() < 0.01),
+            "{w}: last fragment of #w {last:?}"
+        );
+        assert_places(&[(w.clone(), (3, 20.0))]);
     }
 }

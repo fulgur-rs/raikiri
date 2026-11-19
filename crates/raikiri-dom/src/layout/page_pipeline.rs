@@ -19876,11 +19876,17 @@ fn held_float_end(
         let top =
             pagination_child_parent_y(document, block, child, document.pagination_local_y(child));
         if is_floating_box_for_pagination(document, cascade, child) {
+            // A relative offset moves where the float paints, not where it
+            // ends in the flow.
+            let float_end = top - layout_relative_offset_y(document, cascade, body_id, child)
+                + node.layout.size.height
+                + node.layout.margin.bottom;
             if matches!(
                 cascade.computed[child].float,
                 FloatValue::Left | FloatValue::Right
-            ) {
-                end = end.max(top + node.layout.size.height + node.layout.margin.bottom);
+            ) && float_end.is_finite()
+            {
+                end = end.max(float_end);
             }
             continue;
         }
