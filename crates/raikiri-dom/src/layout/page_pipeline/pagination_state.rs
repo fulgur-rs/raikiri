@@ -2487,8 +2487,17 @@ impl PaginationState {
             self.flow_reach(document, env, node_id, natural_y),
             forced_transition,
         );
-        let mut target_page = forced_target_page(self.current_page, natural_page);
-        if !forced_transition {
+        // A row beside a cell that spans it can start above the page that the
+        // spanning cell's content took the flow to (see
+        // `spanned_row_restarts`): it moves down to the top of that page.
+        let restarts_on_flow_page = overflow.table_row
+            && position.effective_y - relative_offset < page_origins.origin(fit_page) - 0.001;
+        let mut target_page = if restarts_on_flow_page {
+            fit_page
+        } else {
+            forced_target_page(self.current_page, natural_page)
+        };
+        if !forced_transition && !restarts_on_flow_page {
             // A box that moves because it would cross a page edge goes to the
             // page after the one it lies on.
             target_page = target_page.max(fit_page.saturating_add(1));

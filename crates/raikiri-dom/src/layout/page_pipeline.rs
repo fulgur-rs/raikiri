@@ -6317,7 +6317,8 @@ impl AvoidedBreaks {
                         page_start,
                         page_end,
                         next_page_step,
-                    )));
+                    ))
+                || spanned_row_restarts(document, cascade, node_id, flow_y, height, page_start));
         let row_group_lead = row_group
             .filter(|&(end, _)| {
                 (item_tail && tail_fits)
@@ -9014,6 +9015,97 @@ fn table_row_moves(
 ) -> bool {
     needed <= next_page_step + 0.001
         && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end)
+}
+
+/// Whether the table row `row`, of `height` at `flow_y`, starts on the page
+/// before the one that starts at `page_start`, beside a cell of an earlier
+/// row that spans it, and moves to that page whole because a cell of its own
+/// breaks before any of its content there. Chromium then starts the row's
+/// own cells at the top of the next page and keeps the row's height, while
+/// the spanning cell goes on from where it broke. The flow reaches a row
+/// beside a spanning cell only after that cell's content, which may have
+/// taken it to the next page already.
+fn spanned_row_restarts(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    flow_y: f32,
+    height: f32,
+    page_start: f32,
+) -> bool {
+    if document.context.pagination_on_transposed_axes
+        || flow_y >= page_start - 0.001
+        || flow_y + height <= page_start + 0.001
+    {
+        return false;
+    }
+    let Some(table) = document.ancestors(row).find(|&id| {
+        matches!(
+            document.nodes[id].display(),
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+    }) else {
+        return false;
+    };
+    if !super::table::row_moves::has_row_spanning_cell(document, table) {
+        return false;
+    }
+    let cells = &document.nodes[row].children;
+    let row_top = cells
+        .iter()
+        .map(|&cell| document.nodes[cell].layout.location.y)
+        .fold(f32::INFINITY, f32::min);
+    cells.iter().any(|&cell| {
+        document.nodes[cell].display() == DisplayValue::TableCell
+            && !super::table::row_moves::spans_rows(document, cell)
+            && first_content_breaks_before(
+                document,
+                cascade,
+                cell,
+                flow_y + document.nodes[cell].layout.location.y - row_top,
+                page_start,
+            )
+    })
+}
+
+/// Whether the first content in flow of `block`, whose border box starts at
+/// `top`, is a box that no break goes through, as it avoids one or is
+/// unbreakable, and that runs past `page_end`: nothing of the block's content
+/// goes before the break.
+fn first_content_breaks_before(
+    document: &Document,
+    cascade: &CascadeResult,
+    block: usize,
+    top: f32,
+    page_end: f32,
+) -> bool {
+    let first = document.nodes[block]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| {
+            let node = &document.nodes[child];
+            !node.is_display_none()
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && !is_floating_box_for_pagination(document, cascade, child)
+        });
+    let Some(first) = first else {
+        return false;
+    };
+    let node = &document.nodes[first];
+    if node.kind() != NodeKind::Element || node.display().is_inline_level() {
+        return false;
+    }
+    let top = top + node.layout.location.y;
+    if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
+        || box_is_unbreakable(document, cascade, first, false)
+    {
+        return top < page_end && top + node.layout.size.height > page_end + 0.001;
+    }
+    first_content_breaks_before(document, cascade, first, top, page_end)
 }
 
 /// Whether a run of `run_height` that avoids breaks inside it, starting at

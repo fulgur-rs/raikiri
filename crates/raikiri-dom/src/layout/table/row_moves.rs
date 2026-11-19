@@ -27,6 +27,11 @@ pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
     })
 }
 
+/// Whether `cell` spans more than one row.
+pub(crate) fn spans_rows(document: &Document, cell: usize) -> bool {
+    super::get_rowspan(document, cell) != 1
+}
+
 /// Records the collapsed border lines that pagination split by moving the
 /// rows in `moved_rows` to a later page.
 ///
