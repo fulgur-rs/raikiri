@@ -1775,18 +1775,17 @@ pub(super) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInsi
 /// CSS2.1 defines the `page-break-before` / `page-break-after` grammar as
 /// `auto | always | avoid | left | right` (verbatim,
 /// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-before>).
-/// This parser accepts only `auto`, `avoid`, and `always`. Because `left` and
-/// `right` would map to values not implemented for `break-before` or
-/// `break-after` (see "Scope carving" in the [`BreakBetween`] docs), the
-/// legacy shorthands do not accept them either. The spec's mapping table
-/// maps `always` to [`BreakBetween::Page`], rather than leaving it unchanged;
-/// `auto` and `avoid` map to themselves.
+/// The spec's mapping table maps `always` to [`BreakBetween::Page`], rather
+/// than leaving it unchanged; `auto`, `avoid`, `left` and `right` map to
+/// themselves.
 pub(super) fn parse_legacy_page_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
         "auto" => Some(BreakBetween::Auto),
         "avoid" => Some(BreakBetween::Avoid),
         "always" => Some(BreakBetween::Page),
+        "left" => Some(BreakBetween::Left),
+        "right" => Some(BreakBetween::Right),
         _ => None,
     }
 }

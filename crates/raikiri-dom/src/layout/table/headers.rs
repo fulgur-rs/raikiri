@@ -225,16 +225,12 @@ impl HeaderRepeats {
                 while let Some(id) = descendants.pop() {
                     let computed = &cascade.computed[id];
                     has_fixed |= matches!(document.nodes[id].position(), PositionValue::Fixed);
-                    has_page_boundary |= matches!(
-                        computed.break_before,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        computed.break_after,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        cascade.page_values.get(id),
-                        Some(raikiri_style::property::PageValue::Named(_))
-                    );
+                    has_page_boundary |= page_forced(computed.break_before)
+                        || page_forced(computed.break_after)
+                        || matches!(
+                            cascade.page_values.get(id),
+                            Some(raikiri_style::property::PageValue::Named(_))
+                        );
                     sources.push((id, group));
                     descendants.extend(document.nodes[id].children.iter().copied());
                 }
@@ -281,13 +277,7 @@ impl HeaderRepeats {
                 .iter()
                 .filter(|&&row| {
                     let computed = &cascade.computed[row];
-                    matches!(
-                        computed.break_before,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        computed.break_after,
-                        BreakBetween::Page | BreakBetween::Always
-                    )
+                    page_forced(computed.break_before) || page_forced(computed.break_after)
                 })
                 .count();
             let table_height = node.layout.size.height;
@@ -733,3 +723,9 @@ fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: u
 
 #[cfg(test)]
 mod tests;
+
+/// Whether a break value forces a page break here: `page`, a page-spread
+/// value, or `always`.
+fn page_forced(value: BreakBetween) -> bool {
+    value.forces_page_break() || value == BreakBetween::Always
+}

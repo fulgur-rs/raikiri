@@ -6672,10 +6672,12 @@ css_keywords!(OverflowWrap {
 /// containing fragmentation context:
 /// <https://drafts.csswg.org/css-break-4/#break-between>.
 ///
-/// Page-spread values (`left`, `right`, `recto`, `verso`), CSS Regions
-/// values (`avoid-region`, `region`), and the Level 4 `all` value remain
-/// unsupported. Column-specific values stay distinct from generic values
-/// so pagination does not apply column-only constraints.
+/// The page-spread values (`left`, `right`, `recto`, `verso`) force a page
+/// break like `page`. Like Chromium, pagination does not add a blank page
+/// to make the next page a left or right one; the content starts on the
+/// next page. CSS Regions values (`avoid-region`, `region`) and the Level 4
+/// `all` value remain unsupported. Column-specific values stay distinct from
+/// generic values so pagination does not apply column-only constraints.
 ///
 /// # Chromium printing compatibility
 ///
@@ -6703,11 +6705,10 @@ css_keywords!(OverflowWrap {
 /// | `auto` | `auto` |
 /// | `avoid` | `avoid` |
 /// | `always` | `page` |
+/// | `left` | `left` |
+/// | `right` | `right` |
 ///
-/// (The table's own first row also lists `left` / `right` as
-/// identity-mapped — out of scope here per the "Scope carving" section
-/// above, so `page-break-before: left` / `: right` are rejected the same
-/// way `break-before: left` is.) Unlike the `padding` / `border` /
+/// Unlike the `padding` / `border` /
 /// `text-decoration` shorthands elsewhere in this crate, this legacy
 /// shorthand expands to exactly **one** longhand with a 1:1 value mapping
 /// — there is no multi-longhand fan-out, so `parse_value` dispatches
@@ -6739,6 +6740,18 @@ pub enum BreakBetween {
     /// `page-break-after` legacy shorthand's remap target for `always`
     /// (this type's doc's "legacy shorthand" section).
     Page,
+    /// `left` — forces one or two page breaks so the next page is a left
+    /// page (§3.1). Pagination treats it as [`Self::Page`].
+    Left,
+    /// `right` — forces one or two page breaks so the next page is a right
+    /// page (§3.1). Pagination treats it as [`Self::Page`].
+    Right,
+    /// `recto` — forces one or two page breaks so the next page is a recto
+    /// page (§3.1). Pagination treats it as [`Self::Page`].
+    Recto,
+    /// `verso` — forces one or two page breaks so the next page is a verso
+    /// page (§3.1). Pagination treats it as [`Self::Page`].
+    Verso,
     /// Forces a break in the immediately containing fragmentation context.
     Always,
     /// Avoids a column break before or after the principal box.
@@ -6752,10 +6765,25 @@ css_keywords!(BreakBetween {
     Avoid => "avoid",
     AvoidPage => "avoid-page",
     Page => "page",
+    Left => "left",
+    Right => "right",
+    Recto => "recto",
+    Verso => "verso",
     Always => "always",
     AvoidColumn => "avoid-column",
     Column => "column",
 });
+
+impl BreakBetween {
+    /// Whether the value forces a page break: `page` or one of the
+    /// page-spread values `left`, `right`, `recto` and `verso`.
+    pub const fn forces_page_break(self) -> bool {
+        matches!(
+            self,
+            Self::Page | Self::Left | Self::Right | Self::Recto | Self::Verso
+        )
+    }
+}
 
 /// The value of the `break-inside` property.
 ///

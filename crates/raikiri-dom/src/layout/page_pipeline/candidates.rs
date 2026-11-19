@@ -1071,11 +1071,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         })
                 }),
             forces_break_after: cascade.computed.iter().any(|computed| {
-                matches!(
-                    computed.break_after,
-                    raikiri_style::property::BreakBetween::Page
-                        | raikiri_style::property::BreakBetween::Always
-                )
+                computed.break_after.forces_page_break()
+                    || computed.break_after == raikiri_style::property::BreakBetween::Always
             }),
             edges_breaks: Vec::new(),
             pending_bottoms: HashMap::new(),

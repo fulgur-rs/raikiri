@@ -607,12 +607,40 @@ fn break_before_after_rejects_out_of_scope_region_values() {
 }
 
 #[test]
-fn break_before_after_rejects_out_of_scope_page_spread_values() {
-    // (b) not supported — no page-spread concept in this crate
-    // (`BreakBetween` doc's "Scope carving" section).
-    for kw in ["left", "right", "recto", "verso"] {
-        assert_eq!(parse(kw, "break-before"), None);
-        assert_eq!(parse(kw, "break-after"), None);
+fn break_before_after_parse_page_spread_values() {
+    for (kw, value) in [
+        ("left", BreakBetween::Left),
+        ("RIGHT", BreakBetween::Right),
+        ("recto", BreakBetween::Recto),
+        ("Verso", BreakBetween::Verso),
+    ] {
+        assert_eq!(
+            parse(kw, "break-before"),
+            Some(PropertyValue::BreakBefore(value))
+        );
+        assert_eq!(
+            parse(kw, "break-after"),
+            Some(PropertyValue::BreakAfter(value))
+        );
+        assert_eq!(value.as_css_str(), kw.to_ascii_lowercase());
+    }
+}
+
+#[test]
+fn only_page_and_page_spread_values_force_a_page_break() {
+    for value in BreakBetween::ALL {
+        assert_eq!(
+            value.forces_page_break(),
+            matches!(
+                value,
+                BreakBetween::Page
+                    | BreakBetween::Left
+                    | BreakBetween::Right
+                    | BreakBetween::Recto
+                    | BreakBetween::Verso
+            ),
+            "{value:?}"
+        );
     }
 }
 
@@ -711,12 +739,21 @@ fn page_break_before_after_legacy_shorthand_rejects_new_property_only_values() {
 }
 
 #[test]
-fn page_break_before_after_legacy_shorthand_rejects_left_and_right() {
-    // CSS2.1's own grammar has `left`/`right`, but they remap to
-    // `break-before`/`break-after` values this crate does not
-    // implement (`BreakBetween` doc's "Scope carving" section) — the
-    // scope carve applies transitively through the legacy shorthand.
-    for kw in ["left", "right"] {
+fn page_break_before_after_legacy_shorthand_keeps_left_and_right() {
+    // CSS Fragmentation Module Level 3 §3.4 maps `left` and `right` to
+    // themselves.
+    for (kw, value) in [("left", BreakBetween::Left), ("right", BreakBetween::Right)] {
+        assert_eq!(
+            parse(kw, "page-break-before"),
+            Some(PropertyValue::BreakBefore(value))
+        );
+        assert_eq!(
+            parse(kw, "page-break-after"),
+            Some(PropertyValue::BreakAfter(value))
+        );
+    }
+    // `recto` / `verso` are not in the CSS2.1 grammar.
+    for kw in ["recto", "verso"] {
         assert_eq!(parse(kw, "page-break-before"), None);
         assert_eq!(parse(kw, "page-break-after"), None);
     }
