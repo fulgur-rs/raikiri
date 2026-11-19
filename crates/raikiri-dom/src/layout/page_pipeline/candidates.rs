@@ -225,9 +225,9 @@ pub(super) struct ElementContext {
     /// the last box of the run, which the edges in `closing_edges` follow. The
     /// run moves to the next page as one when they do not fit after it.
     pub(super) closing_edges_span: f32,
-    /// How far the lines of the box that the edges in `closing_edges` follow
-    /// (this one, or the last of its run) run past the bottom of that box.
-    pub(super) closing_edges_overflow: f32,
+    /// For the first box of such a run: the last box of the run, which the
+    /// edges in `closing_edges` follow.
+    pub(super) closing_edges_last_box: Option<usize>,
     /// How far below the border-box top the run of boxes tied by avoided
     /// breaks ends that the box starts among the boxes of its parent, or that
     /// it holds at the start of its own boxes. The box moves to the next page
@@ -420,9 +420,9 @@ impl BoxContext {
             .map_or(0.0, |attributes| attributes.closing_edges_span)
     }
 
-    pub(super) fn closing_edges_overflow(self) -> f32 {
+    pub(super) fn closing_edges_last_box(self) -> Option<usize> {
         self.element_attributes()
-            .map_or(0.0, |attributes| attributes.closing_edges_overflow)
+            .and_then(|attributes| attributes.closing_edges_last_box)
     }
 
     pub(super) fn avoided_unit(self) -> Option<f32> {
@@ -795,9 +795,8 @@ enum AvoidTie {
     None,
     /// The box starts the run, which moves to the next page with the edges
     /// after it when they do not fit: `span` is the block size from the bottom
-    /// of the box to the bottom of the run, and `overflow` how far the lines
-    /// of the run's last box run past its bottom.
-    RunStart { span: f32, overflow: f32 },
+    /// of the box to the bottom of the run, and `last` the run's last box.
+    RunStart { span: f32, last: usize },
     /// The box ends a block whose boxes are all tied to the first of them, so
     /// that breaking before it is the only break left, the avoided one giving
     /// way.
@@ -2219,19 +2218,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     }
                                     _ => 0.0,
                                 },
-                                closing_edges_overflow: match frame.tie {
-                                    AvoidTie::RunStart { overflow, .. }
-                                        if closing_edges_candidate =>
-                                    {
-                                        overflow
+                                closing_edges_last_box: match frame.tie {
+                                    AvoidTie::RunStart { last, .. } if closing_edges_candidate => {
+                                        Some(last)
                                     }
-                                    _ if closing_edges_candidate
-                                        || lone_box_candidate.is_some()
-                                        || run_tail_candidate =>
-                                    {
-                                        super::lines_overflow(document, cascade, node_id)
-                                    }
-                                    _ => 0.0,
+                                    _ => None,
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
@@ -2530,7 +2521,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             first,
                             span,
                             last_box_edges,
-                            super::lines_overflow(document, cascade, child_order[last]),
+                            flow_flags[last].0.unwrap_or(child_order[last]),
                         ))
                     }
                     _ => None,
@@ -2609,8 +2600,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     // way. When the edges of a block around it follow it too, a
                     // break before this block is a better one, which is left to
                     // the rules for that.
-                    let tie = if let Some((_, span, _, overflow)) = at_chain_start {
-                        AvoidTie::RunStart { span, overflow }
+                    let tie = if let Some((_, span, _, last)) = at_chain_start {
+                        AvoidTie::RunStart { span, last }
                     } else if matches!(avoid_chain, Some(AvoidChain::Start))
                         && own_closing_edges.is_some_and(|own| own > 0.0)
                         && inherited_edges == 0.0
