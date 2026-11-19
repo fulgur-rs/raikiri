@@ -5634,14 +5634,21 @@ pub(super) struct RunUnit {
 /// Whether the page holds no break inside the box `node_id` of a run of
 /// boxes tied by avoided breaks that is better than the one before the run:
 /// the part of it that [`avoided_run_head`] finds is firm and takes the
-/// whole box. A box of the run with such a break inside it takes that break
-/// before the run moves on, as Chromium takes the latest of equal breaks.
+/// whole box, or the box has nothing in its flow to break between. A box of
+/// the run with such a break inside it takes that break before the run moves
+/// on, as Chromium takes the latest of equal breaks.
 fn box_holds_no_break(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
 ) -> bool {
+    // A box with no content in its flow has no place inside it to break.
+    if !document.nodes[node_id].is_ifc_root()
+        && last_flow_child(document, cascade, node_id).is_none()
+    {
+        return true;
+    }
     let held = avoided_run_head(document, cascade, body_id, node_id, false);
     held.firm
         && held
