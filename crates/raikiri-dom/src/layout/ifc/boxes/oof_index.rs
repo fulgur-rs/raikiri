@@ -5,13 +5,14 @@ use super::*;
 
 /// Keep the first anchor in line and visual-fragment order for each node, at
 /// the place it puts its box (see [`AnchorPlaces`]).
-pub(crate) fn first_anchors(doc: &Document, lines: &IfcLines) -> HashMap<usize, (usize, f32)> {
+pub(crate) fn first_anchors(doc: &Document, lines: &IfcLines) -> HashMap<usize, OofAnchor> {
     #[cfg(test)]
     tests::OOF_ANCHOR_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
     let mut anchors = HashMap::new();
     let mut places = AnchorPlaces::new(doc, &lines.lines);
     for (index, line) in lines.lines.iter().enumerate() {
         let mut leading = true;
+        let leading_in_text = anchors_leading_in_text(line);
         // The last text or atomic inline of the line, found at its first
         // anchor.
         let mut last_content = None;
@@ -30,6 +31,9 @@ pub(crate) fn first_anchors(doc: &Document, lines: &IfcLines) -> HashMap<usize, 
                     .last()
             });
             anchors.entry(anchor.node.0 as usize).or_insert_with(|| {
+                let leading = leading_in_text.map_or(leading, |counts| {
+                    anchor_leads_in_text(doc, line, anchor.node.0 as usize, counts)
+                });
                 places.place(index, leading, last.is_none_or(|last| last < at), anchor)
             });
         }
