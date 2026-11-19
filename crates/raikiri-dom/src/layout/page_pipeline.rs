@@ -3921,7 +3921,8 @@ fn forces_page_break(
 
 /// Whether `id` is a block container whose first and last boxes start and
 /// end its own block flow, so that a forced break at them passes to it.
-/// Generated content on that side of its boxes keeps the break inside it.
+/// Generated content on that side of its boxes keeps the break inside it,
+/// and no break reaches out of a box that pagination does not break through.
 fn passes_edge_breaks(
     document: &Document,
     cascade: &CascadeResult,
@@ -3933,6 +3934,7 @@ fn passes_edge_breaks(
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     ) && document.nodes[id].multicol.is_none()
         && !generated_on_side(cascade, id, before)
+        && !is_monolithic_for_pagination_with_transposed_axes(document, cascade, id, false)
 }
 
 /// Whether `id` has generated content in the flow before (`before`) or after

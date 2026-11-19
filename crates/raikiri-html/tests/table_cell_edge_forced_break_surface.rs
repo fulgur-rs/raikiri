@@ -208,3 +208,19 @@ fn generated_content_on_the_other_side_leaves_the_break_at_the_edge() {
         ),
     ]);
 }
+
+/// A box that pagination does not break through, such as one with size
+/// containment, keeps the breaks inside it from the row.
+#[test]
+fn a_break_inside_a_monolithic_box_does_not_reach_the_row() {
+    assert_rows(&[
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='contain:size;width:20px;height:20px'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'B', 10), (0, 'P', 0), (0, 'T', 15), (0, 'X', 30)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0'><div style='contain:size;width:20px;height:20px'><div style='break-after:page'>B</div></div></td><td style='padding:0'>T</td></tr><tr><td>R</td></tr></table><div>X</div>",
+            &[(0, 'B', 0), (0, 'R', 21), (0, 'T', 5), (0, 'X', 32)],
+        ),
+    ]);
+}
