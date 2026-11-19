@@ -4,8 +4,11 @@
 //! holds whatever sets the paragraph's height. A `min-height`, the quirks
 //! mode fill of the body, a `max-height` or a `height` does not keep the
 //! lines in place; the box grows as far as its height allows, and lines past
-//! a set height overflow it. Only size containment, which ignores the
-//! content, leaves them where the layout put them.
+//! a set height overflow it. A clip hides the lines past its edge, which
+//! neither count nor move, and the padding and border below the lines keep
+//! the last of them company only where the box ends at its lines. Only size
+//! containment, which ignores the content, leaves the lines where the layout
+//! put them.
 //!
 //! The expected places are the ones Chromium prints for the same markup:
 //! pages 200px by 100px without margins, Ahem at 10px on 20px lines. Each
@@ -75,6 +78,11 @@ fn cases() -> Vec<Case> {
             "<div style=\"{style}\"><div style=\"height:50px\">W</div>Q<br>R<br>S<br>T{after}</div><div>X</div>"
         ))
     };
+    let wrapped_alone = |style: &str| {
+        standards(&format!(
+            "<div style=\"{style}\"><div style=\"height:50px\">W</div>Q<br>R</div>"
+        ))
+    };
     let qrst = vec![
         ('Q', 1, 55.0),
         ('R', 1, 75.0),
@@ -140,6 +148,47 @@ fn cases() -> Vec<Case> {
                 "<div style=\"min-height:10px\"><div style=\"height:80px\"></div>Q<br>R</div><div>X</div>",
             ),
             vec![('Q', 2, 5.0), ('R', 2, 25.0), ('X', 2, 45.0)],
+        ),
+        (
+            "a clip that hides the line that would cross the page end",
+            standards(
+                "<div style=\"height:80px;overflow:hidden\"><div style=\"height:70px\">W</div>Q<br>R<br>S<br>T</div><div>X</div>",
+            ),
+            vec![('Q', 1, 75.0), ('X', 1, 85.0)],
+        ),
+        (
+            "a clip below the line that crosses the page end",
+            standards(
+                "<div style=\"height:150px;overflow:hidden\"><div style=\"height:70px\">W</div>Q<br>R<br>S<br>T</div><div>X</div>",
+            ),
+            vec![
+                ('Q', 2, 5.0),
+                ('R', 2, 25.0),
+                ('S', 2, 45.0),
+                ('X', 2, 55.0),
+            ],
+        ),
+        (
+            "the bottom padding of a block whose height ends below the lines",
+            wrapped_alone("height:300px;padding-bottom:20px"),
+            vec![('Q', 1, 55.0), ('R', 1, 75.0)],
+        ),
+        (
+            "the bottom border of a block whose min-height ends below the lines",
+            wrapped_alone("min-height:200px;border-bottom:20px solid"),
+            vec![('Q', 1, 55.0), ('R', 1, 75.0)],
+        ),
+        (
+            "the bottom padding of a block whose lines pass its min-height",
+            wrapped_alone("min-height:60px;padding-bottom:20px"),
+            vec![('Q', 2, 5.0), ('R', 2, 25.0)],
+        ),
+        (
+            "the bottom padding of a box around a block with a height",
+            standards(
+                "<div style=\"padding-bottom:20px\"><div style=\"height:200px\"><div style=\"height:50px\">W</div>Q<br>R</div></div>",
+            ),
+            vec![('Q', 1, 55.0), ('R', 1, 75.0)],
         ),
         (
             "a block with size containment keeps the lines in place",

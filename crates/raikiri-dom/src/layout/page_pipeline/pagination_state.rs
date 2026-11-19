@@ -3797,6 +3797,8 @@ impl PaginationState {
             control,
             page_origins,
             text_lines,
+            root_flow_offset,
+            clip_edges,
             ..
         } = *env;
         let node_id = candidate.node_id;
@@ -3806,10 +3808,25 @@ impl PaginationState {
         let Some(run) = lines_between_blocks(document, text_lines, node_id, root) else {
             return Ok(());
         };
-        let run_metrics = |document: &LayoutSession<'_>| {
+        let widows = inline_widows(document, cascade, root, Some(run.end));
+        // A clip of the paragraph hides the lines past its edge: they do not
+        // count, and do not move (see `clipped_line_metrics`).
+        let clip = clip_edges.get(&root);
+        let run_metrics = |document: &LayoutSession<'_>, effective_y: f32| {
             paragraph_line_bounds(document, node_id, text_lines)
                 .and_then(|all| all.get(run.clone()).map(<[_]>::to_vec))
-                .filter(|metrics| !metrics.is_empty())
+                .map(|metrics| {
+                    clipped_line_metrics(
+                        document,
+                        page_origins,
+                        root_flow_offset,
+                        clip,
+                        effective_y,
+                        &metrics,
+                        widows,
+                    )
+                })
+                .filter(|(metrics, _)| !metrics.is_empty())
         };
         // The first candidate on the run judges it for all of them.
         if !self
@@ -3819,9 +3836,11 @@ impl PaginationState {
         {
             return Ok(());
         }
-        let Some(mut metrics) = run_metrics(document).filter(|metrics| {
-            self.breaks_run_after_block(document, env, candidate, entry, root, metrics)
-        }) else {
+        let Some((mut metrics, mut widows)) =
+            run_metrics(document, text.effective_y).filter(|(metrics, _)| {
+                self.breaks_run_after_block(document, env, candidate, entry, root, metrics)
+            })
+        else {
             return Ok(());
         };
         let first_owned_line = text_lines
@@ -3829,10 +3848,13 @@ impl PaginationState {
             .and_then(|owned| owned.lines.first())
             .map_or(run.start, |line| line.line);
         // The padding and border of the paragraph below its last line stay
-        // with the last line of the run, when no block child comes after it:
-        // that block is what they follow instead. Those of the boxes around
-        // the paragraph follow its edges.
-        let closing_edges = if run_ends_paragraph(document, root, &run) {
+        // with the last line of the run, when no block child comes after it
+        // and the paragraph ends at its lines: a block after them, or a
+        // height that ends the box elsewhere, is what they follow instead.
+        // Those of the boxes around the paragraph follow its edges.
+        let closing_edges = if run_ends_paragraph(document, root, &run)
+            && super::box_ends_at_content(document, root)
+        {
             let layout = &document.nodes[root].layout;
             (layout.padding.bottom + layout.border.bottom)
                 .max(candidate.context.lines_closing_edges())
@@ -3862,8 +3884,8 @@ impl PaginationState {
                 (root, first_owned_line),
                 (run.start, page_start - run_top, page),
             );
-            if let Some(next) = run_metrics(document) {
-                metrics = next;
+            if let Some(next) = run_metrics(document, text.effective_y) {
+                (metrics, widows) = next;
             }
         }
         let mut moved = false;
@@ -3876,7 +3898,7 @@ impl PaginationState {
                 page_start,
                 page_start + page_step,
                 cascade.computed[root].orphans,
-                inline_widows(document, cascade, root, Some(run.end)),
+                widows,
                 closing_edges,
             );
             fit.first_fragment = !moved;
@@ -3949,8 +3971,10 @@ impl PaginationState {
             // Judged once more from the page the lines moved to, for the
             // lines that break again on the pages after it.
             moved = true;
-            if let Some(next) = run_metrics(document) {
-                metrics = next;
+            match run_metrics(document, text.effective_y) {
+                Some(next) => (metrics, widows) = next,
+                // The moved lines all went past the clip.
+                None => break,
             }
         }
         Ok(())

@@ -13602,6 +13602,26 @@ fn first_line_judged_height(
     }
 }
 
+/// Whether the border box of `block` ends where its content does: its height
+/// follows the content, or a `min-height` or `max-height` that the content
+/// passes or stays below does not set it. A `height` ends it elsewhere.
+pub(super) fn box_ends_at_content(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> bool {
+    if height_follows_content(document, block) {
+        return true;
+    }
+    if !document.block_axis(block).height().is_auto()
+        || document.nodes[block].size_containment.height
+    {
+        return false;
+    }
+    let (min, max) = border_box_height_bounds(document, block);
+    let height = document.nodes[block].layout.size.height;
+    height > min + 0.5 && height < max - 0.5
+}
+
 /// Whether the box of the paragraph `block_id` leaves the lines that pass its
 /// end to pagination: its height follows its lines, or it does not clip them.
 /// A box with a set height that clips its block-axis overflow hides the lines
