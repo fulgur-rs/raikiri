@@ -403,3 +403,39 @@ fn only_the_items_before_a_forced_break_move_the_container() {
         ),
     ]);
 }
+
+/// In a wrapping row, a forced break before or after an item waits for the
+/// end of its flex line, so the other items on that line still decide.
+#[test]
+fn a_forced_break_in_a_wrapping_row_waits_for_the_end_of_its_line() {
+    assert_rows(&[
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-wrap:wrap'><div style='width:40px;height:20px;break-after:page'>T</div><div style='width:40px;height:35px;margin-bottom:6px'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 5), (1, 'U', 5), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-wrap:wrap'><div style='width:40px;height:35px;margin-bottom:6px'>T</div><div style='width:40px;height:20px;break-before:page'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 5), (1, 'U', 5), (1, 'Z', 46)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-wrap:wrap'><div style='width:40px;height:20px;break-after:page'>T</div><div style='width:40px;height:20px'>U</div><div style='width:100%;height:35px;margin-bottom:6px'>V</div></div><div>Z</div>",
+            &[
+                (0, 'A', 5),
+                (0, 'T', 65),
+                (0, 'U', 65),
+                (1, 'V', 5),
+                (1, 'Z', 46),
+            ],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-wrap:wrap'><div style='width:40px;height:20px'>T</div><div style='width:40px;height:20px'>U</div><div style='width:100%;height:15px;break-before:page;margin-bottom:10px'>V</div></div><div>Z</div>",
+            &[
+                (0, 'A', 5),
+                (0, 'T', 65),
+                (0, 'U', 65),
+                (1, 'V', 5),
+                (1, 'Z', 30),
+            ],
+        ),
+    ]);
+}

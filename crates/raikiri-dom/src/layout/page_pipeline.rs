@@ -10515,33 +10515,45 @@ fn flex_margins_move(
     let row = style.flex_direction_is_row();
     // A break forced between the items of a column or between the lines of
     // a wrapping row starts a page of its own, so only the items before it
-    // decide whether the container moves.
+    // decide whether the container moves. In a wrapping row, a break forced
+    // before or after an item waits for the end of its flex line.
     let lines_break = !row || style.flex_wraps();
     let mut forced = false;
+    let mut break_after = false;
     let mut items = 0;
     let mut items_end = flow_y;
+    let mut line_end = f32::NEG_INFINITY;
     let mut end = flow_y;
     for item in crate::layout::page::pagination_child_order(document, cascade, node_id) {
         if !crate::layout::page::is_in_flow_flex_child_for_pagination(document, node_id, item) {
             continue;
         }
         let computed = &cascade.computed[item];
-        if lines_break && items > 0 && page_break_is_forced(document, item, computed.break_before) {
+        let item_layout = &document.nodes[item].layout;
+        let top = flow_y + item_layout.location.y
+            - layout_relative_offset_y(document, cascade, body_id, item);
+        let starts_line = !row || top - item_layout.margin.top >= line_end - 0.001;
+        if lines_break
+            && items > 0
+            && starts_line
+            && (break_after || page_break_is_forced(document, cascade, item, computed.break_before))
+        {
             forced = true;
             break;
         }
-        let item_layout = &document.nodes[item].layout;
-        let bottom = flow_y + item_layout.location.y + item_layout.size.height
-            - layout_relative_offset_y(document, cascade, body_id, item);
+        let bottom = top + item_layout.size.height;
         items += 1;
         items_end = items_end.max(bottom);
+        line_end = if starts_line {
+            bottom + item_layout.margin.bottom
+        } else {
+            line_end.max(bottom + item_layout.margin.bottom)
+        };
         if bottom <= page_end + 0.001 {
             end = end.max((bottom + item_layout.margin.bottom).min(content_end));
         }
-        if lines_break && page_break_is_forced(document, item, computed.break_after) {
-            forced = true;
-            break;
-        }
+        break_after |=
+            lines_break && page_break_is_forced(document, cascade, item, computed.break_after);
     }
     let single_line = if row { !style.flex_wraps() } else { items == 1 };
     if single_line && !forced && items_end <= page_end + 0.001 && end >= content_end - 0.001 {
