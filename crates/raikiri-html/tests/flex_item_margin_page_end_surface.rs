@@ -204,6 +204,10 @@ fn closing_edges_move_a_single_line_container() {
             "<div style='height:130px'>A</div><div style='display:flex;flex-wrap:wrap;width:100px;padding-bottom:15px'><div style='width:100px;height:30px'>S</div><div style='width:100px;height:30px'>T</div></div><div>Z</div>",
             &[(0, 'A', 5), (1, 'S', 35), (2, 'T', 5), (2, 'Z', 50)],
         ),
+        (
+            "<div style='height:130px'>A</div><div><div style='display:flex;flex-direction:column;padding-bottom:15px'><div style='height:30px'>S</div><div style='height:30px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'S', 35), (2, 'T', 5), (2, 'Z', 50)],
+        ),
     ]);
 }
 
@@ -255,6 +259,81 @@ fn containers_that_fit_or_start_the_page_stay() {
         (
             "<div style='height:160px'>A</div><div style='display:flex;flex-direction:column'><div style='height:20px;margin-bottom:6px'>S</div><div style='height:30px'>T</div></div><div>Z</div>",
             &[(0, 'A', 5), (1, 'S', 65), (2, 'T', 5), (2, 'Z', 35)],
+        ),
+    ]);
+}
+
+/// The blocks a moving container begins go with it, keeping the padding and
+/// border above it; an item inside a `display: contents` box counts, a break
+/// forced after the item still follows on the next page, and a container
+/// taller than a page, a float beside it or a table cell around it changes
+/// nothing.
+#[test]
+fn containers_move_with_what_they_begin_and_past_what_surrounds_them() {
+    assert_rows(&[
+        (
+            "<div style='height:130px'>A</div><div><div style='display:flex'><div style='display:contents'><div style='height:30px;margin-bottom:45px'>T</div></div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 5), (3, 'Z', 5)],
+        ),
+        (
+            "<div style='height:130px'>A</div><div style='display:flex;flex-direction:column'><div style='height:30px;margin-bottom:45px'>S</div><div style='height:30px;break-before:page'>T</div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'S', 5), (3, 'T', 5), (3, 'Z', 35)],
+        ),
+        (
+            "<div style='height:160px'>A</div><div style='display:flex;height:500px'><div style='height:35px;margin-bottom:6px'>T</div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 5), (7, 'Z', 5)],
+        ),
+        (
+            "<div style='height:130px'>A</div><div style='display:flex;flex-direction:column'><div style='height:30px;margin-bottom:45px'>S</div><div style='height:30px'>T</div><div style='height:30px'>U</div><div style='height:30px'>V</div><div style='height:30px'>W</div></div><div>Z</div>",
+            &[
+                (0, 'A', 5),
+                (2, 'S', 5),
+                (3, 'T', 5),
+                (3, 'U', 35),
+                (3, 'V', 65),
+                (4, 'W', 5),
+                (4, 'Z', 35),
+            ],
+        ),
+        (
+            "<div style='height:130px'>A</div><div style='float:left;width:10px;height:100px'></div><div style='display:flex'><div style='height:30px;margin-bottom:45px'>T</div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 5), (3, 'Z', 5)],
+        ),
+        (
+            "<div style='height:130px'>A</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='display:flex'><div style='height:30px;margin-bottom:45px'>T</div></div></td></tr></table><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 5), (3, 'Z', 5)],
+        ),
+        (
+            "<div style='height:130px'>A</div><div style='padding-top:10px;border-top:1px solid'><div style='display:flex'><div style='height:30px;margin-bottom:45px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 16), (3, 'Z', 5)],
+        ),
+        (
+            "<div style='height:130px'>A</div><div style='padding-top:10px'><div style='display:flex'><div style='height:30px;margin-bottom:45px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (2, 'T', 15), (3, 'Z', 5)],
+        ),
+        // The item counts where it stands in the flow: it moves with the
+        // container and is painted 20px above, across the page end. Chromium
+        // also paints the part of its line below the page end on the next page.
+        (
+            "<div style='height:160px'>A</div><div style='display:flex'><div style='height:30px;margin-bottom:15px;position:relative;top:-20px'>T</div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 85), (2, 'Z', 50)],
+        ),
+    ]);
+}
+
+/// A container inside a box that clips it at a set height, and one whose item
+/// a relative offset paints past the page end while its place in the flow
+/// fits, stay where they are.
+#[test]
+fn containers_stay_where_their_place_in_the_flow_fits_or_a_clip_holds_them() {
+    assert_rows(&[
+        (
+            "<div style='height:130px'>A</div><div style='overflow:hidden;height:60px'><div style='display:flex'><div style='height:30px;margin-bottom:45px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 35), (2, 'Z', 5)],
+        ),
+        (
+            "<div style='height:140px'>A</div><div style='display:flex'><div style='height:30px;margin-bottom:15px;position:relative;top:20px'>T</div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 65), (2, 'Z', 5)],
         ),
     ]);
 }

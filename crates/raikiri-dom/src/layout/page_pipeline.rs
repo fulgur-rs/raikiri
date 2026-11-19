@@ -6231,6 +6231,11 @@ struct BoxOverflow {
     /// text that is kept whole, or a box that moves for the edges that close
     /// its parent, is not this.
     moved_for_avoided_break: bool,
+    /// The box is a flex container that moves whole for what follows its
+    /// items (see [`flex_margins_move`]), which is also counted in `page`. It
+    /// takes the blocks it begins along, with the padding and border they
+    /// keep above it.
+    moved_for_flex_margins: bool,
     /// The box starts a run of boxes joined by avoided breaks that would
     /// cross the page edge.
     avoided_run: bool,
@@ -6433,10 +6438,12 @@ impl AvoidedBreaks {
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
-        // A flex container whose items all end on this page, but where an
-        // item's block-end margin, or the edges that close a single-line row,
-        // would run past the page end, moves to the next page whole.
-        let page = page || flex_margins_move(document, cascade, candidate, fit);
+        // A flex container with an item that ends on this page but whose
+        // block-end margin runs past the page end, or whose single line is
+        // closed by edges that do, moves to the next page whole, with the
+        // blocks it begins.
+        let moved_for_flex_margins = flex_margins_move(document, cascade, body_id, candidate, fit);
+        let page = page || moved_for_flex_margins;
         // An ordinary table row that would cross the current page moves to
         // the next one whole when a cell of it breaks before its content, as
         // Chromium does; otherwise it breaks there with its cells (see
@@ -6558,6 +6565,7 @@ impl AvoidedBreaks {
             unbreakable,
             leading_piece_with_holder: false,
             moved_for_avoided_break: avoids_break_inside && moves_for_avoided_end,
+            moved_for_flex_margins,
             avoided_run,
             table_row,
             table_caption,
@@ -10233,12 +10241,15 @@ fn has_flex_trailing_space(document: &Document, node_id: usize) -> bool {
 /// too, not just the item). The margin counts only as far as the container's
 /// content box reaches. The padding and border that close the container move
 /// it too when its items all end on the page and they follow a single line:
-/// a row that does not wrap, or a column of one item. Like a box that avoids
-/// a break inside it, the container stays where it starts the page or where
-/// what has to fit does not fit the next page either.
+/// a row that does not wrap, or a column of one item. An item counts where
+/// it stands in the flow, without its relative offset. Like a box that avoids
+/// a break inside it, the container goes with the blocks it begins, and stays
+/// where they start the page or where what has to fit does not fit the next
+/// page either.
 fn flex_margins_move(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     candidate: &PageCandidate,
     fit: &BoxFit,
 ) -> bool {
@@ -10252,7 +10263,8 @@ fn flex_margins_move(
     }
     let BoxFit {
         flow_y,
-        margin_top,
+        avoided_lead,
+        avoided_margin_top,
         page_start,
         page_end,
         next_page_step,
@@ -10269,7 +10281,8 @@ fn flex_margins_move(
             continue;
         }
         let item_layout = &document.nodes[item].layout;
-        let bottom = flow_y + item_layout.location.y + item_layout.size.height;
+        let bottom = flow_y + item_layout.location.y + item_layout.size.height
+            - layout_relative_offset_y(document, cascade, body_id, item);
         items += 1;
         items_end = items_end.max(bottom);
         if bottom <= page_end + 0.001 {
@@ -10286,8 +10299,14 @@ fn flex_margins_move(
         end = border_box_end;
     }
     end > page_end + 0.001
-        && end - flow_y <= next_page_step + 0.001
-        && avoided_box_moves(flow_y, margin_top, end, page_start, page_end)
+        && end - (flow_y - avoided_lead) <= next_page_step + 0.001
+        && avoided_box_moves(
+            flow_y - avoided_lead,
+            avoided_margin_top,
+            end,
+            page_start,
+            page_end,
+        )
 }
 
 /// Whether a box that ends within its page moves to the next page because the
