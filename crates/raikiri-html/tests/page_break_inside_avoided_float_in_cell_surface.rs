@@ -318,6 +318,41 @@ fn a_box_after_the_float_stays_before_the_break() {
 }
 
 #[test]
+fn a_box_below_the_float_for_want_of_room_comes_back_up() {
+    // The cell is as wide as the float, so the box after it laid out below
+    // it; once the float moves, the box stays on the first page.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div><div style="height:40px">Y</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (0, 'W', 0, 35),
+            (0, 'Y', 0, 75),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 45),
+        ]
+    );
+}
+
+#[test]
+fn a_cell_that_holds_only_the_float_breaks_with_its_row() {
+    // The cell has no content in its flow to put before the break.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="float:left;width:20px;height:80px;break-inside:avoid">F</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 85)
+        ]
+    );
+}
+
+#[test]
 fn a_row_down_the_page_with_a_following_row_breaks_once() {
     // The next row follows the grown row on the next page.
     assert_eq!(

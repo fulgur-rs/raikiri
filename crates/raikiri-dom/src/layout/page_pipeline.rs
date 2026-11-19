@@ -18975,28 +18975,24 @@ fn floats_or_clearance_follow(
     root: usize,
     float: usize,
 ) -> bool {
-    later_in_float_context(document, cascade, root, float, true)
+    later_in_float_context(document, cascade, root, float, |id| {
+        is_floating_box_for_pagination(document, cascade, id)
+            || cascade.computed.get(id).is_some_and(|computed| {
+                computed.clear != ClearValue::None && !document.nodes[id].display().is_inline_flow()
+            })
+    })
 }
 
-/// Whether a block with `clear` comes after the float `float` in the float
-/// context `root`, as in [`floats_or_clearance_follow`].
-fn clearance_follows(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    root: usize,
-    float: usize,
-) -> bool {
-    later_in_float_context(document, cascade, root, float, false)
-}
-
-/// Whether a block with `clear`, or with `floats` also a float, comes after
-/// the float `float` in the float context `root`.
+/// Whether a box for which `hit` holds comes after the float `float` in the
+/// float context `root`, outside the float itself. Independent formatting
+/// contexts inside `root` place their own floats and are skipped, after
+/// `hit` sees their root.
 fn later_in_float_context(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
     float: usize,
-    floats: bool,
+    mut hit: impl FnMut(usize) -> bool,
 ) -> bool {
     let mut stack: Vec<usize> = document.nodes[root]
         .children
@@ -19010,13 +19006,7 @@ fn later_in_float_context(
             after = true;
             continue;
         }
-        if after
-            && (floats && is_floating_box_for_pagination(document, cascade, id)
-                || cascade.computed.get(id).is_some_and(|computed| {
-                    computed.clear != ClearValue::None
-                        && !document.nodes[id].display().is_inline_flow()
-                }))
-        {
+        if after && hit(id) {
             return true;
         }
         if after && holds_floats(document, cascade, id) {
