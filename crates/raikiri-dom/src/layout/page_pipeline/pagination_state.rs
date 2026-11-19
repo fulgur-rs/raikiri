@@ -5267,7 +5267,7 @@ impl PaginationState {
                 document.translate_pagination_y(node_id, clearance.shift);
                 // In a table cell, the boxes after it move down with it and
                 // its row grows, as for a box moved to a later page there.
-                if super::moves_reach_cell_row(document, node_id) {
+                if super::clears_in_cell_flow(document, cascade, node_id, body_id) {
                     super::shift_block_flow_after(
                         document,
                         cascade,
