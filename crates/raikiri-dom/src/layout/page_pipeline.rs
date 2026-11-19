@@ -20184,14 +20184,65 @@ fn forced_break_growth(
     if !holds && old > min + 0.001 && max.is_infinite() {
         return moved;
     }
-    moved_content_growth(
+    let growth = moved_content_growth(
         document,
         cascade,
         body_id,
         block,
         (child, child_growth),
         max,
-    )
+    );
+    if !holds {
+        return growth;
+    }
+    // A box that holds its floats ends below them too (CSS 2.1 §10.6.7), and
+    // the floats after the break moved down with the flow.
+    let float_end = held_float_end(document, cascade, body_id, block);
+    let float_growth = (old.max(float_end + edges_below(document, block)).min(max) - old).max(0.0);
+    growth.max(float_growth)
+}
+
+/// The lowest margin-box end of the floats that `block` holds, in its own
+/// coordinates as [`flow_content_end`] measures, or negative infinity when
+/// it holds none: its float children and the floats of the same block
+/// formatting context inside its in-flow children.
+fn held_float_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+) -> f32 {
+    let mut end = f32::NEG_INFINITY;
+    for child in laid_out_children(document, block) {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element
+            || node.display() == DisplayValue::None
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+        {
+            continue;
+        }
+        let top =
+            pagination_child_parent_y(document, block, child, document.pagination_local_y(child));
+        if is_floating_box_for_pagination(document, cascade, child) {
+            // A relative offset moves where the float paints, not where it
+            // ends in the flow.
+            let float_end = top - layout_relative_offset_y(document, cascade, body_id, child)
+                + node.layout.size.height
+                + node.layout.margin.bottom;
+            // A footnote leaves the flow for the page's footnote area.
+            if cascade.computed[child].float != FloatValue::Footnote && float_end.is_finite() {
+                end = end.max(float_end);
+            }
+            continue;
+        }
+        visit_same_bfc_floats_in_subtree(document, cascade, body_id, child, top, |_, float_end| {
+            end = end.max(float_end);
+        });
+    }
+    end
 }
 
 /// The padding and border below the content of `block`. A table cell keeps
