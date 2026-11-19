@@ -3824,7 +3824,8 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
 /// cell around it: each box from it up to the cell is the first or last box
 /// of the next one up, which stacks its children in block flow. Floats,
 /// positioned boxes and empty `display: contents` boxes beside it do not
-/// count, as for [`page_edge_child`].
+/// count, as for [`page_edge_child`], and generated content does. The cell
+/// must sit in a row of its own element, which takes the break.
 ///
 /// A forced break there lies at the edge of the cell, not inside it, so it
 /// goes to the row (CSS Fragmentation 3, 3.1): see [`row_takes_cell_break`].
@@ -3854,7 +3855,10 @@ fn at_table_cell_edge(
             return false;
         }
         if document.nodes[parent].display() == DisplayValue::TableCell {
-            return true;
+            return !document.nodes[parent].has_before_or_after_content
+                && document
+                    .parent_of(parent)
+                    .is_some_and(|row| document.nodes[row].display() == DisplayValue::TableRow);
         }
         if !passes_edge_breaks(document, parent) {
             return false;
@@ -3874,7 +3878,9 @@ fn row_takes_cell_break(
 ) -> bool {
     document.nodes[row].display() == DisplayValue::TableRow
         && document.nodes[row].children.iter().any(|&cell| {
-            if document.nodes[cell].display() != DisplayValue::TableCell {
+            if document.nodes[cell].display() != DisplayValue::TableCell
+                || document.nodes[cell].has_before_or_after_content
+            {
                 return false;
             }
             let mut edge = page_edge_child(document, cascade, cell, before, 0);
@@ -3920,11 +3926,13 @@ fn forces_page_break(
 
 /// Whether `id` is a block container whose first and last boxes start and
 /// end its own block flow, so that a forced break at them passes to it.
+/// Generated content before or after its boxes keeps the break inside it.
 fn passes_edge_breaks(document: &Document, id: usize) -> bool {
     matches!(
         document.nodes[id].display(),
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     ) && document.nodes[id].multicol.is_none()
+        && !document.nodes[id].has_before_or_after_content
 }
 
 // Find the first/last generated child box, eliding Contents without cloning
@@ -9422,8 +9430,7 @@ fn lineless_piece(
     let node = &document.nodes[node_id];
     // A forced break before a box inside takes the page break there: moving
     // the block would only push that break on to one more page.
-    if depth > 0 && page_break_is_forced(document, node_id, cascade.computed[node_id].break_before)
-    {
+    if depth > 0 && forces_page_break(document, cascade, node_id, true) {
         return None;
     }
     // A paragraph of one line that no text places, of generated text or
@@ -11570,9 +11577,8 @@ fn has_mandatory_break_inside(
         {
             continue;
         }
-        let computed = &cascade.computed[id];
-        if page_break_is_forced(document, id, computed.break_before)
-            || box_forces_break_after(document, cascade, id, computed.break_after)
+        if forces_page_break(document, cascade, id, true)
+            || forces_page_break(document, cascade, id, false)
             || selected_page_name(cascade, id).is_some()
         {
             return true;

@@ -284,12 +284,15 @@ pub(super) fn realign_beside(
 /// cell passes to the row and does not split the cell. Only block-level boxes
 /// break pages, so a break on an inline box, or inside a box that does not
 /// stack its children in block flow, or out of the flow, does not reach it.
+/// Generated content of the cell, or of a block it goes through, counts as
+/// content on either side.
 fn breaks_inside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     cell: usize,
 ) -> bool {
-    breaks_between(document, cascade, cell, false, false)
+    let generated = document.nodes[cell].has_before_or_after_content;
+    breaks_between(document, cascade, cell, generated, generated)
 }
 
 /// The children of `parent` that are content of its block flow, with the
@@ -346,6 +349,12 @@ fn breaks_between(
         page_break_is_forced(document, child, computed.break_before) && before
             || page_break_is_forced(document, child, computed.break_after) && after
             || stacks_children_in_block_flow(document, child)
-                && breaks_between(document, cascade, child, before, after)
+                && breaks_between(
+                    document,
+                    cascade,
+                    child,
+                    before || node.has_before_or_after_content,
+                    after || node.has_before_or_after_content,
+                )
     })
 }

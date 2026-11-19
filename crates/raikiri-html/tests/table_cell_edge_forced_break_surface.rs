@@ -157,3 +157,31 @@ fn a_break_at_the_end_of_a_cell_breaks_after_its_row() {
         ),
     ]);
 }
+
+/// Generated content before the first box of a cell is content of the cell,
+/// so a break after it falls inside the cell, which splits there and leaves
+/// the cells beside it aligned within the row's part on the page. A cell
+/// with no row element of its own keeps its break too.
+#[test]
+fn a_break_after_generated_content_or_in_a_lone_cell_stays_in_the_cell() {
+    assert_rows(&[
+        (
+            "<style>td.g::before{content:'L';display:block}</style><div>P</div><table style='border-spacing:0'><tr><td class='g' style='padding:0'><div style='break-before:page'>B</div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[
+                (0, 'L', 10),
+                (0, 'P', 0),
+                (0, 'T', 50),
+                (1, 'B', 0),
+                (1, 'X', 10),
+            ],
+        ),
+        (
+            "<style>td.g::before{content:'L';display:block}</style><table style='border-spacing:0'><tr><td class='g' style='padding:0'><div style='break-before:page'>B</div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'L', 0), (0, 'T', 45), (1, 'B', 0), (1, 'X', 10)],
+        ),
+        (
+            "<div>P</div><div style='display:table-cell'><div style='break-before:page'>B</div></div><div>X</div>",
+            &[(0, 'P', 0), (1, 'B', 0), (1, 'X', 10)],
+        ),
+    ]);
+}
