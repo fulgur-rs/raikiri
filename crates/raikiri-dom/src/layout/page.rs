@@ -632,9 +632,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
         }
         match node.kind() {
             NodeKind::Text => {
-                if let crate::node::NodeData::Text(text) = &node.data
-                    && !text.text_content.trim().is_empty()
-                {
+                if text_is_page_content(document, cascade, child_id) {
                     return None;
                 }
             }
@@ -1647,6 +1645,25 @@ fn propagated_start_page_name_with_order<'name>(
     )
 }
 
+/// Whether the text node `id` is content of the page flow: text other than
+/// white space, or white space that the style preserves, which lays out a
+/// line as Chromium prints it. White space between flex or grid items lays
+/// out none.
+pub(crate) fn text_is_page_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    let crate::node::NodeData::Text(text) = &document.nodes[id].data else {
+        return false;
+    };
+    !text.text_content.trim().is_empty()
+        || (!crate::generated_content::is_collapsed_white_space(
+            &text.text_content,
+            cascade.computed[id].effective_white_space_collapse,
+        ) && !super::page_pipeline::in_flex_or_grid_container(document, id))
+}
+
 /// The start page value of `node_id`. With `ignore_root_page_name`, the
 /// `page` value of `node_id` itself is not used, while its descendants' values
 /// still are.
@@ -1711,11 +1728,7 @@ fn start_page_name<'name>(
             continue;
         }
         if matches!(node.kind(), NodeKind::Text) {
-            let has_text = matches!(
-                &node.data,
-                crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
-            );
-            if has_text {
+            if text_is_page_content(document, cascade, node_id) {
                 return (true, inherited_page_name);
             }
             continue;

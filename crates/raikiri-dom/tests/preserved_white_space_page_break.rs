@@ -128,3 +128,13 @@ fn white_space_between_flex_items_takes_no_forced_break() {
         &[(0, "A", 0.0, 0.0), (1, "B", 0.0, 10.0)],
     );
 }
+
+#[test]
+fn leading_preserved_white_space_keeps_the_first_page_unnamed() {
+    // The line of spaces is content of the body's page, so the first page
+    // is unnamed and the named box starts the second.
+    check(
+        "<body style='white-space:pre'>  <div style='page:a'>A</div>",
+        &[(1, "A", 0.0, 0.0)],
+    );
+}

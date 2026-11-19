@@ -213,7 +213,7 @@ fn is_empty_inline_box(document: &Document, node_id: usize) -> bool {
 
 /// Whether the box `node_id` is an item of a flex or grid container, whose
 /// items are blockified, looking through `display: contents` parents.
-fn in_flex_or_grid_container(document: &Document, node_id: usize) -> bool {
+pub(crate) fn in_flex_or_grid_container(document: &Document, node_id: usize) -> bool {
     let mut parent = document.parent_of(node_id);
     while let Some(id) = parent.filter(|&id| document.nodes[id].display() == DisplayValue::Contents)
     {
