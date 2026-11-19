@@ -5703,14 +5703,7 @@ fn avoided_run_ends(
             continue;
         }
         let connected = previous.is_some_and(|prior| {
-            let (after_forced, after_avoided) =
-                page_edge_constraint(document, cascade, prior.node_id, false);
-            let (before_forced, before_avoided) =
-                page_edge_constraint(document, cascade, candidate.node_id, true);
-            !after_forced
-                && !before_forced
-                && prior.page_name == candidate.page_name
-                && (after_avoided || before_avoided)
+            boxes_are_tied(document, cascade, prior.node_id, candidate.node_id)
         });
         // A paragraph in the run that breaks between its lines is a better
         // place to break than before the run: the run starts after it, and
@@ -5738,7 +5731,6 @@ fn avoided_run_ends(
             previous = Some(candidate);
         }
     }
-    let join_ties = !super::page::has_named_pages(cascade);
     let mut ends: HashMap<usize, AvoidedRunEnd> = run_lasts
         .into_iter()
         .map(|(start, (last, margin_bottom))| {
@@ -5754,8 +5746,7 @@ fn avoided_run_ends(
                     }
                 }
                 None => {
-                    let held =
-                        avoided_run_head(document, cascade, body_id, last.node_id, join_ties);
+                    let held = avoided_run_head(document, cascade, body_id, last.node_id, true);
                     (held.end, held.firm)
                 }
             };
@@ -6277,16 +6268,27 @@ fn ends_a_run_as_table(document: &Document, cascade: &CascadeResult, node_id: us
 
 /// Whether an avoided break (`break-after` of the box `before` or
 /// `break-before` of the box `after`) ties the two boxes, with no forced break
-/// at either.
+/// at either: neither one of their own nor one that a change of the used page
+/// value between them forces (see [`super::page::page_names_meet`]).
 fn boxes_are_tied(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     before: usize,
     after: usize,
 ) -> bool {
     let (forced_after, avoided_after) = page_edge_constraint(document, cascade, before, false);
     let (forced_before, avoided_before) = page_edge_constraint(document, cascade, after, true);
-    !forced_after && !forced_before && (avoided_after || avoided_before)
+    !forced_after
+        && !forced_before
+        && (avoided_after || avoided_before)
+        && (!document.style_views.names_pages(cascade)
+            || super::page::page_names_meet(
+                document,
+                cascade,
+                before,
+                after,
+                document.context.pagination_on_transposed_axes,
+            ))
 }
 
 /// The boxes of a flow that avoid a page break inside them or between them,
@@ -13279,9 +13281,8 @@ fn breaks_only_around(
             // The boxes are tied from the first to the last, and the block
             // breaks only where they do, whatever its padding and border: a
             // break between them and its edges is no better than the one
-            // before the block. Named pages may start a page between boxes
-            // whatever ties them.
-            [_, _, ..] if !has_named_pages => {
+            // before the block.
+            [_, _, ..] => {
                 return boxes
                     .windows(2)
                     .all(|pair| boxes_are_tied(document, cascade, pair[0], pair[1]))
