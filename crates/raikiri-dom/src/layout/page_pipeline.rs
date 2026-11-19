@@ -4121,39 +4121,28 @@ fn forces_page_break(
 /// Whether `node_id` is a multicol container whose first box is a spanner
 /// that forces a page break before itself. No column content comes before
 /// that break, so it falls before the container, which moves to the next
-/// page whole (Chromium). Boxes that generate no box are looked through.
+/// page whole (Chromium). `page_edge_child` looks through boxes that
+/// generate no box; one with generated content starts with that content.
 fn starts_with_forced_spanner(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    if document.nodes[node_id].multicol.is_none() {
-        return false;
-    }
-    let mut id = node_id;
-    // `page_edge_child` stops the walk below 128 levels.
-    let mut depth = 0;
-    loop {
-        if generated_on_side(cascade, id, true) {
-            return false;
-        }
-        let Ok(Some(child)) = page_edge_child(document, cascade, id, true, depth) else {
-            return false;
-        };
-        if document.nodes[child].kind() != NodeKind::Element {
-            return false;
-        }
-        if document.nodes[child].display() != DisplayValue::Contents {
-            return page_break_is_forced(
-                document,
-                cascade,
-                child,
-                cascade.computed[child].break_before,
-            );
-        }
-        id = child;
-        depth += 1;
-    }
+    document.nodes[node_id].multicol.is_some()
+        && !generated_on_side(cascade, node_id, true)
+        && page_edge_child(document, cascade, node_id, true, 0)
+            .ok()
+            .flatten()
+            .is_some_and(|child| {
+                document.nodes[child].kind() == NodeKind::Element
+                    && document.nodes[child].display() != DisplayValue::Contents
+                    && page_break_is_forced(
+                        document,
+                        cascade,
+                        child,
+                        cascade.computed[child].break_before,
+                    )
+            })
 }
 
 /// Whether `id` is a block container whose first and last boxes start and
