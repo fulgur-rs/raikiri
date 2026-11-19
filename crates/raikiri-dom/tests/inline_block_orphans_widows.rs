@@ -562,3 +562,43 @@ fn a_paragraph_that_starts_its_page_after_a_break_pulls_only_widows_it_meets() {
         (spanned("", 50, [3, 40, 2], [2, 4]), [(2, 5.0), (3, 5.0)]),
     ]);
 }
+
+#[test]
+fn edges_and_blocks_above_the_first_line_decide_whether_the_paragraph_starts_its_page() {
+    let forced = "<div style=\"break-after:page\">X</div>";
+    let z = "<div><span id=z>Z</span></div>";
+    let lines = format!("A{}C<br>C", block(20));
+    assert_places(&[
+        // The paragraph's own top padding comes after the break.
+        (
+            format!(
+                "<div style=\"width:20px\">{forced}<div style=\"padding-top:10px;orphans:1;\
+                 widows:4\"><span>{lines}</span></div>{z}</div>"
+            ),
+            [(1, 45.0), (2, 35.0)],
+        ),
+        // The top padding of a box around it comes before the paragraph.
+        (
+            format!(
+                "<div style=\"width:20px\">{forced}<div style=\"padding-top:10px\">\
+                 <div style=\"orphans:1;widows:4\"><span>{lines}</span></div></div>{z}</div>"
+            ),
+            [(2, 5.0), (3, 5.0)],
+        ),
+        // So does a block of the paragraph before its first line.
+        (
+            format!(
+                "<div style=\"width:20px\">{forced}<div style=\"orphans:1;widows:4\">\
+                 <div style=\"height:10px\"></div><span>{lines}</span></div>{z}</div>"
+            ),
+            [(2, 5.0), (3, 5.0)],
+        ),
+        (
+            format!(
+                "<div style=\"width:20px\">{forced}<div style=\"orphans:1;widows:4\"><span>\
+                 <div style=\"height:10px\"></div>{lines}</span></div>{z}</div>"
+            ),
+            [(2, 35.0), (3, 35.0)],
+        ),
+    ]);
+}

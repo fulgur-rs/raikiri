@@ -3938,7 +3938,7 @@ impl PaginationState {
                 .filter(|&&(_, after, _)| after == 0)
                 .map(|&(block, _, _)| document.nodes[block].layout.size.height)
                 .sum();
-            let (ahead, opens_on_page, pulls) =
+            let (ahead, opens_on_page, after_break) =
                 paragraph_line_bounds(document, node_id, text_lines)
                     .map(|bounds| {
                         let first_top = bounds[0].0 + text.effective_y;
@@ -3952,11 +3952,11 @@ impl PaginationState {
                                 page_start,
                             ),
                             first_top - leading >= page_start - 0.001,
-                            first_top < page_start - 0.001
-                                || widows_pull_lines(document, env, root, first_top, page),
+                            starts_page_after_break(document, env, root, first_top, page)
+                                == Some(true),
                         )
                     })
-                    .unwrap_or((Vec::new(), false, true));
+                    .unwrap_or_default();
             let lines_before = ahead.len();
             // Only blocks that go on from the page before are ahead of the
             // run: Chromium leaves the run's first line with them.
@@ -4034,13 +4034,13 @@ impl PaginationState {
             // The lines ahead of the run stay: a pull that takes them is
             // judged with them (see `keep_lines_through_inline_block`), and
             // the natural break is kept without it. Where the paragraph
-            // opens its page below nothing but the break before it (see
-            // `widows_pull_lines`), the run's lines go only when they meet
-            // the widows, as Chromium counts them with one line more.
+            // starts the page right after a break (see
+            // `starts_page_after_break`), the run's lines go only when they
+            // meet the widows, as Chromium counts them with one line more.
             let fix = match fix {
                 LineBreakFix::MoveLines(moves)
                     if (lines_before > 0
-                        && !pulls
+                        && after_break
                         && moves.iter().any(|&(line, _, _)| {
                             fit_metrics.len() - line + 1 < widows as usize
                         }))
@@ -4281,20 +4281,31 @@ impl PaginationState {
         // The lines of the paragraph on the page before the run, when a
         // block inside an inline box comes right before it (see
         // `inline_lines_before_run`).
-        let ahead = if in_inline_box {
-            paragraph_line_bounds(document, node_id, text_lines).map_or(0, |bounds| {
-                super::inline_lines_before_run(
-                    document,
-                    root,
-                    start,
-                    &bounds,
-                    text.effective_y,
-                    page_start,
+        // Whether the paragraph starts the page right after a break, too
+        // (see `starts_page_after_break`).
+        let (ahead, after_break) = if in_inline_box {
+            paragraph_line_bounds(document, node_id, text_lines).map_or((0, false), |bounds| {
+                (
+                    super::inline_lines_before_run(
+                        document,
+                        root,
+                        start,
+                        &bounds,
+                        text.effective_y,
+                        page_start,
+                    )
+                    .len(),
+                    starts_page_after_break(
+                        document,
+                        env,
+                        root,
+                        text.effective_y + bounds[0].0,
+                        page,
+                    ) == Some(true),
                 )
-                .len()
             })
         } else {
-            0
+            (0, false)
         };
         let orphans = cascade.computed[root].orphans.max(1) as usize;
         let widows = cascade.computed[root].widows.max(1) as usize;
@@ -4326,18 +4337,14 @@ impl PaginationState {
             // The lines and blocks of the paragraph before the run on the
             // page are orphans too, but only the run's lines go along.
             let pulled = (widows - 1).min(on_page + ahead - orphans).min(on_page);
-            // Where the paragraph opens its page below nothing but the break
-            // before it (see `widows_pull_lines`), lines go only when they
-            // meet the widows: the pulled lines and the block with them,
-            // and, as Chromium counts them, one line more.
-            let pulled = paragraph_line_bounds(document, node_id, text_lines)
-                .filter(|bounds| {
-                    let first_top = text.effective_y + bounds[0].0;
-                    first_top >= page_start - 0.001
-                        && !widows_pull_lines(document, env, root, first_top, page)
-                        && pulled + 1 + 1 < widows
-                })
-                .map_or(pulled, |_| 0);
+            // Where the paragraph starts the page right after a break, lines
+            // go only when they meet the widows: the pulled lines and the
+            // block with them, and, as Chromium counts them, one line more.
+            let pulled = if after_break && pulled + 1 + 1 < widows {
+                0
+            } else {
+                pulled
+            };
             (pulled > 0).then(|| metrics.len() - pulled)
         } else if first_on_page == 0 && after_block.is_none() {
             // Lines that open the paragraph go with the whole paragraph, as
@@ -4511,7 +4518,10 @@ impl PaginationState {
             return Ok(());
         }
         // The widows the paragraph declares, the block and the run's lines
-        // among them, must fit on a page for a pull to take the block.
+        // among them, must fit on a page for a pull to take the block, but
+        // on the page a paragraph starts below a box of the flow, or on the
+        // first page, they pull lines all the same (see
+        // `starts_page_after_break`).
         let tops: Vec<f32> = metrics
             .iter()
             .map(|&(top, _)| y + top)
@@ -4522,14 +4532,14 @@ impl PaginationState {
         let next_page = page.saturating_add(1);
         let widows_fit = y + next[next.len() - 1].1 - tops[first_widow]
             <= page_origins.step_at(next_page) + 0.001;
-        let opens_here = bounds
-            .first()
-            .is_some_and(|&(top, _)| widows_pull_lines(document, env, root, y + top, page));
+        let fit_waived = bounds.first().is_some_and(|&(top, _)| {
+            starts_page_after_break(document, env, root, y + top, page) == Some(false)
+        });
         let pulled =
             widows
                 .saturating_sub(after)
                 .min(before - orphans)
-                .min(if widows_fit || opens_here {
+                .min(if widows_fit || fit_waived {
                     usize::MAX
                 } else {
                     0
@@ -5596,21 +5606,35 @@ struct InlineBlockRun<'a> {
     page: u32,
 }
 
-/// Whether widows can pull lines of the paragraph `root`, whose first line
-/// starts at `first_top` on `page`, to the next page. Chromium pulls none
-/// when the paragraph starts its page below nothing of the flow but the
-/// break before it: the first page, or a box of no height before the
-/// paragraph on the page, still let the lines go.
-fn widows_pull_lines(
+/// Whether the paragraph `root`, whose first line starts at `first_top`,
+/// starts `page` right after the break before it: `None` when it starts on
+/// an earlier page. Content of the flow above the first line on the page
+/// (see `follows_box_on_page`), a block of the paragraph before that line,
+/// or the top padding and border of a box around the paragraph, comes
+/// between the break and the paragraph; the paragraph's own top padding and
+/// border do not. The first page has no break before it. Chromium pulls
+/// lines of a paragraph that starts its page after a break for its widows
+/// only when they meet the widows, and lets the widows of any other
+/// paragraph that starts on the page pull lines even when the next page
+/// cannot hold all of them.
+fn starts_page_after_break(
     document: &LayoutSession<'_>,
     env: &FlowEnv<'_>,
     root: usize,
     first_top: f32,
     page: u32,
-) -> bool {
+) -> Option<bool> {
     let page_start = env.page_origins.origin(page);
-    first_top >= page_start - 0.001
-        && (first_top > page_start + 0.5
-            || page == 0
-            || follows_box_on_page(document, env.cascade, env.body_id, root, page_start))
+    let leading: f32 = super::paragraph_blocks(document, root)
+        .iter()
+        .filter(|&&(_, after, _)| after == 0)
+        .map(|&(block, _, _)| document.nodes[block].layout.size.height)
+        .sum();
+    let layout = &document.nodes[root].layout;
+    let content_top = first_top - layout.padding.top - layout.border.top;
+    (first_top - leading >= page_start - 0.001).then(|| {
+        page > 0
+            && content_top <= page_start + 0.5
+            && !follows_box_on_page(document, env.cascade, env.body_id, root, page_start)
+    })
 }
