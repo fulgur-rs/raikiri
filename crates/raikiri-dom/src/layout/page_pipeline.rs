@@ -15906,8 +15906,12 @@ fn grow_float_context_to_moved_float(
     flow_page: u32,
 ) {
     let context = float_context_root(document, cascade, node_id, body_id);
+    // A table cell's `height` is a minimum: it grows with its content
+    // whatever its value (CSS 2.1 §17.5.3).
+    let cell = document.nodes[context].display() == DisplayValue::TableCell;
     if context != body_id
-        && (document.block_axis(context).height().is_auto()
+        && (cell
+            || document.block_axis(context).height().is_auto()
             || definite_content_height(document, context).is_none())
     {
         let context_top = current_abs_y(document, context);
@@ -15915,12 +15919,27 @@ fn grow_float_context_to_moved_float(
             + height
             + document.nodes[node_id].layout.margin.bottom;
         let layout = &document.nodes[context].layout;
-        let grown = (float_bottom - context_top + layout.padding.bottom + layout.border.bottom)
+        let grown = (float_bottom - context_top + edges_below(document, context))
             .min(max_border_box_height(document, cascade, context).unwrap_or(f32::INFINITY));
         let growth = grown - layout.size.height;
         if growth > 0.001 {
             document.nodes[context].layout.size.height += growth;
             document.mark_pagination_extent_dirty(context);
+            // A row grows as far as its cell that grows most: only the part
+            // of a cell's growth past what the row grew already moves the
+            // boxes after the row. The cells beside it sit beside it, not
+            // below it, so the flow follows past the row.
+            let row_end = cell.then(|| cell_row_end(document, context)).flatten();
+            let growth = if cell {
+                let total = shifts.grow_box(context, growth);
+                let holder = row_end.map_or((context, 0), |(row, end, _)| (row, end));
+                shifts.grow_row(holder, total)
+            } else {
+                growth
+            };
+            if growth <= 0.001 {
+                return;
+            }
             grow_ancestors_for_shift(
                 document,
                 cascade,
@@ -15931,7 +15950,10 @@ fn grow_float_context_to_moved_float(
                 flow_page,
                 &IfcBoxShifts::default(),
             );
-            shifts.growth.push((context, growth));
+            match row_end {
+                Some((row, end, _)) => shifts.from_box.push((row, end, growth)),
+                None => shifts.growth.push((context, growth)),
+            }
         }
     }
 }
@@ -18892,20 +18914,11 @@ fn forced_break_growth(
     )
 }
 
-/// How far `block` grows, up to the border-box height `max`, to hold its
-/// in-flow content once its child `child` has grown by `child_growth`.
-fn moved_content_growth(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body_id: usize,
-    block: usize,
-    (child, child_growth): (usize, f32),
-    max: f32,
-) -> f32 {
-    let old = document.nodes[block].layout.size.height;
+/// The padding and border below the content of `block`. A table cell keeps
+/// the room its vertical alignment leaves in its padding; only its own
+/// padding and border lie below its content.
+fn edges_below(document: &super::context::LayoutSession<'_>, block: usize) -> f32 {
     let layout = &document.nodes[block].layout;
-    // A table cell keeps the room its vertical alignment leaves in its
-    // padding; only its own padding and border lie below its content.
     let padding_below = if document.nodes[block].display() == DisplayValue::TableCell {
         // Percentages resolve against the table's width.
         let basis = cell_row_end(document, block)
@@ -18920,7 +18933,21 @@ fn moved_content_growth(
     } else {
         layout.padding.bottom
     };
-    let edges_below = padding_below + layout.border.bottom;
+    padding_below + layout.border.bottom
+}
+
+/// How far `block` grows, up to the border-box height `max`, to hold its
+/// in-flow content once its child `child` has grown by `child_growth`.
+fn moved_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    max: f32,
+) -> f32 {
+    let old = document.nodes[block].layout.size.height;
+    let edges_below = edges_below(document, block);
     let child_end = if child_growth > 0.0 {
         let node = &document.nodes[child];
         let margin = if edges_below > 0.0 || encloses_child_margins(document, cascade, block) {
