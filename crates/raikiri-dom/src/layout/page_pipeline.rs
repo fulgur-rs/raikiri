@@ -19881,11 +19881,8 @@ fn held_float_end(
             let float_end = top - layout_relative_offset_y(document, cascade, body_id, child)
                 + node.layout.size.height
                 + node.layout.margin.bottom;
-            if matches!(
-                cascade.computed[child].float,
-                FloatValue::Left | FloatValue::Right
-            ) && float_end.is_finite()
-            {
+            // A footnote leaves the flow for the page's footnote area.
+            if cascade.computed[child].float != FloatValue::Footnote && float_end.is_finite() {
                 end = end.max(float_end);
             }
             continue;
