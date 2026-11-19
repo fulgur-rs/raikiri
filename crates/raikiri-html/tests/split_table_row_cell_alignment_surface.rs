@@ -14,8 +14,10 @@ use raikiri_html::{
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// The page, glyph and glyph top of every line of text in `body`, where
-/// the painter draws it.
+/// The page, glyph and glyph top of every line of text in `body`. The top
+/// is where the painter draws the run on its page, moved by the translation
+/// that a relative offset left to paint gives it; the page is the one layout
+/// puts the line on.
 fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
@@ -43,7 +45,8 @@ fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
         let page = result.page(index).unwrap();
         for run in page.text_runs() {
             // A relative offset that layout leaves to paint (on a row, a row
-            // group or a cell) moves the run by its transform.
+            // group or a cell) moves the run by its transform, a translation
+            // in these documents.
             let top = (run.origin.0, run.origin.1 - run.ascent);
             let top = run
                 .transform
@@ -347,7 +350,7 @@ fn relative_offsets_and_breaks_outside_the_cells_block_flow() {
 }
 
 /// A row whose place in the flow crosses the page end is split there, and
-/// its cells start at its top, also when a relative offset paints it above
+/// its cells start at its top, also when a relative offset paints it away from
 /// that place, whether the offset is on the table, a box around it, its row
 /// group or the row (Chromium splits at the flow place and paints the parts
 /// moved). A cell's own offset moves only that cell, and the flow after the
@@ -379,6 +382,7 @@ fn rows_split_in_the_flow_and_moved_by_a_relative_offset() {
             "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-30px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:middle'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
             &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
         ),
+        // A and C are painted above the page, where the print shows nothing.
         (
             "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-50px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
             &[(0, 'B', 10), (1, 'X', 10)],
