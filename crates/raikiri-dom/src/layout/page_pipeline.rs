@@ -13944,19 +13944,18 @@ fn in_inline_box(document: &Document, root: usize, block: usize) -> bool {
 /// and in order, each with the index of the line after it and whether it
 /// sits inside an inline box of the paragraph.
 fn paragraph_blocks(document: &Document, root: usize) -> Vec<(usize, usize, bool)> {
-    let Some(lines) = document
+    let mut seen = HashSet::new();
+    document
         .ifc_layout_node(root)
         .and_then(|node| node.ifc.as_ref()?.lines.as_ref())
-    else {
-        return Vec::new();
-    };
-    let mut seen = HashSet::new();
-    lines
-        .block_line_starts
-        .iter()
-        .filter(|&&(block, _)| seen.insert(block))
-        .map(|&(block, after)| (block, after, in_inline_box(document, root, block)))
-        .collect()
+        .map_or_else(Vec::new, |lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .filter(|&&(block, _)| seen.insert(block))
+                .map(|&(block, after)| (block, after, in_inline_box(document, root, block)))
+                .collect()
+        })
 }
 
 /// The lines of the paragraph `root` before its run of lines from `start`
@@ -14005,9 +14004,8 @@ fn inline_lines_before_run(
         if !inline || after < first {
             break;
         }
-        let Some(&(next_top, _)) = bounds.get(after) else {
-            continue;
-        };
+        // A block before the run has a line after it, the run's at least.
+        let next_top = bounds[after].0;
         let end = bottom
             .filter(|&(line, _)| line == after)
             .map_or(next_top, |(_, top)| top);

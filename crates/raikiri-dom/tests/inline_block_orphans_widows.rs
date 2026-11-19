@@ -373,6 +373,10 @@ fn every_block_inside_an_inline_box_is_a_line_of_the_paragraph() {
         // Too few orphans after the first block leave the break where it
         // falls.
         (
+            paragraph(0, "orphans:4;widows:1", &two_blocks(1, 20, 2, 20, 2)),
+            [(1, 35.0), (2, 35.0)],
+        ),
+        (
             paragraph(0, "orphans:3;widows:1", &two_blocks(1, 10, 1, 10, 1)),
             [(0, 75.0), (1, 35.0)],
         ),

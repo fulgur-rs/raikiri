@@ -4392,9 +4392,8 @@ impl PaginationState {
         let page_start = page_origins.origin(page);
         let page_end = page_start + page_origins.step_at(page);
         let y = text.effective_y;
-        let Some(bounds) = paragraph_line_bounds(document, candidate.node_id, text_lines) else {
-            return Ok(());
-        };
+        let bounds =
+            paragraph_line_bounds(document, candidate.node_id, text_lines).unwrap_or_default();
         let total = bounds.len();
         let paragraph_blocks = super::paragraph_blocks(document, root);
         // The blocks inside inline boxes between the run and the lines
