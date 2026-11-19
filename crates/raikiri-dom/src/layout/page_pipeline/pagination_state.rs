@@ -693,7 +693,7 @@ impl PaginationState {
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
-        self.keep_lines_with_inline_block(document, env, candidate, entry, &blocks, &mut text)?;
+        self.keep_lines_with_next_block(document, env, candidate, entry, &blocks, &mut text)?;
         text.effective_y += relative_offset;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
@@ -3834,9 +3834,9 @@ impl PaginationState {
         Ok(())
     }
 
-    /// Keeps the lines right before a block that sits inside an inline box
-    /// of the paragraph with the block, where the page breaks before it.
-    /// Chromium lays such a block out on a line of its own in the paragraph
+    /// Keeps the lines right before a block of the paragraph with the block,
+    /// where the page breaks before it. A block that sits inside an inline
+    /// box of the paragraph Chromium lays out on a line of its own in it
     /// (see `inline_block_after_lines`), so the break before it is a break
     /// between lines: when it leaves fewer than `orphans` lines of the run
     /// before the block on the page, those lines go to the next page with the
@@ -3846,7 +3846,12 @@ impl PaginationState {
     /// candidate, after the checks of its own lines; it is left where it is
     /// under the conditions of [`Self::breaks_run_after_block`], or when a
     /// break is forced before the block.
-    pub(super) fn keep_lines_with_inline_block(
+    ///
+    /// A block straight in the paragraph is no line, but a break avoided
+    /// before it is worse than one that leaves too few orphans or widows:
+    /// the last line of the run goes with it, unless that line starts its
+    /// page.
+    pub(super) fn keep_lines_with_next_block(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
@@ -3869,14 +3874,19 @@ impl PaginationState {
             return Ok(());
         };
         let start = after_block.unwrap_or(0);
-        let Some(block) = super::inline_block_after_lines(document, root, end) else {
+        // An anonymous box, with no style of its own, is left alone.
+        let Some((block, in_inline_box)) = super::block_after_lines(document, root, end)
+            .filter(|&(block, _)| cascade.computed.get(block).is_some())
+        else {
             return Ok(());
         };
+        let (forced, avoided) = super::page_edge_constraint(document, cascade, block, true);
         if self
             .checked_paragraphs
             .lines_before_inline_blocks
             .contains(&(root, start))
-            || super::page_edge_constraint(document, cascade, block, true).0
+            || forced
+            || !(in_inline_box || avoided)
         {
             return Ok(());
         }
@@ -3924,7 +3934,7 @@ impl PaginationState {
         let block_height = document.nodes[block].layout.size.height;
         let breaks_before_block = block_top + block_height > page_end + 0.001
             && (block_top >= page_end - 0.001
-                || super::first_piece_end(document, cascade, env.body_id, block, 0)
+                || super::block_first_piece_end(document, cascade, env.body_id, block)
                     .is_some_and(|piece| block_top + piece > page_end + 0.001));
         if text.effective_y + last_bottom > page_end + 0.001 || !breaks_before_block {
             return Ok(());
@@ -3938,7 +3948,29 @@ impl PaginationState {
         let widows = cascade.computed[root].widows.max(1) as usize;
         // Too few orphans move only lines that all start on this page: those
         // that went on from the page before keep the break above them.
-        let moved = if on_page >= orphans {
+        let moved = if !in_inline_box {
+            // A break that leaves too few orphans or widows is a better one
+            // than the avoided break before the block: the last line goes
+            // with the block, unless it starts its page. As the first line
+            // of the paragraph, it goes with the whole paragraph.
+            let last = metrics.len() - 1;
+            if last == 0 && after_block.is_none() {
+                // The paragraph breaks from a box before it, not from the
+                // top edges of the block around it: with no box before it,
+                // the avoided break is the one taken.
+                let boxes_before =
+                    super::any_level_before(document, cascade, env.body_id, root, |_, _, boxes| {
+                        !boxes.is_empty()
+                    });
+                if !boxes_before {
+                    return Ok(());
+                }
+                return self.move_inline_block_paragraph(
+                    document, env, candidate, entry, blocks, text, page,
+                );
+            }
+            (text.effective_y + last_top > page_start + 0.5).then_some(last)
+        } else if on_page >= orphans {
             let pulled = (widows - 1).min(on_page - orphans);
             (pulled > 0).then(|| metrics.len() - pulled)
         } else if first_on_page == 0 && after_block.is_none() {
@@ -3972,7 +4004,7 @@ impl PaginationState {
     /// Moves the paragraph that `blocks` holds the text `candidate` in whole
     /// from `page` to the next page, as the break before it does, when the
     /// paragraph is the block its line checks move and content of the flow
-    /// comes before it on that page (see [`Self::keep_lines_with_inline_block`]).
+    /// comes before it on that page (see [`Self::keep_lines_with_next_block`]).
     #[allow(clippy::too_many_arguments)]
     fn move_inline_block_paragraph(
         &mut self,
