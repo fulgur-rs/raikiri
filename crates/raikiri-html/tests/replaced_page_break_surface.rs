@@ -462,17 +462,118 @@ fn column_boundary_inheritance_keeps_existing_avoided_breaks() {
 }
 
 #[test]
-fn earlier_float_or_generated_content_stops_a_leading_column_chain() {
+fn an_earlier_float_stops_a_leading_column_chain() {
     let items = format!(
         "<div><div style='float:left;width:10px;height:10px'></div>{}</div>",
         column_image(400, "")
     );
     assert!(extents_of("o", &column_after_lead(&items, ""))[0].is_some());
-    let body = format!(
-        "<style>#w::before{{content:'A';display:block;height:10px}}</style><div style='height:300px'></div><div id=w><div id=o style='display:flex;flex-direction:column'>{}</div></div>",
+}
+
+/// Lines or generated content before a column in its parent's flow give a
+/// break before it: the column moves to the next page whole and leaves them
+/// on the page they are on, as Chromium does.
+#[test]
+fn a_column_after_lines_or_generated_content_moves_whole() {
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
         column_image(400, "")
     );
-    assert!(extents_of("o", &body)[0].is_some());
+    let spacer = "<div style='height:300px'></div>";
+    for body in [
+        format!("{spacer}<div id=w>A{column}</div>"),
+        format!("{spacer}<div id=w>A<br>B{column}</div>"),
+        format!("{spacer}<div id=w><span>A</span>{column}</div>"),
+        format!("{spacer}<div id=w>A{column}B</div>"),
+        format!("{spacer}<div id=w>A<div>{column}</div></div>"),
+        format!("{spacer}<div id=w>A<section style='display:contents'>{column}</section></div>"),
+        format!(
+            "<style>#w::before{{content:'A';display:block;height:10px}}</style>{spacer}<div id=w>{column}</div>"
+        ),
+        format!("<style>#w::before{{content:'A'}}</style>{spacer}<div id=w>{column}</div>"),
+    ] {
+        assert_eq!(extents_of("o", &body), [None, Some((0, 400))], "{body}");
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{body}");
+    }
+    // The block that holds the line keeps it on the first page.
+    let body = format!("{spacer}<div id=w>A{column}</div>");
+    assert_eq!(extents_of("w", &body), [Some((308, 600)), Some((0, 400))]);
+    // A tall line moves no differently.
+    let body = format!("{spacer}<div style='font-size:50px;line-height:50px'>A{column}</div>");
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    // An image taller than a page splits on the next one.
+    let body = format!(
+        "{spacer}<div>A<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div></div>",
+        column_image(750, "")
+    );
+    assert_eq!(
+        extents_of("o", &body),
+        [None, Some((0, 600)), Some((0, 150))]
+    );
+    // A column that fits after the line stays.
+    let body = format!(
+        "{spacer}<div>A<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div></div>",
+        column_image(100, "")
+    );
+    assert_eq!(extents_of("o", &body), [Some((318, 418))]);
+}
+
+/// A column, or a row flex container, that begins a paragraph whose lines
+/// follow it takes the break before the paragraph and moves whole.
+#[test]
+fn a_container_first_in_a_paragraph_moves_whole() {
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div><div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>B</div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    let body = format!(
+        "{spacer}<div><div id=o style='display:flex;width:300px;padding-top:10px'>{}</div>B</div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 410))]);
+    assert_eq!(image_extents(&body), [None, Some((10, 410))]);
+}
+
+/// A plain block after a line moves with its padding, and a column after a
+/// block `::before` leaves the padding and the generated block of its parent
+/// behind. More lines than `orphans` asks for do not keep the column either.
+#[test]
+fn breaks_after_lines_or_generated_content_keep_what_precedes_them() {
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div>A<div id=o style='padding-top:20px;width:300px'>{}</div></div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 420))]);
+    assert_eq!(image_extents(&body), [None, Some((20, 420))]);
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(400, "")
+    );
+    let body = format!(
+        "<style>#w::before{{content:'A';display:block;height:10px}}</style>{spacer}<div id=w style='padding-top:10px'>{column}</div>"
+    );
+    assert_eq!(extents_of("w", &body), [Some((308, 600)), Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    let body =
+        format!("<div style='height:290px'></div><div style='orphans:3'>A<br>B{column}</div>");
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+}
+
+/// A row flex container or a grid after a line moves whole too, when its
+/// first item does not fit after the line.
+#[test]
+fn a_row_flex_or_grid_after_a_line_moves_whole() {
+    for display in ["flex", "grid"] {
+        let body = format!(
+            "<div style='height:300px'></div><div>A<div id=o style='display:{display};width:300px'>{}</div></div>",
+            column_image(400, "")
+        );
+        assert_eq!(extents_of("o", &body), [None, Some((0, 400))], "{display}");
+        assert_eq!(image_extents(&body), [None, Some((0, 400))], "{display}");
+    }
 }
 
 #[test]
