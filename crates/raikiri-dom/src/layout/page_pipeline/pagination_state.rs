@@ -3907,7 +3907,13 @@ impl PaginationState {
             },
         )
         .0;
-        let block_top = text.effective_y + current_abs_y(document, block) - owned_top;
+        // The page breaks where the flow puts the block: relative offsets of
+        // the block and of the inline boxes around it only paint it elsewhere.
+        let relative: f32 = std::iter::successors(Some(block), |&id| document.nodes[id].parent)
+            .take_while(|&id| id != root)
+            .map(|id| super::layout_relative_offset_y(document, cascade, env.body_id, id))
+            .sum();
+        let block_top = text.effective_y + current_abs_y(document, block) - relative - owned_top;
         let (last_top, last_bottom) = metrics[metrics.len() - 1];
         let page = page_origins.page_index_for_y(text.effective_y + last_top + 0.001);
         let page_start = page_origins.origin(page);

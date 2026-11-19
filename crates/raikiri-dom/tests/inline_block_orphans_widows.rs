@@ -176,6 +176,17 @@ fn a_block_whose_first_piece_fits_breaks_inside() {
     assert_places(&[
         (paragraph(10, "", &in_span(1, 80)), [(0, 45.0), (1, 25.0)]),
         (paragraph(40, "", &in_span(1, 40)), [(0, 75.0), (1, 15.0)]),
+        // A relative offset only paints the block lower: the first piece
+        // fits where the flow puts it.
+        (
+            paragraph(
+                40,
+                "",
+                "<span>A<div style=\"height:40px;position:relative;top:5px\">\
+                 <span id=t>T</span></div></span>",
+            ),
+            [(0, 80.0), (1, 15.0)],
+        ),
     ]);
 }
 
