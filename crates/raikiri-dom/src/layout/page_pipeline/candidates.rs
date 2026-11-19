@@ -216,7 +216,7 @@ pub(super) struct ElementContext {
     /// between the two is avoided, by the box or by the box before it. A
     /// box that avoids a break inside it does not move past that break on
     /// its own: Chromium rates both breaks alike and takes the later one,
-    /// inside the box (see [`ElementContext::avoids_break_before`]).
+    /// inside the box (see [`BoxContext::avoids_break_before`]).
     pub(super) avoided_break_before: bool,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
