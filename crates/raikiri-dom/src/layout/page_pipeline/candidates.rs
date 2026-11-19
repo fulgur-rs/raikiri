@@ -1909,10 +1909,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 || document.nodes[previous].layout.margin.bottom > 0.0
                                 // A margin of a box inside the one before it
                                 // that collapses through that box's bottom.
-                                || super::adjoining_margin_extremes(
-                                    document, cascade, previous, false, None,
-                                )
-                                .0 > 0.0
+                                // An anonymous box has no style of its own.
+                                || (cascade.computed.get(previous).is_some()
+                                    && super::adjoining_margin_extremes(
+                                        document, cascade, previous, false, None,
+                                    )
+                                    .0 > 0.0)
                                 // Margins that collapse through an empty box
                                 // put it below them. With no clearance, only
                                 // margins lie between two siblings.

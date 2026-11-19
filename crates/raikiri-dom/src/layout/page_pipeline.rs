@@ -13308,6 +13308,8 @@ fn margin_above_line(
         .rev()
         .find(|&&(_, after)| after == line)?
         .0;
+    // An anonymous box, with no style of its own, is left alone.
+    cascade.computed.get(block)?;
     let line_top = node.layout.border.top + node.layout.padding.top + lines.line_top(line);
     // The block sits in the root, maybe inside inline boxes, each placed
     // in the box around it. Relative offsets only paint them elsewhere.
