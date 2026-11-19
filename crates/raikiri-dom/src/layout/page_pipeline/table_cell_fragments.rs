@@ -294,7 +294,8 @@ fn breaks_inside(
 
 /// Whether a forced break falls between content among the children of
 /// `parent` or inside them, with whether content of the cell comes before and
-/// after `parent`.
+/// after `parent`. Floats and positioned boxes are not content that a break
+/// falls between.
 fn breaks_between(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -306,18 +307,18 @@ fn breaks_between(
         .children
         .iter()
         .copied()
-        .filter(|&child| sibling_renders(document, child))
+        .filter(|&child| {
+            sibling_renders(document, child)
+                && !matches!(
+                    document.nodes[child].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && !is_floating_box_for_pagination(document, cascade, child)
+        })
         .collect();
     children.iter().enumerate().any(|(index, &child)| {
         let node = &document.nodes[child];
-        if node.kind() != NodeKind::Element
-            || !is_block_level_flow_box(node.display())
-            || matches!(
-                node.position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-            || is_floating_box_for_pagination(document, cascade, child)
-        {
+        if node.kind() != NodeKind::Element || !is_block_level_flow_box(node.display()) {
             return false;
         }
         let computed = &cascade.computed[child];
