@@ -14196,6 +14196,14 @@ struct SubtreeShifts {
     /// Boxes that forced breaks inside them grew, with how far in all:
     /// their stored heights leave that growth out.
     grown_boxes: Vec<(usize, f32)>,
+    /// Cells beside one that a forced break grew, aligned again within the
+    /// part of their row on the page the break leaves, with how far their
+    /// content moved up (down when negative). Their content that is still
+    /// to be placed moves with it.
+    realigned_cells: Vec<(usize, f32)>,
+    /// Cells that a page end or a forced break inside them split, which keep
+    /// their content at their top.
+    split_cells: HashSet<usize>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -18382,7 +18390,32 @@ fn shift_block_flow_after(
                 // earlier break in it may have grown it already: only the
                 // rest of the growth moves what follows.
                 let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
+                let first_growth = !shifts.grown_rows.iter().any(|(id, _)| *id == holder);
                 let added = shifts.grow_row(holder, passed);
+                if first_growth
+                    && added > 0.001
+                    && let Some((row, _, _)) = row_end
+                {
+                    // The break ends the row's fragment on this page where
+                    // the margin box of the moved box now starts, at the top
+                    // of the next page. A break below the row, in a cell
+                    // that spans the rows after it, leaves the row whole.
+                    let end = offset_in_cell(document, cascade, body_id, node_id, parent)
+                        - document.nodes[node_id].layout.margin.top;
+                    let breaks_row = end - flow_delta < document.nodes[row].layout.size.height;
+                    let realigned = table_cell_fragments::realign_beside(
+                        document,
+                        cascade,
+                        row,
+                        parent,
+                        breaks_row.then_some(end),
+                        &shifts.split_cells,
+                    );
+                    for fragment in realigned {
+                        let realigned = fragment.apply(document);
+                        shifts.realigned_cells.push(realigned);
+                    }
+                }
                 let Some((row, end, table)) = row_end else {
                     // A cell outside a table sits in an anonymous table of its
                     // own (CSS 2.1 §17.2.1), which grows with it.
@@ -18584,6 +18617,25 @@ fn growing_cell(
             || document.nodes[child].in_ifc_subtree()
             || lines_hold_block(document, cell, child)))
     .then_some(cell)
+}
+
+/// How far below the border-box top of `cell` the border box of `node_id`, a
+/// box in it, now lies in the flow, without the relative offsets that only
+/// move where the boxes between them are painted.
+fn offset_in_cell(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    cell: usize,
+) -> f32 {
+    let laid_out: f32 = document
+        .inclusive_ancestors(node_id)
+        .take_while(|&id| id != cell)
+        .map(|id| document.nodes[id].layout.location.y)
+        .sum();
+    laid_out - accumulated_relative_offset_y(document, cascade, body_id, node_id)
+        + accumulated_relative_offset_y(document, cascade, body_id, cell)
 }
 
 /// The box that holds the row of the table cell `cell`, the index in it
