@@ -485,7 +485,7 @@ fn a_column_after_lines_or_generated_content_moves_whole() {
         format!("{spacer}<div id=w>A<br>B{column}</div>"),
         format!("{spacer}<div id=w><span>A</span>{column}</div>"),
         format!("{spacer}<div id=w>A{column}B</div>"),
-        format!("{spacer}<div id=w style='orphans:2'>A<div>{column}</div></div>"),
+        format!("{spacer}<div id=w>A<div>{column}</div></div>"),
         format!("{spacer}<div id=w>A<section style='display:contents'>{column}</section></div>"),
         format!(
             "<style>#w::before{{content:'A';display:block;height:10px}}</style>{spacer}<div id=w>{column}</div>"
@@ -516,6 +516,50 @@ fn a_column_after_lines_or_generated_content_moves_whole() {
         column_image(100, "")
     );
     assert_eq!(extents_of("o", &body), [Some((318, 418))]);
+}
+
+/// A column, or a row flex container, that begins a paragraph whose lines
+/// follow it takes the break before the paragraph and moves whole.
+#[test]
+fn a_container_first_in_a_paragraph_moves_whole() {
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div><div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>B</div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    let body = format!(
+        "{spacer}<div><div id=o style='display:flex;width:300px;padding-top:10px'>{}</div>B</div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 410))]);
+    assert_eq!(image_extents(&body), [None, Some((10, 410))]);
+}
+
+/// A plain block after a line moves with its padding, and a column after a
+/// block `::before` leaves the padding and the generated block of its parent
+/// behind. More lines than `orphans` asks for do not keep the column either.
+#[test]
+fn breaks_after_lines_or_generated_content_keep_what_precedes_them() {
+    let spacer = "<div style='height:300px'></div>";
+    let body = format!(
+        "{spacer}<div>A<div id=o style='padding-top:20px;width:300px'>{}</div></div>",
+        column_image(400, "")
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 420))]);
+    assert_eq!(image_extents(&body), [None, Some((20, 420))]);
+    let column = format!(
+        "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
+        column_image(400, "")
+    );
+    let body = format!(
+        "<style>#w::before{{content:'A';display:block;height:10px}}</style>{spacer}<div id=w style='padding-top:10px'>{column}</div>"
+    );
+    assert_eq!(extents_of("w", &body), [Some((308, 600)), Some((0, 400))]);
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
+    let body =
+        format!("<div style='height:290px'></div><div style='orphans:3'>A<br>B{column}</div>");
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
 }
 
 /// A row flex container or a grid after a line moves whole too, when its

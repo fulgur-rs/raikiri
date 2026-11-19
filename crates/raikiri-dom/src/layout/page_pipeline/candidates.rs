@@ -1788,10 +1788,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // So do the lines of a paragraph before a block among them
                 // (an anonymous block holds them): Chromium breaks between
                 // the last of them and the block.
-                let breaks_before_box = free_to_break_before
-                    || generated_before().is_some()
-                    || frame.previous_box.is_none()
-                        && breaks_after_paragraph_content(document, cascade, node_id);
+                let after_paragraph_content = frame.previous_box.is_none()
+                    && breaks_after_paragraph_content(document, cascade, node_id);
+                let breaks_before_box =
+                    free_to_break_before || generated_before().is_some() || after_paragraph_content;
                 let column_break_before = (node.display() == DisplayValue::Contents
                     || !matches!(
                         computed.break_before,
@@ -1805,9 +1805,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (self.finds_nested_runs
                         && in_flow_block
                         && !is_body
-                        && (free_to_break_before
-                            || frame.previous_box.is_none()
-                                && breaks_after_paragraph_content(document, cascade, node_id)))
+                        && (free_to_break_before || after_paragraph_content))
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
                         .filter(|held| held.tied)
                         .and_then(|held| held.end);
@@ -2474,7 +2472,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let can_inherit_column_break = column_break_before
                     && !node.has_before_or_after_content
                     && (node.display() == DisplayValue::Contents
-                        || is_plain_block_box(document, node_id) && !node.is_ifc_root());
+                        || is_plain_block_box(document, node_id));
                 let mut column_box_before = false;
                 // Whether any in-flow box comes before the child, text
                 // included: `previous_box` forgets a text box, which is no box
