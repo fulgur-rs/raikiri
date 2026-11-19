@@ -3,8 +3,11 @@
 //! `widows`. A page break before such a block that leaves fewer than
 //! `orphans` lines of the paragraph before it on the page moves those lines
 //! to the next page with the block; otherwise the lines that `widows` asks
-//! for beyond the block go along, as far as `orphans` lets them. A block
-//! straight in the paragraph is not a line, and the lines before it stay.
+//! for beyond the block go along, as far as `orphans` lets them. A break
+//! among the lines after the block counts the block, and the lines before
+//! it on the page, among its orphans, and the widows it asks for take the
+//! block along too. A block straight in the paragraph is not a line, and
+//! the lines before it stay.
 //! The pages and positions are the ones Chromium prints for the same markup:
 //! 100px pages without margins, Ahem at 20px on 30px lines.
 
@@ -255,4 +258,237 @@ fn lines_that_start_their_page_stay() {
             [(2, 5.0), (3, 5.0)],
         ),
     ]);
+}
+
+/// `before` lines of `A`, a block `height` px tall, then `after` lines of
+/// `C`, all inside one span.
+fn around(before: usize, height: u32, after: usize) -> String {
+    format!(
+        "<span>{}{}{}</span>",
+        vec!["A"; before].join("<br>"),
+        block(height),
+        vec!["C"; after].join("<br>")
+    )
+}
+
+#[test]
+fn widows_after_the_block_take_the_block() {
+    assert_places(&[
+        (paragraph(10, "", &around(2, 20, 1)), [(1, 5.0), (1, 55.0)]),
+        // And a line after it, as far as the orphans let them.
+        (
+            paragraph(10, "widows:3", &around(2, 20, 2)),
+            [(1, 5.0), (2, 5.0)],
+        ),
+        // Lines that went on from the page before count from the top of
+        // their page.
+        (
+            paragraph(50, "orphans:1", &around(2, 50, 1)),
+            [(2, 5.0), (3, 5.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn the_block_and_the_lines_before_it_are_orphans_of_the_lines_after_it() {
+    assert_places(&[
+        // Three lines before the break: the last line breaks alone.
+        (
+            paragraph(10, "widows:1", &around(1, 20, 2)),
+            [(0, 45.0), (1, 35.0)],
+        ),
+        // The block goes on from the page before: it is one line there.
+        (
+            paragraph(10, "orphans:3", &around(2, 80, 2)),
+            [(0, 75.0), (2, 35.0)],
+        ),
+        // Too few orphans take the paragraph whole.
+        (
+            paragraph(30, "orphans:3", &around(1, 20, 1)),
+            [(1, 35.0), (2, 5.0)],
+        ),
+        // Also when the block ends the page.
+        (
+            paragraph(50, "orphans:3", &around(1, 20, 1)),
+            [(1, 35.0), (2, 5.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn widows_take_the_block_only_when_they_fit_a_page() {
+    assert_places(&[
+        // The block and the line before it go with the line after it.
+        (
+            paragraph(0, "orphans:1;widows:3", &around(2, 20, 1)),
+            [(1, 35.0), (2, 5.0)],
+        ),
+        // Four widows do not fit the page: none move.
+        (
+            paragraph(100, "orphans:1;widows:4", &around(1, 20, 2)),
+            [(1, 35.0), (2, 35.0)],
+        ),
+        // On the page the paragraph opens on, the lines after the block
+        // still give what widows they can.
+        (
+            paragraph(0, "orphans:2;widows:4", &around(1, 20, 2)),
+            [(0, 35.0), (1, 65.0)],
+        ),
+        // Not on a later page.
+        (
+            paragraph(30, "orphans:2;widows:4", &around(2, 20, 3)),
+            [(1, 5.0), (2, 35.0)],
+        ),
+    ]);
+}
+
+/// `first` lines of `A`, a block `above` px tall, `middle` lines of `B`, a
+/// block `below` px tall that holds `#t`, then `last` lines of `C`, all
+/// inside one span.
+fn two_blocks(first: usize, above: u32, middle: usize, below: u32, last: usize) -> String {
+    format!(
+        "<span>{}<div style=\"height:{above}px\"><span>Q</span></div>{}{}{}</span>",
+        vec!["A"; first].join("<br>"),
+        vec!["B"; middle].join("<br>"),
+        block(below),
+        vec!["C"; last].join("<br>")
+    )
+}
+
+#[test]
+fn every_block_inside_an_inline_box_is_a_line_of_the_paragraph() {
+    assert_places(&[
+        // The first block is an orphan of the break among the lines before
+        // the second.
+        (
+            paragraph(0, "orphans:1;widows:2", &two_blocks(1, 10, 2, 10, 1)),
+            [(1, 35.0), (1, 75.0)],
+        ),
+        // The second block and the line after it are widows of a break
+        // after the first block.
+        (
+            paragraph(0, "orphans:2;widows:2", &two_blocks(2, 20, 1, 10, 1)),
+            [(1, 35.0), (1, 75.0)],
+        ),
+        // Too few orphans after the first block leave the break where it
+        // falls.
+        (
+            paragraph(0, "orphans:4;widows:1", &two_blocks(1, 20, 2, 20, 2)),
+            [(1, 35.0), (2, 35.0)],
+        ),
+        (
+            paragraph(0, "orphans:3;widows:1", &two_blocks(1, 10, 1, 10, 1)),
+            [(0, 75.0), (1, 35.0)],
+        ),
+        // A paragraph that the first block opens goes whole for them.
+        (
+            paragraph(40, "orphans:3;widows:1", &two_blocks(0, 20, 1, 20, 1)),
+            [(1, 55.0), (2, 5.0)],
+        ),
+        (
+            paragraph(40, "orphans:3;widows:1", &two_blocks(0, 10, 2, 10, 1)),
+            [(1, 75.0), (2, 35.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn every_block_and_line_of_the_paragraph_on_the_page_is_an_orphan() {
+    assert_places(&[
+        // The line and the block before the run count with it.
+        (
+            paragraph(0, "orphans:1;widows:2", &two_blocks(1, 10, 1, 10, 1)),
+            [(1, 5.0), (1, 45.0)],
+        ),
+        (
+            paragraph(0, "orphans:1;widows:3", &two_blocks(1, 10, 1, 10, 1)),
+            [(1, 35.0), (1, 75.0)],
+        ),
+        // Blocks next to each other are one line together.
+        (
+            paragraph(
+                0,
+                "orphans:2;widows:3",
+                &format!(
+                    "<span>A<div style=\"height:10px\"><span>Q</span></div>{}C<br>C</span>",
+                    block(10)
+                ),
+            ),
+            [(0, 45.0), (1, 65.0)],
+        ),
+        // The page still breaks between them.
+        (
+            paragraph(
+                20,
+                "orphans:1;widows:2",
+                &format!(
+                    "<span>A<br>A<div style=\"height:10px\"><span>Q</span></div>{}C</span>",
+                    block(20)
+                ),
+            ),
+            [(1, 5.0), (1, 55.0)],
+        ),
+        (
+            paragraph(
+                50,
+                "orphans:1;widows:2",
+                &format!(
+                    "<span>A<div style=\"height:40px\"><span>Q</span></div>{}C<br>C</span>",
+                    block(10)
+                ),
+            ),
+            [(1, 45.0), (2, 65.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_block_straight_in_the_paragraph_ends_the_lines_around_it() {
+    assert_places(&[
+        (
+            paragraph(
+                0,
+                "orphans:1;widows:2",
+                &format!("X<br>X<div>P</div>A<span>{}C<br>C</span>", block(20)),
+            ),
+            [(1, 35.0), (2, 65.0)],
+        ),
+        (
+            paragraph(
+                30,
+                "orphans:1;widows:2",
+                &format!("<span>A{}C</span><div>P</div>X", block(20)),
+            ),
+            [(1, 5.0), (2, 35.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_block_that_opens_the_paragraph_opens_it_on_its_page() {
+    let content = |height| format!("<span>{}C<br>C<br>C</span>", block(height));
+    assert_places(&[
+        (
+            paragraph(0, "orphans:1;widows:3", &content(40)),
+            [(0, 5.0), (2, 5.0)],
+        ),
+        // A block that goes on from the page before keeps the line after
+        // it on its page.
+        (
+            paragraph(70, "orphans:1;widows:3", &content(80)),
+            [(0, 75.0), (2, 65.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn the_padding_below_breaks_among_the_lines_after_the_block() {
+    assert_places(&[(
+        paragraph(
+            0,
+            "orphans:1;widows:2;padding-bottom:30px",
+            &around(1, 20, 2),
+        ),
+        [(0, 35.0), (2, 5.0)],
+    )]);
 }

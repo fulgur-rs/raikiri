@@ -209,6 +209,7 @@ pub(super) fn move_line(
             line: owner.line,
             shift,
             page,
+            with_block_before: false,
         },
         shifts,
         flow_page,

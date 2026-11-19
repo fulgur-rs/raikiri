@@ -514,6 +514,7 @@ impl PaginationState {
                         shift: -removal.removed,
                         growth: removal.growth,
                         page,
+                        with_block_before: false,
                     },
                     ancestor_growth: removal.ancestor_growth,
                 });
@@ -1378,6 +1379,7 @@ impl PaginationState {
             shift,
             growth,
             page,
+            with_block_before: false,
         });
     }
 
@@ -3793,7 +3795,11 @@ impl PaginationState {
         // the run: they do not break as one block of lines, and the gap is not
         // theirs to move.
         in_flow
-            && self.deferred_shifts.line_splits.is_empty()
+            && self
+                .deferred_shifts
+                .line_splits
+                .iter()
+                .all(|split| split.root == root)
             && lines_can_shift_between_blocks(document, env.cascade, root)
             && !metrics.windows(2).any(|pair| pair[1].0 - pair[0].1 > 0.5)
     }
@@ -3911,6 +3917,7 @@ impl PaginationState {
                 text,
                 (root, first_owned_line),
                 (run.start, page_start - run_top, page),
+                false,
             );
             if let Some(next) = run_metrics(document, text.effective_y) {
                 (metrics, widows) = next;
@@ -3920,8 +3927,45 @@ impl PaginationState {
         loop {
             let page_start = page_origins.origin(page);
             let page_step = page_origins.step_at(page);
+            // A block inside an inline box before the run, and the lines
+            // before that block on the page, are lines before the break
+            // too: they stand ahead of the run for the fit, and only the
+            // run's own lines move.
+            // The paragraph opens on the page when its first line does, with
+            // the blocks that come before that line.
+            let leading: f32 = super::paragraph_blocks(document, root)
+                .iter()
+                .filter(|&&(_, after, _)| after == 0)
+                .map(|&(block, _, _)| document.nodes[block].layout.size.height)
+                .sum();
+            let (ahead, opens_on_page) = paragraph_line_bounds(document, node_id, text_lines)
+                .map(|bounds| {
+                    (
+                        super::inline_lines_before_run(
+                            document,
+                            root,
+                            run.start,
+                            &bounds,
+                            text.effective_y,
+                            page_start,
+                        ),
+                        bounds[0].0 - leading + text.effective_y >= page_start - 0.001,
+                    )
+                })
+                .unwrap_or_default();
+            let lines_before = ahead.len();
+            // Only blocks that go on from the page before are ahead of the
+            // run: Chromium leaves the run's first line with them.
+            let page_top = page_start - text.effective_y;
+            let only_continued_blocks =
+                lines_before > 0 && ahead.iter().all(|&(top, _)| top < page_top - 0.5);
+            let fit_metrics: Vec<(f32, f32)> = ahead
+                .into_iter()
+                .map(|(top, bottom)| (top.max(page_top), bottom))
+                .chain(metrics.iter().copied())
+                .collect();
             let mut fit = ParagraphLineFit::measure(
-                &metrics,
+                &fit_metrics,
                 text.effective_y,
                 page_start,
                 page_start + page_step,
@@ -3929,12 +3973,18 @@ impl PaginationState {
                 widows,
                 closing_edges,
             );
-            fit.first_fragment = !moved;
+            // With lines ahead of the run, the widows the paragraph cannot
+            // have are relaxed only on the page it opens on.
+            fit.first_fragment = !moved && (lines_before == 0 || opens_on_page);
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;
             // A run taller than a page moves whole only to keep its orphans,
             // when content comes before it on this page.
+            // With lines ahead of it on the page, the break before the run
+            // is one between lines, judged with those lines (see
+            // `keep_lines_through_inline_block`).
             let can_move_block = !moved
+                && lines_before == 0
                 && (block_fits_page_step(run_height, page_step)
                     || (run_top > page_start + 0.001 && fit.leaves_too_few_orphans()));
             // The padding and border below the last line do not fit, and the
@@ -3943,14 +3993,33 @@ impl PaginationState {
             // block that holds them has a break before the lines, between
             // them and the box above, and Chromium takes that one instead.
             // Judged once more from the next page, the lines break there
-            // inside as the edges ask when they still do not fit.
-            let edges_leave_too_few_lines =
-                fit.edges_leave_too_few_lines() && run_top > page_start + 0.001;
+            // inside as the edges ask when they still do not fit. With lines
+            // ahead of the run, that break is one between lines too.
+            let edges_leave_too_few_lines = fit.edges_leave_too_few_lines()
+                && run_top > page_start + 0.001
+                && lines_before == 0;
             let fix = if edges_leave_too_few_lines {
                 LineBreakFix::MoveBlock
+            } else if lines_before > 0 && fit.leaves_too_few_orphans() {
+                // Too few orphans with the lines ahead of the run: a
+                // paragraph that opens on the page goes whole, as the break
+                // before it does; else none comes between those lines and
+                // the run.
+                if !moved
+                    && self
+                        .inline_block_paragraph_to_move(
+                            document, env, candidate, blocks, text, page,
+                        )
+                        .is_some()
+                {
+                    return self.move_inline_block_paragraph(
+                        document, env, candidate, entry, blocks, text, page,
+                    );
+                }
+                LineBreakFix::Keep
             } else {
                 fit.fix(
-                    &metrics,
+                    &fit_metrics,
                     text.effective_y,
                     page,
                     page_origins,
@@ -3958,8 +4027,27 @@ impl PaginationState {
                     || true,
                 )
             };
+            // The lines ahead of the run stay: a pull that takes them is
+            // judged with them (see `keep_lines_through_inline_block`), and
+            // the natural break is kept without it.
+            let fix = match fix {
+                LineBreakFix::MoveLines(moves)
+                    if moves.iter().any(|&(line, _, _)| {
+                        line < lines_before || (only_continued_blocks && line == lines_before)
+                    }) =>
+                {
+                    LineBreakFix::Keep
+                }
+                fix => fix,
+            };
             let (moves, repeat): (Vec<LineBreakMove>, bool) = match fix {
-                LineBreakFix::MoveLines(moves) => (moves, false),
+                LineBreakFix::MoveLines(moves) => (
+                    moves
+                        .into_iter()
+                        .map(|(line, shift, move_page)| (line - lines_before, shift, move_page))
+                        .collect(),
+                    false,
+                ),
                 LineBreakFix::MoveBlock => {
                     page = page.saturating_add(1);
                     (vec![(0, page_origins.origin(page) - run_top, page)], true)
@@ -3991,6 +4079,7 @@ impl PaginationState {
                     text,
                     (root, first_owned_line),
                     (run.start + line, shift, move_page),
+                    false,
                 );
             }
             if !repeat {
@@ -4062,19 +4151,41 @@ impl PaginationState {
         {
             return Ok(());
         }
-        let Some(metrics) = paragraph_line_bounds(document, node_id, text_lines)
-            .and_then(|all| all.get(start..end).map(<[_]>::to_vec))
-            .filter(|metrics| {
-                !metrics.is_empty()
-                    && self.breaks_run_after_block(document, env, candidate, entry, root, metrics)
-            })
+        let checked_start = start;
+        // Lines that an earlier break of the run took to the top of a later
+        // page are judged from there, as a run of their own on that page,
+        // before a block inside an inline box. Chromium does not move such
+        // lines for a break avoided before a block straight in the
+        // paragraph.
+        let Some((start, after_block, metrics)) =
+            paragraph_line_bounds(document, node_id, text_lines)
+                .and_then(|all| all.get(start..end).map(<[_]>::to_vec))
+                .map(|metrics| {
+                    let cut = metrics
+                        .windows(2)
+                        .rposition(|pair| {
+                            let top = text.effective_y + pair[1].0;
+                            let page = page_origins.page_index_for_y(top + 0.001);
+                            pair[1].0 - pair[0].1 > 0.5
+                                && (top - page_origins.origin(page)).abs() <= 0.5
+                        })
+                        .map_or(0, |gap| gap + 1);
+                    let after_block = if cut > 0 {
+                        Some(start + cut)
+                    } else {
+                        after_block
+                    };
+                    (start + cut, after_block, metrics[cut..].to_vec())
+                })
+                .filter(|&(cut_start, _, ref metrics)| {
+                    !metrics.is_empty()
+                        && (in_inline_box || cut_start == start)
+                        && self
+                            .breaks_run_after_block(document, env, candidate, entry, root, metrics)
+                })
         else {
             return Ok(());
         };
-        // The first candidate that can move the run judges it for all.
-        self.checked_paragraphs
-            .lines_before_inline_blocks
-            .insert((root, start));
         let first_owned_line = text_lines
             .get(node_id)
             .and_then(|owned| owned.lines.first())
@@ -4104,11 +4215,50 @@ impl PaginationState {
         // block starts past it, or when the first piece of the block's
         // content does not fit before it; else it breaks inside the block.
         let block_height = document.nodes[block].layout.size.height;
+        // The blocks next to each other there end where the line after them
+        // starts.
+        let group_height = paragraph_line_bounds(document, node_id, text_lines)
+            .and_then(|all| {
+                all.get(end)
+                    .map(|&(top, _)| text.effective_y + top - block_top)
+            })
+            .unwrap_or(block_height)
+            .max(block_height);
         let breaks_before_block = block_top + block_height > page_end + 0.001
             && (block_top >= page_end - 0.001
                 || super::block_first_piece_end(document, cascade, env.body_id, block)
                     .is_some_and(|piece| block_top + piece > page_end + 0.001));
-        if text.effective_y + last_bottom > page_end + 0.001 || !breaks_before_block {
+        // A run that still crosses the page end is judged by a later
+        // candidate, once the checks of its own lines have broken it; the
+        // first candidate that can move the run judges it for all.
+        let crosses_page_end = text.effective_y + last_bottom > page_end + 0.001;
+        if !crosses_page_end {
+            self.checked_paragraphs
+                .lines_before_inline_blocks
+                .insert((root, checked_start));
+        }
+        if crosses_page_end || !breaks_before_block {
+            // A block inside an inline box that ends on the page is a line
+            // ahead of the lines after it, when the page breaks among those.
+            if !crosses_page_end && in_inline_box && block_top + group_height <= page_end + 0.001 {
+                return self.keep_lines_through_inline_block(
+                    document,
+                    env,
+                    candidate,
+                    entry,
+                    blocks,
+                    text,
+                    InlineBlockRun {
+                        root,
+                        first_owned_line,
+                        after_block,
+                        lines: start..end,
+                        metrics: &metrics,
+                        block_top,
+                        page,
+                    },
+                );
+            }
             return Ok(());
         }
         let first_on_page = metrics
@@ -4116,6 +4266,24 @@ impl PaginationState {
             .position(|&(top, _)| text.effective_y + top >= page_start - 0.001)
             .unwrap_or(metrics.len());
         let on_page = metrics.len() - first_on_page;
+        // The lines of the paragraph on the page before the run, when a
+        // block inside an inline box comes right before it (see
+        // `inline_lines_before_run`).
+        let ahead = if in_inline_box {
+            paragraph_line_bounds(document, node_id, text_lines).map_or(0, |bounds| {
+                super::inline_lines_before_run(
+                    document,
+                    root,
+                    start,
+                    &bounds,
+                    text.effective_y,
+                    page_start,
+                )
+                .len()
+            })
+        } else {
+            0
+        };
         let orphans = cascade.computed[root].orphans.max(1) as usize;
         let widows = cascade.computed[root].widows.max(1) as usize;
         // Too few orphans move only lines that all start on this page: those
@@ -4142,12 +4310,23 @@ impl PaginationState {
                 );
             }
             (text.effective_y + last_top > page_start + 0.5).then_some(last)
-        } else if on_page >= orphans {
-            let pulled = (widows - 1).min(on_page - orphans);
+        } else if on_page + ahead >= orphans {
+            // The lines and blocks of the paragraph before the run on the
+            // page are orphans too, but only the run's lines go along.
+            let pulled = (widows - 1).min(on_page + ahead - orphans).min(on_page);
             (pulled > 0).then(|| metrics.len() - pulled)
         } else if first_on_page == 0 && after_block.is_none() {
             // Lines that open the paragraph go with the whole paragraph, as
             // the page breaks before it.
+            return self
+                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page);
+        } else if first_on_page == 0
+            && ahead > 0
+            && self
+                .inline_block_paragraph_to_move(document, env, candidate, blocks, text, page)
+                .is_some()
+        {
+            // So do the lines and blocks before the run that open it.
             return self
                 .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page);
         } else {
@@ -4169,16 +4348,55 @@ impl PaginationState {
             text,
             (root, first_owned_line),
             (start + moved, shift, next),
+            false,
         );
+        // On the next page, the block inside an inline box is one line ahead
+        // of the lines after it again.
+        let Some(metrics) = paragraph_line_bounds(document, node_id, text_lines)
+            .and_then(|all| all.get(start..end).map(<[_]>::to_vec))
+            .filter(|_| in_inline_box)
+        else {
+            return Ok(());
+        };
+        let block_top = block_top + shift;
+        if block_top + group_height
+            <= page_origins.origin(next) + page_origins.step_at(next) + 0.001
+        {
+            return self.keep_lines_through_inline_block(
+                document,
+                env,
+                candidate,
+                entry,
+                blocks,
+                text,
+                InlineBlockRun {
+                    root,
+                    first_owned_line,
+                    after_block,
+                    lines: start..end,
+                    metrics: &metrics,
+                    block_top,
+                    page: next,
+                },
+            );
+        }
         Ok(())
     }
 
-    /// Moves the paragraph that `blocks` holds the text `candidate` in whole
-    /// from `page` to the next page, as the break before it does, when the
-    /// paragraph is the block its line checks move and content of the flow
-    /// comes before it on that page (see [`Self::keep_lines_with_next_block`]).
+    /// Judges the break among the lines right after the block inside an
+    /// inline box that ends `run`, from the run's first candidate: Chromium
+    /// counts the block as a line of the paragraph between the run and
+    /// those lines (see `inline_block_after_lines`). When the lines of the
+    /// paragraph before the break on the page, the block and the run's
+    /// lines there among them, are fewer than `orphans`, and the run opens
+    /// the paragraph on that page, the paragraph moves whole. When the lines
+    /// after the break are fewer than `widows`, the lines before it that the
+    /// widows ask for go to the next page, as far as `orphans` lets them:
+    /// this judges only a pull that takes the block, which moves alone or
+    /// with lines of the run, and leaves a pull of the later lines alone
+    /// to [`Self::keep_lines_after_block`].
     #[allow(clippy::too_many_arguments)]
-    fn move_inline_block_paragraph(
+    fn keep_lines_through_inline_block(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
@@ -4186,19 +4404,171 @@ impl PaginationState {
         entry: &CandidateEntry,
         blocks: &LineBlocks,
         text: &mut TextPosition,
-        page: u32,
+        run: InlineBlockRun<'_>,
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
+            page_origins,
+            text_lines,
+            ..
+        } = *env;
+        let InlineBlockRun {
+            root,
+            first_owned_line,
+            after_block,
+            lines,
+            metrics,
+            block_top,
+            page,
+        } = run;
+        let page_start = page_origins.origin(page);
+        let page_end = page_start + page_origins.step_at(page);
+        let y = text.effective_y;
+        let bounds =
+            paragraph_line_bounds(document, candidate.node_id, text_lines).unwrap_or_default();
+        let total = bounds.len();
+        let paragraph_blocks = super::paragraph_blocks(document, root);
+        // The lines up to the next block, and how many lines of the
+        // paragraph come after them, up to a block straight in the
+        // paragraph: the later blocks inside inline boxes count among them.
+        let next_end = paragraph_blocks
+            .iter()
+            .map(|&(_, after, _)| after)
+            .filter(|&after| after > lines.end)
+            .min()
+            .unwrap_or(total);
+        let mut later = 0;
+        let mut last_line = total;
+        for &(_, after, inline) in paragraph_blocks
+            .iter()
+            .filter(|&&(_, after, _)| after > lines.end)
+        {
+            if !inline {
+                last_line = after;
+                break;
+            }
+            later += 1;
+        }
+        later += last_line.saturating_sub(next_end);
+        let Some(next) = bounds
+            .get(lines.end..next_end)
+            .filter(|next| !next.is_empty())
+        else {
+            return Ok(());
+        };
+        // The lines and blocks of the paragraph on the page before the run.
+        let ahead =
+            super::inline_lines_before_run(document, root, lines.start, &bounds, y, page_start)
+                .len();
+        let Some(broken) = next
+            .iter()
+            .position(|&(_, bottom)| y + bottom > page_end + 0.001)
+        else {
+            return Ok(());
+        };
+        let first_on_page = metrics
+            .iter()
+            .position(|&(top, _)| y + top >= page_start - 0.001)
+            .unwrap_or(metrics.len());
+        let on_page = metrics.len() - first_on_page;
+        // The blocks inside inline boxes between the run and the lines after
+        // it are one line together.
+        let before = ahead + on_page + 1 + broken;
+        let after = next.len() - broken + later;
+        let orphans = cascade.computed[root].orphans.max(1) as usize;
+        let widows = cascade.computed[root].widows.max(1) as usize;
+        if before < orphans {
+            // Lines that open the paragraph go with the whole paragraph.
+            if first_on_page == 0 && after_block.is_none() {
+                return self.move_inline_block_paragraph(
+                    document, env, candidate, entry, blocks, text, page,
+                );
+            }
+            return Ok(());
+        }
+        // The widows the paragraph declares, the block and the run's lines
+        // among them, must fit on a page for a pull to take the block.
+        let tops: Vec<f32> = metrics
+            .iter()
+            .map(|&(top, _)| y + top)
+            .chain(std::iter::once(block_top))
+            .chain(next.iter().map(|&(top, _)| y + top))
+            .collect();
+        let first_widow = tops.len() - widows.min(tops.len());
+        let next_page = page.saturating_add(1);
+        let widows_fit = y + next[next.len() - 1].1 - tops[first_widow]
+            <= page_origins.step_at(next_page) + 0.001;
+        let pulled = widows
+            .saturating_sub(after)
+            .min(before - orphans)
+            .min(if widows_fit { usize::MAX } else { 0 });
+        // The lines after the block are the first to go, then the block,
+        // then the run's lines on the page; the lines ahead of the run stay.
+        let Some(beyond) = pulled
+            .checked_sub(broken)
+            .filter(|&beyond| beyond > 0 && beyond <= 1 + on_page)
+        else {
+            return Ok(());
+        };
+        reach_page(env.control, next_page)?;
+        if beyond == 1 {
+            // The block goes with the lines after it.
+            self.move_run_lines(
+                document,
+                env,
+                candidate,
+                entry,
+                text,
+                (root, first_owned_line),
+                (
+                    lines.end,
+                    page_origins.origin(next_page) - block_top,
+                    next_page,
+                ),
+                true,
+            );
+        } else {
+            let line = metrics.len() - (beyond - 1);
+            self.move_run_lines(
+                document,
+                env,
+                candidate,
+                entry,
+                text,
+                (root, first_owned_line),
+                (
+                    lines.start + line,
+                    page_origins.origin(next_page) - (y + metrics[line].0),
+                    next_page,
+                ),
+                false,
+            );
+        }
+        Ok(())
+    }
+
+    /// The paragraph that `blocks` holds the text `candidate` in, whether it
+    /// is nested, and its top, when the break before it on `page` can move
+    /// it whole: it is the block its line checks move, it starts on the
+    /// page, and content of the flow comes before it there.
+    fn inline_block_paragraph_to_move(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        blocks: &LineBlocks,
+        text: &TextPosition,
+        page: u32,
+    ) -> Option<(usize, bool, f32)> {
+        let FlowEnv {
+            cascade,
             body_id,
-            control,
             page_origins,
             root_flow_offset,
             ..
         } = *env;
         let page_start = page_origins.origin(page);
-        // Content of the flow must come before the paragraph on the page.
-        let Some((root, nested, block_top)) = blocks
+        blocks
             .block
             .filter(|&(block, _)| Some(block) == blocks.paragraph_root)
             .map(|(root, nested)| {
@@ -4215,6 +4585,33 @@ impl PaginationState {
             .filter(|&(root, _, top)| {
                 top > page_start + 0.001 && follows_flow_content(document, cascade, body_id, root)
             })
+    }
+
+    /// Moves the paragraph that `blocks` holds the text `candidate` in whole
+    /// from `page` to the next page, as the break before it does, when
+    /// [`Self::inline_block_paragraph_to_move`] finds it (see
+    /// [`Self::keep_lines_with_next_block`]).
+    #[allow(clippy::too_many_arguments)]
+    fn move_inline_block_paragraph(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &mut TextPosition,
+        page: u32,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            ..
+        } = *env;
+        let page_start = page_origins.origin(page);
+        let Some((root, nested, block_top)) =
+            self.inline_block_paragraph_to_move(document, env, candidate, blocks, text, page)
         else {
             return Ok(());
         };
@@ -4254,6 +4651,7 @@ impl PaginationState {
         text: &mut TextPosition,
         (root, first_owned_line): (usize, usize),
         (line, shift, page): LineBreakMove,
+        with_block_before: bool,
     ) {
         let FlowEnv {
             cascade,
@@ -4271,6 +4669,7 @@ impl PaginationState {
                 line,
                 shift,
                 page,
+                with_block_before,
             },
             &mut self.subtree_shifts,
             entry.page_before_candidate,
@@ -4289,6 +4688,7 @@ impl PaginationState {
             shift,
             growth,
             page,
+            with_block_before,
         });
     }
 
@@ -4454,6 +4854,7 @@ impl PaginationState {
                             line,
                             shift,
                             page,
+                            with_block_before: false,
                         },
                         None,
                     );
@@ -4506,6 +4907,7 @@ impl PaginationState {
                     line,
                     shift,
                     page,
+                    with_block_before: false,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -4525,6 +4927,7 @@ impl PaginationState {
                 shift,
                 growth,
                 page,
+                with_block_before: false,
             });
         }
         Ok(())
@@ -5144,4 +5547,19 @@ fn runs_past_page_end(
                 + document.nodes[id].layout.size.height
                 > page_end + 0.001
         })
+}
+
+/// The run of lines before a block inside an inline box of the paragraph
+/// `root` (see [`PaginationState::keep_lines_through_inline_block`]): the
+/// line of the text that judges it, the line after the block before the
+/// run, the run's lines and their bounds, where the block starts, and the
+/// page the run ends on.
+struct InlineBlockRun<'a> {
+    root: usize,
+    first_owned_line: usize,
+    after_block: Option<usize>,
+    lines: std::ops::Range<usize>,
+    metrics: &'a [(f32, f32)],
+    block_top: f32,
+    page: u32,
 }

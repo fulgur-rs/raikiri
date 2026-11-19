@@ -145,6 +145,7 @@ fn a_first_line_the_floats_put_down_moves_alone_to_the_next_page() {
             shift: 5.0,
             growth: 5.0,
             page: 1,
+            with_block_before: false,
         }]
     );
     assert_eq!(
@@ -199,6 +200,7 @@ fn a_whole_paragraph_move_discards_the_inherited_float_gap() {
             shift: -10.0,
             growth: -10.0,
             page: 1,
+            with_block_before: false,
         }]
     );
     assert_eq!(
@@ -242,6 +244,7 @@ fn a_float_of_the_paragraph_leaves_its_first_line_to_move_alone() {
             shift: 5.0,
             growth: 5.0,
             page: 1,
+            with_block_before: false,
         }]
     );
     assert_eq!(

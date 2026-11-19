@@ -12764,6 +12764,9 @@ struct LineSplit {
     growth: f32,
     /// The page the lines moved to.
     page: u32,
+    /// Whether the block child laid out right before the first moved line
+    /// moved with the lines.
+    with_block_before: bool,
 }
 
 impl DeferredShifts {
@@ -12817,6 +12820,7 @@ impl DeferredShifts {
                  shift,
                  growth,
                  page,
+                 with_block_before,
              }| {
                 let after_paragraph = !is_descendant_or_self(document, node_id, root);
                 let reached = after_paragraph
@@ -12825,7 +12829,13 @@ impl DeferredShifts {
                             .get(node_id)
                             .and_then(|owned| owned.lines.first())
                             .is_some_and(|line| line.line >= first_moved)
-                    || follows_line_of_paragraph(document, node_id, root, first_moved);
+                    || follows_line_of_paragraph(
+                        document,
+                        node_id,
+                        root,
+                        first_moved,
+                        with_block_before,
+                    );
                 if reached {
                     *flow_shift += if after_paragraph { growth } else { shift };
                     // The flow after the paragraph takes the growth alone.
@@ -14023,12 +14033,100 @@ fn block_after_lines(document: &Document, root: usize, end: usize) -> Option<(us
         .block_line_starts
         .iter()
         .find(|&&(_, after)| after == end)?;
-    let in_inline_box = std::iter::successors(document.nodes[block].parent, |&id| {
+    Some((block, in_inline_box(document, root, block)))
+}
+
+/// Whether the block `block` of the paragraph `root` sits inside an inline
+/// box of the paragraph, in the tree of elements.
+fn in_inline_box(document: &Document, root: usize, block: usize) -> bool {
+    std::iter::successors(document.nodes[block].parent, |&id| {
         document.nodes[id].parent
     })
     .take_while(|&ancestor| ancestor != root)
-    .any(|ancestor| document.nodes[ancestor].display().is_inline_level());
-    Some((block, in_inline_box))
+    .any(|ancestor| document.nodes[ancestor].display().is_inline_level())
+}
+
+/// The blocks laid out among the lines of the paragraph `root`, once each
+/// and in order, each with the index of the line after it and whether it
+/// sits inside an inline box of the paragraph.
+fn paragraph_blocks(document: &Document, root: usize) -> Vec<(usize, usize, bool)> {
+    let mut seen = HashSet::new();
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref()?.lines.as_ref())
+        .map_or_else(Vec::new, |lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .filter(|&&(block, _)| seen.insert(block))
+                .map(|&(block, after)| (block, after, in_inline_box(document, root, block)))
+                .collect()
+        })
+}
+
+/// The lines of the paragraph `root` before its run of lines from `start`
+/// on that count toward the `orphans` of a break among that run, on the page
+/// that starts at `page_start`, as their block-start and block-end edges
+/// relative to `y`, in order. When the block right before the run sits
+/// inside an inline box and the run's first line does not start the page,
+/// Chromium counts each block of the paragraph inside an inline box as one
+/// line (see [`inline_block_after_lines`]), and every line of the paragraph
+/// on the page before the run counts too, back to a block straight in the
+/// paragraph, which ends the lines before it; a block that goes on from
+/// the page before counts as a line there too, and keeps its top above
+/// the page. Blocks end where the line after them starts, and blocks next
+/// to each other are one line together. `bounds` holds
+/// every line of the paragraph, offset by `y`.
+fn inline_lines_before_run(
+    document: &Document,
+    root: usize,
+    start: usize,
+    bounds: &[(f32, f32)],
+    y: f32,
+    page_start: f32,
+) -> Vec<(f32, f32)> {
+    if inline_block_after_lines(document, root, start).is_none()
+        || bounds
+            .get(start)
+            .is_none_or(|&(top, _)| y + top <= page_start + 0.5)
+    {
+        return Vec::new();
+    }
+    let page_top = page_start - y;
+    let blocks: Vec<_> = paragraph_blocks(document, root)
+        .into_iter()
+        .filter(|&(_, after, _)| after <= start)
+        .collect();
+    // A block straight in the paragraph ends the lines before it.
+    let first = blocks
+        .iter()
+        .filter(|&&(_, _, inline)| !inline)
+        .map(|&(_, after, _)| after)
+        .max()
+        .unwrap_or(0);
+    let mut ahead: Vec<(f32, f32)> = bounds.get(first..start).unwrap_or_default().to_vec();
+    let mut bottom = None;
+    for &(block, after, inline) in blocks.iter().rev() {
+        if !inline || after < first {
+            break;
+        }
+        // A block before the run has a line after it, the run's at least.
+        let next_top = bounds[after].0;
+        // Blocks next to each other are one line together.
+        let height = document.nodes[block].layout.size.height;
+        match bottom {
+            Some(line) if line == after => {
+                if let Some(last) = ahead.last_mut() {
+                    last.0 -= height;
+                }
+            }
+            _ => ahead.push((next_top - height, next_top)),
+        }
+        bottom = Some(after);
+    }
+    ahead.retain(|&(_, bottom)| bottom > page_top + 0.5);
+    ahead.sort_by(|a, b| a.0.total_cmp(&b.0));
+    ahead
 }
 
 /// Where the first piece of the content of the block `block` ends (see
@@ -14111,8 +14209,15 @@ fn straddling_line(
 /// The block children of the paragraph `root` that come after its line
 /// `line`: moving the lines from `line` on moves them too, so that a block
 /// placed later starts from where the lines took it. A block split across
-/// columns comes after the line only when its first part does.
-fn blocks_after_line(document: &Document, root: usize, line: usize) -> HashSet<usize> {
+/// columns comes after the line only when its first part does. With
+/// `with_block_before`, the block laid out right before line `line` counts
+/// too.
+fn blocks_after_line(
+    document: &Document,
+    root: usize,
+    line: usize,
+    with_block_before: bool,
+) -> HashSet<usize> {
     let mut first_after: HashMap<usize, usize> = HashMap::new();
     let starts = document
         .ifc_layout_node(root)
@@ -14126,17 +14231,21 @@ fn blocks_after_line(document: &Document, root: usize, line: usize) -> HashSet<u
     }
     first_after
         .into_iter()
-        .filter_map(|(block, after)| (after > line).then_some(block))
+        .filter_map(|(block, after)| {
+            (after > line || (with_block_before && after == line)).then_some(block)
+        })
         .collect()
 }
 
 /// Whether `node_id` lies in a block child of the paragraph `root` that comes
-/// after line `line`, so that moving the lines from `line` on moves it too.
+/// after line `line`, so that moving the lines from `line` on moves it too
+/// (see [`blocks_after_line`] for `with_block_before`).
 fn follows_line_of_paragraph(
     document: &Document,
     node_id: usize,
     root: usize,
     line: usize,
+    with_block_before: bool,
 ) -> bool {
     let block = std::iter::successors(Some(node_id), |&node| document.layout_parent_of(node))
         .find(|&node| document.layout_parent_of(node) == Some(root));
@@ -14152,7 +14261,7 @@ fn follows_line_of_paragraph(
                 index >= line && shaped.fragments().any(|fragment| {
                     matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
                 })
-            }) || blocks_after_line(document, root, line).contains(&block)
+            }) || blocks_after_line(document, root, line, with_block_before).contains(&block)
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
@@ -16070,6 +16179,9 @@ struct LineMove {
     shift: f32,
     /// The page the moved lines start on.
     page: u32,
+    /// Whether the block child laid out right before the first moved line
+    /// moves with the lines too (see [`blocks_after_line`]).
+    with_block_before: bool,
 }
 
 /// How far each out-of-flow box of the paragraph `moved.block_id` moves down
@@ -16179,7 +16291,12 @@ fn shift_paragraph_lines(
             _ => None,
         })
         .collect();
-    let blocks = blocks_after_line(document, moved.block_id, moved.line);
+    let blocks = blocks_after_line(
+        document,
+        moved.block_id,
+        moved.line,
+        moved.with_block_before,
+    );
     let floats = floats_on_moved_lines(document, moved, went_ahead);
     shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift, growth);
     for node in atomics
