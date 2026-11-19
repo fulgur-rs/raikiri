@@ -74,6 +74,12 @@ fn glyph_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
     }
     let mut owners = Vec::new();
     collect(line, &mut owners);
+    // A line with no glyphs that still takes a line box, such as the line of
+    // preserved white space or of a lone preserved line feed, belongs to the
+    // text it holds.
+    if owners.is_empty() && !line.is_empty() {
+        owners.extend(line.owners().map(|(node, _)| node.0 as usize));
+    }
     owners
 }
 

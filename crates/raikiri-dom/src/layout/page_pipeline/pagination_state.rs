@@ -4241,7 +4241,12 @@ impl PaginationState {
             &entry.comparison_page_name,
         );
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
-        let consumes_pending_break = pending_break_applies && name_participates_in_flow;
+        // Preserved white space names no page, but its lines are content of
+        // the flow: a forced break before them moves them to the next page,
+        // as Chromium prints them.
+        let consumes_pending_break = pending_break_applies
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant();
         if self.saw_child {
             if consumes_pending_break || named_page_change {
                 // The break before the first text of a flex line moves the
