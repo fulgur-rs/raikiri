@@ -224,3 +224,20 @@ fn a_break_inside_a_monolithic_box_does_not_reach_the_row() {
         ),
     ]);
 }
+
+/// A cell in an orthogonal writing mode is not broken across pages, so the
+/// breaks at the edges of its block flow stay inside it as well. The
+/// vertical glyph is left out: its position is not comparable.
+#[test]
+fn a_break_in_an_orthogonal_cell_does_not_reach_the_row() {
+    assert_rows(&[
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0;writing-mode:vertical-rl'><div style='break-before:page'>B</div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (0, 'T', 10), (0, 'X', 20)],
+        ),
+        (
+            "<table style='border-spacing:0'><tr><td style='padding:0;writing-mode:vertical-rl'><div style='break-after:page'>B</div></td><td style='padding:0'>T</td></tr><tr><td>R</td></tr></table><div>X</div>",
+            &[(0, 'R', 11), (0, 'T', 0), (0, 'X', 22)],
+        ),
+    ]);
+}

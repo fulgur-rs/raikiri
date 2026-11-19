@@ -3825,7 +3825,9 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
 /// of the next one up, which stacks its children in block flow. Floats,
 /// positioned boxes and empty `display: contents` boxes beside it do not
 /// count, as for [`page_edge_child`], and generated content does. The cell
-/// must sit in a row of its own element, which takes the break.
+/// must sit in a row of its own element, which takes the break, and must not
+/// be a box that pagination does not break through, such as a cell in an
+/// orthogonal writing mode.
 ///
 /// A forced break there lies at the edge of the cell, not inside it, so it
 /// goes to the row (CSS Fragmentation 3, 3.1): see [`row_takes_cell_break`].
@@ -3851,6 +3853,9 @@ fn at_table_cell_edge(
         };
         if document.nodes[parent].display() == DisplayValue::TableCell {
             return !generated_on_side(cascade, parent, before)
+                && !is_monolithic_for_pagination_with_transposed_axes(
+                    document, cascade, parent, false,
+                )
                 && document
                     .parent_of(parent)
                     .is_some_and(|row| document.nodes[row].display() == DisplayValue::TableRow);
@@ -3875,6 +3880,7 @@ fn row_takes_cell_break(
         && document.nodes[row].children.iter().any(|&cell| {
             if document.nodes[cell].display() != DisplayValue::TableCell
                 || generated_on_side(cascade, cell, before)
+                || is_monolithic_for_pagination_with_transposed_axes(document, cascade, cell, false)
             {
                 return false;
             }
