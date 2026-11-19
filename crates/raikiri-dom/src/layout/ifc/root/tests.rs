@@ -16,6 +16,7 @@ fn debug_reports_fragment_box_placement_count() {
         discarded_float_gap: 0.0,
         escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
+        leading_block_baseline: None,
         block_line_starts: Vec::new(),
         generated_block_starts: Vec::new(),
         generated_block_lines: Vec::new(),

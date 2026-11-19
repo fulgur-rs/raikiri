@@ -192,6 +192,7 @@ pub(crate) fn layout_with_boxes_in(
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
+            leading_block_baseline: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
@@ -411,6 +412,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
+            leading_block_baseline: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
@@ -607,6 +609,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         discarded_float_gap: 0.0,
         escaping_margin,
         leading_block_margin: None,
+        leading_block_baseline: None,
         block_line_starts,
         generated_block_starts: Vec::new(),
         generated_block_lines,
@@ -881,6 +884,7 @@ fn run_boxes_segment(
     // The collapsed top margins of a block child that starts the paragraph,
     // with no line, float or other margin above it.
     let mut leading_block_margin = None;
+    let mut leading_block_baseline = None;
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut generated_block_starts = Vec::new();
@@ -1578,6 +1582,11 @@ fn run_boxes_segment(
                     marker_pending = None;
                     candidate_leading = 0.0;
                 }
+                // The first block with a baseline ahead of every line gives the
+                // root its first baseline.
+                if lines.is_empty() && generated_block_starts.is_empty() {
+                    leading_block_baseline = leading_block_baseline.or(block.first_baseline);
+                }
                 oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
@@ -1720,6 +1729,7 @@ fn run_boxes_segment(
             discarded_float_gap: 0.0,
             escaping_margin,
             leading_block_margin,
+            leading_block_baseline,
             block_line_starts,
             generated_block_starts,
             generated_block_lines,
