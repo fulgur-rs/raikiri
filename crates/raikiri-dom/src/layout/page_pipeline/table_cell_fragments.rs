@@ -471,7 +471,7 @@ fn cell_breaks(
         && !box_avoids_page_break_inside(document, cell, computed.break_inside)
         && shift.is_finite()
         && (!own
-            || !page_break_is_forced(document, cell, computed.break_before)
+            || !page_break_is_forced(document, cascade, cell, computed.break_before)
                 && !starts_with_forced_break(document, cascade, cell)
                 && content_fits(document, cascade, cell, tops, closing, page_end))
         && !float_crosses(
@@ -495,8 +495,12 @@ fn starts_with_forced_break(
     flow_children(document, cascade, block, &mut children);
     children.first().is_some_and(|&first| {
         block_level_element(document, first)
-            && (page_break_is_forced(document, first, cascade.computed[first].break_before)
-                || starts_with_forced_break(document, cascade, first))
+            && (page_break_is_forced(
+                document,
+                cascade,
+                first,
+                cascade.computed[first].break_before,
+            ) || starts_with_forced_break(document, cascade, first))
     })
 }
 
