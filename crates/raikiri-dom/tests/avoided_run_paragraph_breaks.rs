@@ -16,11 +16,11 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// The page index, top and bottom on that page of each fragment of the
-/// element with the id `id`.
 /// A document body and where its letters land: (id, page, top).
 type Case<'a> = (&'a str, &'a [(&'a str, usize, f32)]);
 
+/// The page index, top and bottom on that page of each fragment of the
+/// element with the id `id`.
 fn fragments_of(body: &str, id: &str) -> Vec<(usize, f32, f32)> {
     let html = format!(
         "<!DOCTYPE html><style>@page{{size:200px 100px;margin:0}}\
