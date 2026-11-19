@@ -292,10 +292,40 @@ fn breaks_inside(
     breaks_between(document, cascade, cell, false, false)
 }
 
+/// The children of `parent` that are content of its block flow, with the
+/// children of `display: contents` boxes in place of them. Floats and
+/// positioned boxes are not that content.
+fn flow_children(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    parent: usize,
+    out: &mut Vec<usize>,
+) {
+    for &child in &document.nodes[parent].children {
+        let node = &document.nodes[child];
+        if !sibling_renders(document, child)
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        if node.kind() == NodeKind::Element
+            && node.display() == DisplayValue::Contents
+            && !node.has_before_or_after_content
+        {
+            flow_children(document, cascade, child, out);
+        } else {
+            out.push(child);
+        }
+    }
+}
+
 /// Whether a forced break falls between content among the children of
 /// `parent` or inside them, with whether content of the cell comes before and
-/// after `parent`. Floats and positioned boxes are not content that a break
-/// falls between.
+/// after `parent`.
 fn breaks_between(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -303,19 +333,8 @@ fn breaks_between(
     before: bool,
     after: bool,
 ) -> bool {
-    let children: Vec<usize> = document.nodes[parent]
-        .children
-        .iter()
-        .copied()
-        .filter(|&child| {
-            sibling_renders(document, child)
-                && !matches!(
-                    document.nodes[child].position(),
-                    PositionValue::Absolute | PositionValue::Fixed
-                )
-                && !is_floating_box_for_pagination(document, cascade, child)
-        })
-        .collect();
+    let mut children = Vec::new();
+    flow_children(document, cascade, parent, &mut children);
     children.iter().enumerate().any(|(index, &child)| {
         let node = &document.nodes[child];
         if node.kind() != NodeKind::Element || !is_block_level_flow_box(node.display()) {

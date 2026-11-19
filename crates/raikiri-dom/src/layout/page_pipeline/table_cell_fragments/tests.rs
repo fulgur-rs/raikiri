@@ -278,9 +278,9 @@ fn vertical_cells_other_boxes_and_transposed_pagination_are_not_split() {
     assert!(fixture.split_at(row, 160.0, true).is_empty());
 }
 
-/// Whether a forced break falls inside the fixture's cell when `before` sits
-/// ahead of a block that forces a break before itself.
-fn breaks_after(before: &str) -> bool {
+/// Whether a forced break falls inside a cell when a box styled `before`, with
+/// `text` in it, sits ahead of a block that forces a break before itself.
+fn breaks_after(before: &str, text: &str) -> bool {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
@@ -288,7 +288,7 @@ fn breaks_after(before: &str) -> bool {
     let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
     let first = doc.append_element(Some(cell), "div", Some(before));
-    doc.append_text(first, "Q");
+    doc.append_text(first, text);
     let block = doc.append_element(Some(cell), "div", Some("display:block;break-before:page"));
     doc.append_text(block, "B");
     doc.mark_in_document_flags();
@@ -304,8 +304,10 @@ fn breaks_after(before: &str) -> bool {
 }
 
 #[test]
-fn floats_and_positioned_boxes_are_not_content_a_break_falls_after() {
-    assert!(breaks_after("display:block"));
-    assert!(!breaks_after("display:block;position:absolute"));
-    assert!(!breaks_after("display:block;float:left;width:10px"));
+fn floats_positioned_and_contents_boxes_are_not_content_a_break_falls_after() {
+    assert!(breaks_after("display:block", "Q"));
+    assert!(!breaks_after("display:block;position:absolute", "Q"));
+    assert!(!breaks_after("display:block;float:left;width:10px", "Q"));
+    assert!(!breaks_after("display:contents", " "));
+    assert!(breaks_after("display:contents", "Q"));
 }
