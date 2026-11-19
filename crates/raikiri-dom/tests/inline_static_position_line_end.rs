@@ -195,6 +195,16 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "<div style='padding-left:20px'><div style='direction:rtl;text-align:right;width:100px'>\u{202E}XXXX XXXX\u{202C} <span id=q style='position:absolute'>Q</span>1234</div></div>",
         [20.0, 0.0, 10.0, 10.0],
     ),
+    (
+        "rtl left with another box later on the next line",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:left;width:100px'>XXXX XXXX <span id=q style='position:absolute'>Q</span>YYYY <span style='position:absolute'>S</span>ZZ</div></div>",
+        [110.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl right with another box later on the next line",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:right;width:100px'>XXXX XXXX <span id=q style='position:absolute'>Q</span>YYYY <span style='position:absolute'>S</span>ZZ</div></div>",
+        [120.0, 0.0, 10.0, 10.0],
+    ),
 ];
 
 #[test]

@@ -7291,7 +7291,7 @@ fn follow_moved_ifc_text(
 
 /// Whether `a` comes before `b` in tree order. An ancestor comes before its
 /// descendants.
-fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
+pub(crate) fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
     let a_chain: Vec<usize> = document.inclusive_ancestors(a).collect();
     let mut b_child = None;
     for id in document.inclusive_ancestors(b) {

@@ -4908,7 +4908,9 @@ pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> 
                     let trailing = (at + 1..line.fragments().len())
                         .filter_map(|later| line.fragment(later))
                         .all(|later| !holds_content(&later));
-                    let leading = anchors_lead_in_text(line).unwrap_or(leading);
+                    let leading = anchors_leading_in_text(line).map_or(leading, |counts| {
+                        anchor_leads_in_text(doc, line, node, counts)
+                    });
                     return Some(places.place(index, leading, trailing, anchor));
                 }
                 fragment => leading &= !starts_content(&fragment),
@@ -4918,13 +4920,13 @@ pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> 
     None
 }
 
-/// Whether the anchors of `line` come before all of its content in logical
-/// order, when the order of its fragments does not tell: on a line that reads
-/// right to left in part or throughout, the fragments are in visual order.
-/// `None` when the fragments tell, or when the text cannot: some anchors come
-/// first and some later, an atomic inline shares their object replacement
-/// character, or an inline box starts on the line.
-fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
+/// How many of the anchors of `line` come before all of its content in
+/// logical order, and how many anchors it holds, when the order of its
+/// fragments does not tell: on a line that reads right to left in part or
+/// throughout, the fragments are in visual order. `None` when the fragments
+/// tell, or when the text cannot: an atomic inline shares the object
+/// replacement character of the anchors, or an inline box starts on the line.
+fn anchors_leading_in_text(line: &shodo::Line) -> Option<(usize, usize)> {
     if line.used_direction() == Direction::Ltr && !reads_against(line) {
         return None;
     }
@@ -4937,9 +4939,6 @@ fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
             _ => {}
         }
     }
-    if anchors == 0 {
-        return None;
-    }
     // Spaces at the start of a line are content: only preserved ones stay.
     let text = line.text().get(line.text_range()).unwrap_or_default();
     let first = text
@@ -4947,11 +4946,30 @@ fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
         .take_while(|&c| c == '\u{FFFC}' || is_bidi_control(c))
         .filter(|&c| c == '\u{FFFC}')
         .count();
-    match first {
-        0 => Some(false),
-        first if first == anchors => Some(true),
-        _ => None,
+    Some((first, anchors))
+}
+
+/// Whether the anchor of `node` comes before all the content of `line` in
+/// logical order, given what [`anchors_leading_in_text`] found for the line.
+/// The anchors that lead are the first ones in tree order, as the text of a
+/// line follows the tree.
+fn anchor_leads_in_text(
+    doc: &Document,
+    line: &shodo::Line,
+    node: usize,
+    (first, anchors): (usize, usize),
+) -> bool {
+    if first == 0 || first == anchors {
+        return first > 0;
     }
+    let before = line
+        .fragments()
+        .filter(|fragment| {
+            matches!(fragment, shodo::Fragment::OutOfFlowAnchor(other)
+                if crate::layout::page_pipeline::precedes_in_tree(doc, other.node.0 as usize, node))
+        })
+        .count();
+    before < first
 }
 
 /// Whether some text of `line` reads against the line's direction.
