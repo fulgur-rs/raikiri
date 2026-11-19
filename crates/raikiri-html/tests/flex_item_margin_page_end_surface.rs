@@ -337,3 +337,69 @@ fn containers_stay_where_their_place_in_the_flow_fits_or_a_clip_holds_them() {
         ),
     ]);
 }
+
+/// A clip box that the page end cuts moves with the container it begins, or
+/// lets the container move inside it, for a row as for a column; one that
+/// ends by the page end holds the container where it is.
+#[test]
+fn containers_move_inside_a_clip_that_the_page_end_cuts() {
+    assert_rows(&[
+        (
+            "<div style='height:60px'>A</div><div style='height:60px;overflow:hidden'><div style='display:flex;flex-direction:column'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 5), (1, 'Z', 65)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='height:60px;overflow:hidden'><div style='display:flex'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 5), (1, 'Z', 65)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='height:30px;overflow:hidden'><div style='display:flex;flex-direction:column'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'T', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='height:30px;overflow:hidden'><div style='display:flex'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'T', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'>A</div><div style='height:80px;overflow:hidden'><div style='height:40px'>B</div><div style='display:flex;flex-direction:column'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 25), (0, 'T', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'>A</div><div style='height:80px;overflow:hidden'><div style='height:40px'>B</div><div style='display:flex'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 25), (0, 'T', 65), (1, 'Z', 5)],
+        ),
+        (
+            "<div style='height:20px'>A</div><div style='height:150px;overflow:hidden'><div style='height:40px'>B</div><div style='display:flex;flex-direction:column'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 25), (1, 'T', 5), (1, 'Z', 75)],
+        ),
+        (
+            "<div style='height:20px'>A</div><div style='height:150px;overflow:hidden'><div style='height:40px'>B</div><div style='display:flex'><div style='height:35px;margin-bottom:6px'>T</div></div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'B', 25), (1, 'T', 5), (1, 'Z', 75)],
+        ),
+    ]);
+}
+
+/// A break forced between the items of a column or between the lines of a
+/// wrapping row starts a page of its own: only the items before it decide
+/// whether the container moves.
+#[test]
+fn only_the_items_before_a_forced_break_move_the_container() {
+    assert_rows(&[
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-direction:column'><div style='height:20px'>T</div><div style='height:15px;break-before:page;margin-bottom:10px'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'T', 65), (1, 'U', 5), (1, 'Z', 30)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-direction:column'><div style='height:35px;margin-bottom:6px'>T</div><div style='height:15px;break-before:page'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (1, 'T', 5), (2, 'U', 5), (2, 'Z', 20)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-direction:column'><div style='height:20px;break-after:page'>T</div><div style='height:15px;margin-bottom:10px'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'T', 65), (1, 'U', 5), (1, 'Z', 30)],
+        ),
+        (
+            "<div style='height:60px'>A</div><div style='display:flex;flex-wrap:wrap'><div style='height:20px;width:100%'>T</div><div style='height:15px;width:100%;break-before:page;margin-bottom:10px'>U</div></div><div>Z</div>",
+            &[(0, 'A', 5), (0, 'T', 65), (1, 'U', 5), (1, 'Z', 30)],
+        ),
+    ]);
+}

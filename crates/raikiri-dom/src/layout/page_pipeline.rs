@@ -10273,12 +10273,24 @@ fn flex_margins_move(
     let layout = &node.layout;
     let border_box_end = flow_y + candidate.height;
     let content_end = border_box_end - layout.padding.bottom - layout.border.bottom;
+    let style = document.pagination_style(node_id);
+    let row = style.flex_direction_is_row();
+    // A break forced between the items of a column or between the lines of
+    // a wrapping row starts a page of its own, so only the items before it
+    // decide whether the container moves.
+    let lines_break = !row || style.flex_wraps();
+    let mut forced = false;
     let mut items = 0;
     let mut items_end = flow_y;
     let mut end = flow_y;
     for item in crate::layout::page::pagination_child_order(document, cascade, node_id) {
         if !crate::layout::page::is_in_flow_flex_child_for_pagination(document, node_id, item) {
             continue;
+        }
+        let computed = &cascade.computed[item];
+        if lines_break && items > 0 && page_break_is_forced(document, item, computed.break_before) {
+            forced = true;
+            break;
         }
         let item_layout = &document.nodes[item].layout;
         let bottom = flow_y + item_layout.location.y + item_layout.size.height
@@ -10288,14 +10300,13 @@ fn flex_margins_move(
         if bottom <= page_end + 0.001 {
             end = end.max((bottom + item_layout.margin.bottom).min(content_end));
         }
+        if lines_break && page_break_is_forced(document, item, computed.break_after) {
+            forced = true;
+            break;
+        }
     }
-    let style = document.pagination_style(node_id);
-    let single_line = if style.flex_direction_is_row() {
-        !style.flex_wraps()
-    } else {
-        items == 1
-    };
-    if single_line && items_end <= page_end + 0.001 && end >= content_end - 0.001 {
+    let single_line = if row { !style.flex_wraps() } else { items == 1 };
+    if single_line && !forced && items_end <= page_end + 0.001 && end >= content_end - 0.001 {
         end = border_box_end;
     }
     end > page_end + 0.001

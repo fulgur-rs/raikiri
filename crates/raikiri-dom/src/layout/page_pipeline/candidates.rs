@@ -1975,6 +1975,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inline_level
                     && is_block_flow_box
                     && line_after_block.is_some();
+                // A flex container nested in block flow moves whole when what
+                // follows its items runs past the page end (see
+                // `flex_margins_move`), so it needs a place of its own.
+                let flex_margins_base = nested_candidate_base
+                    && !inline_level
+                    && super::has_flex_trailing_space(document, node_id);
                 let needs_ancestor_constraints = margin_shape
                     || line_after_block_base
                     || (nested_candidate_base
@@ -1989,7 +1995,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || (leading_piece.is_some() && !direct_body_child)
                     || (leading_block_piece.is_some() && !direct_body_child)
                     || (column_replaced_piece.is_some() && !direct_body_child)
-                    || (first_grid_row.is_some() && !direct_body_child);
+                    || (first_grid_row.is_some() && !direct_body_child)
+                    || flex_margins_base;
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor. Whether
                 // a clip box around it holds the break depends on where
@@ -2031,13 +2038,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
-                // A flex container nested in block flow moves whole when what
-                // follows its items runs past the page end (see
-                // `flex_margins_move`), so it needs a place of its own.
-                let flex_margins_candidate = nested_candidate_base
-                    && can_move_nested
-                    && !inline_level
-                    && super::has_flex_trailing_space(document, node_id);
+                // Not beside other boxes, but past a clip that the page end
+                // cuts: the clip box moves along with the container.
+                let flex_margins_candidate = flex_margins_base && !side_by_side_ancestor;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
