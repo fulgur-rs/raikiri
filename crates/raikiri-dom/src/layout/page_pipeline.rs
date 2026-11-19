@@ -8997,7 +8997,7 @@ fn unplaced_line(
     {
         return None;
     }
-    let unplaced = single_unplaced_line(document, node_id)?;
+    let unplaced = single_unplaced_line(document, cascade, node_id)?;
     let layout = document.ifc_layout_node(node_id)?.layout;
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
@@ -13275,6 +13275,54 @@ fn line_run(
     Some((start, end, total))
 }
 
+/// The margin between the block child of the paragraph `root` that comes
+/// right before its line `line` and that line: how far the line starts below
+/// the block's border box, when only the block's block-end margin lies
+/// between them. The line then sits in that margin as the first box of an
+/// anonymous block after the block would, and a page edge inside the margin
+/// truncates it there (CSS Fragmentation 3 section 5.2, Chromium). `None`
+/// when no block comes right before the line, when something else, such as
+/// a float the line clears, pushes the line further down, or when the block
+/// forces a break after it, whose margin the next page keeps.
+fn margin_above_line(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root: usize,
+    line: usize,
+) -> Option<f32> {
+    let node = document.ifc_layout_node(root)?;
+    let lines = node.ifc.as_ref()?.lines.as_ref()?;
+    let block = lines
+        .block_line_starts
+        .iter()
+        .rev()
+        .find(|&&(_, after)| after == line)?
+        .0;
+    if box_forces_break_after(
+        document,
+        cascade,
+        block,
+        cascade.computed[block].break_after,
+    ) {
+        return None;
+    }
+    let line_top = node.layout.border.top + node.layout.padding.top + lines.line_top(line);
+    // The block sits in the root, maybe inside inline boxes, each placed
+    // in the box around it. Relative offsets only paint it elsewhere.
+    let mut block_bottom = document.nodes[block].layout.size.height
+        - (layout_relative_offset_y(document, cascade, body_id, block)
+            - layout_relative_offset_y(document, cascade, body_id, root));
+    let mut current = block;
+    while current != root {
+        block_bottom += document.pagination_local_y(current);
+        current = document.nodes[current].parent?;
+    }
+    let gap = line_top - block_bottom;
+    let (positive, negative) = adjoining_margin_extremes(document, cascade, block, false, None);
+    (gap > 0.001 && gap <= positive + negative + 0.01).then_some(gap)
+}
+
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
 /// no block child comes after them. The run ends where the next block child
 /// begins, or at the last line.
@@ -15475,6 +15523,24 @@ fn move_paragraph_lines(
             shifts,
             flow_page,
             &IfcBoxShifts::default(),
+        );
+    } else if growth < 0.0 {
+        // Lines that move up, to the top of the page whose edge truncated
+        // the margin above them, shorten the boxes around the paragraph as a
+        // truncated margin above a box does.
+        let held = shrink_ancestors_after_content_change(
+            document,
+            cascade,
+            moved.block_id,
+            growth,
+            growth,
+            body_id,
+            &IfcBoxShifts::default(),
+            None,
+        );
+        shifts.bounded.extend(
+            held.into_iter()
+                .map(|(ancestor, held)| (ancestor, held, flow_page)),
         );
     }
     // A float that moved past the end of a box that keeps its height still

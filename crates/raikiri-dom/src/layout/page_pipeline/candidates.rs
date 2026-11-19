@@ -1199,7 +1199,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !later_text_of_item
                     && matches!(
                         &node.data,
-                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                        crate::node::NodeData::Text(text)
+                            if crate::layout::ifc::text_lines::places_lines(cascade, node_id, &text.text_content)
                     )
                 {
                     // A text node of an ifc paragraph has no layout of its own:
@@ -1214,6 +1215,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
+                    // Preserved white space that shows up on no line, such as
+                    // a lone line feed that only ends the line before it,
+                    // has nothing to place.
+                    if node.in_ifc_subtree()
+                        && self.text_lines.get(node_id).is_none()
+                        && matches!(&node.data, crate::node::NodeData::Text(text) if text.text_content.trim().is_empty())
+                    {
+                        return Ok(());
+                    }
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document
@@ -1896,6 +1906,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         Some(previous) => {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
+                                // A margin of a box inside the one before it
+                                // that collapses through that box's bottom
+                                // leaves a gap between the two.
+                                || (document.nodes[previous].parent == node.parent
+                                    && normal_flow_y(document, cascade, body_id, node_id)
+                                        - normal_flow_bottom(document, cascade, body_id, previous)
+                                        > 0.001)
                         }
                         None => {
                             generated_before().is_some_and(|(end, flow_top)| end < flow_top - 0.001)
