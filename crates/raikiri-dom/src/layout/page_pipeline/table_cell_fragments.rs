@@ -285,14 +285,19 @@ pub(super) fn realign_beside(
 /// break pages, so a break on an inline box, or inside a box that does not
 /// stack its children in block flow, or out of the flow, does not reach it.
 /// Generated content of the cell, or of a block it goes through, counts as
-/// content on either side.
+/// content on its own side.
 fn breaks_inside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     cell: usize,
 ) -> bool {
-    let generated = document.nodes[cell].has_before_or_after_content;
-    breaks_between(document, cascade, cell, generated, generated)
+    breaks_between(
+        document,
+        cascade,
+        cell,
+        generated_on_side(cascade, cell, true),
+        generated_on_side(cascade, cell, false),
+    )
 }
 
 /// The children of `parent` that are content of its block flow, with the
@@ -353,8 +358,8 @@ fn breaks_between(
                     document,
                     cascade,
                     child,
-                    before || node.has_before_or_after_content,
-                    after || node.has_before_or_after_content,
+                    before || generated_on_side(cascade, child, true),
+                    after || generated_on_side(cascade, child, false),
                 )
     })
 }

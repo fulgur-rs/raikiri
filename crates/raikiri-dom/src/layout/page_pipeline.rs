@@ -3850,12 +3850,12 @@ fn at_table_cell_edge(
             return false;
         };
         if document.nodes[parent].display() == DisplayValue::TableCell {
-            return !document.nodes[parent].has_before_or_after_content
+            return !generated_on_side(cascade, parent, before)
                 && document
                     .parent_of(parent)
                     .is_some_and(|row| document.nodes[row].display() == DisplayValue::TableRow);
         }
-        if !passes_edge_breaks(document, parent) {
+        if !passes_edge_breaks(document, cascade, parent, before) {
             return false;
         }
         id = parent;
@@ -3874,7 +3874,7 @@ fn row_takes_cell_break(
     document.nodes[row].display() == DisplayValue::TableRow
         && document.nodes[row].children.iter().any(|&cell| {
             if document.nodes[cell].display() != DisplayValue::TableCell
-                || document.nodes[cell].has_before_or_after_content
+                || generated_on_side(cascade, cell, before)
             {
                 return false;
             }
@@ -3891,7 +3891,7 @@ fn row_takes_cell_break(
                 {
                     return true;
                 }
-                if !passes_edge_breaks(document, id) {
+                if !passes_edge_breaks(document, cascade, id, before) {
                     return false;
                 }
                 edge = page_edge_child(document, cascade, id, before, 0);
@@ -3921,13 +3921,32 @@ fn forces_page_break(
 
 /// Whether `id` is a block container whose first and last boxes start and
 /// end its own block flow, so that a forced break at them passes to it.
-/// Generated content before or after its boxes keeps the break inside it.
-fn passes_edge_breaks(document: &Document, id: usize) -> bool {
+/// Generated content on that side of its boxes keeps the break inside it.
+fn passes_edge_breaks(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    before: bool,
+) -> bool {
     matches!(
         document.nodes[id].display(),
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     ) && document.nodes[id].multicol.is_none()
-        && !document.nodes[id].has_before_or_after_content
+        && !generated_on_side(cascade, id, before)
+}
+
+/// Whether `id` has generated content in the flow before (`before`) or after
+/// its boxes.
+pub(super) fn generated_on_side(cascade: &CascadeResult, id: usize, before: bool) -> bool {
+    crate::generated_content::is_in_flow_generated_text(
+        cascade,
+        id,
+        if before {
+            raikiri_style::PseudoElem::Before
+        } else {
+            raikiri_style::PseudoElem::After
+        },
+    )
 }
 
 // Find the first/last generated child box, eliding Contents without cloning

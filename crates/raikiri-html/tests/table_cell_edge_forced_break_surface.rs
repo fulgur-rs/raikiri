@@ -185,3 +185,26 @@ fn a_break_after_generated_content_or_in_a_lone_cell_stays_in_the_cell() {
         ),
     ]);
 }
+
+/// Generated content keeps a break inside the cell only on its own side: a
+/// cell's `::before` does not keep a break after its last box inside it, and
+/// its `::after` does not keep a break before its first box.
+#[test]
+fn generated_content_on_the_other_side_leaves_the_break_at_the_edge() {
+    assert_rows(&[
+        (
+            "<style>td.g::before{content:'L';display:block}</style><table style='border-spacing:0'><tr><td class='g' style='padding:0;vertical-align:bottom'><div style='break-after:page'>B</div></td><td style='padding:0'><div style='height:60px'>T</div></td></tr></table><div>X</div>",
+            &[(0, 'B', 50), (0, 'L', 40), (0, 'T', 0), (1, 'X', 0)],
+        ),
+        (
+            "<style>td.g::after{content:'L';display:block}</style><div>P</div><table style='border-spacing:0'><tr><td class='g' style='padding:0;vertical-align:bottom'><div style='break-before:page'>B</div></td><td style='padding:0'><div style='height:60px'>T</div></td></tr></table><div>X</div>",
+            &[
+                (0, 'P', 0),
+                (1, 'B', 40),
+                (1, 'L', 50),
+                (1, 'T', 0),
+                (1, 'X', 60),
+            ],
+        ),
+    ]);
+}
