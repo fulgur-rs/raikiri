@@ -304,3 +304,61 @@ fn content_before_the_box_keeps_the_row_on_its_page() {
         ]
     );
 }
+
+#[test]
+fn a_first_box_taller_than_the_page_starts_the_row_on_the_next_page_too() {
+    // The box breaks inside itself there.
+    assert_eq!(
+        glyphs(
+            r#"<table><tr><td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td><td><div style="height:50px">W</div></td></tr><tr><td><div style="height:150px;break-inside:avoid">Y</div></td></tr><tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (1, 'D', 0, 5),
+            (1, 'Y', 10, 5),
+            (2, 'R', 0, 55),
+            (2, 'S', 10, 55),
+            (2, 'X', 0, 75),
+        ]
+    );
+}
+
+#[test]
+fn white_space_between_the_tags_does_not_keep_the_row_on_its_page() {
+    assert_eq!(
+        glyphs(
+            r#"<table> <tr> <td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td> <td><div style="height:50px">W</div></td> </tr> <tr> <td> <div style="height:70px;break-inside:avoid">Y</div> </td> </tr> <tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (1, 'D', 0, 5),
+            (1, 'Y', 10, 5),
+            (2, 'R', 0, 5),
+            (2, 'S', 10, 5),
+            (2, 'X', 0, 25),
+        ]
+    );
+}
+
+#[test]
+fn a_forced_break_before_the_row_still_opens_a_page_of_its_own() {
+    assert_eq!(
+        glyphs(
+            r#"<table><tr><td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td><td><div style="height:50px">W</div></td></tr><tr style="break-before:page"><td><div style="height:70px;break-inside:avoid">Y</div></td></tr><tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (1, 'D', 0, 5),
+            (2, 'Y', 10, 5),
+            (3, 'R', 0, 5),
+            (3, 'S', 10, 5),
+            (3, 'X', 0, 25),
+        ]
+    );
+}

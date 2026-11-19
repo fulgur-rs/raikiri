@@ -9047,22 +9047,29 @@ fn spanned_row_restarts(
     }) else {
         return false;
     };
-    if !super::table::row_moves::has_row_spanning_cell(document, table) {
+    if !super::table::row_moves::row_beside_spanning_cell(document, table, row) {
         return false;
     }
-    let cells = &document.nodes[row].children;
+    let cells: Vec<usize> = document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            document.nodes[cell].display() == DisplayValue::TableCell
+                && sibling_renders(document, cell)
+        })
+        .collect();
     let row_top = cells
         .iter()
-        .map(|&cell| document.nodes[cell].layout.location.y)
+        .map(|&cell| document.pagination_local_y(cell))
         .fold(f32::INFINITY, f32::min);
     cells.iter().any(|&cell| {
-        document.nodes[cell].display() == DisplayValue::TableCell
-            && !super::table::row_moves::spans_rows(document, cell)
+        !super::table::row_moves::spans_rows(document, cell)
             && first_content_breaks_before(
                 document,
                 cascade,
                 cell,
-                flow_y + document.nodes[cell].layout.location.y - row_top,
+                flow_y + document.pagination_local_y(cell) - row_top,
                 page_start,
             )
     })
@@ -9071,7 +9078,8 @@ fn spanned_row_restarts(
 /// Whether the first content in flow of `block`, whose border box starts at
 /// `top`, is a box that no break goes through, as it avoids one or is
 /// unbreakable, and that runs past `page_end`: nothing of the block's content
-/// goes before the break.
+/// goes before the break. Chromium starts the row on the next page also when
+/// that box is taller than the page and breaks inside it there.
 fn first_content_breaks_before(
     document: &Document,
     cascade: &CascadeResult,
@@ -9084,10 +9092,9 @@ fn first_content_breaks_before(
         .iter()
         .copied()
         .find(|&child| {
-            let node = &document.nodes[child];
-            !node.is_display_none()
+            sibling_renders(document, child)
                 && !matches!(
-                    node.position(),
+                    document.nodes[child].position(),
                     PositionValue::Absolute | PositionValue::Fixed
                 )
                 && !is_floating_box_for_pagination(document, cascade, child)
@@ -9099,7 +9106,7 @@ fn first_content_breaks_before(
     if node.kind() != NodeKind::Element || node.display().is_inline_level() {
         return false;
     }
-    let top = top + node.layout.location.y;
+    let top = top + document.pagination_local_y(first);
     if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
         || box_is_unbreakable(document, cascade, first, false)
     {
