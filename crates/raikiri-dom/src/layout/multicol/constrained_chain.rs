@@ -42,8 +42,8 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
             || !style.min_size().height.is_auto()
             || !style.max_size().height.is_auto()
             || node.break_inside != raikiri_style::property::BreakInside::Auto
-            || node.break_before != BreakBetween::Auto
-            || node.break_after != BreakBetween::Auto
+            || crate::layout::multicol::sets_break_in_columns(node.break_before)
+            || crate::layout::multicol::sets_break_in_columns(node.break_after)
             || node.has_before_or_after_content
             || node.multicol.is_some()
         {

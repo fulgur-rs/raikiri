@@ -3809,12 +3809,12 @@ fn box_forces_break_after(
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
-    if value.is_page_value() {
-        return true;
-    }
-    if !matches!(value, BreakBetween::Always) {
+    if !value.may_force_page_break() {
         return false;
     }
+    // A break inside a multicol container falls in its column context.
+    // Chromium also ignores a page value there when it prints: the content
+    // after it stays in the columns and on the page.
     !document
         .layout_ancestors(node_id)
         .any(|id| document.nodes[id].multicol.is_some())
