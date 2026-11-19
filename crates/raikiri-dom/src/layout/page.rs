@@ -1770,6 +1770,7 @@ fn end_page_name<'name>(
                     && is_in_flow_page_child(cascade, boxes, child)
                     && (!matches!(child_node.kind(), NodeKind::Text)
                         || text_is_page_content(boxes, cascade, child))
+                    && !is_boxless_contents(document, cascade, boxes, child)
             })
         });
         match last {
@@ -1779,6 +1780,42 @@ fn end_page_name<'name>(
             _ => return page_name,
         }
     }
+}
+
+/// Whether the child `id` takes part in the start page value of its parent:
+/// an in-flow child other than a `display: contents` element that puts
+/// nothing on the page.
+fn is_page_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    boxes: BoxTree<'_>,
+    id: usize,
+) -> bool {
+    is_in_flow_page_child(cascade, boxes, id) && !is_boxless_contents(document, cascade, boxes, id)
+}
+
+/// Whether `id` is a `display: contents` element that holds no in-flow box or
+/// page content, at any depth: it puts nothing on the page, so it neither
+/// starts nor ends the page value of the box around it.
+fn is_boxless_contents(
+    document: &Document,
+    cascade: &CascadeResult,
+    boxes: BoxTree<'_>,
+    id: usize,
+) -> bool {
+    boxes.identity(id).display() == DisplayValue::Contents
+        && document.nodes[id]
+            .children
+            .iter()
+            .all(|&child| match document.nodes[child].kind() {
+                NodeKind::Text => !text_is_page_content(boxes, cascade, child),
+                NodeKind::Element => {
+                    boxes.identity(child).display() == DisplayValue::None
+                        || !is_in_flow_page_child(cascade, boxes, child)
+                        || is_boxless_contents(document, cascade, boxes, child)
+                }
+                _ => true,
+            })
 }
 
 /// Whether the text node `id` is content of the page flow: text other than
@@ -1851,7 +1888,7 @@ fn start_page_name<'name>(
             } => {
                 let found = children[next..]
                     .iter()
-                    .position(|&child_id| is_in_flow_page_child(cascade, boxes, child_id));
+                    .position(|&child_id| is_page_child(document, cascade, boxes, child_id));
                 if let Some(offset) = found {
                     let next_index = next + offset;
                     let child_id = children[next_index];
@@ -1912,7 +1949,7 @@ fn start_page_name<'name>(
         }
         let next = child_order
             .iter()
-            .position(|&child_id| is_in_flow_page_child(cascade, boxes, child_id));
+            .position(|&child_id| is_page_child(document, cascade, boxes, child_id));
         if let Some(index) = next {
             let child_id = child_order[index];
             pending.push(Task::ContinueChildren {

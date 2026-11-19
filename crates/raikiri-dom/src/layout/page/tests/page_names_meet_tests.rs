@@ -170,3 +170,33 @@ fn a_multicol_container_keeps_its_own_page_value() {
         (first, div(doc, body, "display:block"))
     }));
 }
+
+#[test]
+fn a_contents_element_that_puts_nothing_on_the_page_passes_no_value() {
+    // An empty `display: contents` element after the last box, or before the
+    // first one, is not where the page value ends or starts.
+    assert!(!meet("", |doc, body| {
+        let first = empty(doc, body, "display:block");
+        div(doc, first, "display:block;page:x");
+        let contents = empty(doc, first, "display:contents");
+        empty(doc, contents, "display:contents");
+        doc.append_text(contents, " ");
+        empty(doc, contents, "display:none");
+        (first, div(doc, body, "display:block"))
+    }));
+    assert!(!meet("", |doc, body| {
+        let first = div(doc, body, "display:block");
+        let second = empty(doc, body, "display:block");
+        empty(doc, second, "display:contents");
+        div(doc, second, "display:block;page:x");
+        (first, second)
+    }));
+    // One that holds a box passes its value on.
+    assert!(meet("", |doc, body| {
+        let first = empty(doc, body, "display:block");
+        div(doc, first, "display:block;page:x");
+        let contents = empty(doc, first, "display:contents");
+        div(doc, contents, "display:block");
+        (first, div(doc, body, "display:block"))
+    }));
+}
