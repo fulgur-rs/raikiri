@@ -10086,9 +10086,15 @@ fn breaks_inside_columns_never_force_a_page_break() {
     let mut doc = Document::new();
     let columns = doc.append_element(Some(0), "div", Some("columns:2"));
     let child = doc.append_element(Some(columns), "div", None::<&str>);
-    let spanner = doc.append_element(Some(columns), "div", Some("column-span:all"));
+    let spanner = doc.append_element(Some(columns), "div", Some("display:block;column-span:all"));
     let inner = doc.append_element(Some(columns), "div", Some("columns:2"));
-    let inner_spanner = doc.append_element(Some(inner), "div", Some("column-span:all"));
+    let inner_spanner =
+        doc.append_element(Some(inner), "div", Some("display:block;column-span:all"));
+    let floated = doc.append_element(
+        Some(columns),
+        "div",
+        Some("display:block;column-span:all;float:left"),
+    );
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -10099,16 +10105,35 @@ fn breaks_inside_columns_never_force_a_page_break() {
         BreakBetween::Left,
         BreakBetween::Verso,
     ] {
-        assert!(!page_break_is_forced(&doc, child, value), "{value:?}");
-        assert!(page_break_is_forced(&doc, columns, value), "{value:?}");
-        // A spanner leaves only its own container's columns.
-        assert!(page_break_is_forced(&doc, spanner, value), "{value:?}");
         assert!(
-            !page_break_is_forced(&doc, inner_spanner, value),
+            !page_break_is_forced(&doc, &cascade, child, value),
+            "{value:?}"
+        );
+        assert!(
+            page_break_is_forced(&doc, &cascade, columns, value),
+            "{value:?}"
+        );
+        // A spanner leaves only its own container's columns.
+        assert!(
+            page_break_is_forced(&doc, &cascade, spanner, value),
+            "{value:?}"
+        );
+        assert!(
+            !page_break_is_forced(&doc, &cascade, inner_spanner, value),
+            "{value:?}"
+        );
+        // A float spans nothing, so it stays in the columns.
+        assert!(
+            !page_break_is_forced(&doc, &cascade, floated, value),
             "{value:?}"
         );
     }
-    assert!(!page_break_is_forced(&doc, columns, BreakBetween::Column));
+    assert!(!page_break_is_forced(
+        &doc,
+        &cascade,
+        columns,
+        BreakBetween::Column
+    ));
 }
 
 #[test]

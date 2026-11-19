@@ -1923,7 +1923,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // `clip_holds_breaks`).
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
-                    || page_break_is_forced(document, node_id, computed.break_before)
+                    || page_break_is_forced(document, cascade, node_id, computed.break_before)
                     || box_forces_break_after(document, cascade, node_id, computed.break_after);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {

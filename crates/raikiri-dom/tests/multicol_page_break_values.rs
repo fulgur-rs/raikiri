@@ -246,6 +246,23 @@ fn a_page_value_from_a_spanner_into_columns_changes_nothing() {
     );
 }
 
+/// A float spans nothing, so a float with `column-span: all` stays in the
+/// columns, and its page value only moves it to the next column.
+#[test]
+fn a_page_value_on_a_float_with_column_span_changes_nothing() {
+    for value in ["always", "page"] {
+        check(
+            &format!(
+                "<div style='{COLUMNS}'><div>A</div>\
+                 <div id=f style='float:left;column-span:all;break-before:{value}'>F</div>\
+                 <div>C</div></div><div id=x>X</div>"
+            ),
+            1,
+            &[("f", 0, 50.0, 0.0), ("x", 0, 0.0, 10.0)],
+        );
+    }
+}
+
 /// An empty box with a page value inside columns leaves the content after
 /// it on the page too.
 #[test]

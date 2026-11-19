@@ -1976,7 +1976,7 @@ impl PaginationState {
         // container, as the box does before it moves to `effective_y`.
         let line_y = current_abs_y(document, node_id);
         materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
+        let forced_before = page_break_is_forced(document, cascade, node_id, computed.break_before)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
@@ -3170,7 +3170,7 @@ impl PaginationState {
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
                 let moves = forced_line_moves(
-                    &forced_line_breaks(document, block_id),
+                    &forced_line_breaks(document, cascade, block_id),
                     &line_metrics,
                     text.effective_y,
                     page_origins,

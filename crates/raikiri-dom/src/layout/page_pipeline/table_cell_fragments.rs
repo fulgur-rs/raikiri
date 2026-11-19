@@ -343,8 +343,8 @@ fn breaks_between(
         let computed = &cascade.computed[child];
         let before = before || index > 0;
         let after = after || index + 1 < children.len();
-        page_break_is_forced(document, child, computed.break_before) && before
-            || page_break_is_forced(document, child, computed.break_after) && after
+        page_break_is_forced(document, cascade, child, computed.break_before) && before
+            || page_break_is_forced(document, cascade, child, computed.break_after) && after
             || stacks_children_in_block_flow(document, child)
                 && breaks_between(document, cascade, child, before, after)
     })
