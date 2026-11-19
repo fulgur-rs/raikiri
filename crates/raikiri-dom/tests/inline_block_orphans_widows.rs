@@ -404,7 +404,30 @@ fn every_block_and_line_of_the_paragraph_on_the_page_is_an_orphan() {
             paragraph(0, "orphans:1;widows:3", &two_blocks(1, 10, 1, 10, 1)),
             [(1, 35.0), (1, 75.0)],
         ),
-        // Blocks next to each other are a line each.
+        // Blocks next to each other are one line together.
+        (
+            paragraph(
+                0,
+                "orphans:2;widows:3",
+                &format!(
+                    "<span>A<div style=\"height:10px\"><span>Q</span></div>{}C<br>C</span>",
+                    block(10)
+                ),
+            ),
+            [(0, 45.0), (1, 65.0)],
+        ),
+        // The page still breaks between them.
+        (
+            paragraph(
+                20,
+                "orphans:1;widows:2",
+                &format!(
+                    "<span>A<br>A<div style=\"height:10px\"><span>Q</span></div>{}C</span>",
+                    block(20)
+                ),
+            ),
+            [(1, 5.0), (1, 55.0)],
+        ),
         (
             paragraph(
                 50,

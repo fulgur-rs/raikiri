@@ -13968,8 +13968,8 @@ fn paragraph_blocks(document: &Document, root: usize) -> Vec<(usize, usize, bool
 /// on the page before the run counts too, back to a block straight in the
 /// paragraph, which ends the lines before it; a block that goes on from
 /// the page before counts as a line there too, and keeps its top above
-/// the page. Blocks end where the line after them starts, one above the
-/// other. `bounds` holds
+/// the page. Blocks end where the line after them starts, and blocks next
+/// to each other are one line together. `bounds` holds
 /// every line of the paragraph, offset by `y`.
 fn inline_lines_before_run(
     document: &Document,
@@ -14006,12 +14006,17 @@ fn inline_lines_before_run(
         }
         // A block before the run has a line after it, the run's at least.
         let next_top = bounds[after].0;
-        let end = bottom
-            .filter(|&(line, _)| line == after)
-            .map_or(next_top, |(_, top)| top);
-        let top = end - document.nodes[block].layout.size.height;
-        ahead.push((top, end));
-        bottom = Some((after, top));
+        // Blocks next to each other are one line together.
+        let height = document.nodes[block].layout.size.height;
+        match bottom {
+            Some(line) if line == after => {
+                if let Some(last) = ahead.last_mut() {
+                    last.0 -= height;
+                }
+            }
+            _ => ahead.push((next_top - height, next_top)),
+        }
+        bottom = Some(after);
     }
     ahead.retain(|&(_, bottom)| bottom > page_top + 0.5);
     ahead.sort_by(|a, b| a.0.total_cmp(&b.0));

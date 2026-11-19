@@ -4192,6 +4192,15 @@ impl PaginationState {
         // block starts past it, or when the first piece of the block's
         // content does not fit before it; else it breaks inside the block.
         let block_height = document.nodes[block].layout.size.height;
+        // The blocks next to each other there end where the line after them
+        // starts.
+        let group_height = paragraph_line_bounds(document, node_id, text_lines)
+            .and_then(|all| {
+                all.get(end)
+                    .map(|&(top, _)| text.effective_y + top - block_top)
+            })
+            .unwrap_or(block_height)
+            .max(block_height);
         let breaks_before_block = block_top + block_height > page_end + 0.001
             && (block_top >= page_end - 0.001
                 || super::block_first_piece_end(document, cascade, env.body_id, block)
@@ -4208,7 +4217,7 @@ impl PaginationState {
         if crosses_page_end || !breaks_before_block {
             // A block inside an inline box that ends on the page is a line
             // ahead of the lines after it, when the page breaks among those.
-            if !crosses_page_end && in_inline_box && block_top + block_height <= page_end + 0.001 {
+            if !crosses_page_end && in_inline_box && block_top + group_height <= page_end + 0.001 {
                 return self.keep_lines_through_inline_block(
                     document,
                     env,
@@ -4327,7 +4336,7 @@ impl PaginationState {
             return Ok(());
         };
         let block_top = block_top + shift;
-        if block_top + block_height
+        if block_top + group_height
             <= page_origins.origin(next) + page_origins.step_at(next) + 0.001
         {
             return self.keep_lines_through_inline_block(
@@ -4396,13 +4405,6 @@ impl PaginationState {
             paragraph_line_bounds(document, candidate.node_id, text_lines).unwrap_or_default();
         let total = bounds.len();
         let paragraph_blocks = super::paragraph_blocks(document, root);
-        // The blocks inside inline boxes between the run and the lines
-        // after it, each one line.
-        let here = paragraph_blocks
-            .iter()
-            .filter(|&&(_, after, inline)| inline && after == lines.end)
-            .count()
-            .max(1);
         // The lines up to the next block, and how many lines of the
         // paragraph come after them, up to a block straight in the
         // paragraph: the later blocks inside inline boxes count among them.
@@ -4446,7 +4448,9 @@ impl PaginationState {
             .position(|&(top, _)| y + top >= page_start - 0.001)
             .unwrap_or(metrics.len());
         let on_page = metrics.len() - first_on_page;
-        let before = ahead + on_page + here + broken;
+        // The blocks inside inline boxes between the run and the lines after
+        // it are one line together.
+        let before = ahead + on_page + 1 + broken;
         let after = next.len() - broken + later;
         let orphans = cascade.computed[root].orphans.max(1) as usize;
         let widows = cascade.computed[root].widows.max(1) as usize;
@@ -4475,16 +4479,16 @@ impl PaginationState {
             .saturating_sub(after)
             .min(before - orphans)
             .min(if widows_fit { usize::MAX } else { 0 });
-        // The lines after the block are the first to go, then the blocks,
+        // The lines after the block are the first to go, then the block,
         // then the run's lines on the page; the lines ahead of the run stay.
         let Some(beyond) = pulled
             .checked_sub(broken)
-            .filter(|&beyond| beyond > 0 && beyond <= here + on_page)
+            .filter(|&beyond| beyond > 0 && beyond <= 1 + on_page)
         else {
             return Ok(());
         };
         reach_page(env.control, next_page)?;
-        if beyond <= here {
+        if beyond == 1 {
             // The block goes with the lines after it.
             self.move_run_lines(
                 document,
@@ -4501,7 +4505,7 @@ impl PaginationState {
                 true,
             );
         } else {
-            let line = metrics.len() - (beyond - here);
+            let line = metrics.len() - (beyond - 1);
             self.move_run_lines(
                 document,
                 env,
