@@ -12353,7 +12353,8 @@ fn avoid_chain_before_last_box(
 }
 
 /// Whether the paragraph `node_id` may break between its lines: it has lines,
-/// does not avoid breaks inside it, and, unless `few_lines` allows it, has
+/// does not avoid breaks inside it, has no set height that leaves room below
+/// its lines (the page breaks in that room instead), and, unless `few_lines` allows it, has
 /// lines enough for `orphans` and `widows` on both sides of a break.
 fn paragraph_may_split_lines(
     document: &super::context::LayoutSession<'_>,
@@ -12363,6 +12364,7 @@ fn paragraph_may_split_lines(
 ) -> bool {
     document.nodes[node_id].is_ifc_root()
         && !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && !room_below_lines(document, node_id)
         && document
             .ifc_layout_node(node_id)
             .and_then(|node| node.ifc.as_ref())
