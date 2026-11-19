@@ -3940,11 +3940,15 @@ impl PaginationState {
                 // before it does; else none comes between those lines and
                 // the run.
                 if !moved
-                    && self.move_inline_block_paragraph(
-                        document, env, candidate, entry, blocks, text, page,
-                    )?
+                    && self
+                        .inline_block_paragraph_to_move(
+                            document, env, candidate, blocks, text, page,
+                        )
+                        .is_some()
                 {
-                    break;
+                    return self.move_inline_block_paragraph(
+                        document, env, candidate, entry, blocks, text, page,
+                    );
                 }
                 LineBreakFix::Keep
             } else {
@@ -4224,11 +4228,9 @@ impl PaginationState {
                 if !boxes_before {
                     return Ok(());
                 }
-                return self
-                    .move_inline_block_paragraph(
-                        document, env, candidate, entry, blocks, text, page,
-                    )
-                    .map(drop);
+                return self.move_inline_block_paragraph(
+                    document, env, candidate, entry, blocks, text, page,
+                );
             }
             (text.effective_y + last_top > page_start + 0.5).then_some(last)
         } else if on_page + ahead >= orphans {
@@ -4240,15 +4242,16 @@ impl PaginationState {
             // Lines that open the paragraph go with the whole paragraph, as
             // the page breaks before it.
             return self
-                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page)
-                .map(drop);
+                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page);
         } else if first_on_page == 0
             && ahead > 0
             && self
-                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page)?
+                .inline_block_paragraph_to_move(document, env, candidate, blocks, text, page)
+                .is_some()
         {
             // So do the lines and blocks before the run that open it.
-            return Ok(());
+            return self
+                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page);
         } else {
             // A block child of the paragraph comes before the lines on the
             // page, unless it ends the page before.
@@ -4396,11 +4399,9 @@ impl PaginationState {
         if before < orphans {
             // Lines that open the paragraph go with the whole paragraph.
             if first_on_page == 0 && after_block.is_none() {
-                return self
-                    .move_inline_block_paragraph(
-                        document, env, candidate, entry, blocks, text, page,
-                    )
-                    .map(drop);
+                return self.move_inline_block_paragraph(
+                    document, env, candidate, entry, blocks, text, page,
+                );
             }
             return Ok(());
         }
@@ -4461,33 +4462,28 @@ impl PaginationState {
         Ok(())
     }
 
-    /// Moves the paragraph that `blocks` holds the text `candidate` in whole
-    /// from `page` to the next page, as the break before it does, when the
-    /// paragraph is the block its line checks move and content of the flow
-    /// comes before it on that page (see [`Self::keep_lines_with_next_block`]).
-    /// Returns whether it moved.
-    #[allow(clippy::too_many_arguments)]
-    fn move_inline_block_paragraph(
-        &mut self,
-        document: &mut LayoutSession<'_>,
+    /// The paragraph that `blocks` holds the text `candidate` in, whether it
+    /// is nested, and its top, when the break before it on `page` can move
+    /// it whole: it is the block its line checks move, it starts on the
+    /// page, and content of the flow comes before it there.
+    fn inline_block_paragraph_to_move(
+        &self,
+        document: &LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
-        entry: &CandidateEntry,
         blocks: &LineBlocks,
-        text: &mut TextPosition,
+        text: &TextPosition,
         page: u32,
-    ) -> Result<bool, Halt> {
+    ) -> Option<(usize, bool, f32)> {
         let FlowEnv {
             cascade,
             body_id,
-            control,
             page_origins,
             root_flow_offset,
             ..
         } = *env;
         let page_start = page_origins.origin(page);
-        // Content of the flow must come before the paragraph on the page.
-        let Some((root, nested, block_top)) = blocks
+        blocks
             .block
             .filter(|&(block, _)| Some(block) == blocks.paragraph_root)
             .map(|(root, nested)| {
@@ -4504,8 +4500,35 @@ impl PaginationState {
             .filter(|&(root, _, top)| {
                 top > page_start + 0.001 && follows_flow_content(document, cascade, body_id, root)
             })
+    }
+
+    /// Moves the paragraph that `blocks` holds the text `candidate` in whole
+    /// from `page` to the next page, as the break before it does, when
+    /// [`Self::inline_block_paragraph_to_move`] finds it (see
+    /// [`Self::keep_lines_with_next_block`]).
+    #[allow(clippy::too_many_arguments)]
+    fn move_inline_block_paragraph(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &mut TextPosition,
+        page: u32,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            ..
+        } = *env;
+        let page_start = page_origins.origin(page);
+        let Some((root, nested, block_top)) =
+            self.inline_block_paragraph_to_move(document, env, candidate, blocks, text, page)
         else {
-            return Ok(false);
+            return Ok(());
         };
         let next = page.saturating_add(1);
         reach_page(control, next)?;
@@ -4525,7 +4548,7 @@ impl PaginationState {
         self.note_line_block_move(text, root, delta, consumed, next);
         self.float_shifts
             .record_grown_floats(document, cascade, body_id, candidate, root, delta);
-        Ok(true)
+        Ok(())
     }
 
     /// Moves the lines of the paragraph `root` from `line` on by `shift` to
