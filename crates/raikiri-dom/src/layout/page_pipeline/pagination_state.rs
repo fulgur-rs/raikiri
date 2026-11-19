@@ -3321,7 +3321,7 @@ impl PaginationState {
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
                 let moves = forced_line_moves(
-                    &forced_line_breaks(document, block_id),
+                    &forced_line_breaks(document, cascade, block_id),
                     &line_metrics,
                     text.effective_y,
                     page_origins,

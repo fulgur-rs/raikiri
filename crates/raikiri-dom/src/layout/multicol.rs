@@ -1880,8 +1880,8 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
             || node.size_containment.height
             || node.column_span_all
             || node.break_inside != raikiri_style::property::BreakInside::Auto
-            || node.break_before != BreakBetween::Auto
-            || node.break_after != BreakBetween::Auto
+            || sets_break_in_columns(node.break_before)
+            || sets_break_in_columns(node.break_after)
         {
             return None;
         }
@@ -6600,6 +6600,14 @@ pub(crate) fn prepare_authored_block_widths(
             );
         }
     }
+}
+
+/// Whether a `break-before` / `break-after` value does anything inside a
+/// multicol container. A page value (`page`, `left`, `right`, `recto`,
+/// `verso`) is ignored there, as Chromium ignores it when it prints, so the
+/// box lays out as one without a break value.
+pub(crate) fn sets_break_in_columns(value: BreakBetween) -> bool {
+    value != BreakBetween::Auto && !value.is_page_value()
 }
 
 #[cfg(test)]

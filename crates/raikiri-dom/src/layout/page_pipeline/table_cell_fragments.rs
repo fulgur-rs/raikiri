@@ -230,22 +230,24 @@ fn only_box(document: &Document, parent: usize) -> Option<usize> {
 pub(super) fn realign_beside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
-    row: usize,
+    cells: &[usize],
     grown: usize,
     end: Option<f32>,
     split_cells: &std::collections::HashSet<usize>,
 ) -> Vec<CellFragment> {
     // Only a forced break in the cell's own block flow splits the row there.
     if document.context.pagination_on_transposed_axes
-        || document.nodes[row].display() != DisplayValue::TableRow
         || end.is_none()
         || !breaks_inside(document, cascade, grown)
     {
         return Vec::new();
     }
     let end = end.unwrap_or_default();
-    document.nodes[row]
-        .children
+    // Where a cell starts below the top of the grown one: the cells of a
+    // row sit at its top, and those of a run outside a table at the top of
+    // their anonymous row, below the boxes before the table.
+    let grown_y = document.nodes[grown].layout.location.y;
+    cells
         .iter()
         .copied()
         .filter(|&cell| {
@@ -255,12 +257,12 @@ pub(super) fn realign_beside(
                 && node.display() == DisplayValue::TableCell
                 && sibling_renders(document, cell)
                 && !node.used_writing_mode.is_vertical()
-                && node.layout.location.y + node.layout.size.height <= end + 0.001
+                && node.layout.location.y - grown_y + node.layout.size.height <= end + 0.001
                 && !breaks_inside(document, cascade, cell)
         })
         .filter_map(|cell| {
             let layout = &document.nodes[cell].layout;
-            let top = layout.location.y;
+            let top = layout.location.y - grown_y;
             let padding = document
                 .physical_style(cell)
                 .padding()
@@ -364,8 +366,8 @@ fn breaks_between(
         let computed = &cascade.computed[child];
         let before = before || index > 0;
         let after = after || index + 1 < children.len();
-        page_break_is_forced(document, child, computed.break_before) && before
-            || page_break_is_forced(document, child, computed.break_after) && after
+        page_break_is_forced(document, cascade, child, computed.break_before) && before
+            || page_break_is_forced(document, cascade, child, computed.break_after) && after
             || (breaks_through_block_flow(document, cascade, child)
                 || stacks_children_in_block_flow(document, child)
                     && !is_monolithic_for_pagination_with_transposed_axes(
@@ -443,6 +445,107 @@ pub(super) fn row_splits(
         })
 }
 
+/// How far below the top of the row `row` the first break that splits it
+/// can go (see [`row_splits`]): the end of the first content of its cells
+/// that a page can hold apart from the rest of the row, when a break at any
+/// later end of that content splits the row too, so that the page end can
+/// fall anywhere past it. `None` when no such break exists, and when the row
+/// avoids breaks inside it.
+pub(super) fn first_split_end(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    row: usize,
+) -> Option<f32> {
+    let node = &document.nodes[row];
+    if document.context.pagination_on_transposed_axes
+        || box_avoids_page_break_inside(document, row, cascade.computed[row].break_inside)
+    {
+        return None;
+    }
+    let height = node.layout.size.height;
+    let row_y = current_abs_y(document, row);
+    let mut ends = Vec::new();
+    let mut tops = Vec::new();
+    for &cell in &node.children {
+        let cell_node = &document.nodes[cell];
+        if cell_node.display() != DisplayValue::TableCell {
+            continue;
+        }
+        // A cell that breaks loses the room its alignment put above its
+        // content, so its content ends that much higher (see `cell_breaks`).
+        let padding = document
+            .physical_style(cell)
+            .padding()
+            .resolve_or_zero(Some(cell_node.layout.size.width));
+        let shift = cell_node.layout.padding.top - padding.top;
+        let origin = row_y + shift.max(0.0);
+        if let Some(bounds) = line_bounds(document, cell) {
+            let content_top = current_abs_y(document, cell) - origin
+                + cell_node.layout.border.top
+                + cell_node.layout.padding.top;
+            ends.extend(bounds.iter().map(|&(_, bottom)| content_top + bottom));
+            tops.extend(bounds.iter().map(|&(top, _)| content_top + top));
+        }
+        content_ends(document, cell, origin, &mut ends, &mut tops);
+    }
+    ends.sort_by(f32::total_cmp);
+    ends.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    ends.retain(|&end| end > 0.001 && end < height - 0.001);
+    // Every place a box or line starts or ends, so that a page end between
+    // two of them falls inside the same content as any other page end
+    // there.
+    let mut points: Vec<f32> = ends.iter().copied().chain(tops).collect();
+    points.retain(|&point| point > 0.001 && point < height - 0.001);
+    points.sort_by(f32::total_cmp);
+    points.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    // Walk back from the bottom of the row while every page end, at a point
+    // and inside the gap after it, splits the row; the break must come
+    // after the latest place where it does not.
+    let mut first = None;
+    let mut next = height;
+    for &point in points.iter().rev() {
+        let gap = (point + next) / 2.0;
+        if !row_splits(document, cascade, body_id, row, 0.0, gap)
+            || !row_splits(document, cascade, body_id, row, 0.0, point)
+        {
+            break;
+        }
+        if ends.iter().any(|&end| (end - point).abs() < 0.001) {
+            first = Some(point);
+        }
+        next = point;
+    }
+    first
+}
+
+/// Pushes where each element inside `parent`, and each line of one that lays
+/// out lines, ends into `ends` and starts into `tops`, measured below
+/// `origin` in the document.
+fn content_ends(
+    document: &super::super::context::LayoutSession<'_>,
+    parent: usize,
+    origin: f32,
+    ends: &mut Vec<f32>,
+    tops: &mut Vec<f32>,
+) {
+    for &child in &document.nodes[parent].children {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element {
+            continue;
+        }
+        let top = current_abs_y(document, child) - origin;
+        tops.push(top);
+        ends.push(top + node.layout.size.height);
+        if let Some(bounds) = line_bounds(document, child) {
+            let content_top = top + node.layout.border.top + node.layout.padding.top;
+            ends.extend(bounds.iter().map(|&(_, bottom)| content_top + bottom));
+            tops.extend(bounds.iter().map(|&(top, _)| content_top + top));
+        }
+        content_ends(document, child, origin, ends, tops);
+    }
+}
+
 /// Whether the cell `cell`, with its border box at `cell_top` in the flow,
 /// lets a break at `page_end` go through it where its content is. `own`
 /// holds the body for a cell of the row itself, which must also put some of
@@ -475,7 +578,7 @@ fn cell_breaks(
         && !box_avoids_page_break_inside(document, cell, computed.break_inside)
         && shift.is_finite()
         && (own.is_none()
-            || !page_break_is_forced(document, cell, computed.break_before)
+            || !page_break_is_forced(document, cascade, cell, computed.break_before)
                 && !starts_with_forced_break(document, cascade, cell)
                 && content_fits(document, cascade, cell, tops, closing, page_end))
         && !float_crosses(
@@ -499,8 +602,12 @@ fn starts_with_forced_break(
     flow_children(document, cascade, block, &mut children);
     children.first().is_some_and(|&first| {
         block_level_element(document, first)
-            && (page_break_is_forced(document, first, cascade.computed[first].break_before)
-                || starts_with_forced_break(document, cascade, first))
+            && (page_break_is_forced(
+                document,
+                cascade,
+                first,
+                cascade.computed[first].break_before,
+            ) || starts_with_forced_break(document, cascade, first))
     })
 }
 

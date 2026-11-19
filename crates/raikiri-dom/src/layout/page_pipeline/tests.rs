@@ -10099,16 +10099,58 @@ fn column_breaks_do_not_force_a_page_boundary() {
 }
 
 #[test]
-fn always_uses_the_nearest_column_context_but_page_stays_page_specific() {
+fn breaks_inside_columns_never_force_a_page_break() {
     let mut doc = Document::new();
     let columns = doc.append_element(Some(0), "div", Some("columns:2"));
     let child = doc.append_element(Some(columns), "div", None::<&str>);
+    let spanner = doc.append_element(Some(columns), "div", Some("display:block;column-span:all"));
+    let inner = doc.append_element(Some(columns), "div", Some("columns:2"));
+    let inner_spanner =
+        doc.append_element(Some(inner), "div", Some("display:block;column-span:all"));
+    let floated = doc.append_element(
+        Some(columns),
+        "div",
+        Some("display:block;column-span:all;float:left"),
+    );
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     apply_computed_to_style(&mut doc, &cascade).unwrap();
-    assert!(!page_break_is_forced(&doc, child, BreakBetween::Always));
-    assert!(page_break_is_forced(&doc, child, BreakBetween::Page));
+    for value in [
+        BreakBetween::Always,
+        BreakBetween::Page,
+        BreakBetween::Left,
+        BreakBetween::Verso,
+    ] {
+        assert!(
+            !page_break_is_forced(&doc, &cascade, child, value),
+            "{value:?}"
+        );
+        assert!(
+            page_break_is_forced(&doc, &cascade, columns, value),
+            "{value:?}"
+        );
+        // A spanner leaves only its own container's columns.
+        assert!(
+            page_break_is_forced(&doc, &cascade, spanner, value),
+            "{value:?}"
+        );
+        assert!(
+            !page_break_is_forced(&doc, &cascade, inner_spanner, value),
+            "{value:?}"
+        );
+        // A float spans nothing, so it stays in the columns.
+        assert!(
+            !page_break_is_forced(&doc, &cascade, floated, value),
+            "{value:?}"
+        );
+    }
+    assert!(!page_break_is_forced(
+        &doc,
+        &cascade,
+        columns,
+        BreakBetween::Column
+    ));
 }
 
 #[test]
