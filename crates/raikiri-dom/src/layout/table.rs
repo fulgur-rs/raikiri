@@ -5087,25 +5087,8 @@ fn first_cell_baseline(doc: &LayoutSession<'_>, root: usize, content_top: f32) -
         return node.table_first_baseline;
     }
 
-    if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
-        && let Some(baseline) = super::ifc::flow::first_baseline(lines)
-    {
-        // A block before line zero can supply the first qualifying line or
-        // table row. Later blocks must not displace the root's first line.
-        for &(child, line) in &lines.block_line_starts {
-            if line != 0 {
-                continue;
-            }
-            let child_node = doc.ifc_layout_node(child).unwrap();
-            let top = child_node.layout.padding.top + child_node.layout.border.top;
-            let first = child_node
-                .table_first_baseline
-                .or_else(|| first_cell_baseline(doc, child, top));
-            if let Some(first) = first {
-                return Some(child_node.layout.location.y + first);
-            }
-        }
-        return Some(content_top + baseline);
+    if let Some(baseline) = first_line_baseline(doc, root, content_top) {
+        return Some(baseline);
     }
     let mut stack = Vec::new();
     for &child in node.children.iter().rev() {
@@ -5130,16 +5113,39 @@ fn first_cell_baseline(doc: &LayoutSession<'_>, root: usize, content_top: f32) -
             }
             continue;
         }
-        if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
-            && let Some(baseline) = super::ifc::flow::first_baseline(lines)
-        {
-            return Some(y + node.layout.padding.top + node.layout.border.top + baseline);
+        let content_top = node.layout.padding.top + node.layout.border.top;
+        if let Some(baseline) = first_line_baseline(doc, id, content_top) {
+            return Some(y + baseline);
         }
         for &child in node.children.iter().rev() {
             stack.push((child, y + doc.nodes[child].layout.location.y));
         }
     }
     None
+}
+
+// The first baseline of a box that lays out lines, relative to its border
+// edge. A block before line zero can supply the first qualifying line or
+// table row, at any depth; later blocks must not displace the box's own first
+// line.
+fn first_line_baseline(doc: &LayoutSession<'_>, id: usize, content_top: f32) -> Option<f32> {
+    let node = doc.ifc_layout_node(id).expect("table cell layout view");
+    let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())?;
+    let baseline = super::ifc::flow::first_baseline(lines)?;
+    for &(child, line) in &lines.block_line_starts {
+        if line != 0 {
+            continue;
+        }
+        let child_node = doc.ifc_layout_node(child).unwrap();
+        let top = child_node.layout.padding.top + child_node.layout.border.top;
+        let first = child_node
+            .table_first_baseline
+            .or_else(|| first_cell_baseline(doc, child, top));
+        if let Some(first) = first {
+            return Some(child_node.layout.location.y + first);
+        }
+    }
+    Some(content_top + baseline)
 }
 
 fn resolve_row_heights(

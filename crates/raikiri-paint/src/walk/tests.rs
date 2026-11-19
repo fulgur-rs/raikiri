@@ -8684,11 +8684,11 @@ fn a_centered_cell_border_can_reach_the_page_before_its_logical_box() {
 #[test]
 fn a_row_moved_to_the_next_page_takes_its_half_of_the_collapsed_line() {
     // The second row ends at y=85, where the 10px blue line between it and
-    // the third row is centered. The third row does not fit and starts the
-    // next page: the upper half of the line stays below the second row, and
+    // the third row is centered. The third row, whose cell avoids a break
+    // inside it, does not fit and starts the next page: the upper half of the line stays below the second row, and
     // the lower half moves to the top of the next page.
     // White space between the tags is not a cell and moves nothing.
-    let markup = "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'>\n<tbody style='border:10px solid lime'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid blue'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid yellow'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n</table></body></html>";
+    let markup = "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'>\n<tbody style='border:10px solid lime'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid blue'>\n<tr>\n<td style='padding:0;width:40px;height:30px'></td>\n</tr>\n</tbody>\n<tbody style='border:10px solid yellow'>\n<tr>\n<td style='padding:0;width:40px;height:30px;break-inside:avoid'></td>\n</tr>\n</tbody>\n</table></body></html>";
     let first = paint_ahem_page(markup, square_page(100.0), 0);
     let pixel = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..3].to_vec();
     assert_eq!(pixel(&first, 20, 82), [0, 0, 255]);
@@ -8702,11 +8702,12 @@ fn a_row_moved_to_the_next_page_takes_its_half_of_the_collapsed_line() {
 #[test]
 fn a_row_span_stops_at_its_row_group_when_the_collapsed_line_splits() {
     // The blue cells span more rows than their row group holds: they end
-    // with the group, so the line below them splits where the next group
-    // moves to the next page, as it does for a cell spanning one row.
+    // with the group, so the line below them splits where the next group,
+    // whose cell avoids a break inside it, moves to the next page, as it
+    // does for a cell spanning one row.
     for rowspan in ["2", "0"] {
         let markup = format!(
-            "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tbody style='border:10px solid lime'><tr><td style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid blue'><tr><td rowspan='{rowspan}' style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid yellow'><tr><td style='padding:0;width:40px;height:30px'></td></tr></tbody></table></body></html>"
+            "<!doctype html><html><body style='margin:0'><table style='border-collapse:collapse'><tbody style='border:10px solid lime'><tr><td style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid blue'><tr><td rowspan='{rowspan}' style='padding:0;width:40px;height:30px'></td></tr></tbody><tbody style='border:10px solid yellow'><tr><td style='padding:0;width:40px;height:30px;break-inside:avoid'></td></tr></tbody></table></body></html>"
         );
         let first = paint_ahem_page(&markup, square_page(100.0), 0);
         let pixel = |rgba: &[u8], x: usize, y: usize| rgba[(y * 100 + x) * 4..][..3].to_vec();

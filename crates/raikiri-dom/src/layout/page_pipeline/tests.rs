@@ -13258,7 +13258,11 @@ fn append_row(doc: &mut Document, group: usize, row_css: &str, height: f32) -> (
     let cell = doc.append_element(
         Some(row),
         "td",
-        Some(&format!("display:table-cell;padding:0;height:{height}px")),
+        // A cell that avoids a break inside it keeps its row whole, where an
+        // empty one would let the row break across the page end.
+        Some(&format!(
+            "display:table-cell;padding:0;height:{height}px;break-inside:avoid"
+        )),
     );
     (row, cell)
 }
