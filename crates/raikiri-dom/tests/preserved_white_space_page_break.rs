@@ -20,6 +20,7 @@ const AHEM: &[u8] = include_bytes!(concat!(
 fn runs(body: &str) -> Vec<(usize, String, f32, f32)> {
     let html = format!(
         "<!DOCTYPE html><style>@page {{ size: 200px 100px; margin: 0 }} \
+         @page a {{ size: 200px 100px; margin: 0 }} \
          html, body {{ margin: 0 }} body {{ font: 10px/10px Ahem }}</style>{body}"
     );
     let fonts = FontCollectionBuilder::new()
@@ -103,5 +104,27 @@ fn a_preserved_white_space_line_in_a_cell_splits_the_row() {
          <div style='break-after:page'>B</div>&#10;</td><td style='padding:0'>T</td></tr>\
          <tr><td style='padding:0'>R</td></tr></table>",
         &[(0, "B", 0.0, 40.0), (1, "R", 0.0, 10.0)],
+    );
+}
+
+#[test]
+fn a_preserved_white_space_line_takes_the_page_name_of_its_parent() {
+    // The line between two `page: a` boxes has the parent's page name, so the
+    // boxes do not share a page: three pages in all.
+    check(
+        "<div style='white-space:pre'><div style='page:a'>B</div>&#10;\
+         <div style='page:a'>X</div></div>",
+        &[(0, "B", 0.0, 0.0), (2, "X", 0.0, 0.0)],
+    );
+}
+
+#[test]
+fn white_space_between_flex_items_takes_no_forced_break() {
+    // The newline lays out no line between the items, so the margin of B is
+    // what moves it down the next page.
+    check(
+        "<div style='display:flex;flex-direction:column;white-space:pre'>\
+         <div style='break-after:page'>A</div>&#10;<div style='margin-top:10px'>B</div></div>",
+        &[(0, "A", 0.0, 0.0), (1, "B", 0.0, 10.0)],
     );
 }
