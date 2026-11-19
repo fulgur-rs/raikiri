@@ -2518,6 +2518,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         });
                 // Where the run starts, the block size from the bottom of its
                 // first box to the bottom of its last, and the edges after it.
+                // A run that starts at a paragraph breaking between its lines
+                // puts the block size after the paragraph to the next page
+                // with its last lines, as edges that close it.
+                let chain_lines = match (avoid_chain, last_in_flow) {
+                    (Some(AvoidChain::Lines { first }), Some(last)) if last_box_edges > 0.0 => {
+                        let bottom = |index: usize| {
+                            normal_flow_bottom(document, cascade, body_id, child_order[index])
+                        };
+                        let span = bottom(last) - bottom(first);
+                        (span > 0.0).then_some((first, span + last_box_edges))
+                    }
+                    _ => None,
+                };
                 let chain_run = match (avoid_chain, last_in_flow) {
                     (Some(AvoidChain::Run { first }), Some(last)) => {
                         let bottom = |index: usize| {
@@ -2535,8 +2548,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 // Where the runs of boxes tied by avoided breaks that start
                 // among the boxes of this block end.
-                let run_units = if !self.finds_nested_runs || !in_flow_block || is_body {
-                    Vec::new()
+                let (run_units, run_line_tails) = if is_body && !flow_flags.is_empty() {
+                    // The runs of the body's own boxes are found from its
+                    // candidates (see `avoided_run_ends`); only the lines a
+                    // paragraph among them keeps with the boxes after it
+                    // are found here.
+                    let (_, tails) =
+                        nested_run_units(document, cascade, body_id, &child_order, &flow_flags);
+                    (Vec::new(), tails)
+                } else if !self.finds_nested_runs || !in_flow_block || is_body {
+                    (Vec::new(), Vec::new())
                 } else if !flow_flags.is_empty() {
                     nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
                 } else if node.is_ifc_root()
@@ -2552,7 +2573,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     let paragraph_flags = child_flow_flags(document, cascade, &child_order);
                     nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
                 } else {
-                    Vec::new()
+                    (Vec::new(), Vec::new())
                 };
                 // A `display: contents` element lends its boxes to the flow
                 // of its parent: the box before its first one is the box
@@ -2596,11 +2617,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && is_flow_table_caption(document, cascade, node_id, roots.element);
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
-                    let child_closing_edges = match at_chain_start {
-                        Some((_, _, edges, _)) => edges,
-                        None if last_in_flow == Some(index) => last_box_edges,
-                        None => 0.0,
-                    };
+                    let lines_tail = chain_lines
+                        .filter(|&(first, _)| index == first)
+                        .map(|(_, tail)| tail);
+                    let child_closing_edges = match (at_chain_start, lines_tail) {
+                        (Some((_, _, edges, _)), _) => edges,
+                        (None, Some(tail)) => tail,
+                        (None, None) if last_in_flow == Some(index) => last_box_edges,
+                        (None, None) => 0.0,
+                    }
+                    // A paragraph whose last lines a run of tied boxes after
+                    // it takes along carries that run like closing edges.
+                    .max(run_line_tails.get(index).copied().unwrap_or(0.0));
                     // A block with edges of its own whose boxes are all tied to
                     // the first one has no break between boxes left to take: its
                     // last box moves alone with them, the avoided break giving
@@ -2707,7 +2735,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             min_height_edges: min_height_edges
                                 .filter(|_| last_in_flow == Some(index)),
                             capped_edges_block: (child_closing_edges > 0.0
-                                && at_chain_start.is_none())
+                                && at_chain_start.is_none()
+                                && lines_tail.is_none()
+                                && run_line_tails.get(index).is_none_or(|&tail| tail <= 0.0))
                             .then(|| {
                                 if contents || height_follows_content(document, node_id) {
                                     frame.capped_edges_block.filter(|_| inherited_edges > 0.0)

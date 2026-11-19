@@ -932,9 +932,11 @@ fn the_last_box_of_a_run_in_nested_blocks_moves_on_with_the_edges_of_both() {
 }
 
 #[test]
-fn a_run_of_tied_boxes_stays_when_the_page_breaks_better_inside_one_of_them() {
+fn a_tied_paragraph_breaks_between_its_lines_for_the_edges_after_the_run() {
     // The tied paragraph has lines enough for `orphans` and `widows` to break
-    // between them, which comes later than breaking before the run.
+    // between them, which comes later than breaking before the run: its last
+    // two lines go to the next page with the last box and the padding, as
+    // Chromium prints it.
     let (mut parent, mut last) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         parent = block(doc, body, "display:block;padding-bottom:30px");
@@ -948,12 +950,8 @@ fn a_run_of_tied_boxes_stays_when_the_page_breaks_better_inside_one_of_them() {
         doc.append_text(paragraph, ["aaa"; 4].join(" "));
         last = block(doc, parent, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, last), 70.0);
-    // The padding that does not fit under the last box starts the next page.
-    // Chromium breaks between the lines of the paragraph for it and moves the
-    // last box too, which is not done for a paragraph that avoided breaks tie
-    // to the box after it.
-    assert_eq!(doc.nodes[parent].layout.size.height, 130.0);
+    assert_eq!(page_flow_y(&doc, last), 120.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 170.0);
 }
 
 #[test]
@@ -986,9 +984,10 @@ fn an_avoided_break_before_the_last_box_gives_way_when_it_ties_it_to_the_first_b
 }
 
 #[test]
-fn a_run_that_starts_the_block_stays_when_the_page_breaks_better_inside_its_first_box() {
+fn a_run_that_starts_the_block_breaks_between_the_lines_of_its_first_box() {
     // The paragraph has lines enough for `orphans` and `widows` to break
-    // between them: the last box is not moved away from it alone.
+    // between them: its last two lines go to the next page with the last box
+    // and the padding, as Chromium prints it.
     let (mut parent, mut last) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         parent = block(doc, body, "display:block;padding-bottom:30px");
@@ -1001,12 +1000,8 @@ fn a_run_that_starts_the_block_stays_when_the_page_breaks_better_inside_its_firs
         doc.append_text(paragraph, ["aaa"; 4].join(" "));
         last = block(doc, parent, "display:block;height:40px");
     });
-    assert_eq!(page_flow_y(&doc, last), 40.0);
-    // The padding that does not fit under the last box starts the next page.
-    // Chromium breaks between the lines of the paragraph for it and moves the
-    // last box too, which is not done for a paragraph that avoided breaks tie
-    // to the box after it.
-    assert_eq!(doc.nodes[parent].layout.size.height, 130.0);
+    assert_eq!(page_flow_y(&doc, last), 120.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 190.0);
 }
 
 #[test]

@@ -5705,6 +5705,18 @@ fn avoided_run_ends(
                 && prior.page_name == candidate.page_name
                 && (after_avoided || before_avoided)
         });
+        // A paragraph in the run that breaks between its lines is a better
+        // place to break than before the run: the run starts after it, and
+        // the paragraph keeps its last lines with the boxes after it.
+        let splits_lines = |id: usize| {
+            document.nodes[id].is_ifc_root()
+                && !paragraph_lines_keep_together(document, cascade, id)
+        };
+        if connected && previous.is_some_and(|prior| splits_lines(prior.node_id)) {
+            run_start = None;
+            previous = Some(candidate);
+            continue;
+        }
         if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
             let margin_bottom =
@@ -12033,6 +12045,11 @@ enum AvoidChain {
     /// The last box is tied to the boxes before it all the way to the first
     /// box of the block: no break between boxes is left to take.
     Start,
+    /// The run of tied boxes starts at the paragraph `first`, which may break
+    /// between its lines, and the boxes after it move whole at best: the
+    /// page breaks between the paragraph's lines, so that its last lines go
+    /// to the next page with the boxes after it and the edges.
+    Lines { first: usize },
 }
 
 /// The avoided breaks that tie the last box of a block to the boxes before it.
@@ -12107,19 +12124,64 @@ fn avoid_chain_before_last_box(
         }
         first = before;
     };
+    if first == last {
+        return None;
+    }
     // A break inside one of the boxes of the run at a better place than
     // before the run is taken instead.
-    (first != last
-        && (first..=last)
-            .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
-            .all(|index| {
-                moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
-            }))
-    .then_some(if starts_block {
-        AvoidChain::Start
-    } else {
-        AvoidChain::Run { first }
+    let boxes: Vec<usize> = (first..=last)
+        .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
+        .collect();
+    let moves_whole = |index: usize| {
+        moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
+    };
+    let Some(split) = boxes.iter().rposition(|&index| !moves_whole(index)) else {
+        return Some(if starts_block {
+            AvoidChain::Start
+        } else {
+            AvoidChain::Run { first }
+        });
+    };
+    // A box after the paragraph whose set height leaves room below its lines
+    // breaks in that room: the paragraph keeps its lines then.
+    if boxes[split + 1..]
+        .iter()
+        .any(|&index| room_below_lines(document, children[index]))
+    {
+        return None;
+    }
+    // The last paragraph of the run that breaks between its lines takes the
+    // break instead, which leaves its last lines with the boxes after it. A
+    // paragraph with lines too few to split would move whole without the
+    // boxes tied before it, so then the run keeps its placement.
+    let paragraph = children[boxes[split]];
+    (document.nodes[paragraph].is_ifc_root()
+        && (split == 0 || !paragraph_lines_keep_together(document, cascade, paragraph)))
+    .then_some(AvoidChain::Lines {
+        first: boxes[split],
     })
+}
+
+/// Whether the paragraph `node_id` has a set height that leaves room below its
+/// last line, where the page may break inside it.
+fn room_below_lines(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    if !node.is_ifc_root() || height_follows_content(document, node_id) {
+        return false;
+    }
+    let lines_end = document
+        .ifc_layout_node(node_id)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .and_then(|lines| lines.lines.last())
+        .map_or(0.0, |line| line.block_offset() + line.block_size());
+    let layout = &node.layout;
+    let content = layout.size.height
+        - layout.padding.top
+        - layout.padding.bottom
+        - layout.border.top
+        - layout.border.bottom;
+    content > lines_end + 0.5
 }
 
 /// For each child of a block, how far below its border-box top the run of
@@ -12138,7 +12200,7 @@ fn nested_run_units(
     body_id: usize,
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
-) -> Vec<Option<f32>> {
+) -> (Vec<Option<f32>>, Vec<f32>) {
     // A table ends a run it joins and starts none: only its first row stays
     // with the box before it.
     let is_flow_box = |index: usize| {
@@ -12155,8 +12217,9 @@ fn nested_run_units(
         .iter()
         .position(|&(in_flow, _)| in_flow.is_some());
     let mut units = vec![None; children.len()];
+    let mut tails = vec![0.0; children.len()];
     let mut finish = |run: Option<(usize, usize)>| {
-        let Some((start, last)) = run.filter(|&(start, _)| Some(start) != first_in_flow) else {
+        let Some((start, last)) = run else {
             return;
         };
         let (start_box, last_box) = (children[start], children[last]);
@@ -12165,11 +12228,24 @@ fn nested_run_units(
             Some(head) if head < last_height - 0.001 => head,
             _ => last_height + document.nodes[last_box].layout.margin.bottom.max(0.0),
         };
-        units[start] = Some(
-            normal_flow_y(document, cascade, body_id, last_box)
-                - normal_flow_y(document, cascade, body_id, start_box)
-                + head,
-        );
+        let run_end = normal_flow_y(document, cascade, body_id, last_box) + head;
+        // A paragraph in the run that breaks between its lines is a better
+        // place to break than before the run: the run does not move whole,
+        // and the last such paragraph keeps its last lines with the boxes
+        // after it instead.
+        if let Some(paragraph) = (start..last).rev().find(|&index| {
+            is_box(index)
+                && document.nodes[children[index]].is_ifc_root()
+                && !paragraph_lines_keep_together(document, cascade, children[index])
+        }) {
+            tails[paragraph] =
+                run_end - normal_flow_bottom(document, cascade, body_id, children[paragraph]);
+            return;
+        }
+        // A run from the first box has no break before it to move to.
+        if Some(start) != first_in_flow {
+            units[start] = Some(run_end - normal_flow_y(document, cascade, body_id, start_box));
+        }
     };
     let mut run: Option<(usize, usize)> = None;
     let mut previous: Option<usize> = None;
@@ -12194,7 +12270,7 @@ fn nested_run_units(
         previous = Some(index);
     }
     finish(run);
-    units
+    (units, tails)
 }
 
 /// The break that keeps a paragraph's last lines with the `edges` of bottom
