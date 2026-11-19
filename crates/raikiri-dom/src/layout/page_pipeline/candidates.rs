@@ -1881,6 +1881,24 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     !forced && avoided
                                 }))
                     };
+                // The part of that which the page passes on to the content
+                // before the box: lines of its paragraph, which give way
+                // for it (see `PaginationState::keep_lines_with_next_block`),
+                // or a plain block of the same parent tied to it, which
+                // moves on with it as a run (see `nested_run_units` and
+                // `avoided_run_ends`). Only then does a box that avoids
+                // breaks inside it split where it stands rather than move
+                // on alone.
+                let avoided_break_passed_on = avoided_break_before
+                    && (super::lines_before_block(document, node_id)
+                        || frame.previous_box.is_some_and(|previous| {
+                            let parent = document.nodes[node_id].parent;
+                            is_plain_block_box(document, previous)
+                                && document.nodes[previous].parent == parent
+                                && parent.is_some_and(|parent| {
+                                    document.nodes[parent].display() != DisplayValue::Contents
+                                })
+                        }));
                 // A break avoided before the box is still a better one than a
                 // break through the first piece of its content, which cuts a
                 // line or a monolithic box: Chromium takes it when that piece
@@ -2235,7 +2253,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unplaced_line: unplaced_line.or(line_after_block),
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
-                                avoided_break_before,
+                                avoided_break_before: avoided_break_passed_on,
                                 closing_edges: if closing_edges_candidate
                                     || lone_box_candidate.is_some()
                                 {

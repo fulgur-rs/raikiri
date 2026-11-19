@@ -5457,6 +5457,9 @@ fn avoided_run_ends(
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
     let mut run_lasts = HashMap::<usize, (&PageCandidate, f32)>::new();
+    // The runs with a box before their last that holds a break of its own
+    // (see `box_holds_no_break`), keyed by their first box.
+    let mut soft_runs = std::collections::HashSet::<usize>::new();
     let mut previous: Option<&PageCandidate> = None;
     let mut run_start: Option<usize> = None;
     for candidate in candidates {
@@ -5513,6 +5516,9 @@ fn avoided_run_ends(
         });
         if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
+            if !box_holds_no_break(document, cascade, body_id, prior.node_id) {
+                soft_runs.insert(start);
+            }
             let margin_bottom =
                 used_computed_length_percentage_or_auto(&computed.margin.bottom, content_width)
                     .unwrap_or(0.0)
@@ -5549,6 +5555,7 @@ fn avoided_run_ends(
                     (held.end, held.firm)
                 }
             };
+            let firm = firm && !soft_runs.contains(&start);
             let (end, whole) = match head {
                 Some(head) if head < last.height - 0.001 => (last.raw_y + head, false),
                 // Content that runs out past a box that avoids breaks
@@ -5618,6 +5625,24 @@ pub(super) struct RunUnit {
     pub(super) firm: bool,
 }
 
+/// Whether the page holds no break inside the box `node_id` of a run of
+/// boxes tied by avoided breaks that is better than the one before the run:
+/// the part of it that [`avoided_run_head`] finds is firm and takes the
+/// whole box. A box of the run with such a break inside it takes that break
+/// before the run moves on, as Chromium takes the latest of equal breaks.
+fn box_holds_no_break(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    let held = avoided_run_head(document, cascade, body_id, node_id, false);
+    held.firm
+        && held
+            .end
+            .is_none_or(|end| end >= document.nodes[node_id].layout.size.height - 0.001)
+}
+
 /// The part of a block that the page cannot break away from the box before
 /// it (see [`avoided_run_head`]).
 struct HeldPart {
@@ -5649,11 +5674,15 @@ struct HeldPart {
 /// close the box right below it, which would be alone there. The first box of
 /// a block of boxes holds the same, and with it the boxes after it that
 /// avoided breaks tie to it, when `join_ties` is set. A table holds its first
-/// row (see [`held_table_end`]). A box that avoids breaks inside it, a box
-/// that is not a plain block or table, a paragraph that cannot move its lines
-/// down inside it, a block that moves whole with its closing edges (see
-/// [`lone_box_tail`]), and anything with a break, a float or generated content
-/// at its start is kept whole.
+/// row (see [`held_table_end`]), and a flex container that lays its items
+/// out in rows the first piece of their content. A box that avoids breaks
+/// inside it is kept whole, with the content that runs out past it (see
+/// [`avoided_box_extent`]). A box that is not a plain block or table, a
+/// paragraph that cannot move its lines down inside it, a block that moves
+/// whole with its closing edges (see [`lone_box_tail`]), and anything with a
+/// break, a float or generated content at its start is kept whole too.
+/// Whether no break inside the part held beats the one before the run is
+/// told by [`HeldPart::firm`].
 fn avoided_run_head(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6498,12 +6527,12 @@ impl AvoidedBreaks {
                 page_end,
             )
         };
-        // Only the content before a break forced inside the box has to fit,
-        // which can reach below the box's own end (a later child with a
-        // negative margin pulls the end up).
         // A break avoided before the box is no better than one avoided inside
         // it: Chromium takes the later of the two and splits the box.
         let avoided_end = avoided_end.filter(|_| !candidate.context.avoids_break_before());
+        // Only the content before a break forced inside the box has to fit,
+        // which can reach below the box's own end (a later child with a
+        // negative margin pulls the end up).
         let moves_for_avoided_end = avoided_end.is_some_and(|end| {
             avoided_moves(
                 forced_break_inside(
@@ -9400,8 +9429,10 @@ fn first_content_breaks_before(
 ///
 /// A run of sibling blocks joined by `break-before` or `break-after: avoid`
 /// stays intact when its block size, through the last box's trailing margin,
-/// would cross the current page. This is the direct block-flow case; nested
-/// formatting contexts still require fragment-level break opportunities.
+/// would cross the current page. It moves when it fits the next page, or,
+/// when it is `firm`, whether or not it fits: no break inside a firm run is
+/// better than the one before it (see [`HeldPart::firm`]), so Chromium takes
+/// that one, and the run breaks inside on the next page.
 fn avoided_run_moves(
     run_height: f32,
     firm: bool,
@@ -11942,11 +11973,15 @@ fn nested_run_units(
             Some(head) => head.max(last_height + margin_bottom),
             None => last_height + margin_bottom,
         };
+        let firm = held.firm
+            && (start..last)
+                .filter(|&index| is_flow_box(index))
+                .all(|index| box_holds_no_break(document, cascade, body_id, children[index]));
         units[start] = Some(RunUnit {
             end: normal_flow_y(document, cascade, body_id, last_box)
                 - normal_flow_y(document, cascade, body_id, start_box)
                 + head,
-            firm: held.firm,
+            firm,
         });
     };
     let mut run: Option<(usize, usize)> = None;
@@ -14137,17 +14172,30 @@ fn avoided_box_extent(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    let layout = &document.nodes[node_id].layout;
-    let overflow = (!element_clips_overflow(document, cascade, node_id))
-        .then(|| flow_content_overflow(document, cascade, body_id, node_id))
-        .flatten()
-        .filter(|&overflow| overflow > 0.0);
-    overflow.map_or(layout.size.height, |overflow| {
-        layout
-            .size
-            .height
-            .max(layout.size.height - layout.padding.bottom - layout.border.bottom + overflow)
-    })
+    let node = &document.nodes[node_id];
+    let layout = &node.layout;
+    if node.size_containment.height || element_clips_overflow(document, cascade, node_id) {
+        return layout.size.height;
+    }
+    let content_top = layout.border.top + layout.padding.top;
+    // The margins below the content are cut at a page break, so only the
+    // border box of the last child counts.
+    let flow_end = if node.is_ifc_root() {
+        document
+            .ifc_layout_node(node_id)
+            .and_then(|lines_node| lines_node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .map(|lines| content_top + lines.shifted_height())
+    } else {
+        last_flow_child(document, cascade, node_id)
+            .filter(|&child| document.nodes[child].display() != DisplayValue::Contents)
+            .map(|child| {
+                let child_layout = &document.nodes[child].layout;
+                child_layout.location.y + child_layout.size.height
+                    - layout_relative_offset_y(document, cascade, body_id, child)
+            })
+    };
+    flow_end.map_or(layout.size.height, |end| layout.size.height.max(end))
 }
 
 /// Whether lines of the paragraph that holds the block `block` come before

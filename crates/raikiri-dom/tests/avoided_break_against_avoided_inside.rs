@@ -289,3 +289,42 @@ fn a_box_whose_first_piece_is_an_image_moves_past_the_avoided_break() {
         ),
     ]);
 }
+
+#[test]
+fn a_run_with_a_break_inside_an_earlier_box_breaks_there() {
+    // The first box of the run holds breaks between its lines, which beat
+    // the one before the run: the run stays, too tall for the next page.
+    let run = "<div style=\"break-after:avoid\"><span id=t>T</span><br>A<br>A<br>A<br>A</div>\
+               <div style=\"height:40px;break-inside:avoid\"></div><div><span id=z>Z</span></div>";
+    assert_places(&[
+        (
+            format!("<div style=\"height:10px\"></div>{run}"),
+            [(0, 15.0), (2, 5.0)],
+        ),
+        (
+            format!("<div style=\"width:20px\"><div style=\"height:10px\"></div>{run}</div>"),
+            [(0, 15.0), (2, 5.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn a_margin_below_the_content_of_a_box_that_avoids_breaks_inside_is_cut() {
+    let z = "<div><span id=z>Z</span></div>";
+    assert_places(&[
+        (
+            format!(
+                "<div style=\"height:60px\"></div><div style=\"height:30px;break-inside:avoid\">\
+                 <p style=\"margin:0 0 30px\"><span id=t>T</span></p></div>{z}"
+            ),
+            [(0, 65.0), (1, 5.0)],
+        ),
+        (
+            format!(
+                "<div style=\"height:50px\"></div><div style=\"break-inside:avoid\">\
+                 <p style=\"margin:0 0 30px\"><span id=t>T</span></p></div>{z}"
+            ),
+            [(0, 55.0), (1, 5.0)],
+        ),
+    ]);
+}
