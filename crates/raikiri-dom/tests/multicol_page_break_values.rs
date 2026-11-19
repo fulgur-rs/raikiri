@@ -444,3 +444,33 @@ fn a_page_value_on_a_spanner_inside_a_spanner() {
         &[],
     );
 }
+
+/// Generated content after a spanner, from the container's or a wrapper's
+/// `::after` or from a `::before` of a wrapper that generates no box, is
+/// column content, so the page value of the spanner stays in the columns
+/// (Chromium: X on the first page).
+#[test]
+fn a_page_value_before_generated_content_changes_nothing() {
+    let style = "<style>#c::after, #w::after, #e::before { content: 'G' }</style>";
+    for body in [
+        format!(
+            "<div id=c style='{COLUMNS}'><div>A</div>\
+             <div style='column-span:all;break-after:page'>S</div></div>"
+        ),
+        format!(
+            "<div style='{COLUMNS}'><div>A</div><div id=w style='display:contents'>\
+             <div style='column-span:all;break-after:page'>S</div></div>\
+             <div style='column-span:all'>T</div></div>"
+        ),
+        format!(
+            "<div style='{COLUMNS}'><div>A</div><div style='column-span:all;break-after:page'>S</div>\
+             <div id=e style='display:contents'></div><div style='column-span:all'>T</div></div>"
+        ),
+        format!(
+            "<div style='{COLUMNS}'><div>A</div><div style='column-span:all;break-after:page'>S</div>\
+             <div id=e style='display:contents'><div style='column-span:all'>T</div></div></div>"
+        ),
+    ] {
+        check(&format!("{style}{body}<div id=x>X</div>"), 1, &[]);
+    }
+}

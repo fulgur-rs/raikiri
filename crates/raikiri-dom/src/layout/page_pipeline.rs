@@ -3846,12 +3846,17 @@ fn page_break_after_is_forced(
     let mut current = node_id;
     loop {
         let parent = document.parent_of(current);
+        // Generated content after the last child is not among the children
+        // but follows the spanner too.
         let next = parent.and_then(|parent| {
-            first_flow_child(document, cascade, parent, Some(current)).map(|next| (parent, next))
+            first_flow_child(document, cascade, parent, Some(current))
+                .map(Some)
+                .or_else(|| generated_on_side(cascade, parent, false).then_some(None))
+                .map(|next| (parent, next))
         });
         if let Some((parent, next)) = next {
             return !lays_out_in_columns(document, parent)
-                || starts_with_spanner(document, cascade, next);
+                || next.is_some_and(|next| starts_with_spanner(document, cascade, next));
         }
         match parent {
             Some(parent)
@@ -3881,7 +3886,8 @@ fn lays_out_in_columns(document: &Document, id: usize) -> bool {
 
 /// The first child of `parent`, after `after` when it is given, that the
 /// flow lays out: neither hidden nor out of flow, nor text of white space
-/// that its style collapses away, nor a wrapper that generates no box and holds no such child.
+/// that its style collapses away, nor a wrapper that generates no box and
+/// holds no such child or generated content.
 fn first_flow_child(
     document: &Document,
     cascade: &CascadeResult,
@@ -3913,6 +3919,8 @@ fn first_flow_child(
                 _ => true,
             }
             && (cascade.computed[child].display != DisplayValue::Contents
+                || generated_on_side(cascade, child, true)
+                || generated_on_side(cascade, child, false)
                 || first_flow_child(document, cascade, child, None).is_some())
     })
 }
@@ -3922,6 +3930,7 @@ fn first_flow_child(
 fn starts_with_spanner(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
     super::is_spanner_in(document, cascade, node)
         || (cascade.computed[node].display == DisplayValue::Contents
+            && !generated_on_side(cascade, node, true)
             && first_flow_child(document, cascade, node, None)
                 .is_some_and(|first| starts_with_spanner(document, cascade, first)))
 }
