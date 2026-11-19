@@ -13838,29 +13838,69 @@ fn margin_above_line(
 }
 
 /// The block child of the paragraph `root` laid out right after its line
-/// `end - 1`, when that block sits inside an inline box of the paragraph, in
-/// the tree of elements. Chromium lays such a block out on a line of its own
-/// in the paragraph, which `orphans` and `widows` count as one line: a page
-/// break before the block leaves that one line after it.
-fn inline_block_after_lines(document: &Document, root: usize, end: usize) -> Option<usize> {
+/// `end - 1`, and whether it sits inside an inline box of the paragraph, in
+/// the tree of elements.
+fn block_after_lines(document: &Document, root: usize, end: usize) -> Option<(usize, bool)> {
     let lines = document
         .ifc_layout_node(root)?
         .ifc
         .as_ref()?
         .lines
         .as_ref()?;
-    lines
+    let &(block, _) = lines
         .block_line_starts
         .iter()
-        .find(|&&(_, after)| after == end)
-        .map(|&(block, _)| block)
-        .filter(|&block| {
-            std::iter::successors(document.nodes[block].parent, |&id| {
-                document.nodes[id].parent
-            })
-            .take_while(|&ancestor| ancestor != root)
-            .any(|ancestor| document.nodes[ancestor].display().is_inline_level())
-        })
+        .find(|&&(_, after)| after == end)?;
+    let in_inline_box = std::iter::successors(document.nodes[block].parent, |&id| {
+        document.nodes[id].parent
+    })
+    .take_while(|&ancestor| ancestor != root)
+    .any(|ancestor| document.nodes[ancestor].display().is_inline_level());
+    Some((block, in_inline_box))
+}
+
+/// Where the first piece of the content of the block `block` ends (see
+/// [`first_piece_end`]), read through a block child that comes before the
+/// first line of a paragraph: that child holds the paragraph's first piece.
+fn block_first_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+) -> Option<f32> {
+    first_piece_end(document, cascade, body_id, block, 0).or_else(|| {
+        let node = &document.nodes[block];
+        if !node.is_ifc_root() {
+            return None;
+        }
+        let lines = document
+            .ifc_layout_node(block)?
+            .ifc
+            .as_ref()?
+            .lines
+            .as_ref()?;
+        let &(leading, _) = lines
+            .block_line_starts
+            .iter()
+            .find(|&&(_, after)| after == 0)?;
+        // An anonymous box or one inside an inline box is not read.
+        cascade.computed.get(leading)?;
+        (document.nodes[leading].parent == Some(block)).then_some(())?;
+        Some(
+            normal_flow_y(document, cascade, body_id, leading)
+                + first_piece_end(document, cascade, body_id, leading, 1)?,
+        )
+    })
+}
+
+/// The block that [`block_after_lines`] finds after the line `end - 1` of
+/// the paragraph `root`, when it sits inside an inline box. Chromium lays
+/// such a block out on a line of its own in the paragraph, which `orphans`
+/// and `widows` count as one line: a page break before the block leaves
+/// that one line after it.
+fn inline_block_after_lines(document: &Document, root: usize, end: usize) -> Option<usize> {
+    block_after_lines(document, root, end)
+        .and_then(|(block, in_inline_box)| in_inline_box.then_some(block))
 }
 
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
