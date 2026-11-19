@@ -3398,9 +3398,11 @@ fn the_last_item_of_a_container_stays_where_a_box_cannot_move_on_its_own() {
 }
 
 #[test]
-fn the_margin_below_the_last_item_is_no_edge_without_padding_or_border() {
-    // Nothing closes the container but a margin below its last item, which is
-    // no edge that breaks away from it: the item keeps its place.
+fn the_margin_below_the_last_item_moves_its_column_whole() {
+    // Nothing closes the container but a margin below its last item. The
+    // item ends on the page, but Chromium does not truncate a flex item's
+    // margin at a break as block flow does: the page breaks before the
+    // column, and both items move with it.
     let (ys, _) = card_with_edges(0, |doc, card| {
         let column = block(doc, card, "display:flex;flex-direction:column");
         let first = block(doc, column, "display:block;height:10px");
@@ -3410,7 +3412,7 @@ fn the_margin_below_the_last_item_is_no_edge_without_padding_or_border() {
             block(doc, column, "display:block;height:10px;margin-bottom:30px"),
         ]
     });
-    assert_eq!(ys[1..], [70.0, 80.0]);
+    assert_eq!(ys, [100.0, 100.0, 110.0]);
 }
 
 /// A grid of `rows` rows of 10px in the card of [`card_with_edges`], whose
