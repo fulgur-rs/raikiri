@@ -12485,6 +12485,10 @@ struct CheckedParagraphs {
     /// Runs of lines between the block children of a paragraph that were
     /// checked against the page end: `(paragraph root, first line)`.
     lines_after_blocks: HashSet<(usize, usize)>,
+    /// Runs of lines before a block inside an inline box of their paragraph
+    /// that were checked against a break before the block: `(paragraph
+    /// root, first line)`.
+    lines_before_inline_blocks: HashSet<(usize, usize)>,
 }
 
 impl CheckedParagraphs {
@@ -13440,6 +13444,32 @@ fn line_run(
         }
     }
     Some((start, end, total))
+}
+
+/// The block child of the paragraph `root` laid out right after its line
+/// `end - 1`, when that block sits inside an inline box of the paragraph, in
+/// the tree of elements. Chromium lays such a block out on a line of its own
+/// in the paragraph, which `orphans` and `widows` count as one line: a page
+/// break before the block leaves that one line after it.
+fn inline_block_after_lines(document: &Document, root: usize, end: usize) -> Option<usize> {
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    lines
+        .block_line_starts
+        .iter()
+        .find(|&&(_, after)| after == end)
+        .map(|&(block, _)| block)
+        .filter(|&block| {
+            std::iter::successors(document.nodes[block].parent, |&id| {
+                document.nodes[id].parent
+            })
+            .take_while(|&ancestor| ancestor != root)
+            .any(|ancestor| document.nodes[ancestor].display().is_inline_level())
+        })
 }
 
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
