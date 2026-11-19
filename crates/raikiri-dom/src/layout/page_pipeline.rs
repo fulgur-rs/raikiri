@@ -13668,6 +13668,26 @@ fn first_line_judged_height(
     }
 }
 
+/// Whether the border box of `block` ends where its content does: its height
+/// follows the content, or a `min-height` or `max-height` that the content
+/// passes or stays below does not set it. A `height` ends it elsewhere.
+pub(super) fn box_ends_at_content(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> bool {
+    if height_follows_content(document, block) {
+        return true;
+    }
+    if !document.block_axis(block).height().is_auto()
+        || document.nodes[block].size_containment.height
+    {
+        return false;
+    }
+    let (min, max) = border_box_height_bounds(document, block);
+    let height = document.nodes[block].layout.size.height;
+    height > min + 0.5 && height < max - 0.5
+}
+
 /// Whether the box of the paragraph `block_id` leaves the lines that pass its
 /// end to pagination: its height follows its lines, or it does not clip them.
 /// A box with a set height that clips its block-axis overflow hides the lines
@@ -13705,9 +13725,12 @@ fn lines_can_shift_inside(
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
-/// children can move down inside it: its height grows with them, it is in one
-/// column, and the only boxes it lays out are atomic inlines, floats, block
-/// children and out-of-flow boxes. The block children move with the lines
+/// children can move down inside it: no size containment ignores them, it is
+/// in one column, and the only boxes it lays out are atomic inlines, floats,
+/// block children and out-of-flow boxes. Its box grows with the moved lines
+/// as far as its height allows (see [`lines_shift_growth`]): as in Chromium,
+/// a `height`, `min-height` or `max-height` does not keep the lines in
+/// place, and lines past a set height overflow the box. The block children move with the lines
 /// before them (see [`blocks_after_line`]). An out-of-flow box is one that a block-axis
 /// inset places away from the lines or that follows them (see
 /// [`out_of_flow_follow`]). A float is a page candidate of its own, placed
@@ -13717,7 +13740,7 @@ fn lines_can_shift_between_blocks(
     cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
-    height_follows_content(document, block_id)
+    !document.nodes[block_id].size_containment.height
         && content_follows_block_children(document, cascade, block_id)
 }
 
