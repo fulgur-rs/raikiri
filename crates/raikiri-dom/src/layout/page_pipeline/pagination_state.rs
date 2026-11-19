@@ -253,6 +253,10 @@ pub(super) struct LineBlocks {
     /// A content-height paragraph that ends an eligible column flex box.
     /// Its lines can move without invoking row-flex sibling movement.
     pub(super) column_paragraph: Option<usize>,
+    /// A paragraph in a table cell whose moved lines grow the cell's row
+    /// (see [`super::cell_flow_inline`]). It cannot move as a unit: the row
+    /// decides whether it breaks before the cell's content.
+    pub(super) cell_paragraph: Option<usize>,
 }
 
 impl LineBlocks {
@@ -313,11 +317,22 @@ impl LineBlocks {
                         )
                     })
         });
+        let cell_paragraph = paragraph_root.filter(|&root| {
+            block.is_none()
+                && flex_line.is_none()
+                && column_paragraph.is_none()
+                && !uses_positioned_coordinates
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+                && !checked_paragraphs.orphans_widows.contains(&root)
+                && super::cell_flow_inline(document, env.cascade, root, env.body_id).is_some()
+        });
         Self {
             paragraph_root,
             block,
             flex_line,
             column_paragraph,
+            cell_paragraph,
         }
     }
 }
@@ -3172,6 +3187,7 @@ impl PaginationState {
             .block
             .or(blocks.flex_line.map(|(root, _)| (root, true)))
             .or(blocks.column_paragraph.map(|root| (root, true)))
+            .or(blocks.cell_paragraph.map(|root| (root, true)))
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(mut all_line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
@@ -3340,7 +3356,13 @@ impl PaginationState {
             // what they follow instead, also when a set height ends the box
             // at its lines and the block overflows it. Half a pixel absorbs
             // the rounding of the line boxes.
-            let own_closing_edges = if blocks.paragraph_root == Some(block_id) {
+            // A table cell holds the room its alignment leaves below its
+            // content in its padding, and its row, not its lines, decides
+            // whether its edges break before its content.
+            let cell_paragraph = blocks.cell_paragraph == Some(block_id);
+            let cell_root = cell_paragraph
+                && document.nodes[block_id].display() == raikiri_style::DisplayValue::TableCell;
+            let own_closing_edges = if blocks.paragraph_root == Some(block_id) && !cell_root {
                 let layout = &document.nodes[block_id].layout;
                 let edges = layout.padding.bottom + layout.border.bottom;
                 let content = block_height - edges - layout.padding.top - layout.border.top;
@@ -3362,6 +3384,7 @@ impl PaginationState {
             // as in Chromium, while a `max-height` lets the paragraph grow
             // that far; past it, the edges stay at the paragraph's end.
             let min_height_room = (blocks.paragraph_root == Some(block_id)
+                && !cell_root
                 && !block_follows_run
                 && own_closing_edges <= 0.0
                 && lines_can_move
@@ -3505,7 +3528,7 @@ impl PaginationState {
                     || leading_page_lines
                     || keep_first_fragment
                     || breaks_after_block)
-                    && blocks.block.is_some()
+                    && (blocks.block.is_some() || cell_paragraph && lines_can_move)
                     && (block_fits_page_step(block_height, page_step)
                         || line_fit.top_edges_end_page
                         || line_fit.lone_line_moves_with_edges
@@ -3663,14 +3686,18 @@ impl PaginationState {
                         // A block that moves to keep its orphans, with a line
                         // that fits beside or below the floats, takes them
                         // along.
+                        // A paragraph in a table cell breaks before its first
+                        // line instead: the row, not the paragraph, moves as
+                        // a unit.
                         let below_floats = (lines_can_move
-                            && line_fit.lines_before_break == 0
-                            && floats_put_first_line_down(
-                                document,
-                                block_id,
-                                text_lines.get(node_id),
-                                first_line_top - (block_effective_y + block_edges),
-                            ))
+                            && (cell_paragraph
+                                || line_fit.lines_before_break == 0
+                                    && floats_put_first_line_down(
+                                        document,
+                                        block_id,
+                                        text_lines.get(node_id),
+                                        first_line_top - (block_effective_y + block_edges),
+                                    )))
                         .then(|| page_origins.origin(page) - first_line_top)
                         .filter(|shift| *shift > 0.0);
                         if let Some(shift) = below_floats {
