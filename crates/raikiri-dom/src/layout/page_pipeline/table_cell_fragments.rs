@@ -364,7 +364,11 @@ fn breaks_between(
         let after = after || index + 1 < children.len();
         page_break_is_forced(document, child, computed.break_before) && before
             || page_break_is_forced(document, child, computed.break_after) && after
-            || stacks_children_in_block_flow(document, child)
+            || (breaks_through_block_flow(document, cascade, child)
+                || stacks_children_in_block_flow(document, child)
+                    && !is_monolithic_for_pagination_with_transposed_axes(
+                        document, cascade, child, false,
+                    ))
                 && breaks_between(
                     document,
                     cascade,

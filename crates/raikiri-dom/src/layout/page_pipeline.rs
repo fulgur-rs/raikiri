@@ -3935,26 +3935,36 @@ fn passes_edge_breaks(
     id: usize,
     before: bool,
 ) -> bool {
+    breaks_through_block_flow(document, cascade, id) && !generated_on_side(cascade, id, before)
+}
+
+/// Whether `id` stacks its children in block flow that pagination breaks
+/// through, so that a forced break between them breaks the page. A block
+/// with inline content beside its block children still does.
+pub(super) fn breaks_through_block_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
     matches!(
         document.nodes[id].display(),
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     ) && document.nodes[id].multicol.is_none()
-        && !generated_on_side(cascade, id, before)
         && !is_monolithic_for_pagination_with_transposed_axes(document, cascade, id, false)
 }
 
 /// Whether `id` has generated content in the flow before (`before`) or after
-/// its boxes.
+/// its boxes. An inside list marker comes before them too.
 pub(super) fn generated_on_side(cascade: &CascadeResult, id: usize, before: bool) -> bool {
-    crate::generated_content::is_in_flow_generated_text(
-        cascade,
-        id,
-        if before {
-            raikiri_style::PseudoElem::Before
-        } else {
-            raikiri_style::PseudoElem::After
-        },
-    )
+    if before {
+        crate::generated_content::has_page_flow_generated_prefix(cascade, id)
+    } else {
+        crate::generated_content::is_in_flow_generated_text(
+            cascade,
+            id,
+            raikiri_style::PseudoElem::After,
+        )
+    }
 }
 
 // Find the first/last generated child box, eliding Contents without cloning

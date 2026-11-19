@@ -262,3 +262,29 @@ fn preserved_white_space_keeps_the_break_inside_the_cell() {
         ),
     ]);
 }
+
+/// An inside list marker, like a `::before`, is content before the first
+/// block of its list item, so a break before that block falls inside the
+/// cell, which Chromium breaks there and stretches to the end of the page.
+/// Without a marker, or with an outside one, the row takes the break.
+#[test]
+fn an_inside_marker_keeps_the_break_inside_the_cell() {
+    assert_rows(&[
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='display:list-item;list-style:inside square'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (0, 'T', 50), (1, 'B', 0), (1, 'X', 10)],
+        ),
+        (
+            "<style>.g::before{content:'G'}</style><div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div class='g'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'G', 10), (0, 'P', 0), (0, 'T', 50), (1, 'B', 0), (1, 'X', 10)],
+        ),
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='display:list-item;list-style:inside none'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (1, 'B', 0), (1, 'T', 0), (1, 'X', 10)],
+        ),
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0 0 0 30px'><div style='display:list-item;list-style:outside square'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (1, 'B', 0), (1, 'T', 0), (1, 'X', 10)],
+        ),
+    ]);
+}
