@@ -6433,6 +6433,10 @@ impl AvoidedBreaks {
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
+        // A flex container whose items all end on this page, but where an
+        // item's block-end margin, or the edges that close a single-line row,
+        // would run past the page end, moves to the next page whole.
+        let page = page || flex_margins_move(document, cascade, candidate, fit);
         // An ordinary table row that would cross the current page moves to
         // the next one whole when a cell of it breaks before its content, as
         // Chromium does; otherwise it breaks there with its cells (see
@@ -10204,6 +10208,86 @@ fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// break between items or rows is the better one (see [`tail_edges_move`]).
 fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     tail_edges_move(candidate.context.item_tail_edges(), 0.0, candidate, fit)
+}
+
+/// Whether `node_id` is a flex container that [`flex_margins_move`] may move
+/// whole: one with an item that has a block-end margin, or with padding or a
+/// border that closes it below its items.
+fn has_flex_trailing_space(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.formatting_context == FormattingContext::Flex
+        && !node.used_writing_mode.is_vertical()
+        && (node.layout.padding.bottom + node.layout.border.bottom > 0.001
+            || node.layout_children().iter().any(|&item| {
+                crate::layout::page::is_in_flow_flex_child_for_pagination(document, node_id, item)
+                    && document.nodes[item].layout.margin.bottom > 0.001
+            }))
+}
+
+/// Whether the flex container of `candidate`, placed as `fit` says, moves to
+/// the next page whole because what follows an item that ends on this page
+/// runs past the page end. Chromium does not truncate a flex item's block-end
+/// margin at a page break as block flow does: when an item ends on the page
+/// but its margin runs past the page end, the page breaks before the
+/// container, which moves with all its items (in a column or a wrapping row
+/// too, not just the item). The margin counts only as far as the container's
+/// content box reaches. The padding and border that close the container move
+/// it too when its items all end on the page and they follow a single line:
+/// a row that does not wrap, or a column of one item. Like a box that avoids
+/// a break inside it, the container stays where it starts the page or where
+/// what has to fit does not fit the next page either.
+fn flex_margins_move(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    let node_id = candidate.node_id;
+    let node = &document.nodes[node_id];
+    if node.formatting_context != FormattingContext::Flex
+        || document.context.pagination_on_transposed_axes
+        || node.used_writing_mode.is_vertical()
+    {
+        return false;
+    }
+    let BoxFit {
+        flow_y,
+        margin_top,
+        page_start,
+        page_end,
+        next_page_step,
+        ..
+    } = *fit;
+    let layout = &node.layout;
+    let border_box_end = flow_y + candidate.height;
+    let content_end = border_box_end - layout.padding.bottom - layout.border.bottom;
+    let mut items = 0;
+    let mut items_end = flow_y;
+    let mut end = flow_y;
+    for item in crate::layout::page::pagination_child_order(document, cascade, node_id) {
+        if !crate::layout::page::is_in_flow_flex_child_for_pagination(document, node_id, item) {
+            continue;
+        }
+        let item_layout = &document.nodes[item].layout;
+        let bottom = flow_y + item_layout.location.y + item_layout.size.height;
+        items += 1;
+        items_end = items_end.max(bottom);
+        if bottom <= page_end + 0.001 {
+            end = end.max((bottom + item_layout.margin.bottom).min(content_end));
+        }
+    }
+    let style = document.pagination_style(node_id);
+    let single_line = if style.flex_direction_is_row() {
+        !style.flex_wraps()
+    } else {
+        items == 1
+    };
+    if single_line && items_end <= page_end + 0.001 && end >= content_end - 0.001 {
+        end = border_box_end;
+    }
+    end > page_end + 0.001
+        && end - flow_y <= next_page_step + 0.001
+        && avoided_box_moves(flow_y, margin_top, end, page_start, page_end)
 }
 
 /// Whether a box that ends within its page moves to the next page because the

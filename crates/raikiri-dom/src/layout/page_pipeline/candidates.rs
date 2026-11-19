@@ -2031,6 +2031,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                // A flex container nested in block flow moves whole when what
+                // follows its items runs past the page end (see
+                // `flex_margins_move`), so it needs a place of its own.
+                let flex_margins_candidate = nested_candidate_base
+                    && can_move_nested
+                    && !inline_level
+                    && super::has_flex_trailing_space(document, node_id);
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
@@ -2124,6 +2131,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
+                        || flex_margins_candidate
                         || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
