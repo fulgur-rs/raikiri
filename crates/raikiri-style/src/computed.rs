@@ -1555,11 +1555,11 @@ pub struct ComputedValues {
     /// [`PropertyKey::BreakBefore`] ([`BreakBetween`] doc's "legacy
     /// shorthand" section).
     ///
-    /// # Scope carving (minimal scope)
+    /// # Scope carving
     ///
-    /// This field holds only the `auto | avoid | avoid-page | page`
-    /// subset of the property's full 12-keyword grammar — see
-    /// [`BreakBetween`] doc's "Scope carving" section.
+    /// This field holds every value of the property's grammar except the
+    /// region values, plus the Level 4 `always` — see [`BreakBetween`]
+    /// doc's "Scope carving" section.
     ///
     /// [`PropertyKey::BreakBefore`]: crate::property::PropertyKey::BreakBefore
     pub break_before: BreakBetween,

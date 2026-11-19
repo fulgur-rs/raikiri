@@ -5,8 +5,8 @@ use crate::Document;
 use raikiri_style::{
     CascadeResult, ComputedLengthPercentageOrAuto as Length,
     property::{
-        BreakBetween, BreakInside, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-        OverflowValue, PositionValue,
+        BreakInside, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, OverflowValue,
+        PositionValue,
     },
 };
 use std::collections::{BTreeMap, HashMap};
@@ -225,16 +225,12 @@ impl HeaderRepeats {
                 while let Some(id) = descendants.pop() {
                     let computed = &cascade.computed[id];
                     has_fixed |= matches!(document.nodes[id].position(), PositionValue::Fixed);
-                    has_page_boundary |= matches!(
-                        computed.break_before,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        computed.break_after,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        cascade.page_values.get(id),
-                        Some(raikiri_style::property::PageValue::Named(_))
-                    );
+                    has_page_boundary |= computed.break_before.may_force_page_break()
+                        || computed.break_after.may_force_page_break()
+                        || matches!(
+                            cascade.page_values.get(id),
+                            Some(raikiri_style::property::PageValue::Named(_))
+                        );
                     sources.push((id, group));
                     descendants.extend(document.nodes[id].children.iter().copied());
                 }
@@ -281,13 +277,8 @@ impl HeaderRepeats {
                 .iter()
                 .filter(|&&row| {
                     let computed = &cascade.computed[row];
-                    matches!(
-                        computed.break_before,
-                        BreakBetween::Page | BreakBetween::Always
-                    ) || matches!(
-                        computed.break_after,
-                        BreakBetween::Page | BreakBetween::Always
-                    )
+                    computed.break_before.may_force_page_break()
+                        || computed.break_after.may_force_page_break()
                 })
                 .count();
             let table_height = node.layout.size.height;

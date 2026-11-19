@@ -832,7 +832,7 @@ fn a_box_at_the_start_of_its_paragraph_has_no_line_to_break_before() {
 
 #[test]
 fn only_page_and_always_breaks_are_forced() {
-    for value in ["auto", "avoid", "avoid-page", "column", "left"] {
+    for value in ["auto", "avoid", "avoid-page", "column"] {
         assert!(
             forced_breaks_of(
                 &format!("break-before:{value};break-after:{value}"),
@@ -842,6 +842,31 @@ fn only_page_and_always_breaks_are_forced() {
             )
             .is_empty(),
             "{value}"
+        );
+    }
+}
+
+#[test]
+fn page_spread_breaks_are_forced_like_page() {
+    for (keyword, value) in [
+        ("left", BreakBetween::Left),
+        ("right", BreakBetween::Right),
+        ("recto", BreakBetween::Recto),
+        ("verso", BreakBetween::Verso),
+    ] {
+        let breaks = forced_breaks_of(
+            &format!("break-before:{keyword};break-after:{keyword}"),
+            1,
+            2,
+            None,
+        );
+        assert_eq!(
+            breaks
+                .iter()
+                .map(|forced| (forced.line, forced.value))
+                .collect::<Vec<_>>(),
+            [(1, value), (2, value)],
+            "{keyword}"
         );
     }
 }

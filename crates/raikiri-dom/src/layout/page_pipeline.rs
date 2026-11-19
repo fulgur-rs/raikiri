@@ -3809,7 +3809,7 @@ fn box_forces_break_after(
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
-    if matches!(value, BreakBetween::Page) {
+    if value.is_page_value() {
         return true;
     }
     if !matches!(value, BreakBetween::Always) {
@@ -6022,6 +6022,156 @@ fn no_forced_break_inside_or_after(
     true
 }
 
+/// How far below the border-box top of the block `node_id`, in normal flow,
+/// the first break forced inside it falls, when one does: the end of the
+/// content before it. Only the block flow inside the block is looked
+/// through, as a break inside a flex, grid or table box, an atomic inline or
+/// a box no page break goes through stays inside that box, and floats and
+/// out-of-flow boxes take their breaks with them. A forced break before the
+/// first box at the start of the block or after the last one at its end is a
+/// break before or after the block itself (CSS Fragmentation 3 §4.1), so it
+/// is left out. A block-level box inside that names a page other than
+/// `page_name`, the one the block is on, forces a break before it too (CSS
+/// Paged Media 3 §6.3).
+///
+/// A box that avoids a break inside it still breaks there: Chromium keeps it
+/// on its page when the content before that break fits there, and moves it
+/// only when that content crosses the page end.
+///
+/// A break inside a box in the block that clips its overflow, has a height
+/// its content cannot grow and ends no further below the border-box top of
+/// the block than `page_end`, breaks nothing (see [`clip_holds_breaks`]).
+fn forced_break_inside(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    page_name: Option<&str>,
+    transposed: bool,
+    page_end: f32,
+) -> Option<f32> {
+    if !looks_through_for_breaks(document, cascade, node_id, transposed) {
+        return None;
+    }
+    let flow_top = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let top = flow_top(node_id);
+    let held = |id: usize, before: bool| {
+        // A break at the first or last box of a box is a break before or
+        // after that box.
+        let mut edge = id;
+        while let Some(parent) = document.parent_of(edge).filter(|&parent| parent != node_id)
+            && !document.nodes[parent].has_before_or_after_content
+            && ordered_edge_child(document, cascade, parent, before)
+                .is_some_and(|child| is_descendant_or_self(document, child, edge))
+        {
+            edge = parent;
+        }
+        document
+            .ancestors(edge)
+            .take_while(|&id| id != node_id)
+            .any(|id| {
+                element_clips_overflow(document, cascade, id)
+                    && height_is_capped(document, id)
+                    && flow_top(id) + document.nodes[id].layout.size.height - top
+                        <= page_end + 0.001
+            })
+    };
+    // Walk the boxes in flow order, so that the first forced break found is
+    // the first one in the flow; with negative margins a later break can sit
+    // above an earlier one. An entry marked `true` is the end of a box,
+    // where its `break-after` applies.
+    let mut pending: Vec<(usize, bool)> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .map(|&id| (id, false))
+        .collect();
+    while let Some((id, after)) = pending.pop() {
+        let node = &document.nodes[id];
+        if after {
+            if !at_block_edge(document, cascade, id, node_id, false) && !held(id, false) {
+                return Some(flow_top(id) + node.layout.size.height - top);
+            }
+            continue;
+        }
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || node.kind() != NodeKind::Element
+            || node.display() == DisplayValue::None
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, id)
+        {
+            continue;
+        }
+        let breaks = !node.display().is_inline_level() && node.display() != DisplayValue::Contents;
+        if breaks {
+            let computed = &cascade.computed[id];
+            let names_other_page =
+                selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
+            if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
+                && !at_block_edge(document, cascade, id, node_id, true)
+                && !held(id, true)
+            {
+                return Some(flow_top(id) - node.layout.margin.top - top);
+            }
+            if page_break_is_forced(document, id, computed.break_after) {
+                pending.push((id, true));
+            }
+        }
+        if matches!(
+            node.display(),
+            DisplayValue::Contents | DisplayValue::Inline
+        ) || looks_through_for_breaks(document, cascade, id, transposed)
+        {
+            pending.extend(node.children.iter().rev().map(|&child| (child, false)));
+        }
+    }
+    None
+}
+
+/// Whether the breaks inside the box `node_id` are breaks of the block flow
+/// around it: it lays its children out in block flow and a page break can go
+/// through it.
+fn looks_through_for_breaks(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    transposed: bool,
+) -> bool {
+    is_plain_block_box(document, node_id)
+        && !is_monolithic_for_pagination_with_transposed_axes(
+            document, cascade, node_id, transposed,
+        )
+}
+
+/// Whether the box `id` inside the block `block` is the first box at its
+/// start (`before`) or the last at its end, through every box between them.
+/// Generated content of a box between them comes before its first box and
+/// after its last.
+fn at_block_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    block: usize,
+    before: bool,
+) -> bool {
+    std::iter::successors(Some(id), |&id| document.parent_of(id))
+        .take_while(|&id| id != block)
+        .all(|id| {
+            document
+                .parent_of(id)
+                .filter(|&parent| !document.nodes[parent].has_before_or_after_content)
+                .and_then(|parent| page_edge_child(document, cascade, parent, before, 0).ok())
+                .flatten()
+                .is_some_and(|edge| edge == id || document.ancestors(edge).any(|up| up == id))
+        })
+}
+
 /// Where a box and its page stand when the box is tested for moving to the
 /// next page.
 #[derive(Clone, Copy)]
@@ -6245,13 +6395,30 @@ impl AvoidedBreaks {
         });
         // The blocks that a box which avoids a break inside it begins, with
         // the padding and border they keep above it, are what starts a page.
-        let moves_for_avoided_end = avoided_end.is_some_and(|end| {
+        let avoided_moves = |end: f32| {
             avoided_box_moves(
                 flow_y - avoided_lead,
                 avoided_margin_top,
                 end,
                 page_start,
                 page_end,
+            )
+        };
+        // Only the content before a break forced inside the box has to fit,
+        // which can reach below the box's own end (a later child with a
+        // negative margin pulls the end up).
+        let moves_for_avoided_end = avoided_end.is_some_and(|end| {
+            avoided_moves(
+                forced_break_inside(
+                    document,
+                    cascade,
+                    body_id,
+                    node_id,
+                    candidate.page_name.as_deref(),
+                    document.context.pagination_on_transposed_axes,
+                    page_end - flow_y,
+                )
+                .map_or(end, |offset| flow_y + offset),
             )
         });
         let page = unbreakable || moves_for_avoided_end;
@@ -9137,7 +9304,7 @@ fn unplaced_line(
     {
         return None;
     }
-    let unplaced = single_unplaced_line(document, node_id)?;
+    let unplaced = single_unplaced_line(document, cascade, node_id)?;
     let layout = document.ifc_layout_node(node_id)?.layout;
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
@@ -13413,6 +13580,56 @@ fn line_run(
     Some((start, end, total))
 }
 
+/// The margin between the block child of the paragraph `root` that comes
+/// right before its line `line` and that line: how far the line starts below
+/// the block's border box, when only the block's block-end margin lies
+/// between them. The line then sits in that margin as the first box of an
+/// anonymous block after the block would, and a page edge inside the margin
+/// truncates it there (CSS Fragmentation 3 section 5.2, Chromium). `None`
+/// when no block comes right before the line, or when something else, such as
+/// a float the line clears, pushes the line further down. `None` too
+/// when the paragraph holds floats, which lines moving up leave behind, or
+/// is a flex or grid item, whose size the lines do not set alone.
+fn margin_above_line(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root: usize,
+    line: usize,
+) -> Option<f32> {
+    let node = document.ifc_layout_node(root)?;
+    let ifc = node.ifc.as_ref()?;
+    if ifc.boxes.iter().any(|item| item.kind == IfcBoxKind::Float)
+        || edges_break_container(document, root, body_id)
+            .flatten()
+            .is_some()
+    {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    let block = lines
+        .block_line_starts
+        .iter()
+        .rev()
+        .find(|&&(_, after)| after == line)?
+        .0;
+    // An anonymous box, with no style of its own, is left alone.
+    cascade.computed.get(block)?;
+    let line_top = node.layout.border.top + node.layout.padding.top + lines.line_top(line);
+    // The block sits in the root, maybe inside inline boxes, each placed
+    // in the box around it. Relative offsets only paint them elsewhere.
+    let mut block_bottom = document.nodes[block].layout.size.height;
+    let mut current = block;
+    while current != root {
+        block_bottom += document.pagination_local_y(current)
+            - layout_relative_offset_y(document, cascade, body_id, current);
+        current = document.nodes[current].parent?;
+    }
+    let gap = line_top - block_bottom;
+    let (positive, negative) = adjoining_margin_extremes(document, cascade, block, false, None);
+    (gap > 0.001 && gap <= positive + negative + 0.01).then_some(gap)
+}
+
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
 /// no block child comes after them. The run ends where the next block child
 /// begins, or at the last line.
@@ -14331,6 +14548,12 @@ struct SubtreeShifts {
     /// Table rows, or cells outside a table, that forced breaks in their
     /// cells grew, with how far.
     grown_rows: Vec<((usize, usize), f32)>,
+    /// Table rows, or cells outside a table, that floats moved in their
+    /// cells grew, with how far, and the cells with how far each grew to
+    /// hold its floats. A cell's stored height takes that growth in, but a
+    /// row's growth is measured from the height the cell was laid out with.
+    float_rows: Vec<((usize, usize), f32)>,
+    float_cells: Vec<(usize, f32)>,
     /// Boxes that forced breaks inside them grew, with how far in all:
     /// their stored heights leave that growth out.
     grown_boxes: Vec<(usize, f32)>,
@@ -14394,21 +14617,48 @@ impl SubtreeShifts {
             .map_or(0.0, |&(_, grown)| grown)
     }
 
+    /// How far `row` has grown in all, for forced breaks and for moved
+    /// floats in its cells.
+    fn row_growth(&self, row: (usize, usize)) -> f32 {
+        let grown = |rows: &[((usize, usize), f32)]| {
+            rows.iter()
+                .find(|(id, _)| *id == row)
+                .map_or(0.0, |&(_, grown)| grown)
+        };
+        grown(&self.grown_rows).max(grown(&self.float_rows))
+    }
+
+    /// How far the cell `cell` grew to hold the floats that moved in it.
+    fn float_growth(&self, cell: usize) -> f32 {
+        self.float_cells
+            .iter()
+            .find(|(id, _)| *id == cell)
+            .map_or(0.0, |&(_, grown)| grown)
+    }
+
+    /// Records that the cell `cell` of `row` grew `growth` more to hold a
+    /// float that moved in it, and returns how much more that grows the
+    /// row.
+    fn grow_row_for_float(&mut self, row: (usize, usize), cell: usize, growth: f32) -> f32 {
+        let total = self.float_growth(cell) + growth;
+        self.float_cells.retain(|(id, _)| *id != cell);
+        self.float_cells.push((cell, total));
+        let before = self.row_growth(row);
+        match self.float_rows.iter_mut().find(|(id, _)| *id == row) {
+            Some((_, grown)) => *grown = grown.max(total),
+            None => self.float_rows.push((row, total)),
+        }
+        self.row_growth(row) - before
+    }
+
     /// Records that a cell of `row` needs it `growth` taller than it was
-    /// laid out, and returns how much more that is than it grew already.
-    /// `row` is the box that holds the row with the index after it, which
-    /// tells the anonymous rows of one table apart.
-    fn grow_row(&mut self, row: (usize, usize), growth: f32) -> f32 {
+    /// laid out for a forced break in it. `row` is the box that holds the
+    /// row with the index after it, which tells the anonymous rows of one
+    /// table apart.
+    fn grow_row(&mut self, row: (usize, usize), growth: f32) {
         match self.grown_rows.iter_mut().find(|(id, _)| *id == row) {
-            Some((_, grown)) => {
-                let added = (growth - *grown).max(0.0);
-                *grown = grown.max(growth);
-                added
-            }
-            None => {
-                self.grown_rows.push((row, growth));
-                growth
-            }
+            Some((_, grown)) => *grown = grown.max(growth),
+            None => self.grown_rows.push((row, growth)),
         }
     }
 
@@ -15622,6 +15872,22 @@ fn move_paragraph_lines(
             flow_page,
             &IfcBoxShifts::default(),
         );
+    } else if growth < 0.0 {
+        // Lines that move up, to the top of the page whose edge truncated
+        // the margin above them, shorten the boxes around the paragraph as a
+        // truncated margin above a box does.
+        let held = shrink_ancestors_after_margin_truncation(
+            document,
+            cascade,
+            moved.block_id,
+            growth,
+            body_id,
+            &IfcBoxShifts::default(),
+        );
+        shifts.bounded.extend(
+            held.into_iter()
+                .map(|(ancestor, held)| (ancestor, held, flow_page)),
+        );
     }
     // A float that moved past the end of a box that keeps its height still
     // has its formatting context hold it.
@@ -15877,8 +16143,12 @@ fn grow_float_context_to_moved_float(
     flow_page: u32,
 ) {
     let context = float_context_root(document, cascade, node_id, body_id);
+    // A table cell's `height` is a minimum: it grows with its content
+    // whatever its value (CSS 2.1 §17.5.3).
+    let cell = document.nodes[context].display() == DisplayValue::TableCell;
     if context != body_id
-        && (document.block_axis(context).height().is_auto()
+        && (cell
+            || document.block_axis(context).height().is_auto()
             || definite_content_height(document, context).is_none())
     {
         let context_top = current_abs_y(document, context);
@@ -15886,12 +16156,26 @@ fn grow_float_context_to_moved_float(
             + height
             + document.nodes[node_id].layout.margin.bottom;
         let layout = &document.nodes[context].layout;
-        let grown = (float_bottom - context_top + layout.padding.bottom + layout.border.bottom)
+        let grown = (float_bottom - context_top + edges_below(document, context))
             .min(max_border_box_height(document, cascade, context).unwrap_or(f32::INFINITY));
         let growth = grown - layout.size.height;
         if growth > 0.001 {
             document.nodes[context].layout.size.height += growth;
             document.mark_pagination_extent_dirty(context);
+            // A row grows as far as its cell that grows most: only the part
+            // of a cell's growth past what the row grew already moves the
+            // boxes after the row. The cells beside it sit beside it, not
+            // below it, so the flow follows past the row.
+            let row_end = cell.then(|| cell_row_end(document, context)).flatten();
+            let growth = if cell {
+                let holder = row_end.map_or((context, 0), |(row, end, _)| (row, end));
+                shifts.grow_row_for_float(holder, context, growth)
+            } else {
+                growth
+            };
+            if growth <= 0.001 {
+                return;
+            }
             grow_ancestors_for_shift(
                 document,
                 cascade,
@@ -15902,7 +16186,10 @@ fn grow_float_context_to_moved_float(
                 flow_page,
                 &IfcBoxShifts::default(),
             );
-            shifts.growth.push((context, growth));
+            match row_end {
+                Some((row, end, _)) => shifts.from_box.push((row, end, growth)),
+                None => shifts.growth.push((context, growth)),
+            }
         }
     }
 }
@@ -18529,7 +18816,11 @@ fn shift_block_flow_after(
                 // rest of the growth moves what follows.
                 let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
                 let first_growth = !shifts.grown_rows.iter().any(|(id, _)| *id == holder);
-                let added = shifts.grow_row(holder, passed);
+                // A float that moved in the cell grew its stored height
+                // already, which `passed` is measured from.
+                let before = shifts.row_growth(holder);
+                shifts.grow_row(holder, passed + shifts.float_growth(parent));
+                let added = shifts.row_growth(holder) - before;
                 if first_growth
                     && added > 0.001
                     && let Some((row, _, _)) = row_end
@@ -18863,20 +19154,11 @@ fn forced_break_growth(
     )
 }
 
-/// How far `block` grows, up to the border-box height `max`, to hold its
-/// in-flow content once its child `child` has grown by `child_growth`.
-fn moved_content_growth(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body_id: usize,
-    block: usize,
-    (child, child_growth): (usize, f32),
-    max: f32,
-) -> f32 {
-    let old = document.nodes[block].layout.size.height;
+/// The padding and border below the content of `block`. A table cell keeps
+/// the room its vertical alignment leaves in its padding; only its own
+/// padding and border lie below its content.
+fn edges_below(document: &super::context::LayoutSession<'_>, block: usize) -> f32 {
     let layout = &document.nodes[block].layout;
-    // A table cell keeps the room its vertical alignment leaves in its
-    // padding; only its own padding and border lie below its content.
     let padding_below = if document.nodes[block].display() == DisplayValue::TableCell {
         // Percentages resolve against the table's width.
         let basis = cell_row_end(document, block)
@@ -18891,7 +19173,21 @@ fn moved_content_growth(
     } else {
         layout.padding.bottom
     };
-    let edges_below = padding_below + layout.border.bottom;
+    padding_below + layout.border.bottom
+}
+
+/// How far `block` grows, up to the border-box height `max`, to hold its
+/// in-flow content once its child `child` has grown by `child_growth`.
+fn moved_content_growth(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    (child, child_growth): (usize, f32),
+    max: f32,
+) -> f32 {
+    let old = document.nodes[block].layout.size.height;
+    let edges_below = edges_below(document, block);
     let child_end = if child_growth > 0.0 {
         let node = &document.nodes[child];
         let margin = if edges_below > 0.0 || encloses_child_margins(document, cascade, block) {

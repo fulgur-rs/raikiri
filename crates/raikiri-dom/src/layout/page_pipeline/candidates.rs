@@ -1070,13 +1070,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             )
                         })
                 }),
-            forces_break_after: cascade.computed.iter().any(|computed| {
-                matches!(
-                    computed.break_after,
-                    raikiri_style::property::BreakBetween::Page
-                        | raikiri_style::property::BreakBetween::Always
-                )
-            }),
+            forces_break_after: cascade
+                .computed
+                .iter()
+                .any(|computed| computed.break_after.may_force_page_break()),
             edges_breaks: Vec::new(),
             pending_bottoms: HashMap::new(),
             preceding_bottoms: HashMap::new(),
@@ -1199,7 +1196,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !later_text_of_item
                     && matches!(
                         &node.data,
-                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                        crate::node::NodeData::Text(text)
+                            if crate::layout::ifc::text_lines::places_lines(cascade, node_id, &text.text_content)
                     )
                 {
                     // A text node of an ifc paragraph has no layout of its own:
@@ -1214,6 +1212,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
+                    // White space alone, preserved or a no-break space. When
+                    // it shows up on no line, such as a lone line feed that
+                    // only ends the line before it, it has nothing to place.
+                    let blank = matches!(&node.data, crate::node::NodeData::Text(text)
+                        if text.text_content.trim().is_empty());
+                    if blank && node.in_ifc_subtree() && self.text_lines.get(node_id).is_none() {
+                        return Ok(());
+                    }
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document
@@ -1285,7 +1291,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             context: BoxContext::text(CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
-                                page_name_in_flow: !inside_float && !inside_out_of_flow,
+                                // White space gives the flow no page value
+                                // (Chromium).
+                                page_name_in_flow: !inside_float && !inside_out_of_flow && !blank,
                                 lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),
@@ -1785,13 +1793,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // Such content gives the flow a break before the box, as a
                 // box there would: edges that would be left alone at the page
                 // end after it may move on with what they hold.
-                let breaks_before_box = free_to_break_before || generated_before().is_some();
+                // So do the lines of a paragraph before a block among them
+                // (an anonymous block holds them): Chromium breaks between
+                // the last of them and the block.
+                let after_paragraph_content = frame.previous_box.is_none()
+                    && breaks_after_paragraph_content(document, cascade, node_id);
+                let breaks_before_box =
+                    free_to_break_before || generated_before().is_some() || after_paragraph_content;
                 let column_break_before = (node.display() == DisplayValue::Contents
                     || !matches!(
                         computed.break_before,
                         BreakBetween::Avoid | BreakBetween::AvoidPage
                     ))
-                    && (free_to_break_before
+                    && (breaks_before_box
                         || frame.previous_box.is_none() && frame.column_break_before);
                 let leading_unit =
                     // A block among the lines of a paragraph may also break
@@ -1799,9 +1813,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (self.finds_nested_runs
                         && in_flow_block
                         && !is_body
-                        && (free_to_break_before
-                            || frame.previous_box.is_none()
-                                && breaks_after_paragraph_content(document, cascade, node_id)))
+                        && (free_to_break_before || after_paragraph_content))
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
                         .filter(|held| held.tied)
                         .and_then(|held| held.end);
@@ -1896,6 +1908,25 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         Some(previous) => {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
+                                // A margin of a box inside the one before it
+                                // that collapses through that box's bottom.
+                                // An anonymous box has no style of its own.
+                                || (cascade.computed.get(previous).is_some()
+                                    && super::adjoining_margin_extremes(
+                                        document, cascade, previous, false, None,
+                                    )
+                                    .0 > 0.0)
+                                // Margins that collapse through an empty box
+                                // put it below them. With no clearance, only
+                                // margins lie between two siblings.
+                                || (document.nodes[previous].parent == node.parent
+                                    && matches!(
+                                        computed.clear,
+                                        raikiri_style::property::ClearValue::None
+                                    )
+                                    && normal_flow_y(document, cascade, body_id, node_id)
+                                        - normal_flow_bottom(document, cascade, body_id, previous)
+                                        > 0.001)
                         }
                         None => {
                             generated_before().is_some_and(|(end, flow_top)| end < flow_top - 0.001)
@@ -2468,7 +2499,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let can_inherit_column_break = column_break_before
                     && !node.has_before_or_after_content
                     && (node.display() == DisplayValue::Contents
-                        || is_plain_block_box(document, node_id) && !node.is_ifc_root());
+                        || is_plain_block_box(document, node_id));
                 let mut column_box_before = false;
                 // Whether any in-flow box comes before the child, text
                 // included: `previous_box` forgets a text box, which is no box
