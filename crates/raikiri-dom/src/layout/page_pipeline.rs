@@ -6306,8 +6306,9 @@ fn tied_to_box_before(
     };
     children[..position]
         .iter()
+        .rev()
         .copied()
-        .filter(|&child| {
+        .find(|&child| {
             let node = &document.nodes[child];
             node.kind() == NodeKind::Element
                 && !node.is_display_none()
@@ -6318,7 +6319,6 @@ fn tied_to_box_before(
                     PositionValue::Absolute | PositionValue::Fixed
                 )
         })
-        .last()
         .is_some_and(|before| boxes_are_tied(document, cascade, before, node_id))
 }
 
