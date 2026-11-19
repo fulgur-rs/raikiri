@@ -227,3 +227,35 @@ fn the_last_row_of_an_anonymous_table_moves_with_the_box_after_it() {
         [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)]
     );
 }
+
+#[test]
+fn tables_inside_a_block_move_as_they_do_in_the_body() {
+    // One that avoids breaks inside it moves whole.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><div><table style="break-inside:avoid">{ROWS}</table><div style="break-before:avoid">Z</div></div>"#
+        )),
+        [(0, 'S', 0), (1, 'L', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+    // One of one row ties the boxes on both sides.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div><div style="break-after:avoid">B</div><table><tr><td>X</td></tr></table><div style="break-before:avoid">Z</div></div>"#
+        ),
+        [(0, 'S', 0), (1, 'B', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+    // Rows in a row group: the last moves.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><div><table><tbody>{ROWS}</tbody></table><div style="break-before:avoid">Z</div></div>"#
+        )),
+        [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)]
+    );
+    // One with a footer group that fits stays.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px">S</div><div><table><tr><td>L</td></tr><tfoot><tr><td>F</td></tr></tfoot></table><div style="break-before:avoid">Z</div></div>"#
+        ),
+        [(0, 'F', 30), (0, 'L', 10), (0, 'S', 0), (0, 'Z', 50)]
+    );
+}

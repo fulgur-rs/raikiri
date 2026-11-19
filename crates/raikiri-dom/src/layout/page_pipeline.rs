@@ -6049,7 +6049,11 @@ fn held_step(
                 }
                 continue;
             };
-            if is_plain_block_box(document, before)
+            // A table that moves whole holds the box after it as a block
+            // does (see `table_run_start`).
+            if (is_plain_block_box(document, before)
+                || (ends_a_run_as_table(document, cascade, before)
+                    && table_run_start(document, cascade, before) == Some(TableRunStart::Whole)))
                 && !takes_no_block_space(document, next)
                 && boxes_are_tied(document, cascade, before, next)
                 && (is_plain_block_box(document, next)
