@@ -279,3 +279,65 @@ fn tables_inside_a_block_move_as_they_do_in_the_body() {
         [(0, 'F', 30), (0, 'L', 10), (0, 'S', 0), (0, 'Z', 50)]
     );
 }
+
+#[test]
+fn a_last_row_that_crosses_the_page_end_breaks_inside_it() {
+    let rows = "<tr><td>L</td></tr><tr><td>X<br>X<br>X</td></tr>";
+    let expected = [
+        (0, 'L', 30),
+        (0, 'S', 0),
+        (0, 'X', 50),
+        (0, 'X', 70),
+        (1, 'X', 0),
+        (1, 'Z', 20),
+    ];
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:30px">S</div><table>{rows}</table><div style="break-before:avoid">Z</div>"#
+        )),
+        expected
+    );
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div><div style="height:30px">S</div><table>{rows}</table><div style="break-before:avoid">Z</div></div>"#
+        )),
+        expected
+    );
+}
+
+#[test]
+fn a_last_row_of_several_lines_that_fits_moves_whole() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:20px">S</div><table><tr><td>L</td></tr><tr><td>X<br>Y<br>W</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'L', 20),
+            (0, 'S', 0),
+            (1, 'W', 40),
+            (1, 'X', 0),
+            (1, 'Y', 20),
+            (1, 'Z', 60)
+        ]
+    );
+}
+
+#[test]
+fn a_box_after_the_last_row_too_tall_for_a_page_breaks_inside_on_the_next() {
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:30px">S</div><table>{ROWS}</table><div style="break-before:avoid">Z<br>Z<br>Z<br>Z<br>Z<br>Z</div>"#
+        )),
+        [
+            (0, 'L', 30),
+            (0, 'S', 0),
+            (1, 'X', 0),
+            (1, 'Z', 20),
+            (1, 'Z', 40),
+            (1, 'Z', 60),
+            (1, 'Z', 80),
+            (2, 'Z', 0),
+            (2, 'Z', 20)
+        ]
+    );
+}

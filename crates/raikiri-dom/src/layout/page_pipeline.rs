@@ -5726,7 +5726,11 @@ fn avoided_run_ends(
         if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
             // Of a table, the run holds the part it starts with.
-            if !box_holds_no_break(document, cascade, body_id, prior.node_id) {
+            let held_box = last_parts
+                .get(&prior.node_id)
+                .copied()
+                .unwrap_or(prior.node_id);
+            if !box_holds_no_break(document, cascade, body_id, held_box) {
                 soft_runs.insert(start);
             }
             let margin_bottom =
@@ -6883,20 +6887,27 @@ impl AvoidedBreaks {
             page_end,
             next_page_step,
         } = *fit;
-        let avoided_run = self.run_ends.get(&node_id).is_some_and(|end| {
-            avoided_run_moves(
-                end.end - raw_y,
-                end.firm,
-                margin_top,
-                effective_y,
-                page_start,
-                page_end,
-                next_page_step,
-            ) || end
-                .closing
-                .as_ref()
-                .is_some_and(|closing| closing.moves(fit))
-        });
+        // A table's last part that starts a run (see `table_last_parts`) and
+        // crosses the page end itself breaks inside it, as Chromium does,
+        // rather than move with the run.
+        let part_crosses = (candidate.context.is_table_row()
+            || candidate.context.is_table_caption())
+            && effective_y + height > page_end;
+        let avoided_run = !part_crosses
+            && self.run_ends.get(&node_id).is_some_and(|end| {
+                avoided_run_moves(
+                    end.end - raw_y,
+                    end.firm,
+                    margin_top,
+                    effective_y,
+                    page_start,
+                    page_end,
+                    next_page_step,
+                ) || end
+                    .closing
+                    .as_ref()
+                    .is_some_and(|closing| closing.moves(fit))
+            });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();
         // A replaced element is unbreakable whole.
