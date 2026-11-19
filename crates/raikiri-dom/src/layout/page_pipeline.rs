@@ -5892,13 +5892,18 @@ fn no_forced_break_inside_or_after(
 /// A box that avoids a break inside it still breaks there: Chromium keeps it
 /// on its page when the content before that break fits there, and moves it
 /// only when that content crosses the page end.
+///
+/// A break inside a box in the block that clips its overflow, has a height
+/// its content cannot grow and ends no further below the border-box top of
+/// the block than `page_end`, breaks nothing (see [`clip_holds_breaks`]).
 fn forced_break_inside(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
     page_name: Option<&str>,
     transposed: bool,
+    page_end: f32,
 ) -> Option<f32> {
     if !looks_through_for_breaks(document, cascade, node_id, transposed) {
         return None;
@@ -5907,6 +5912,27 @@ fn forced_break_inside(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let top = flow_top(node_id);
+    let held = |id: usize, before: bool| {
+        // A break at the first or last box of a box is a break before or
+        // after that box.
+        let mut edge = id;
+        while let Some(parent) = document.parent_of(edge).filter(|&parent| parent != node_id)
+            && !document.nodes[parent].has_before_or_after_content
+            && ordered_edge_child(document, cascade, parent, before)
+                .is_some_and(|child| is_descendant_or_self(document, child, edge))
+        {
+            edge = parent;
+        }
+        document
+            .ancestors(edge)
+            .take_while(|&id| id != node_id)
+            .any(|id| {
+                element_clips_overflow(document, cascade, id)
+                    && height_is_capped(document, id)
+                    && flow_top(id) + document.nodes[id].layout.size.height - top
+                        <= page_end + 0.001
+            })
+    };
     // Walk the boxes in flow order, so that the first forced break found is
     // the first one in the flow; with negative margins a later break can sit
     // above an earlier one. An entry marked `true` is the end of a box,
@@ -5920,7 +5946,7 @@ fn forced_break_inside(
     while let Some((id, after)) = pending.pop() {
         let node = &document.nodes[id];
         if after {
-            if !at_block_edge(document, cascade, id, node_id, false) {
+            if !at_block_edge(document, cascade, id, node_id, false) && !held(id, false) {
                 return Some(flow_top(id) + node.layout.size.height - top);
             }
             continue;
@@ -5944,6 +5970,7 @@ fn forced_break_inside(
                 selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
             if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
                 && !at_block_edge(document, cascade, id, node_id, true)
+                && !held(id, true)
             {
                 return Some(flow_top(id) - node.layout.margin.top - top);
             }
@@ -6244,6 +6271,7 @@ impl AvoidedBreaks {
                     node_id,
                     candidate.page_name.as_deref(),
                     document.context.pagination_on_transposed_axes,
+                    page_end - flow_y,
                 )
                 .map_or(end, |offset| flow_y + offset),
             )

@@ -266,3 +266,48 @@ fn a_break_inside_a_box_that_keeps_it_is_not_a_break_of_the_avoiding_box() {
         ]
     );
 }
+
+#[test]
+fn a_break_held_by_a_clipping_box_on_the_page_is_no_break_of_the_avoiding_box() {
+    // The clipping box ends on the page, so the break inside it breaks
+    // nothing and the whole avoiding box moves.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid"><div style="height:40px;overflow:hidden"><div style="height:20px">A</div><div style="height:20px;break-before:page">B</div></div><div style="height:40px">C</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'W', 0, 5),
+            (1, 'A', 0, 5),
+            (1, 'B', 0, 25),
+            (1, 'C', 0, 45),
+            (1, 'X', 0, 85)
+        ]
+    );
+    // One that runs past the page end breaks as any other box.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid"><div style="height:10px">P</div><div style="height:50px;overflow:hidden"><div style="height:20px">A</div><div style="height:20px;break-before:page">B</div></div><div style="height:40px">C</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'A', 0, 65),
+            (0, 'P', 0, 55),
+            (0, 'W', 0, 5),
+            (1, 'B', 0, 5),
+            (1, 'C', 0, 15),
+            (1, 'X', 0, 55)
+        ]
+    );
+    // A break after its last box is a break after the clipping box.
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ABOVE}<div style="break-inside:avoid"><div style="height:40px;overflow:hidden"><div style="height:20px">A</div><div style="height:20px;break-after:page">B</div></div><div style="height:40px">C</div></div><div>X</div>"#
+        )),
+        [
+            (0, 'A', 0, 55),
+            (0, 'B', 0, 75),
+            (0, 'W', 0, 5),
+            (1, 'C', 0, 5),
+            (1, 'X', 0, 45)
+        ]
+    );
+}
