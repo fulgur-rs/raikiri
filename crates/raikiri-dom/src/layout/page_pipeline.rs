@@ -14038,10 +14038,12 @@ fn box_leaves_lines_to_pagination(
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it: it
-/// is in one column and holds nothing but text, atomic inlines, floats, and
-/// out-of-flow boxes that stay where their insets put them or follow the moved
-/// lines (see [`out_of_flow_follow`]). An atomic inline moves with its line, as
-/// its glyphs are part of that line; a float is a page candidate of its own. Its box grows with the moved lines as far as its
+/// is in one column and holds nothing but text, floats, atomic inlines that
+/// come after its first text (see [`atomics_follow_text`]), and out-of-flow
+/// boxes that stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). The atomic inlines on the moved lines move with
+/// them (see [`shift_paragraph_lines`]); a float is a page candidate of its
+/// own. Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_inside(
     document: &super::context::LayoutSession<'_>,
@@ -14054,11 +14056,39 @@ fn lines_can_shift_inside(
         .is_some_and(|ifc| {
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
-                    matches!(b.kind, IfcBoxKind::Float | IfcBoxKind::Atomic)
+                    b.kind == IfcBoxKind::Float
                         || (b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
+                        || (b.kind == IfcBoxKind::Atomic
+                            && ifc
+                                .lines
+                                .as_ref()
+                                .is_some_and(|lines| atomics_follow_text(document, &lines.lines)))
                 })
         })
+}
+
+/// Whether every atomic inline of the `lines` of a paragraph comes after the
+/// first glyph of its text. The text is what moves the lines, and the boxes
+/// before it are placed before it is: a move would leave them behind.
+fn atomics_follow_text(document: &Document, lines: &[shodo::Line]) -> bool {
+    for fragment in lines.iter().flat_map(|line| line.fragments()) {
+        match fragment {
+            shodo::Fragment::Atomic(_) => return false,
+            shodo::Fragment::GlyphRun(run)
+                if run
+                    .node()
+                    .and_then(|node| document.nodes.get(node.0 as usize))
+                    .is_some_and(|node| {
+                        matches!(&node.data, crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty())
+                    }) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block

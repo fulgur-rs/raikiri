@@ -171,3 +171,56 @@ fn lines_of_atomic_inlines_in_a_cell_follow_the_widows() {
         ]
     );
 }
+
+#[test]
+fn an_absolute_box_of_atomic_inlines_breaks_between_its_lines() {
+    // The third line crosses the page end and starts the next page, with the
+    // fourth after it.
+    for content in ["<i>A</i>", "T "] {
+        let glyphs = glyphs(&format!(
+            r#"<div style="position:absolute;top:20px;width:20px">{content}<i>B</i><i>C</i><i>D</i></div>"#
+        ));
+        let first = if content == "T " { 'T' } else { 'A' };
+        let mut expected = vec![
+            (0, first, 0, 25),
+            (0, 'B', 0, 55),
+            (1, 'C', 0, 5),
+            (1, 'D', 0, 35),
+        ];
+        expected.sort_unstable();
+        assert_eq!(glyphs, expected, "{content}");
+    }
+}
+
+#[test]
+fn an_atomic_inline_taller_than_a_page_starts_a_page_of_its_own() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px"></div><div style="width:20px">T <i style="height:150px">A</i> U</div><div>Z</div>"#
+        ),
+        [
+            (1, 'T', 0, 5),
+            (2, 'A', 0, 5),
+            (3, 'U', 0, 55),
+            (4, 'Z', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn an_atomic_inline_raised_above_its_line_stays_where_it_is_drawn() {
+    // The inline-block's negative margin raises it into the line before; the
+    // widows move only the last line.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px"></div><div style="width:20px">T T <i style="margin-top:-25px;vertical-align:top">A</i> U</div><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 80),
+            (0, 'T', 0, 15),
+            (0, 'T', 0, 45),
+            (1, 'U', 0, 35),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}

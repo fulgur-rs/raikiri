@@ -173,14 +173,19 @@ fn a_first_line_that_moves_to_a_page_past_the_limit_halts_the_layout() {
 
 #[test]
 fn a_whole_paragraph_move_discards_the_inherited_float_gap() {
-    // An inline box among the lines keeps the lines from moving down inside
-    // the box: it moves whole.
+    // An absolutely positioned box that both insets place keeps the lines
+    // from moving down inside the box: it moves whole.
     let (doc, cascade, body, root, text) =
         paragraph_after_a_float("aaaa", 85.0, 10.0, |doc, root| {
             doc.append_element(
                 Some(root),
                 "span",
                 Some("display:inline-block;width:10px;height:10px"),
+            );
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("position:absolute;top:0;bottom:0;width:10px"),
             );
         });
     let (kept, state, position, doc) = keep_after_a_float(
