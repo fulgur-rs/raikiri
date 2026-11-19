@@ -224,3 +224,18 @@ fn an_atomic_inline_raised_above_its_line_stays_where_it_is_drawn() {
         ]
     );
 }
+
+#[test]
+fn text_before_an_atomic_inline_in_source_order_moves_the_lines_under_bidi() {
+    // The bidi override puts the inline-block before the text on the line,
+    // but the text comes first in the document: the lines still move as in
+    // the paragraph without the override.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px"></div><div style="width:20px;widows:2"><bdo dir="rtl">T T <i>B</i><i>B</i></bdo></div><div>Z</div>"#
+        ),
+        glyphs(
+            r#"<div style="height:10px"></div><div style="width:20px;widows:2">T T <i>B</i><i>B</i></div><div>Z</div>"#
+        )
+    );
+}

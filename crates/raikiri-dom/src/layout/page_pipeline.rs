@@ -14069,26 +14069,34 @@ fn lines_can_shift_inside(
 }
 
 /// Whether every atomic inline of the `lines` of a paragraph comes after the
-/// first glyph of its text. The text is what moves the lines, and the boxes
-/// before it are placed before it is: a move would leave them behind.
+/// first of its text in tree order, the order in which its page candidates are
+/// placed. The text is what moves the lines, and the boxes before it are
+/// placed before it is: a move would leave them behind. The order the lines
+/// show is the visual one, which bidi reordering can change.
 fn atomics_follow_text(document: &Document, lines: &[shodo::Line]) -> bool {
+    let mut first_text: Option<usize> = None;
+    let mut atomics = Vec::new();
     for fragment in lines.iter().flat_map(|line| line.fragments()) {
         match fragment {
-            shodo::Fragment::Atomic(_) => return false,
-            shodo::Fragment::GlyphRun(run)
-                if run
-                    .node()
-                    .and_then(|node| document.nodes.get(node.0 as usize))
-                    .is_some_and(|node| {
+            shodo::Fragment::Atomic(atomic) => atomics.push(atomic.node.0 as usize),
+            shodo::Fragment::GlyphRun(run) => {
+                let Some(text) = run.node().map(|node| node.0 as usize).filter(|&node| {
+                    document.nodes.get(node).is_some_and(|node| {
                         matches!(&node.data, crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty())
-                    }) =>
-            {
-                return true;
+                    })
+                }) else {
+                    continue;
+                };
+                if first_text.is_none_or(|first| precedes_in_tree(document, text, first)) {
+                    first_text = Some(text);
+                }
             }
             _ => {}
         }
     }
-    true
+    atomics
+        .into_iter()
+        .all(|atomic| first_text.is_some_and(|text| precedes_in_tree(document, text, atomic)))
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
