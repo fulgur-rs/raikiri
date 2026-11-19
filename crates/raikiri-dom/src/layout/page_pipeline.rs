@@ -5708,16 +5708,10 @@ fn avoided_run_ends(
         // A paragraph in the run that breaks between its lines is a better
         // place to break than before the run: the run starts after it, and
         // the paragraph keeps its last lines with the boxes after it.
-        let splits_lines = |id: usize| {
-            document.nodes[id].is_ifc_root()
-                && !paragraph_lines_keep_together(document, cascade, id)
-        };
+        let splits_lines = |id: usize| paragraph_may_split_lines(document, cascade, id, false);
         if connected && previous.is_some_and(|prior| splits_lines(prior.node_id)) {
             run_start = None;
-            previous = Some(candidate);
-            continue;
-        }
-        if let Some(prior) = previous.filter(|_| connected) {
+        } else if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
             let margin_bottom =
                 used_computed_length_percentage_or_auto(&computed.margin.bottom, content_width)
@@ -12155,11 +12149,30 @@ fn avoid_chain_before_last_box(
     // paragraph with lines too few to split would move whole without the
     // boxes tied before it, so then the run keeps its placement.
     let paragraph = children[boxes[split]];
-    (document.nodes[paragraph].is_ifc_root()
-        && (split == 0 || !paragraph_lines_keep_together(document, cascade, paragraph)))
-    .then_some(AvoidChain::Lines {
-        first: boxes[split],
-    })
+    paragraph_may_split_lines(document, cascade, paragraph, split == 0).then_some(
+        AvoidChain::Lines {
+            first: boxes[split],
+        },
+    )
+}
+
+/// Whether the paragraph `node_id` may break between its lines: it has lines,
+/// does not avoid breaks inside it, and, unless `few_lines` allows it, has
+/// lines enough for `orphans` and `widows` on both sides of a break.
+fn paragraph_may_split_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    few_lines: bool,
+) -> bool {
+    document.nodes[node_id].is_ifc_root()
+        && !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| !lines.lines.is_empty())
+        && (few_lines || !paragraph_lines_keep_together(document, cascade, node_id))
 }
 
 /// Whether the paragraph `node_id` has a set height that leaves room below its
@@ -12234,12 +12247,24 @@ fn nested_run_units(
         // and the last such paragraph keeps its last lines with the boxes
         // after it instead.
         if let Some(paragraph) = (start..last).rev().find(|&index| {
-            is_box(index)
-                && document.nodes[children[index]].is_ifc_root()
-                && !paragraph_lines_keep_together(document, cascade, children[index])
+            is_box(index) && paragraph_may_split_lines(document, cascade, children[index], false)
         }) {
             tails[paragraph] =
                 run_end - normal_flow_bottom(document, cascade, body_id, children[paragraph]);
+            // The boxes before the paragraph stay tied to its first lines.
+            if start < paragraph && Some(start) != first_in_flow {
+                let paragraph_box = children[paragraph];
+                let height = document.nodes[paragraph_box].layout.size.height;
+                let head =
+                    match avoided_run_head(document, cascade, body_id, paragraph_box, true).end {
+                        Some(head) if head < height - 0.001 => head,
+                        _ => height + document.nodes[paragraph_box].layout.margin.bottom.max(0.0),
+                    };
+                units[start] = Some(
+                    normal_flow_y(document, cascade, body_id, paragraph_box) + head
+                        - normal_flow_y(document, cascade, body_id, start_box),
+                );
+            }
             return;
         }
         // A run from the first box has no break before it to move to.
