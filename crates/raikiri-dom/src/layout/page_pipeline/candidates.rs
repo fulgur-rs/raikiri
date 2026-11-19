@@ -1590,23 +1590,22 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // out-of-flow box, or a flex, grid or table keeps them, and
                 // so does a document paginated on transposed axes, whose
                 // lines do not run along y.
-                let unplaced_line = (!inside_float
+                let unplaced_base = !inside_float
                     && !inside_out_of_flow
-                    && !inside_flex
                     && !inside_table
-                    && !flex_item_candidate
-                    && !grid_item_candidate
                     && !is_rendered_leaf
-                    && !document.context.pagination_on_transposed_axes)
-                    .then(|| {
-                        unplaced_line(document, cascade, node_id)
-                            .or_else(|| unplaced_line_after_block(document, cascade, node_id))
-                    })
+                    && !document.context.pagination_on_transposed_axes;
+                let unplaced_line =
+                    (unplaced_base && !inside_flex && !flex_item_candidate && !grid_item_candidate)
+                        .then(|| unplaced_line(document, cascade, node_id))
+                        .flatten();
+                // A line after a block child keeps nothing whole: the page
+                // breaks between the block and the line, inside a flex or
+                // grid item too, as between the lines of text there.
+                let line_after_block = unplaced_base
+                    .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
-                // The line after a block child keeps nothing whole: the page
-                // breaks between the block and the line.
-                let unplaced_line_attribute = unplaced_line;
-                let unplaced_line = unplaced_line.filter(|line| !line.after_block);
+                let unplaced_line_attribute = unplaced_line.or(line_after_block);
                 let unbreakable_box = box_is_unbreakable(
                     document,
                     cascade,
@@ -1952,11 +1951,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     };
                 // A paragraph whose single unplaced line comes after a block
                 // child of it breaks between the two: it is placed as a box
-                // to move that line on (see `break_before_unplaced_line`).
-                let line_after_block_base = nested_candidate_base
+                // to move that line on (see `break_before_line_after_block`).
+                let line_after_block_base = participates_in_flow
+                    && !direct_body_child
+                    && !out_of_flow_subtree
                     && !inline_level
                     && is_block_flow_box
-                    && unplaced_line_attribute.is_some_and(|line| line.after_block);
+                    && line_after_block.is_some();
                 let needs_ancestor_constraints = margin_shape
                     || line_after_block_base
                     || (nested_candidate_base
@@ -2014,7 +2015,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
-                let line_after_block_candidate = line_after_block_base && can_move_nested;
+                let line_after_block_candidate =
+                    line_after_block_base && !bounded_clipping_ancestor;
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 let first_grid_row =
                     first_grid_row.filter(|_| direct_body_child || can_move_nested);
@@ -2158,7 +2160,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && (!out_of_flow_subtree || own_page_name.is_some()),
                                 // The edges that close the boxes around a
                                 // paragraph go with its line after a block.
-                                lines_closing_edges: if line_after_block_candidate {
+                                lines_closing_edges: if line_after_block.is_some() {
                                     frame.closing_edges
                                         + node.layout.padding.bottom
                                         + node.layout.border.bottom

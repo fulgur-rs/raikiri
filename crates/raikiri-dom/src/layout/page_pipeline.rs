@@ -8931,9 +8931,10 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
-    /// Whether a block child of the paragraph is laid out above the line.
-    /// The page then breaks between that block and the line, as before a
-    /// line of text there, instead of keeping the paragraph whole (see
+    /// Whether the block child of the paragraph laid out right above the
+    /// line sits in no inline box and does not avoid a break after it. The
+    /// page then breaks between that block and the line, as before a line of
+    /// text there, instead of keeping the paragraph whole (see
     /// [`unplaced_line_after_block`]).
     after_block: bool,
 }
@@ -8998,7 +8999,7 @@ fn unplaced_line(
 /// it. Such a line does not keep the paragraph whole: Chromium breaks the
 /// page between the block and the line, as before a line of text there, and
 /// moves the line on, or truncates the block-end margin of the block above
-/// it at the page edge (see `PaginationState::break_before_unplaced_line`).
+/// it at the page edge (see `PaginationState::break_before_line_after_block`).
 fn unplaced_line_after_block(
     document: &Document,
     cascade: &CascadeResult,
@@ -9033,10 +9034,16 @@ fn paragraph_unplaced_line(
         .ifc
         .as_ref()
         .and_then(|ifc| ifc.lines.as_ref())
-        .is_some_and(|lines| {
-            lines.block_line_starts.iter().any(|&(block, after)| {
-                after <= unplaced.line.line && block_outside_inline(document, node_id, block)
-            })
+        .and_then(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .rev()
+                .find(|&&(_, after)| after <= unplaced.line.line)
+        })
+        .is_some_and(|&(block, _)| {
+            block_outside_inline(document, node_id, block)
+                && !page_edge_constraint(document, cascade, block, false).1
         });
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
@@ -9048,8 +9055,8 @@ fn paragraph_unplaced_line(
 
 /// Whether the block child `block` of the paragraph `root` sits in no inline
 /// box of it, in the tree of elements: the boxes of the paragraph place the
-/// block straight in the root. Chromium keeps a block inside an inline box together with the
-/// line after it, as part of the line of that inline box.
+/// block straight in the root. Chromium keeps a block inside an inline box
+/// together with the line after it, as part of the line of that inline box.
 fn block_outside_inline(document: &Document, root: usize, block: usize) -> bool {
     std::iter::successors(document.nodes[block].parent, |&id| {
         document.nodes[id].parent

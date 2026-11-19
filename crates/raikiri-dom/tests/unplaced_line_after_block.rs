@@ -202,3 +202,46 @@ fn block_inside_an_inline_box_moves_with_the_line() {
         [(1, 5.0), (1, 55.0)],
     )]);
 }
+
+#[test]
+fn block_that_avoids_a_break_after_it_moves_with_the_line() {
+    let avoiding = |above: u32| {
+        format!(
+            "<div style=\"width:20px\"><div style=\"height:{above}px\"></div><div>\
+             <div style=\"height:20px;break-after:avoid\"><span id=t>T</span></div><br></div>{Z}</div>"
+        )
+    };
+    assert_places(&[
+        (avoiding(60), [(1, 5.0), (1, 55.0)]),
+        (avoiding(50), [(0, 55.0), (1, 5.0)]),
+    ]);
+}
+
+#[test]
+fn line_in_a_flex_or_grid_item_breaks_from_the_block_too() {
+    let item = |above: u32, container: &str, margin_bottom: u32| {
+        format!(
+            "<div style=\"width:20px\"><div style=\"height:{above}px\"></div>\
+             <div style=\"{container}\"><div><div style=\"height:20px;margin-bottom:{margin_bottom}px\">\
+             <span id=t>T</span></div><br></div></div>{Z}</div>"
+        )
+    };
+    assert_places(&[
+        (item(60, "display:flex", 10), [(0, 65.0), (1, 35.0)]),
+        (item(70, "display:flex", 0), [(0, 75.0), (1, 35.0)]),
+        (
+            item(60, "display:flex;flex-direction:column", 0),
+            [(0, 65.0), (1, 35.0)],
+        ),
+        (item(70, "display:grid", 0), [(0, 75.0), (1, 35.0)]),
+        // A paragraph nested in a row flex item.
+        (
+            format!(
+                "<div style=\"width:40px\"><div style=\"height:50px\"></div><div style=\"display:flex\">\
+                 <div style=\"width:20px\"><div><div style=\"height:20px;margin-bottom:10px\">\
+                 <span id=t>T</span></div><br></div></div></div>{Z}</div>"
+            ),
+            [(0, 55.0), (1, 35.0)],
+        ),
+    ]);
+}
