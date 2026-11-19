@@ -230,22 +230,24 @@ fn only_box(document: &Document, parent: usize) -> Option<usize> {
 pub(super) fn realign_beside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
-    row: usize,
+    cells: &[usize],
     grown: usize,
     end: Option<f32>,
     split_cells: &std::collections::HashSet<usize>,
 ) -> Vec<CellFragment> {
     // Only a forced break in the cell's own block flow splits the row there.
     if document.context.pagination_on_transposed_axes
-        || document.nodes[row].display() != DisplayValue::TableRow
         || end.is_none()
         || !breaks_inside(document, cascade, grown)
     {
         return Vec::new();
     }
     let end = end.unwrap_or_default();
-    document.nodes[row]
-        .children
+    // Where a cell starts below the top of the grown one: the cells of a
+    // row sit at its top, and those of a run outside a table at the top of
+    // their anonymous row, below the boxes before the table.
+    let grown_y = document.nodes[grown].layout.location.y;
+    cells
         .iter()
         .copied()
         .filter(|&cell| {
@@ -255,12 +257,12 @@ pub(super) fn realign_beside(
                 && node.display() == DisplayValue::TableCell
                 && sibling_renders(document, cell)
                 && !node.used_writing_mode.is_vertical()
-                && node.layout.location.y + node.layout.size.height <= end + 0.001
+                && node.layout.location.y - grown_y + node.layout.size.height <= end + 0.001
                 && !breaks_inside(document, cascade, cell)
         })
         .filter_map(|cell| {
             let layout = &document.nodes[cell].layout;
-            let top = layout.location.y;
+            let top = layout.location.y - grown_y;
             let padding = document
                 .physical_style(cell)
                 .padding()

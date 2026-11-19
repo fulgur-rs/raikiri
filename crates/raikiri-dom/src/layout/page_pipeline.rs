@@ -17028,12 +17028,10 @@ fn grow_float_context_to_moved_float(
             // of a cell's growth past what the row grew already moves the
             // boxes after the row. The cells beside it sit beside it, not
             // below it, so the flow follows past the row.
-            let row_end = cell.then(|| cell_row_end(document, context)).flatten();
-            let growth = if cell {
-                let holder = row_end.map_or((context, 0), |(row, end, _)| (row, end));
-                shifts.grow_row_for_float(holder, context, growth)
-            } else {
-                growth
+            let holder = cell.then(|| cell_growth_holder(document, context));
+            let growth = match holder {
+                Some(holder) => shifts.grow_row_for_float(holder, context, growth),
+                None => growth,
             };
             if growth <= 0.001 {
                 return;
@@ -17048,9 +17046,9 @@ fn grow_float_context_to_moved_float(
                 flow_page,
                 &IfcBoxShifts::default(),
             );
-            match row_end {
-                Some((row, end, _)) => shifts.from_box.push((row, end, growth)),
-                None => shifts.growth.push((context, growth)),
+            match holder {
+                Some((row, end)) if end > 0 => shifts.from_box.push((row, end, growth)),
+                _ => shifts.growth.push((context, growth)),
             }
         }
     }
@@ -19744,16 +19742,38 @@ fn shift_flow_after(
                 // A row grows as far as its cell that grows most, and an
                 // earlier break in it may have grown it already: only the
                 // rest of the growth moves what follows.
-                let holder = row_end.map_or((parent, 0), |(row, end, _)| (row, end));
+                // Cells outside a table share the anonymous row that wraps
+                // their run (CSS 2.1 §17.2.1).
+                let loose_run = row_end
+                    .is_none()
+                    .then(|| loose_cell_run(document, parent))
+                    .flatten();
+                let holder = cell_growth_holder(document, parent);
                 let first_growth = !shifts.grown_rows.iter().any(|(id, _)| *id == holder);
                 // A float that moved in the cell grew its stored height
                 // already, which `passed` is measured from.
                 let before = shifts.row_growth(holder);
                 shifts.grow_row(holder, passed + shifts.float_growth(parent));
                 let added = shifts.row_growth(holder) - before;
+                // The cells of the row, or of the run of cells outside a
+                // table, and how tall the row is.
+                let row_cells = match (row_end, &loose_run) {
+                    (Some((row, _, _)), _)
+                        if document.nodes[row].display() == DisplayValue::TableRow =>
+                    {
+                        Some((
+                            document.nodes[row].children.clone(),
+                            document.nodes[row].layout.size.height,
+                        ))
+                    }
+                    (None, Some((cells, _, _))) => {
+                        Some((cells.clone(), document.nodes[parent].layout.size.height))
+                    }
+                    _ => None,
+                };
                 if first_growth
                     && added > 0.001
-                    && let Some((row, _, _)) = row_end
+                    && let Some((cells, row_height)) = row_cells
                 {
                     // The break ends the row's fragment on this page where
                     // the margin box of the moved box now starts, at the top
@@ -19763,11 +19783,11 @@ fn shift_flow_after(
                         offset_in_cell(document, cascade, body_id, node_id, parent)
                             - document.nodes[node_id].layout.margin.top
                     });
-                    let breaks_row = end - flow_delta < document.nodes[row].layout.size.height;
+                    let breaks_row = end - flow_delta < row_height;
                     let realigned = table_cell_fragments::realign_beside(
                         document,
                         cascade,
-                        row,
+                        &cells,
                         parent,
                         breaks_row.then_some(end),
                         &shifts.split_cells,
@@ -19778,6 +19798,30 @@ fn shift_flow_after(
                     }
                 }
                 let Some((row, end, table)) = row_end else {
+                    if let Some((_, last, holder)) = loose_run {
+                        // The cells beside it in its run sit beside it, as in
+                        // a row: only the boxes after the run follow its
+                        // growth.
+                        shifts.bounded.push((parent, flow_delta, flow_page));
+                        if added <= 0.001 {
+                            break;
+                        }
+                        if let Some((run_parent, run_end)) = loose_run_end(document, last) {
+                            shifts.from_box.push((run_parent, run_end, added));
+                        }
+                        // The boxes after the run inside the boxes with
+                        // `display: contents` around its end move here; the
+                        // walk moves those after them in the holder.
+                        let mut inner = last;
+                        while let Some(up) = document.parent_of(inner).filter(|&up| up != holder) {
+                            shift_later_flow_siblings(document, up, inner, added);
+                            inner = up;
+                        }
+                        flow_delta = added;
+                        child_total = Some(shifts.grow_box(parent, added));
+                        child = inner;
+                        continue;
+                    }
                     // A cell outside a table sits in an anonymous table of its
                     // own (CSS 2.1 §17.2.1), which grows with it.
                     if added < flow_delta - 0.001 {
@@ -20038,13 +20082,77 @@ fn cell_row_end(document: &Document, cell: usize) -> Option<(usize, usize, usize
         }
         _ => return None,
     };
-    let table = std::iter::successors(Some(up), |&id| document.parent_of(id)).find(|&id| {
-        matches!(
-            document.nodes[id].display(),
-            DisplayValue::Table | DisplayValue::InlineTable
-        )
-    })?;
+    // A row or row group outside a table belongs to the anonymous table that
+    // wraps it, which is not among its ancestors and is left to
+    // `loose_cell_run`.
+    let table = match document.nodes[up].display() {
+        DisplayValue::Table | DisplayValue::InlineTable => up,
+        _ => document.table_of_row(up)?,
+    };
+    if document.anonymous_table_parts(table).is_some() {
+        return None;
+    }
     Some((up, end, table))
+}
+
+/// The run of consecutive table cells outside a table that `cell` belongs
+/// to, which table fixup wraps in an anonymous row (CSS 2.1 §17.2.1), with
+/// its last box (its last cell, or the row outside a table that holds the
+/// cells) and the box that holds the anonymous table. `None` when `cell` is
+/// not such a cell.
+fn loose_cell_run(document: &Document, cell: usize) -> Option<(Vec<usize>, usize, usize)> {
+    let (table, cells, last) = match document.anonymous_table_of(cell) {
+        Some(table) => {
+            let parts = document.anonymous_table_parts(table)?;
+            let at = parts.iter().position(|&part| part == cell)?;
+            let is_cell =
+                |part: &&usize| document.nodes[**part].display() == DisplayValue::TableCell;
+            let start = at - parts[..at].iter().rev().take_while(is_cell).count();
+            let end = at + 1 + parts[at + 1..].iter().take_while(is_cell).count();
+            (table, parts[start..end].to_vec(), parts[end - 1])
+        }
+        // A row outside a table holds its cells itself.
+        None => {
+            let row = document
+                .ancestors(cell)
+                .find(|&id| document.nodes[id].display() != DisplayValue::Contents)?;
+            if document.nodes[row].display() != DisplayValue::TableRow {
+                return None;
+            }
+            (
+                document.anonymous_table_of(row)?,
+                document.nodes[row].children.clone(),
+                row,
+            )
+        }
+    };
+    Some((cells, last, document.table_parts_boundary(table)))
+}
+
+/// The parent of the last box `last` of a run of cells outside a table and
+/// the index in it after which the boxes follow the run. Inside a box with
+/// `display: contents`, that parent is the wrapper, so that the boxes after
+/// the run inside it follow too.
+fn loose_run_end(document: &Document, last: usize) -> Option<(usize, usize)> {
+    let parent = document.parent_of(last)?;
+    let index = document.nodes[parent]
+        .children
+        .iter()
+        .position(|&child| child == last)?;
+    Some((parent, index + 1))
+}
+
+/// The box whose growth a table cell's growth adds to, as a key of the
+/// growth recorded so far, and the boxes after which the flow follows it:
+/// the cell's row, or the run of cells outside a table that it belongs to,
+/// or the cell alone.
+fn cell_growth_holder(document: &Document, cell: usize) -> (usize, usize) {
+    cell_row_end(document, cell)
+        .map(|(row, end, _)| (row, end))
+        .or_else(|| {
+            loose_cell_run(document, cell).and_then(|(_, last, _)| loose_run_end(document, last))
+        })
+        .unwrap_or((cell, 0))
 }
 
 /// How far `block` grows when a forced break inside its child `child` moves
