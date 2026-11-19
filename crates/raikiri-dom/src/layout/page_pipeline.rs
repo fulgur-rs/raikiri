@@ -12255,11 +12255,11 @@ fn nested_run_units(
             if start < paragraph && Some(start) != first_in_flow {
                 let paragraph_box = children[paragraph];
                 let height = document.nodes[paragraph_box].layout.size.height;
-                let head =
-                    match avoided_run_head(document, cascade, body_id, paragraph_box, true).end {
-                        Some(head) if head < height - 0.001 => head,
-                        _ => height + document.nodes[paragraph_box].layout.margin.bottom.max(0.0),
-                    };
+                let whole = height + document.nodes[paragraph_box].layout.margin.bottom.max(0.0);
+                let head = avoided_run_head(document, cascade, body_id, paragraph_box, true)
+                    .end
+                    .filter(|&head| head < height - 0.001)
+                    .unwrap_or(whole);
                 units[start] = Some(
                     normal_flow_y(document, cascade, body_id, paragraph_box) + head
                         - normal_flow_y(document, cascade, body_id, start_box),
