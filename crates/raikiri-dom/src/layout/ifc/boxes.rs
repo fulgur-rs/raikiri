@@ -5298,6 +5298,7 @@ fn vertical_static_position(
     writing_mode: WritingMode,
     rtl: bool,
     anchor: Option<(f32, bool)>,
+    own_line: Option<(f32, AxisStaticEdge)>,
     block_offset: f32,
     (content_left, content_top): (f32, f32),
     (content_right, inline_extent): (f32, f32),
@@ -5328,10 +5329,22 @@ fn vertical_static_position(
                 },
             )
         }
-        None if reversed => {
-            AxisStaticPosition::from_edge(content_top + inline_extent, AxisStaticEdge::End)
-        }
-        None => AxisStaticPosition::from_edge(content_top, AxisStaticEdge::Start),
+        // A line of its own is measured from its line-left edge: the top,
+        // or the bottom in `sideways-lr` (CSS Writing Modes 4 §6.4).
+        None => match own_line {
+            Some((at, edge)) if writing_mode == WritingMode::SidewaysLr => {
+                let flipped = match edge {
+                    AxisStaticEdge::End => AxisStaticEdge::Start,
+                    _ => AxisStaticEdge::End,
+                };
+                AxisStaticPosition::from_edge(content_top + inline_extent - at, flipped)
+            }
+            Some((at, edge)) => AxisStaticPosition::from_edge(content_top + at, edge),
+            None if reversed => {
+                AxisStaticPosition::from_edge(content_top + inline_extent, AxisStaticEdge::End)
+            }
+            None => AxisStaticPosition::from_edge(content_top, AxisStaticEdge::Start),
+        },
     };
     Point { x, y }
 }
@@ -6245,9 +6258,8 @@ pub(crate) fn place_out_of_flow(
         };
         // A box that stays out of the lines after it sits where a block-level
         // box would: below the block it follows, before the floats after it
-        // move the lines down. The lines of a vertical root have no line of
-        // its own to place it on, so it keeps its anchor there.
-        let out_of_lines = (!vertical_root && inline_level && anchor.is_some())
+        // move the lines down.
+        let out_of_lines = (inline_level && anchor.is_some())
             .then(|| {
                 before_floats
                     .get_or_insert_with(|| boxes_before_floats_after_a_block(tree, idx, &lines))
@@ -6271,18 +6283,31 @@ pub(crate) fn place_out_of_flow(
                     anchor_has_odd_level(&lines.lines[index], position, rtl),
                 )
             });
+        // A box that was inline-level but has no anchor sits on a line of its
+        // own, which the lines do not hold: where along it, from the line-left
+        // edge of the content box, with the edge of the box that goes there.
+        let own_line = (inline_anchor.is_none() && inline_level).then(|| {
+            let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
+                || beside_inline
+                    .get_or_insert_with(|| boxes_in_anonymous_line_blocks(tree, idx))
+                    .contains(&node);
+            hypothetical
+                .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)))
+                .anchor(node, in_inline_box, block_offset, preceding_line)
+        });
         let static_spot = if vertical_root {
             vertical_static_position(
                 writing_mode,
                 rtl,
                 inline_anchor,
+                own_line,
                 block_offset,
                 (content_left, content_top),
                 (content_right, lines.width),
             )
         } else {
-            let x = match inline_anchor {
-                Some((position, odd_level)) => AxisStaticPosition::from_edge(
+            let x = match (inline_anchor, own_line) {
+                (Some((position, odd_level)), _) => AxisStaticPosition::from_edge(
                     content_left
                         + if rtl {
                             lines.width - position
@@ -6295,24 +6320,13 @@ pub(crate) fn place_out_of_flow(
                         AxisStaticEdge::Start
                     },
                 ),
-                // A box that was inline-level but has no anchor sits on a line
-                // of its own, which the lines do not hold.
-                None if inline_level => {
-                    let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
-                        || beside_inline
-                            .get_or_insert_with(|| boxes_in_anonymous_line_blocks(tree, idx))
-                            .contains(&node);
-                    let line = hypothetical
-                        .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)));
-                    let (at, edge) = line.anchor(node, in_inline_box, block_offset, preceding_line);
-                    AxisStaticPosition::from_edge(content_left + at, edge)
-                }
+                (None, Some((at, edge))) => AxisStaticPosition::from_edge(content_left + at, edge),
                 // Any other box starts at the inline-start edge of the content
                 // box: the right one in a right-to-left root.
-                None if rtl => {
+                (None, None) if rtl => {
                     AxisStaticPosition::from_edge(content_left + lines.width, AxisStaticEdge::End)
                 }
-                None => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
+                (None, None) => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
             };
             Point {
                 x,
