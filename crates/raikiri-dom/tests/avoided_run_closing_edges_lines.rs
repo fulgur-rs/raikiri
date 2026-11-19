@@ -240,3 +240,122 @@ fn a_tied_paragraph_with_padding_keeps_its_page_when_its_lines_fit() {
         assert_places(body, expected);
     }
 }
+
+#[test]
+fn a_tied_paragraph_in_wrappers_breaks_as_the_bare_paragraph_does() {
+    let cases: &[Case] = &[
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:20px'><span id=M>M</span></div><div><div><div><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("Z", 2, 65.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:20px'><span id=M>M</span></div><div style='padding-bottom:10px'><div><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("Z", 2, 75.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:30px'><span id=H>H</span></div><div style='break-after:avoid;height:10px'><span id=M>M</span></div><div><div><span id=a>a</span><br><span id=b>b</span></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 1, 5.0),
+                ("a", 1, 15.0),
+                ("b", 1, 35.0),
+                ("Z", 2, 5.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:20px'><span id=M>M</span></div><div><div><span id=a>a</span></div><div><span id=b>b</span><br><span id=c>c</span></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 0, 15.0),
+                ("a", 0, 35.0),
+                ("b", 1, 5.0),
+                ("c", 1, 25.0),
+                ("Z", 1, 85.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:10px'><span id=M>M</span></div><div><div><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 0, 15.0),
+                ("a", 0, 25.0),
+                ("b", 0, 45.0),
+                ("c", 1, 5.0),
+                ("d", 1, 25.0),
+                ("Z", 1, 85.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:20px'><span id=M>M</span></div><div><div><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 1, 5.0),
+                ("a", 1, 25.0),
+                ("b", 1, 45.0),
+                ("c", 2, 5.0),
+                ("Z", 2, 65.0),
+            ],
+        ),
+    ];
+    for &(body, expected) in cases {
+        assert_places(body, expected);
+    }
+}
+
+#[test]
+fn a_tied_paragraph_keeps_its_rules_at_the_start_of_the_block_and_with_room_below() {
+    let cases: &[Case] = &[
+        (
+            "<div style='padding-bottom:20px'><div style='height:20px'><span id=S>S</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:20px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 1, 5.0),
+                ("b", 1, 25.0),
+                ("c", 1, 45.0),
+                ("L", 1, 65.0),
+                ("Z", 2, 5.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:20px'><div style='break-after:avoid;margin-top:20px'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:20px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("a", 0, 25.0),
+                ("b", 0, 45.0),
+                ("c", 1, 5.0),
+                ("L", 1, 25.0),
+                ("Z", 1, 65.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'><div style='height:10px'><span id=H>H</span></div><div style='break-after:avoid;height:10px'><span id=M>M</span></div><div style='break-inside:avoid;height:60px'><span id=a>a</span><br><span id=b>b</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("H", 0, 5.0),
+                ("M", 1, 5.0),
+                ("a", 2, 5.0),
+                ("b", 2, 25.0),
+                ("Z", 3, 5.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:40px'> <div style='height:40px'><span id=H>H</span></div> <div style='break-after:avoid'></div> <div><span id=a>a</span><br><span id=b>b</span></div> </div><div><span id=Z>Z</span></div>",
+            &[("H", 0, 5.0), ("a", 1, 5.0), ("b", 1, 25.0), ("Z", 1, 85.0)],
+        ),
+    ];
+    for &(body, expected) in cases {
+        assert_places(body, expected);
+    }
+}
