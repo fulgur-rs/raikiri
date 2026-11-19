@@ -7,7 +7,10 @@
 //! among the lines after the block counts the block, and the lines before
 //! it on the page, among its orphans, and the widows it asks for take the
 //! block along too. A block straight in the paragraph is not a line, and
-//! the lines before it stay.
+//! the lines before it stay. The widows pull lines even when the next page
+//! cannot hold all of them, except where the paragraph starts its page right
+//! after a break, below no box of the flow on that page: there the lines go
+//! only when they meet the widows.
 //! The pages and positions are the ones Chromium prints for the same markup:
 //! 100px pages without margins, Ahem at 20px on 30px lines.
 
@@ -491,4 +494,71 @@ fn the_padding_below_breaks_among_the_lines_after_the_block() {
         ),
         [(0, 35.0), (2, 5.0)],
     )]);
+}
+
+/// In a 20px wide block: `before`, a block `above` px tall, then a paragraph
+/// with `orphans` and `widows` whose span holds `lines` lines of `A`, a block
+/// `height` px tall that holds `#t`, and `after` lines of `C`, then `#z`.
+fn spanned(
+    before: &str,
+    above: u32,
+    [lines, height, after]: [u32; 3],
+    [orphans, widows]: [u32; 2],
+) -> String {
+    let join = |letter: &str, count: u32| vec![letter; count as usize].join("<br>");
+    format!(
+        "<div style=\"width:20px\">{before}<div style=\"height:{above}px\"></div>\
+         <div style=\"orphans:{orphans};widows:{widows}\"><span>{}{}{}</span></div>\
+         <div><span id=z>Z</span></div></div>",
+        join("A", lines),
+        block(height),
+        join("C", after),
+    )
+}
+
+#[test]
+fn widows_the_next_page_cannot_hold_still_pull_on_the_page_the_paragraph_opens() {
+    assert_places(&[
+        (spanned("", 0, [1, 20, 2], [1, 4]), [(1, 5.0), (2, 5.0)]),
+        (spanned("", 10, [2, 20, 1], [2, 4]), [(1, 5.0), (1, 55.0)]),
+        (spanned("", 10, [1, 40, 3], [1, 4]), [(1, 5.0), (2, 35.0)]),
+        // A box of no height before the paragraph at the top of the page.
+        (
+            spanned(
+                "<div style=\"break-after:page\">X</div>",
+                0,
+                [1, 20, 2],
+                [1, 4],
+            ),
+            [(2, 5.0), (3, 5.0)],
+        ),
+        // A box that runs on from the page before.
+        (spanned("", 110, [1, 20, 2], [1, 4]), [(2, 5.0), (3, 5.0)]),
+    ]);
+}
+
+#[test]
+fn a_paragraph_that_starts_its_page_after_a_break_pulls_only_widows_it_meets() {
+    let forced = "<div style=\"break-after:page\">X</div>";
+    assert_places(&[
+        // Lines through the block, then among the lines after it.
+        (spanned("", 100, [1, 20, 2], [1, 4]), [(1, 35.0), (2, 35.0)]),
+        (
+            format!(
+                "<div style=\"width:20px\">{forced}<div style=\"orphans:1;widows:4\"><span>A{}C<br>C</span></div>\
+                 <div><span id=z>Z</span></div></div>",
+                block(20)
+            ),
+            [(1, 35.0), (2, 35.0)],
+        ),
+        (spanned("", 80, [1, 20, 2], [1, 4]), [(1, 35.0), (2, 35.0)]),
+        (spanned("", 30, [2, 20, 2], [1, 4]), [(1, 35.0), (2, 35.0)]),
+        (spanned("", 60, [1, 20, 2], [2, 4]), [(1, 35.0), (2, 35.0)]),
+        (spanned("", 60, [1, 20, 2], [2, 3]), [(1, 35.0), (2, 65.0)]),
+        (spanned("", 60, [1, 20, 2], [2, 2]), [(1, 35.0), (2, 65.0)]),
+        // The block crosses the page end.
+        (spanned("", 80, [3, 20, 1], [2, 4]), [(2, 5.0), (2, 55.0)]),
+        (spanned("", 80, [3, 20, 1], [2, 3]), [(2, 35.0), (3, 5.0)]),
+        (spanned("", 50, [3, 40, 2], [2, 4]), [(2, 5.0), (3, 5.0)]),
+    ]);
 }

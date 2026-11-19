@@ -3938,21 +3938,25 @@ impl PaginationState {
                 .filter(|&&(_, after, _)| after == 0)
                 .map(|&(block, _, _)| document.nodes[block].layout.size.height)
                 .sum();
-            let (ahead, opens_on_page) = paragraph_line_bounds(document, node_id, text_lines)
-                .map(|bounds| {
-                    (
-                        super::inline_lines_before_run(
-                            document,
-                            root,
-                            run.start,
-                            &bounds,
-                            text.effective_y,
-                            page_start,
-                        ),
-                        bounds[0].0 - leading + text.effective_y >= page_start - 0.001,
-                    )
-                })
-                .unwrap_or_default();
+            let (ahead, opens_on_page, pulls) =
+                paragraph_line_bounds(document, node_id, text_lines)
+                    .map(|bounds| {
+                        let first_top = bounds[0].0 + text.effective_y;
+                        (
+                            super::inline_lines_before_run(
+                                document,
+                                root,
+                                run.start,
+                                &bounds,
+                                text.effective_y,
+                                page_start,
+                            ),
+                            first_top - leading >= page_start - 0.001,
+                            first_top < page_start - 0.001
+                                || widows_pull_lines(document, env, root, first_top, page),
+                        )
+                    })
+                    .unwrap_or((Vec::new(), false, true));
             let lines_before = ahead.len();
             // Only blocks that go on from the page before are ahead of the
             // run: Chromium leaves the run's first line with them.
@@ -4029,12 +4033,20 @@ impl PaginationState {
             };
             // The lines ahead of the run stay: a pull that takes them is
             // judged with them (see `keep_lines_through_inline_block`), and
-            // the natural break is kept without it.
+            // the natural break is kept without it. Where the paragraph
+            // opens its page below nothing but the break before it (see
+            // `widows_pull_lines`), the run's lines go only when they meet
+            // the widows, as Chromium counts them with one line more.
             let fix = match fix {
                 LineBreakFix::MoveLines(moves)
-                    if moves.iter().any(|&(line, _, _)| {
-                        line < lines_before || (only_continued_blocks && line == lines_before)
-                    }) =>
+                    if (lines_before > 0
+                        && !pulls
+                        && moves.iter().any(|&(line, _, _)| {
+                            fit_metrics.len() - line + 1 < widows as usize
+                        }))
+                        || moves.iter().any(|&(line, _, _)| {
+                            line < lines_before || (only_continued_blocks && line == lines_before)
+                        }) =>
                 {
                     LineBreakFix::Keep
                 }
@@ -4314,6 +4326,18 @@ impl PaginationState {
             // The lines and blocks of the paragraph before the run on the
             // page are orphans too, but only the run's lines go along.
             let pulled = (widows - 1).min(on_page + ahead - orphans).min(on_page);
+            // Where the paragraph opens its page below nothing but the break
+            // before it (see `widows_pull_lines`), lines go only when they
+            // meet the widows: the pulled lines and the block with them,
+            // and, as Chromium counts them, one line more.
+            let pulled = paragraph_line_bounds(document, node_id, text_lines)
+                .filter(|bounds| {
+                    let first_top = text.effective_y + bounds[0].0;
+                    first_top >= page_start - 0.001
+                        && !widows_pull_lines(document, env, root, first_top, page)
+                        && pulled + 1 + 1 < widows
+                })
+                .map_or(pulled, |_| 0);
             (pulled > 0).then(|| metrics.len() - pulled)
         } else if first_on_page == 0 && after_block.is_none() {
             // Lines that open the paragraph go with the whole paragraph, as
@@ -4498,10 +4522,18 @@ impl PaginationState {
         let next_page = page.saturating_add(1);
         let widows_fit = y + next[next.len() - 1].1 - tops[first_widow]
             <= page_origins.step_at(next_page) + 0.001;
-        let pulled = widows
-            .saturating_sub(after)
-            .min(before - orphans)
-            .min(if widows_fit { usize::MAX } else { 0 });
+        let opens_here = bounds
+            .first()
+            .is_some_and(|&(top, _)| widows_pull_lines(document, env, root, y + top, page));
+        let pulled =
+            widows
+                .saturating_sub(after)
+                .min(before - orphans)
+                .min(if widows_fit || opens_here {
+                    usize::MAX
+                } else {
+                    0
+                });
         // The lines after the block are the first to go, then the block,
         // then the run's lines on the page; the lines ahead of the run stay.
         let Some(beyond) = pulled
@@ -5562,4 +5594,23 @@ struct InlineBlockRun<'a> {
     metrics: &'a [(f32, f32)],
     block_top: f32,
     page: u32,
+}
+
+/// Whether widows can pull lines of the paragraph `root`, whose first line
+/// starts at `first_top` on `page`, to the next page. Chromium pulls none
+/// when the paragraph starts its page below nothing of the flow but the
+/// break before it: the first page, or a box of no height before the
+/// paragraph on the page, still let the lines go.
+fn widows_pull_lines(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    root: usize,
+    first_top: f32,
+    page: u32,
+) -> bool {
+    let page_start = env.page_origins.origin(page);
+    first_top >= page_start - 0.001
+        && (first_top > page_start + 0.5
+            || page == 0
+            || follows_box_on_page(document, env.cascade, env.body_id, root, page_start))
 }
