@@ -4900,7 +4900,6 @@ pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> 
     let mut places = AnchorPlaces::new(doc, &lines.lines);
     for (index, line) in lines.lines.iter().enumerate() {
         let mut leading = true;
-        let leading_in_text = anchors_lead_in_text(line);
         for (at, fragment) in line.fragments().enumerate() {
             #[cfg(test)]
             tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
@@ -4909,7 +4908,7 @@ pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> 
                     let trailing = (at + 1..line.fragments().len())
                         .filter_map(|later| line.fragment(later))
                         .all(|later| !holds_content(&later));
-                    let leading = leading_in_text.unwrap_or(leading);
+                    let leading = anchors_lead_in_text(line).unwrap_or(leading);
                     return Some(places.place(index, leading, trailing, anchor));
                 }
                 fragment => leading &= !starts_content(&fragment),
@@ -4926,24 +4925,26 @@ pub(crate) fn find_oof_anchor(doc: &Document, lines: &IfcLines, node: usize) -> 
 /// first and some later, an atomic inline shares their object replacement
 /// character, or an inline box starts on the line.
 fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
+    if line.used_direction() == Direction::Ltr && !reads_against(line) {
+        return None;
+    }
     let mut anchors = 0;
-    let mut mixed = line.used_direction() == Direction::Rtl;
     for fragment in line.fragments() {
         match fragment {
             shodo::Fragment::OutOfFlowAnchor(_) => anchors += 1,
-            shodo::Fragment::GlyphRun(run) => mixed |= run.bidi_level() % 2 == 1,
             shodo::Fragment::Atomic(_) => return None,
             shodo::Fragment::InlineBox(piece) if piece.has_start_edge => return None,
             _ => {}
         }
     }
-    if !mixed || anchors == 0 {
+    if anchors == 0 {
         return None;
     }
+    // Spaces at the start of a line are content: only preserved ones stay.
     let text = line.text().get(line.text_range()).unwrap_or_default();
     let first = text
         .chars()
-        .take_while(|&c| c.is_whitespace() || c == '\u{FFFC}')
+        .take_while(|&c| c == '\u{FFFC}' || is_bidi_control(c))
         .filter(|&c| c == '\u{FFFC}')
         .count();
     match first {
@@ -4951,6 +4952,23 @@ fn anchors_lead_in_text(line: &shodo::Line) -> Option<bool> {
         first if first == anchors => Some(true),
         _ => None,
     }
+}
+
+/// Whether some text of `line` reads against the line's direction.
+fn reads_against(line: &shodo::Line) -> bool {
+    let rtl = line.used_direction() == Direction::Rtl;
+    line.fragments().any(|fragment| {
+        matches!(fragment, shodo::Fragment::GlyphRun(run) if (run.bidi_level() % 2 == 1) != rtl)
+    })
+}
+
+/// Whether `c` is one of the formatting characters of bidirectional text,
+/// which take no room of their own.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 /// Whether `fragment` ends the run of anchors and inline boxes that go on
@@ -4983,15 +5001,16 @@ fn holds_content(fragment: &shodo::Fragment<'_>) -> bool {
 /// on the later line: that is where Chromium puts it. A block-level box sits
 /// below that line either way, so its anchor stays where it is.
 ///
-/// Only lines that read left to right throughout are changed. Preserved
-/// spaces that hang count as removed.
+/// Positions run from the line's start edge, the right one in a line that
+/// reads right to left, where the spaces at the end of the line sit at its
+/// left (UAX #9, rule L1). Preserved spaces that hang count as removed.
 pub(super) struct AnchorPlaces<'a> {
     doc: &'a Document,
     lines: &'a [shodo::Line],
     ends: HashMap<usize, Option<LineEnd>>,
 }
 
-/// The end of the content of a line that reads left to right.
+/// The end of the content of a line, from its start edge.
 #[derive(Clone, Copy)]
 struct LineEnd {
     /// Where the spaces that hang at the end of the line start.
@@ -5045,21 +5064,9 @@ impl<'a> AnchorPlaces<'a> {
         });
         if let Some(before) = before
             && let Some(end) = self.end(before)
+            && let Some(moved) = moved_to_line_end(&self.lines[before], &self.lines[index], end)
         {
-            // The anchor takes the direction of the text on both sides of it
-            // when they agree (UAX #9, rule N1). Text against the line's
-            // direction then ends at the start of its run, the anchor with it.
-            let line = &self.lines[before];
-            let rtl = line.used_direction() == Direction::Rtl;
-            return match (last_text_run(line), first_text_run(&self.lines[index])) {
-                (Some(last), Some(next))
-                    if last.bidi_level() % 2 == next.bidi_level() % 2
-                        && (last.bidi_level() % 2 == 1) != rtl =>
-                {
-                    (before, last.inline_start(), Some(!rtl))
-                }
-                _ => (before, end.content, None),
-            };
+            return (before, moved.0, moved.1);
         }
         // Only the spaces before the anchor are taken out: an end margin
         // after them stays, and has no fragment that would tell its end.
@@ -5073,7 +5080,7 @@ impl<'a> AnchorPlaces<'a> {
         }
     }
 
-    /// The end of the content of line `index`, when it reads left to right.
+    /// The end of the content of line `index`.
     fn end(&mut self, index: usize) -> Option<LineEnd> {
         let lines = self.lines;
         *self
@@ -5081,6 +5088,51 @@ impl<'a> AnchorPlaces<'a> {
             .entry(index)
             .or_insert_with(|| content_end(&lines[index]))
     }
+}
+
+/// Where on `line` the anchor that leads the line `next` sits once moved to
+/// the end of `line`, with its bidi level parity when that sets it.
+///
+/// In text of one direction the anchor sits where the content ends. Where
+/// some text reads against the line's direction, the anchor takes the
+/// direction of the text on both sides of it when they agree (UAX #9, rule
+/// N1): against the line's direction it then sits at the start of the last
+/// run, where that text ends, past the atomic inlines that go on from it.
+/// Without text on either line the anchor stays where the line breaker put
+/// it (`None`).
+fn moved_to_line_end(
+    line: &shodo::Line,
+    next: &shodo::Line,
+    end: LineEnd,
+) -> Option<(f32, Option<bool>)> {
+    if !reads_against(line) && !reads_against(next) {
+        return Some((end.content, None));
+    }
+    let (last, first) = (last_text_run(line)?, first_text_run(next)?);
+    let rtl = line.used_direction() == Direction::Rtl;
+    let odd = last.bidi_level() % 2 == 1;
+    let same = odd == (first.bidi_level() % 2 == 1);
+    Some(if same && odd != rtl {
+        // Positions are snapped to 1/64 px by the line engine.
+        const SLACK: f32 = 1.0 / 32.0;
+        let mut start = last.inline_start();
+        while let Some(atomic) = line.fragments().find_map(|fragment| match fragment {
+            shodo::Fragment::Atomic(atomic)
+                if (atomic.margin_rect.inline_start + atomic.margin_rect.inline_size - start)
+                    .abs()
+                    < SLACK
+                    && atomic.margin_rect.inline_size > 0.0 =>
+            {
+                Some(atomic.margin_rect.inline_start)
+            }
+            _ => None,
+        }) {
+            start = atomic;
+        }
+        (start, Some(odd))
+    } else {
+        (end.content, None)
+    })
 }
 
 /// The line and inline position where an out-of-flow box is anchored, and,
@@ -5103,10 +5155,7 @@ fn first_text_run<'l>(line: &'l shodo::Line) -> Option<shodo::GlyphRunView<'l>> 
 /// bidirectional embeddings and isolates.
 fn text_runs<'l>(line: &'l shodo::Line) -> impl Iterator<Item = shodo::GlyphRunView<'l>> {
     let text = line.text();
-    let blank = |c: char| {
-        c.is_whitespace()
-            || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-    };
+    let blank = |c: char| c.is_whitespace() || is_bidi_control(c);
     line.fragments().filter_map(move |fragment| match fragment {
         shodo::Fragment::GlyphRun(run)
             if text
@@ -5126,9 +5175,10 @@ fn hanging_spaces(line: &shodo::Line) -> f32 {
 }
 
 /// Where the content of `line` ends, before the spaces that hang at its end,
-/// and where those spaces start, when the line and all of its text read left
-/// to right. The runs of text hold those spaces; the boxes of inline elements
-/// leave them out. A tab has no glyph to tell where it ends, so a line whose
+/// and where those spaces start, from the line's start edge. The spaces at
+/// the end of a line take its direction (UAX #9, rule L1), so they come last
+/// whatever the text reads. The runs of text hold those spaces; the boxes of
+/// inline elements leave them out. A tab has no glyph to tell where it ends, so a line whose
 /// trailing white space holds one is left as it is.
 fn content_end(line: &shodo::Line) -> Option<LineEnd> {
     let trailing_tab = line

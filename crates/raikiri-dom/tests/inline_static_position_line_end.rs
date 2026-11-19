@@ -165,6 +165,36 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "<div style='padding-left:20px'><div style='direction:ltr;text-align:right;width:100px'>XXXX XXXX <span id=q style='position:absolute'>Q</span><span style='position:absolute'>S</span>YYYY</div></div>",
         [120.0, 0.0, 10.0, 10.0],
     ),
+    (
+        "rtl left before digits on the next line",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:left;width:100px'>XXXX XXXX <span id=q style='position:absolute'>Q</span>1234</div></div>",
+        [110.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl right before digits on the next line",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:right;width:100px'>XXXX XXXX <span id=q style='position:absolute'>Q</span>1234</div></div>",
+        [120.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl left after digits where the line wraps",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:left;width:100px'>XXXX 1234 <span id=q style='position:absolute'>Q</span>YYYY</div></div>",
+        [110.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl left after an inline-block where the line wraps",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:left;width:100px'>XXXX <span style='display:inline-block;width:30px;height:10px'></span> <span id=q style='position:absolute'>Q</span>YYYYYYYYY</div></div>",
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl left between an overridden word and digits across a wrap",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:left;width:100px'>\u{202E}XXXX XXXX\u{202C} <span id=q style='position:absolute'>Q</span>1234</div></div>",
+        [10.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "rtl right between an overridden word and digits across a wrap",
+        "<div style='padding-left:20px'><div style='direction:rtl;text-align:right;width:100px'>\u{202E}XXXX XXXX\u{202C} <span id=q style='position:absolute'>Q</span>1234</div></div>",
+        [20.0, 0.0, 10.0, 10.0],
+    ),
 ];
 
 #[test]
