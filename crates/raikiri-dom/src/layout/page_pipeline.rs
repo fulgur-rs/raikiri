@@ -5648,6 +5648,7 @@ fn avoided_run_ends(
         row_groups,
         body_id,
     );
+    let last_parts = table_last_parts(document, candidates, &first_row_ends, row_groups);
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
     let mut run_lasts = HashMap::<usize, (&PageCandidate, f32)>::new();
@@ -5685,8 +5686,9 @@ fn avoided_run_ends(
                 document.nodes[candidate.node_id].position(),
                 PositionValue::Running(_)
             );
-        // A table ends the run it joins and starts none: only its first row
-        // stays with the box before it.
+        // A table joins a run by its first row, which stays with the box
+        // before it, and starts one by its last row, which stays with the box
+        // after it (see `table_last_parts`).
         let ends_run = !eligible
             && candidate.context.is_direct_body_element()
             && first_row_ends.contains_key(&candidate.node_id);
@@ -5716,8 +5718,8 @@ fn avoided_run_ends(
             run_start = None;
         }
         if ends_run {
-            previous = None;
-            run_start = None;
+            run_start = last_parts.get(&candidate.node_id).copied();
+            previous = run_start.map(|_| candidate);
         } else {
             previous = Some(candidate);
         }
@@ -5768,7 +5770,14 @@ fn avoided_run_ends(
     for candidate in candidates {
         if let Some(unit) = candidate.context.avoided_unit() {
             let end = candidate.raw_y + unit;
-            ends.entry(candidate.node_id)
+            // A run that a table starts reaches past the table's end, and
+            // begins with the table's last part.
+            let key = last_parts
+                .get(&candidate.node_id)
+                .copied()
+                .filter(|_| unit > candidate.height + 0.001)
+                .unwrap_or(candidate.node_id);
+            ends.entry(key)
                 .and_modify(|known| {
                     known.end = known.end.max(end);
                     if let Some(closing) = &mut known.closing {
@@ -5780,6 +5789,61 @@ fn avoided_run_ends(
         }
     }
     ends
+}
+
+/// The row or caption that each table among `first_row_ends` keeps with the
+/// box after it when the break between them is avoided: the last of them in
+/// visual order, which is a caption below the rows when the table has one, or
+/// the first row of the last row group when that group avoids breaks inside it
+/// (see `row_groups`, from [`avoided_row_groups`]). The page breaks before
+/// that part, inside the table, as in Chromium. A table with a footer group
+/// has none.
+fn table_last_parts(
+    document: &Document,
+    candidates: &[PageCandidate],
+    first_row_ends: &HashMap<usize, f32>,
+    row_groups: &HashMap<usize, (f32, f32)>,
+) -> HashMap<usize, usize> {
+    let mut last_rows = HashMap::<usize, (usize, f32)>::new();
+    for candidate in candidates {
+        let table = if candidate.context.is_table_row() {
+            document.table_of_row(candidate.node_id)
+        } else if candidate.context.is_table_caption() {
+            caption_table(document, candidate.node_id)
+        } else {
+            None
+        };
+        // A footer group is placed after the rows on its own (see
+        // `place_table_footer`), and keeps that place.
+        let Some(table) = table.filter(|&table| {
+            first_row_ends.contains_key(&table) && !has_footer_group(document, table)
+        }) else {
+            continue;
+        };
+        let end = candidate.raw_y + candidate.height;
+        last_rows
+            .entry(table)
+            .and_modify(|last| {
+                if end >= last.1 {
+                    *last = (candidate.node_id, end);
+                }
+            })
+            .or_insert((candidate.node_id, end));
+    }
+    last_rows
+        .into_iter()
+        .map(|(table, (row, _))| {
+            // The rows of a group that avoids breaks inside it move together:
+            // its first row carries the group.
+            let group = document.parent_of(row);
+            let first = row_groups
+                .keys()
+                .copied()
+                .find(|&first| first != row && document.parent_of(first) == group)
+                .unwrap_or(row);
+            (table, first)
+        })
+        .collect()
 }
 
 /// The part of a block that the page cannot break away from the box before
@@ -12139,24 +12203,28 @@ fn nested_run_units(
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
 ) -> Vec<Option<f32>> {
-    // A table ends a run it joins and starts none: only its first row stays
-    // with the box before it.
+    // A table joins a run by its first row, which stays with the box before
+    // it, and starts one by its last part, which stays with the box after it:
+    // the run it starts begins inside it (see `table_last_parts`), and the
+    // page may break there even when nothing comes before the table.
     let is_flow_box = |index: usize| {
         let id = children[index];
         let (in_flow, floated) = flow_flags[index];
         in_flow == Some(id) && !floated && !takes_no_block_space(document, id)
     };
     let is_box = |index: usize| is_flow_box(index) && is_plain_block_box(document, children[index]);
-    let is_run_end = |index: usize| {
-        is_box(index)
-            || (is_flow_box(index) && ends_a_run_as_table(document, cascade, children[index]))
+    let is_table = |index: usize| {
+        is_flow_box(index) && ends_a_run_as_table(document, cascade, children[index])
     };
+    let is_run_end = |index: usize| is_box(index) || is_table(index);
     let first_in_flow = flow_flags
         .iter()
         .position(|&(in_flow, _)| in_flow.is_some());
     let mut units = vec![None; children.len()];
     let mut finish = |run: Option<(usize, usize)>| {
-        let Some((start, last)) = run.filter(|&(start, _)| Some(start) != first_in_flow) else {
+        let Some((start, last)) =
+            run.filter(|&(start, _)| Some(start) != first_in_flow || is_table(start))
+        else {
             return;
         };
         let (start_box, last_box) = (children[start], children[last]);
@@ -12180,13 +12248,16 @@ fn nested_run_units(
             continue;
         }
         let tied_before = previous.filter(|&before| {
-            is_box(before)
+            (is_box(before) || is_table(before))
                 && boxes_are_tied(document, cascade, children[before], children[index])
                 && is_run_end(index)
         });
         match (tied_before, run) {
-            (Some(_), Some((start, _))) => run = Some((start, index)),
-            (Some(before), None) => run = Some((before, index)),
+            (Some(before), Some((start, _))) if !is_table(before) => run = Some((start, index)),
+            (Some(before), current) => {
+                finish(current);
+                run = Some((before, index));
+            }
             (None, _) => {
                 finish(run.take());
             }
