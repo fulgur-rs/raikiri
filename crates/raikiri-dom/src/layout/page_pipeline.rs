@@ -14453,10 +14453,8 @@ impl SubtreeShifts {
     /// row.
     fn grow_row_for_float(&mut self, row: (usize, usize), cell: usize, growth: f32) -> f32 {
         let total = self.float_growth(cell) + growth;
-        match self.float_cells.iter_mut().find(|(id, _)| *id == cell) {
-            Some((_, grown)) => *grown = total,
-            None => self.float_cells.push((cell, total)),
-        }
+        self.float_cells.retain(|(id, _)| *id != cell);
+        self.float_cells.push((cell, total));
         let before = self.row_growth(row);
         match self.float_rows.iter_mut().find(|(id, _)| *id == row) {
             Some((_, grown)) => *grown = grown.max(total),
