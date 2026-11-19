@@ -6427,10 +6427,12 @@ impl AvoidedBreaks {
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
-        // Keep an ordinary table row intact when it would cross the current
-        // page. The row is a class-A boundary owned by the table engine; its
-        // cells and descendants follow the same flow shift below. Rowspans,
-        // cell-internal breaks remain out of this narrow row-boundary pass.
+        // An ordinary table row that would cross the current page moves to
+        // the next one whole when a cell of it breaks before its content, as
+        // Chromium does; otherwise it breaks there with its cells (see
+        // `table_cell_fragments::row_splits`). A row whose cells would need
+        // their lines moved, or one of a table that repeats a header or
+        // footer, still moves whole.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
         // A row of a table that repeats its footer leaves room for the
@@ -6464,7 +6466,11 @@ impl AvoidedBreaks {
                         page_start,
                         page_end,
                         next_page_step,
-                    ))
+                    )
+                    && !(repeated_header_height + repeated_footer_height <= 0.001
+                        && table_cell_fragments::row_splits(
+                            document, cascade, node_id, flow_y, page_end,
+                        )))
                 || spanned_row_restarts(
                     document,
                     cascade,
