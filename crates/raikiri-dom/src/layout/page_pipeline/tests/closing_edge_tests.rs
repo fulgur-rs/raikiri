@@ -2509,7 +2509,9 @@ fn table_of_rows(
         let cell = block(
             doc,
             row,
-            &format!("display:table-cell;padding:0;height:{height}px"),
+            // A cell that avoids a break inside it keeps its row whole, where
+            // an empty one would let the row break across the page end.
+            &format!("display:table-cell;padding:0;height:{height}px;break-inside:avoid"),
         );
         ids.extend([row, cell]);
     }
@@ -4267,7 +4269,12 @@ fn a_final_avoided_group_can_split_its_tail_after_moving_to_a_shorter_page() {
                 let first = block(doc, group, "display:table-row");
                 block(doc, first, "display:table-cell;padding:0;height:10px");
                 let last = block(doc, group, "display:table-row");
-                block(doc, last, "display:table-cell;padding:0;height:10px");
+                // A cell that avoids a break inside it keeps its row whole.
+                block(
+                    doc,
+                    last,
+                    "display:table-cell;padding:0;height:10px;break-inside:avoid",
+                );
                 vec![first, last]
             },
             &steps,

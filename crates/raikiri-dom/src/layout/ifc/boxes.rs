@@ -192,6 +192,7 @@ pub(crate) fn layout_with_boxes_in(
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
+            leading_block_baseline: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
@@ -411,6 +412,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
+            leading_block_baseline: None,
             block_line_starts: Vec::new(),
             generated_block_starts: Vec::new(),
             generated_block_lines: Vec::new(),
@@ -432,6 +434,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut next_start = LineStart::PARAGRAPH;
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
+    let mut leading_block_baseline = None;
+    let mut first_segment = true;
     let mut generated_block_lines = Vec::new();
     let mut shifts = super::root::LineShifts::default();
     let mut fragment_box_placements = Vec::new();
@@ -538,6 +542,12 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
+        // Only a block ahead of every line of the whole paragraph counts, in
+        // the first fragmentainer, whose offsets the lines start from.
+        if first_segment {
+            leading_block_baseline =
+                leading_block_baseline.or(outcome.lines.leading_block_baseline);
+        }
         if !has_next
             && let Some(height) = fragmentainer_height
             && let Some(last) = outcome.lines.lines.last()
@@ -584,6 +594,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             .unwrap_or_else(|_| unreachable!("column lines have a single owner"));
         all_lines.extend(column_lines);
 
+        first_segment = false;
         if let Some(next) = outcome.continuation {
             token = next;
         } else {
@@ -607,6 +618,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         discarded_float_gap: 0.0,
         escaping_margin,
         leading_block_margin: None,
+        leading_block_baseline,
         block_line_starts,
         generated_block_starts: Vec::new(),
         generated_block_lines,
@@ -881,6 +893,7 @@ fn run_boxes_segment(
     // The collapsed top margins of a block child that starts the paragraph,
     // with no line, float or other margin above it.
     let mut leading_block_margin = None;
+    let mut leading_block_baseline = None;
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut generated_block_starts = Vec::new();
@@ -901,14 +914,13 @@ fn run_boxes_segment(
     let mut oof_candidates = OofCandidates::new();
     // The floats kept for the lines that the paragraph's inline-level
     // out-of-flow boxes may sit on alone.
-    let mut float_views =
-        if root.writing_mode == WritingMode::HorizontalTb && fragmentainer.is_none() {
-            FloatSnapshots::new(&root.boxes, |node| {
-                tree.nodes[node].display().is_inline_level()
-            })
-        } else {
-            None
-        };
+    let mut float_views = if fragmentainer.is_none() {
+        FloatSnapshots::new(&root.boxes, |node| {
+            tree.nodes[node].display().is_inline_level()
+        })
+    } else {
+        None
+    };
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
@@ -1580,6 +1592,11 @@ fn run_boxes_segment(
                     marker_pending = None;
                     candidate_leading = 0.0;
                 }
+                // The first block with a baseline ahead of every line gives the
+                // root its first baseline.
+                if lines.is_empty() {
+                    leading_block_baseline = leading_block_baseline.or(block.first_baseline);
+                }
                 oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
@@ -1722,6 +1739,7 @@ fn run_boxes_segment(
             discarded_float_gap: 0.0,
             escaping_margin,
             leading_block_margin,
+            leading_block_baseline,
             block_line_starts,
             generated_block_starts,
             generated_block_lines,
@@ -5291,13 +5309,17 @@ fn leading_static_offset(lines: &IfcLines) -> (f32, Option<usize>) {
 /// inline-start edge of the content box, and extends the way the text around
 /// it reads: downwards for left-to-right text and upwards for right-to-left
 /// text (`anchor.1`), but the other way round in `sideways-lr`, which lays
-/// the lines out upwards. Any other box starts on the inline-start edge of the
-/// content box. The inline direction is reversed, so that its start is the
-/// bottom edge, by `direction: rtl` or by `sideways-lr`.
+/// the lines out upwards. One without an anchor that sits on a line of its
+/// own lies at `own_line.0` from the line-left edge of that line, the top
+/// edge, or the bottom one in `sideways-lr`, with its edge `own_line.1` there.
+/// Any other box starts on the inline-start edge of the content box. The
+/// inline direction is reversed, so that its start is the bottom edge, by
+/// `direction: rtl` or by `sideways-lr`.
 fn vertical_static_position(
     writing_mode: WritingMode,
     rtl: bool,
     anchor: Option<(f32, bool)>,
+    own_line: Option<(f32, AxisStaticEdge)>,
     block_offset: f32,
     (content_left, content_top): (f32, f32),
     (content_right, inline_extent): (f32, f32),
@@ -5328,10 +5350,25 @@ fn vertical_static_position(
                 },
             )
         }
-        None if reversed => {
-            AxisStaticPosition::from_edge(content_top + inline_extent, AxisStaticEdge::End)
-        }
-        None => AxisStaticPosition::from_edge(content_top, AxisStaticEdge::Start),
+        // A line of its own is measured from its line-left edge: the top,
+        // or the bottom in `sideways-lr` (CSS Writing Modes 4 §6.4).
+        None => match own_line {
+            Some((at, edge)) if writing_mode == WritingMode::SidewaysLr => {
+                // The line gives the box its start or its end edge, never
+                // its center.
+                let flipped = if edge == AxisStaticEdge::End {
+                    AxisStaticEdge::Start
+                } else {
+                    AxisStaticEdge::End
+                };
+                AxisStaticPosition::from_edge(content_top + inline_extent - at, flipped)
+            }
+            Some((at, edge)) => AxisStaticPosition::from_edge(content_top + at, edge),
+            None if reversed => {
+                AxisStaticPosition::from_edge(content_top + inline_extent, AxisStaticEdge::End)
+            }
+            None => AxisStaticPosition::from_edge(content_top, AxisStaticEdge::Start),
+        },
     };
     Point { x, y }
 }
@@ -5866,8 +5903,9 @@ struct BoxSurroundings {
     boundary: Option<usize>,
 }
 
-/// The lines, missing from the lines of a horizontal paragraph, that its
-/// inline-level out-of-flow boxes without an anchor sit on.
+/// The lines, missing from the lines of a paragraph, that its inline-level
+/// out-of-flow boxes without an anchor sit on. They are measured along the
+/// line from its line-left edge, in every writing mode.
 struct HypotheticalLines<'a> {
     lines: &'a IfcLines,
     options: LineOptions,
@@ -5930,8 +5968,9 @@ impl<'a> HypotheticalLines<'a> {
 
     /// Where the static position of the box `node` lies along its line,
     /// `block_offset` from the content box's block-start edge and after the
-    /// line `preceding` (see [`static_block_offset`]): from the content box's
-    /// left edge, with the edge of the box that goes there.
+    /// line `preceding` (see [`static_block_offset`]): from the line-left edge
+    /// of the content box, the left one in a horizontal paragraph, with the
+    /// edge of the box that goes there.
     ///
     /// Chromium lays out two kinds of such a line. When the box follows a
     /// forced line break, or sits in an inline box, the line holds something
@@ -6245,9 +6284,8 @@ pub(crate) fn place_out_of_flow(
         };
         // A box that stays out of the lines after it sits where a block-level
         // box would: below the block it follows, before the floats after it
-        // move the lines down. The lines of a vertical root have no line of
-        // its own to place it on, so it keeps its anchor there.
-        let out_of_lines = (!vertical_root && inline_level && anchor.is_some())
+        // move the lines down.
+        let out_of_lines = (inline_level && anchor.is_some())
             .then(|| {
                 before_floats
                     .get_or_insert_with(|| boxes_before_floats_after_a_block(tree, idx, &lines))
@@ -6271,18 +6309,31 @@ pub(crate) fn place_out_of_flow(
                     anchor_has_odd_level(&lines.lines[index], position, rtl),
                 )
             });
+        // A box that was inline-level but has no anchor sits on a line of its
+        // own, which the lines do not hold: where along it, from the line-left
+        // edge of the content box, with the edge of the box that goes there.
+        let own_line = (inline_anchor.is_none() && inline_level).then(|| {
+            let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
+                || beside_inline
+                    .get_or_insert_with(|| boxes_in_anonymous_line_blocks(tree, idx))
+                    .contains(&node);
+            hypothetical
+                .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)))
+                .anchor(node, in_inline_box, block_offset, preceding_line)
+        });
         let static_spot = if vertical_root {
             vertical_static_position(
                 writing_mode,
                 rtl,
                 inline_anchor,
+                own_line,
                 block_offset,
                 (content_left, content_top),
                 (content_right, lines.width),
             )
         } else {
-            let x = match inline_anchor {
-                Some((position, odd_level)) => AxisStaticPosition::from_edge(
+            let x = match (inline_anchor, own_line) {
+                (Some((position, odd_level)), _) => AxisStaticPosition::from_edge(
                     content_left
                         + if rtl {
                             lines.width - position
@@ -6295,24 +6346,13 @@ pub(crate) fn place_out_of_flow(
                         AxisStaticEdge::Start
                     },
                 ),
-                // A box that was inline-level but has no anchor sits on a line
-                // of its own, which the lines do not hold.
-                None if inline_level => {
-                    let in_inline_box = has_inline_ancestor(tree, idx, owner, node)
-                        || beside_inline
-                            .get_or_insert_with(|| boxes_in_anonymous_line_blocks(tree, idx))
-                            .contains(&node);
-                    let line = hypothetical
-                        .get_or_insert_with(|| HypotheticalLines::new(&lines, tree, (idx, owner)));
-                    let (at, edge) = line.anchor(node, in_inline_box, block_offset, preceding_line);
-                    AxisStaticPosition::from_edge(content_left + at, edge)
-                }
+                (None, Some((at, edge))) => AxisStaticPosition::from_edge(content_left + at, edge),
                 // Any other box starts at the inline-start edge of the content
                 // box: the right one in a right-to-left root.
-                None if rtl => {
+                (None, None) if rtl => {
                     AxisStaticPosition::from_edge(content_left + lines.width, AxisStaticEdge::End)
                 }
-                None => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
+                (None, None) => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
             };
             Point {
                 x,
