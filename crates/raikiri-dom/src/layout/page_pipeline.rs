@@ -13639,9 +13639,12 @@ fn lines_can_shift_inside(
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
-/// children can move down inside it: its height grows with them, it is in one
-/// column, and the only boxes it lays out are atomic inlines, floats, block
-/// children and out-of-flow boxes. The block children move with the lines
+/// children can move down inside it: no size containment ignores them, it is
+/// in one column, and the only boxes it lays out are atomic inlines, floats,
+/// block children and out-of-flow boxes. Its box grows with the moved lines
+/// as far as its height allows (see [`lines_shift_growth`]): as in Chromium,
+/// a `height`, `min-height` or `max-height` does not keep the lines in
+/// place, and lines past a set height overflow the box. The block children move with the lines
 /// before them (see [`blocks_after_line`]). An out-of-flow box is one that a block-axis
 /// inset places away from the lines or that follows them (see
 /// [`out_of_flow_follow`]). A float is a page candidate of its own, placed
@@ -13651,7 +13654,7 @@ fn lines_can_shift_between_blocks(
     cascade: &CascadeResult,
     block_id: usize,
 ) -> bool {
-    height_follows_content(document, block_id)
+    !document.nodes[block_id].size_containment.height
         && content_follows_block_children(document, cascade, block_id)
 }
 
