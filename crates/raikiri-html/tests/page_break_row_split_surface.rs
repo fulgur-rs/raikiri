@@ -432,3 +432,36 @@ fn a_cell_that_avoids_a_break_or_breaks_before_itself_moves_its_row_whole() {
         ]
     );
 }
+
+#[test]
+fn a_break_forced_before_the_first_box_of_a_cell_moves_its_row_whole() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:60px">W</div><table><tr><td><div style="break-before:page">A</div></td><td><div style="height:60px">B</div></td></tr><tr><td>R</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'W', 0, 5),
+            (1, 'A', 0, 5),
+            (1, 'B', 10, 5),
+            (1, 'R', 0, 65),
+            (1, 'X', 0, 85),
+        ]
+    );
+}
+
+#[test]
+fn a_float_that_breaks_lets_its_row_break_with_it() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:60px">W</div><table><tr><td><div style="float:left;height:60px;width:10px">F</div>A</td><td><div style="height:60px">B</div></td></tr><tr><td>R</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 10, 65),
+            (0, 'B', 20, 65),
+            (0, 'F', 0, 65),
+            (0, 'W', 0, 5),
+            (1, 'R', 0, 25),
+            (1, 'X', 0, 45),
+        ]
+    );
+}

@@ -1,5 +1,7 @@
 //! A single-line cell can keep its text while its spare height continues,
-//! and a cell that a page break splits drops its block-axis alignment.
+//! a row breaks across the page end unless a cell of it breaks before its
+//! content, and a cell that a page break splits drops its block-axis
+//! alignment.
 
 use super::*;
 use raikiri_layout_style::values::ResolveOrZero;
@@ -384,32 +386,117 @@ pub(super) fn row_splits(
         .iter()
         .map(|&cell| document.pagination_local_y(cell))
         .fold(f32::INFINITY, f32::min);
+    // The cells of earlier rows that span the row break with it where they
+    // are: their content before it is already on the page.
+    let spanning = document
+        .ancestors(row)
+        .find(|&id| {
+            matches!(
+                document.nodes[id].display(),
+                DisplayValue::Table | DisplayValue::InlineTable
+            )
+        })
+        .map_or_else(Vec::new, |table| {
+            crate::layout::table::row_moves::spanning_cells_beside(document, table, row)
+        });
+    let row_abs_y = current_abs_y(document, row);
     !document.context.pagination_on_transposed_axes
         && !cells.is_empty()
         && cells.iter().all(|&cell| {
-            let node = &document.nodes[cell];
-            let layout = &node.layout;
-            let padding = document
-                .physical_style(cell)
-                .padding()
-                .resolve_or_zero(Some(layout.size.width));
             let cell_top = top + document.pagination_local_y(cell) - row_top;
-            // The room that the cell's alignment put above its content, which
-            // a cell that breaks loses.
-            let shift = layout.padding.top - padding.top;
-            let tops = (cell_top - shift, cell_top + layout.border.top + padding.top);
-            let closing = padding.bottom + layout.border.bottom;
-            let computed = &cascade.computed[cell];
-            // Chromium takes a break forced before a cell as one before its
-            // row, which then starts the next page whole.
-            node.display() == DisplayValue::TableCell
-                && !node.used_writing_mode.is_vertical()
-                && !box_avoids_page_break_inside(document, cell, computed.break_inside)
-                && !page_break_is_forced(document, cell, computed.break_before)
-                && shift.is_finite()
-                && content_fits(document, cascade, cell, tops, closing, page_end)
-                && breaks_cleanly(document, cascade, cell, tops, closing, page_end)
+            cell_breaks(document, cascade, cell, cell_top, page_end, true)
         })
+        && spanning.iter().all(|&cell| {
+            let cell_top = top + current_abs_y(document, cell) - row_abs_y;
+            cell_breaks(document, cascade, cell, cell_top, page_end, false)
+        })
+}
+
+/// Whether the cell `cell`, with its border box at `cell_top` in the flow,
+/// lets a break at `page_end` go through it where its content is, and, for
+/// a cell of the row itself (`own`), puts some of that content before it.
+fn cell_breaks(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    cell: usize,
+    cell_top: f32,
+    page_end: f32,
+    own: bool,
+) -> bool {
+    let node = &document.nodes[cell];
+    let layout = &node.layout;
+    let padding = document
+        .physical_style(cell)
+        .padding()
+        .resolve_or_zero(Some(layout.size.width));
+    // The room that the cell's alignment put above its content, which a
+    // cell that breaks loses.
+    let shift = layout.padding.top - padding.top;
+    let tops = (cell_top - shift, cell_top + layout.border.top + padding.top);
+    let closing = padding.bottom + layout.border.bottom;
+    let computed = &cascade.computed[cell];
+    // Chromium takes a break forced before a cell, or before its first
+    // content, as one before its row, which then starts the next page whole.
+    node.display() == DisplayValue::TableCell
+        && !node.used_writing_mode.is_vertical()
+        && !box_avoids_page_break_inside(document, cell, computed.break_inside)
+        && shift.is_finite()
+        && (!own
+            || !page_break_is_forced(document, cell, computed.break_before)
+                && !starts_with_forced_break(document, cascade, cell)
+                && content_fits(document, cascade, cell, tops, closing, page_end))
+        && !float_crosses(
+            document,
+            cascade,
+            cell,
+            tops.0 - current_abs_y(document, cell),
+            page_end,
+        )
+        && breaks_cleanly(document, cascade, cell, tops, closing, page_end)
+}
+
+/// Whether the first content of `block` in its flow, at any depth, is a box
+/// with a break forced before it.
+fn starts_with_forced_break(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+) -> bool {
+    let mut children = Vec::new();
+    flow_children(document, cascade, block, &mut children);
+    children.first().is_some_and(|&first| {
+        block_level_element(document, first)
+            && (page_break_is_forced(document, first, cascade.computed[first].break_before)
+                || starts_with_forced_break(document, cascade, first))
+    })
+}
+
+/// Whether a float inside `parent` that no break goes through, or that does
+/// not stack its content in block flow, runs past `page_end`. `offset` takes
+/// a box from where it is in the document to where it is in the flow.
+/// Pagination does not move such a float down inside a table cell.
+fn float_crosses(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    parent: usize,
+    offset: f32,
+    page_end: f32,
+) -> bool {
+    document.nodes[parent].children.iter().any(|&child| {
+        let node = &document.nodes[child];
+        node.kind() == NodeKind::Element
+            && (is_floating_box_for_pagination(document, cascade, child) && {
+                let top = offset + current_abs_y(document, child);
+                top < page_end - 0.001
+                    && top + node.layout.size.height > page_end + 0.001
+                    && (box_avoids_page_break_inside(
+                        document,
+                        child,
+                        cascade.computed[child].break_inside,
+                    ) || box_is_unbreakable(document, cascade, child, false)
+                        || !plain_block(document, child))
+            } || float_crosses(document, cascade, child, offset, page_end))
+    })
 }
 
 /// Whether some content of the block `block` goes before a break at
@@ -517,47 +604,37 @@ fn breaks_cleanly(
                 .last()
                 .is_none_or(|&(_, bottom)| edges_fit(content_top + bottom));
     }
-    let node = &document.nodes[block];
-    let floats_stay_apart = node.children.iter().all(|&child| {
-        !is_floating_box_for_pagination(document, cascade, child) || {
-            let child_top = border_top + document.pagination_local_y(child);
-            let child_end = child_top + document.nodes[child].layout.size.height;
-            child_end <= page_end + 0.001 || child_top >= page_end - 0.001
-        }
-    });
     let mut children = Vec::new();
     flow_children(document, cascade, block, &mut children);
     let mut content_end = content_top;
-    floats_stay_apart
-        && children.iter().all(|&child| {
-            let layout = &document.nodes[child].layout;
-            let child_top = border_top + document.pagination_local_y(child);
-            let child_end = child_top + layout.size.height;
-            let child_content_top = child_top + layout.border.top + layout.padding.top;
-            content_end = child_end;
-            // A box that avoids a break inside it moves to the next page
-            // inside the cell, and the row grows with it.
-            block_level_element(document, child)
-                && (child_end <= page_end + 0.001
-                    || child_top >= page_end - 0.001
-                    || box_avoids_page_break_inside(
+    children.iter().all(|&child| {
+        let layout = &document.nodes[child].layout;
+        let child_top = border_top + document.pagination_local_y(child);
+        let child_end = child_top + layout.size.height;
+        let child_content_top = child_top + layout.border.top + layout.padding.top;
+        content_end = child_end;
+        // A box that avoids a break inside it moves to the next page
+        // inside the cell, and the row grows with it.
+        block_level_element(document, child)
+            && (child_end <= page_end + 0.001
+                || child_top >= page_end - 0.001
+                || box_avoids_page_break_inside(
+                    document,
+                    child,
+                    cascade.computed[child].break_inside,
+                )
+                || !box_is_unbreakable(document, cascade, child, false)
+                    && plain_block(document, child)
+                    && child_content_top <= page_end + 0.001
+                    && breaks_cleanly(
                         document,
+                        cascade,
                         child,
-                        cascade.computed[child].break_inside,
-                    )
-                    || !box_is_unbreakable(document, cascade, child, false)
-                        && plain_block(document, child)
-                        && child_content_top <= page_end + 0.001
-                        && breaks_cleanly(
-                            document,
-                            cascade,
-                            child,
-                            (child_top, child_content_top),
-                            layout.padding.bottom + layout.border.bottom,
-                            page_end,
-                        ))
-        })
-        && edges_fit(content_end)
+                        (child_top, child_content_top),
+                        layout.padding.bottom + layout.border.bottom,
+                        page_end,
+                    ))
+    }) && edges_fit(content_end)
 }
 
 /// The block-start and block-end edges of the lines of `block`, below the

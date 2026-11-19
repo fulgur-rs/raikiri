@@ -35,6 +35,11 @@ pub(crate) fn spans_rows(document: &Document, cell: usize) -> bool {
 /// Whether a cell of an earlier row of `table` spans the row box `row`. A
 /// cell spans no further than the end of its row group, as in layout.
 pub(crate) fn row_beside_spanning_cell(document: &Document, table: usize, row: usize) -> bool {
+    !spanning_cells_beside(document, table, row).is_empty()
+}
+
+/// The cells of earlier rows of `table` that span the row box `row`.
+pub(crate) fn spanning_cells_beside(document: &Document, table: usize, row: usize) -> Vec<usize> {
     let rows = document
         .table_objects
         .rows
@@ -47,17 +52,22 @@ pub(crate) fn row_beside_spanning_cell(document: &Document, table: usize, row: u
                 .first()
                 .is_some_and(|&cell| document.parent_of(cell) == Some(row))
     };
-    rows.iter().position(holds_row).is_some_and(|index| {
-        let markers: Vec<usize> = rows.iter().map(|row| row.marker).collect();
-        let group_ends = super::rowspan::group_ends(document, table, &markers);
-        rows[..index].iter().enumerate().any(|(start, entry)| {
-            group_ends[start] > index
-                && entry
-                    .cells
-                    .iter()
-                    .any(|&cell| start + usize::from(super::get_rowspan(document, cell)) > index)
+    rows.iter()
+        .position(holds_row)
+        .map_or_else(Vec::new, |index| {
+            let markers: Vec<usize> = rows.iter().map(|row| row.marker).collect();
+            let group_ends = super::rowspan::group_ends(document, table, &markers);
+            rows[..index]
+                .iter()
+                .enumerate()
+                .filter(|&(start, _)| group_ends[start] > index)
+                .flat_map(|(start, entry)| {
+                    entry.cells.iter().copied().filter(move |&cell| {
+                        start + usize::from(super::get_rowspan(document, cell)) > index
+                    })
+                })
+                .collect()
         })
-    })
 }
 
 /// Records the collapsed border lines that pagination split by moving the
