@@ -284,17 +284,25 @@ pub(super) fn realign_beside(
 /// cell passes to the row and does not split the cell. Only block-level boxes
 /// break pages, so a break on an inline box, or inside a box that does not
 /// stack its children in block flow, or out of the flow, does not reach it.
+/// Generated content of the cell, or of a block it goes through, counts as
+/// content on its own side.
 fn breaks_inside(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     cell: usize,
 ) -> bool {
-    breaks_between(document, cascade, cell, false, false)
+    breaks_between(
+        document,
+        cascade,
+        cell,
+        generated_on_side(cascade, cell, true),
+        generated_on_side(cascade, cell, false),
+    )
 }
 
 /// The children of `parent` that are content of its block flow, with the
-/// children of `display: contents` boxes in place of them. Floats and
-/// positioned boxes are not that content.
+/// children of `display: contents` boxes in place of them. Floats,
+/// positioned boxes and white space that collapses away are not that content.
 fn flow_children(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -303,7 +311,18 @@ fn flow_children(
 ) {
     for &child in &document.nodes[parent].children {
         let node = &document.nodes[child];
-        if !sibling_renders(document, child)
+        // White space that the style preserves still makes a line.
+        let renders = if node.kind() == NodeKind::Text {
+            node.text_content().is_some_and(|text| {
+                !crate::generated_content::is_collapsed_white_space(
+                    text,
+                    cascade.computed[child].effective_white_space_collapse,
+                )
+            })
+        } else {
+            sibling_renders(document, child)
+        };
+        if !renders
             || matches!(
                 node.position(),
                 PositionValue::Absolute | PositionValue::Fixed
@@ -345,7 +364,17 @@ fn breaks_between(
         let after = after || index + 1 < children.len();
         page_break_is_forced(document, child, computed.break_before) && before
             || page_break_is_forced(document, child, computed.break_after) && after
-            || stacks_children_in_block_flow(document, child)
-                && breaks_between(document, cascade, child, before, after)
+            || (breaks_through_block_flow(document, cascade, child)
+                || stacks_children_in_block_flow(document, child)
+                    && !is_monolithic_for_pagination_with_transposed_axes(
+                        document, cascade, child, false,
+                    ))
+                && breaks_between(
+                    document,
+                    cascade,
+                    child,
+                    before || generated_on_side(cascade, child, true),
+                    after || generated_on_side(cascade, child, false),
+                )
     })
 }

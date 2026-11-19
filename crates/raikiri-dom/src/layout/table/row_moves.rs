@@ -27,6 +27,39 @@ pub(crate) fn has_row_spanning_cell(document: &Document, table: usize) -> bool {
     })
 }
 
+/// Whether `cell` spans more than one row.
+pub(crate) fn spans_rows(document: &Document, cell: usize) -> bool {
+    super::get_rowspan(document, cell) != 1
+}
+
+/// Whether a cell of an earlier row of `table` spans the row box `row`. A
+/// cell spans no further than the end of its row group, as in layout.
+pub(crate) fn row_beside_spanning_cell(document: &Document, table: usize, row: usize) -> bool {
+    let rows = document
+        .table_objects
+        .rows
+        .get(&table)
+        .map_or(&[][..], Vec::as_slice);
+    let holds_row = |entry: &super::anonymous::Row| {
+        entry.marker == row
+            || entry
+                .cells
+                .first()
+                .is_some_and(|&cell| document.parent_of(cell) == Some(row))
+    };
+    rows.iter().position(holds_row).is_some_and(|index| {
+        let markers: Vec<usize> = rows.iter().map(|row| row.marker).collect();
+        let group_ends = super::rowspan::group_ends(document, table, &markers);
+        rows[..index].iter().enumerate().any(|(start, entry)| {
+            group_ends[start] > index
+                && entry
+                    .cells
+                    .iter()
+                    .any(|&cell| start + usize::from(super::get_rowspan(document, cell)) > index)
+        })
+    })
+}
+
 /// Records the collapsed border lines that pagination split by moving the
 /// rows in `moved_rows` to a later page.
 ///
