@@ -946,10 +946,18 @@ pub(super) fn layout(
                 output.size + margin.sum_axes(),
                 if let Some(top) = tree.context.float_resumptions.float_top(usize::from(child)) {
                     top
-                } else if leading && collapse_start {
-                    flow.end
                 } else {
-                    flow.end + pending.resolve()
+                    let top = if leading && collapse_start {
+                        flow.end
+                    } else {
+                        flow.end + pending.resolve()
+                    };
+                    // A float the page walk moved whole to a later page
+                    // starts there, never above where the flow puts it.
+                    tree.context
+                        .float_resumptions
+                        .pushed_float_top(usize::from(child))
+                        .map_or(top, |pushed| pushed.max(top))
                 },
                 if style.float == Float::Left {
                     FloatDirection::Left
