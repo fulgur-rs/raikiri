@@ -3815,7 +3815,9 @@ fn clear_floats_at_forced_breaks<'name>(
 /// between it and what follows: when that is column content, the break
 /// falls in the columns, so Chromium ignores a page value there. It breaks
 /// the page before another spanner, or after the last spanner of the
-/// multicol container where the container's own edge follows.
+/// multicol container where the container's own edge follows. A spanner
+/// inside another box, such as an enclosing spanner, has no column content
+/// after it within that box.
 fn page_break_after_is_forced(
     document: &Document,
     cascade: &CascadeResult,
@@ -3837,21 +3839,43 @@ fn page_break_after_is_forced(
     // context is no layout child of its own. A wrapper that generates no box
     // passes the edge on to its parent, and the first content inside one
     // after the spanner is what follows it.
+    // Inside a box of its own, such as an enclosing spanner, what follows
+    // is no column content, so the page value breaks the page; at the end
+    // of such a box the break passes on to the box's own edge. A plain
+    // wrapper that layout leaves out ends in the columns.
     let mut current = node_id;
     loop {
-        let parent = document.parent_of(current);
-        let next =
-            parent.and_then(|parent| first_flow_child(document, cascade, parent, Some(current)));
-        if let Some(next) = next {
-            return starts_with_spanner(document, cascade, next);
+        let Some(parent) = document.parent_of(current) else {
+            return true;
+        };
+        if let Some(next) = first_flow_child(document, cascade, parent, Some(current)) {
+            return !lays_out_in_columns(document, parent)
+                || starts_with_spanner(document, cascade, next);
         }
-        match parent {
-            Some(parent) if cascade.computed[parent].display == DisplayValue::Contents => {
-                current = parent
-            }
-            _ => return parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
+        let node = &document.nodes[parent];
+        if node.multicol.is_some() {
+            return true;
         }
+        if cascade.computed[parent].display != DisplayValue::Contents
+            && node.display() == DisplayValue::Contents
+        {
+            return false;
+        }
+        current = parent;
     }
+}
+
+/// Whether the children of `id` are laid out in the columns of a multicol
+/// container: `id` is that container, or a box that layout leaves out on the
+/// way up to it.
+fn lays_out_in_columns(document: &Document, id: usize) -> bool {
+    document
+        .inclusive_layout_ancestors(id)
+        .find(|&id| {
+            let node = &document.nodes[id];
+            node.multicol.is_some() || node.display() != DisplayValue::Contents
+        })
+        .is_some_and(|id| document.nodes[id].multicol.is_some())
 }
 
 /// The first child of `parent`, after `after` when it is given, that the

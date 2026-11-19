@@ -406,3 +406,41 @@ fn a_page_value_on_a_spanner_that_cannot_span_changes_nothing() {
         &[],
     );
 }
+
+/// A spanner inside another spanner spans nothing of its own. The content
+/// after it in the outer spanner is no column content, so its page value
+/// breaks the page. As the last box of the outer spanner, its page value
+/// passes on to the end of the outer spanner: column content after that
+/// keeps it in the columns, and another spanner takes it to the next page.
+/// A plain wrapper that ends with a spanner passes nothing on (Chromium).
+#[test]
+fn a_page_value_on_a_spanner_inside_a_spanner() {
+    let nested = |inner_rest: &str, outer_rest: &str| {
+        format!(
+            "<div style='{COLUMNS}'><div style='column-span:all'>\
+             <div id=a style='column-span:all;break-after:page'>A</div>{inner_rest}</div>\
+             {outer_rest}</div>"
+        )
+    };
+    check(
+        &nested("<div id=b>B</div>", ""),
+        2,
+        &[("a", 0, 0.0, 0.0), ("b", 1, 0.0, 0.0)],
+    );
+    check(&nested("", "<div id=b>B</div>"), 1, &[]);
+    // Chromium puts B at the top of the second page, which the placement of
+    // adjacent spanners does not match yet.
+    check(
+        &nested("", "<div id=b style='column-span:all'>B</div>"),
+        2,
+        &[],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div><div style='column-span:all;break-after:page'>A</div></div>\
+             <div id=b style='column-span:all'>B</div></div>"
+        ),
+        1,
+        &[],
+    );
+}
