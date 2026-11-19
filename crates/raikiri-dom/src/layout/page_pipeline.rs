@@ -3892,10 +3892,8 @@ fn spanner_before(document: &Document, cascade: &CascadeResult, node_id: usize) 
         .iter()
         .rev()
         .copied()
-        .find(|&child| document.nodes[child].kind() == NodeKind::Element)?;
-    (super::is_spanner_in(document, cascade, previous)
-        && first_flow_child(document, cascade, parent, Some(previous)) == Some(node_id))
-    .then_some(previous)
+        .find(|&child| lays_out_in_flow(document, cascade, child))?;
+    super::is_spanner_in(document, cascade, previous).then_some(previous)
 }
 
 /// Whether the children of `id` are laid out in the columns of a multicol
@@ -3912,9 +3910,7 @@ fn lays_out_in_columns(document: &Document, id: usize) -> bool {
 }
 
 /// The first child of `parent`, after `after` when it is given, that the
-/// flow lays out: neither hidden nor out of flow, nor text of white space
-/// that its style collapses away, nor a wrapper that generates no box and
-/// holds no such child or generated content.
+/// flow lays out (see [`lays_out_in_flow`]).
 fn first_flow_child(
     document: &Document,
     cascade: &CascadeResult,
@@ -3928,28 +3924,36 @@ fn first_flow_child(
             .position(|&child| child == after)
             .map_or(children.len(), |index| index + 1)
     });
-    children[start..].iter().copied().find(|&child| {
-        let node = &document.nodes[child];
-        node.is_in_document()
-            && node.display() != DisplayValue::None
-            && !matches!(
-                node.position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-            && match &node.data {
-                crate::node::NodeData::Text(text) => {
-                    !crate::generated_content::is_collapsed_white_space(
-                        &text.text_content,
-                        cascade.computed[child].effective_white_space_collapse,
-                    )
-                }
-                _ => true,
+    children[start..]
+        .iter()
+        .copied()
+        .find(|&child| lays_out_in_flow(document, cascade, child))
+}
+
+/// Whether the flow lays out `child`: it is neither hidden nor out of flow,
+/// nor text of white space that its style collapses away, nor a wrapper that
+/// generates no box and holds no such child or generated content.
+fn lays_out_in_flow(document: &Document, cascade: &CascadeResult, child: usize) -> bool {
+    let node = &document.nodes[child];
+    node.is_in_document()
+        && node.display() != DisplayValue::None
+        && !matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && match &node.data {
+            crate::node::NodeData::Text(text) => {
+                !crate::generated_content::is_collapsed_white_space(
+                    &text.text_content,
+                    cascade.computed[child].effective_white_space_collapse,
+                )
             }
-            && (cascade.computed[child].display != DisplayValue::Contents
-                || generated_on_side(cascade, child, true)
-                || generated_on_side(cascade, child, false)
-                || first_flow_child(document, cascade, child, None).is_some())
-    })
+            _ => true,
+        }
+        && (cascade.computed[child].display != DisplayValue::Contents
+            || generated_on_side(cascade, child, true)
+            || generated_on_side(cascade, child, false)
+            || first_flow_child(document, cascade, child, None).is_some())
 }
 
 /// Whether the content that starts at `node`, looking into wrappers that
@@ -4083,7 +4087,9 @@ fn row_takes_cell_break(
                     return false;
                 }
                 let computed = &cascade.computed[id];
-                if before && page_break_is_forced(document, cascade, id, computed.break_before)
+                if before
+                    && (page_break_is_forced(document, cascade, id, computed.break_before)
+                        || starts_with_forced_spanner(document, cascade, id))
                     || !before
                         && box_forces_break_after(document, cascade, id, computed.break_after)
                 {
@@ -4918,7 +4924,14 @@ fn paginate_flow(
         .nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| !node.multicol_groups.is_empty())
+        .filter(|&(id, node)| {
+            !node.multicol_groups.is_empty()
+                || node.multicol.is_some()
+                    && document
+                        .children_through_contents(id)
+                        .iter()
+                        .any(|&child| super::is_spanner_in(document, cascade, child))
+        })
         .map(|(id, _)| (current_abs_y(document, id), id))
         .collect();
     spanning_owners.sort_by(|a, b| a.0.total_cmp(&b.0));

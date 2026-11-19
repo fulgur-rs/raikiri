@@ -620,3 +620,69 @@ fn a_page_value_before_generated_content_changes_nothing() {
         check(&format!("{style}{body}<div id=x>X</div>"), 1, &[]);
     }
 }
+
+#[test]
+fn a_page_break_between_spanners_and_around_hidden_boxes() {
+    let spanner = "column-span:all";
+    // The third spanner in a row still breaks before itself.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div><div style='{spanner}'>S</div>\
+             <div id=t style='{spanner}'>T</div>\
+             <div id=u style='{spanner};break-before:page'>U</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("t", 0, 0.0, 20.0), ("u", 1, 0.0, 0.0), ("x", 1, 0.0, 10.0)],
+    );
+    // A container of spanners alone, and spanners with hidden boxes between
+    // them, break where the first one asks.
+    for between in ["", "<script></script>", "<div style='display:none'></div>"] {
+        check(
+            &format!(
+                "<div style='{COLUMNS}'><div id=s style='{spanner};break-after:page'>S</div>\
+                 {between}<div id=t style='{spanner}'>T</div></div><div id=x>X</div>"
+            ),
+            2,
+            &[("s", 0, 0.0, 0.0), ("t", 1, 0.0, 0.0), ("x", 1, 0.0, 10.0)],
+        );
+    }
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='{spanner};break-after:page'>S</div>\
+             <script></script><div id=t style='{spanner}'>T</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("t", 1, 0.0, 0.0), ("x", 1, 0.0, 10.0)],
+    );
+    // A hidden box between spanners holds no column content: their margins
+    // stay apart and nothing breaks.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div><div style='{spanner};margin-bottom:20px'>S</div>\
+             <div style='display:none'></div>\
+             <div id=t style='{spanner};margin-top:10px'>T</div></div><div id=x>X</div>"
+        ),
+        1,
+        &[("t", 0, 0.0, 40.0), ("x", 0, 0.0, 50.0)],
+    );
+    // A margin that runs past the end of its page is truncated there.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div>\
+             <div id=s style='{spanner};margin-top:150px'>S</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("x", 1, 0.0, 10.0)],
+    );
+    // A row takes the break of a container at the start of its cell.
+    check(
+        &format!(
+            "<div style='height:20px'>Z</div><table style='border-spacing:0'><tr>\
+             <td style='padding:0'><div style='{COLUMNS}'>\
+             <div id=s style='{spanner};break-before:page'>S</div></div></td>\
+             <td style='padding:0'>C</td></tr></table>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0)],
+    );
+}
