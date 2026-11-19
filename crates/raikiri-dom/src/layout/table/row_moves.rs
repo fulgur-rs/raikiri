@@ -34,23 +34,25 @@ pub(crate) fn spans_rows(document: &Document, cell: usize) -> bool {
 
 /// Whether a cell of an earlier row of `table` spans the row box `row`.
 pub(crate) fn row_beside_spanning_cell(document: &Document, table: usize, row: usize) -> bool {
-    let Some(rows) = document.table_objects.rows.get(&table) else {
-        return false;
-    };
-    let Some(index) = rows.iter().position(|entry| {
+    let rows = document
+        .table_objects
+        .rows
+        .get(&table)
+        .map_or(&[][..], Vec::as_slice);
+    let holds_row = |entry: &super::anonymous::Row| {
         entry.marker == row
             || entry
                 .cells
                 .first()
                 .is_some_and(|&cell| document.parent_of(cell) == Some(row))
-    }) else {
-        return false;
     };
-    rows[..index].iter().enumerate().any(|(start, entry)| {
-        entry
-            .cells
-            .iter()
-            .any(|&cell| start + usize::from(super::get_rowspan(document, cell)) > index)
+    rows.iter().position(holds_row).is_some_and(|index| {
+        rows[..index].iter().enumerate().any(|(start, entry)| {
+            entry
+                .cells
+                .iter()
+                .any(|&cell| start + usize::from(super::get_rowspan(document, cell)) > index)
+        })
     })
 }
 

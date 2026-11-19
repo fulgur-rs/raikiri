@@ -9039,17 +9039,17 @@ fn spanned_row_restarts(
     {
         return false;
     }
-    let Some(table) = document.ancestors(row).find(|&id| {
-        matches!(
-            document.nodes[id].display(),
-            DisplayValue::Table | DisplayValue::InlineTable
-        )
-    }) else {
-        return false;
-    };
-    if !super::table::row_moves::row_beside_spanning_cell(document, table, row) {
-        return false;
-    }
+    let beside_span = document
+        .ancestors(row)
+        .find(|&id| {
+            matches!(
+                document.nodes[id].display(),
+                DisplayValue::Table | DisplayValue::InlineTable
+            )
+        })
+        .is_some_and(|table| {
+            super::table::row_moves::row_beside_spanning_cell(document, table, row)
+        });
     let cells: Vec<usize> = document.nodes[row]
         .children
         .iter()
@@ -9063,16 +9063,17 @@ fn spanned_row_restarts(
         .iter()
         .map(|&cell| document.pagination_local_y(cell))
         .fold(f32::INFINITY, f32::min);
-    cells.iter().any(|&cell| {
-        !super::table::row_moves::spans_rows(document, cell)
-            && first_content_breaks_before(
-                document,
-                cascade,
-                cell,
-                flow_y + document.pagination_local_y(cell) - row_top,
-                page_start,
-            )
-    })
+    beside_span
+        && cells.iter().any(|&cell| {
+            !super::table::row_moves::spans_rows(document, cell)
+                && first_content_breaks_before(
+                    document,
+                    cascade,
+                    cell,
+                    flow_y + document.pagination_local_y(cell) - row_top,
+                    page_start,
+                )
+        })
 }
 
 /// Whether the first content in flow of `block`, whose border box starts at
@@ -9099,20 +9100,19 @@ fn first_content_breaks_before(
                 )
                 && !is_floating_box_for_pagination(document, cascade, child)
         });
-    let Some(first) = first else {
-        return false;
-    };
-    let node = &document.nodes[first];
-    if node.kind() != NodeKind::Element || node.display().is_inline_level() {
-        return false;
-    }
-    let top = top + document.pagination_local_y(first);
-    if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
-        || box_is_unbreakable(document, cascade, first, false)
-    {
-        return top < page_end && top + node.layout.size.height > page_end + 0.001;
-    }
-    first_content_breaks_before(document, cascade, first, top, page_end)
+    first.is_some_and(|first| {
+        let node = &document.nodes[first];
+        if node.kind() != NodeKind::Element || node.display().is_inline_level() {
+            return false;
+        }
+        let top = top + document.pagination_local_y(first);
+        if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
+            || box_is_unbreakable(document, cascade, first, false)
+        {
+            return top < page_end && top + node.layout.size.height > page_end + 0.001;
+        }
+        first_content_breaks_before(document, cascade, first, top, page_end)
+    })
 }
 
 /// Whether a run of `run_height` that avoids breaks inside it, starting at
