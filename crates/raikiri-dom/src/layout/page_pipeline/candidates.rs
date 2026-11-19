@@ -910,7 +910,7 @@ pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usiz
 /// inline formatting context, so the walk keeps no box before it, but
 /// something before it renders in that flow and does not tie the two.
 fn breaks_after_paragraph_content(
-    document: &Document,
+    document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
@@ -1097,18 +1097,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             has_named_pages,
-            finds_nested_runs: !has_named_pages
-                && cascade.computed.iter().any(|computed| {
-                    [computed.break_before, computed.break_after]
-                        .into_iter()
-                        .any(|edge| {
-                            matches!(
-                                edge,
-                                raikiri_style::property::BreakBetween::Avoid
-                                    | raikiri_style::property::BreakBetween::AvoidPage
-                            )
-                        })
-                }),
+            finds_nested_runs: cascade.computed.iter().any(|computed| {
+                [computed.break_before, computed.break_after]
+                    .into_iter()
+                    .any(|edge| {
+                        matches!(
+                            edge,
+                            raikiri_style::property::BreakBetween::Avoid
+                                | raikiri_style::property::BreakBetween::AvoidPage
+                        )
+                    })
+            }),
             forces_break_after: cascade
                 .computed
                 .iter()

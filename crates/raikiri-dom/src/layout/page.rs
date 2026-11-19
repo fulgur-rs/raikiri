@@ -1642,6 +1642,146 @@ fn propagated_start_page_name_with_order<'name>(
     )
 }
 
+/// Whether the used page values on either side of the class-A break point
+/// between the in-flow boxes `before` and `after` agree: the end page value of
+/// `before` (see [`end_page_name`]) and the start page value of `after` (see
+/// [`start_page_name`]). Where they differ, CSS Page 3 forces a page break
+/// between the boxes, so an avoided break there ties nothing.
+///
+/// Pagination leaves `page` alone where Chromium ignores it: on the items of
+/// a flex or grid container, and inside a multicol container, a float or an
+/// absolutely positioned box. Names there force no break, so they meet.
+pub(crate) fn page_names_meet(
+    document: &Document,
+    cascade: &CascadeResult,
+    before: usize,
+    after: usize,
+    pagination_on_transposed_axes: bool,
+) -> bool {
+    let boxes = BoxTree::for_layout(document);
+    let ignores_names = |id: usize| {
+        boxes
+            .parent(id, BoxParentScope::Document)
+            .and_then(|parent| boxes.display(parent))
+            .is_some_and(DisplayValue::is_flex_or_grid_container)
+            || std::iter::once(id)
+                .chain(document.ancestors(id))
+                .any(|ancestor| {
+                    document.nodes[ancestor].multicol.is_some()
+                        || floating_box_with_boxes(cascade, ancestor, boxes)
+                        || matches!(
+                            boxes.identity(ancestor).position(),
+                            PositionValue::Absolute | PositionValue::Fixed
+                        )
+                })
+    };
+    if ignores_names(before) || ignores_names(after) {
+        return true;
+    }
+    let inherited = |id: usize| {
+        document.ancestors(id).find_map(|ancestor| {
+            page_applies_with_boxes(boxes, ancestor)
+                .then(|| selected_page_name(cascade, ancestor))
+                .flatten()
+        })
+    };
+    let end = end_page_name(
+        document,
+        cascade,
+        boxes,
+        before,
+        inherited(before),
+        pagination_on_transposed_axes,
+    );
+    let start = match start_page_name(
+        document,
+        cascade,
+        after,
+        inherited(after),
+        true,
+        pagination_on_transposed_axes,
+        false,
+    ) {
+        (true, name) => name,
+        (false, _) => inherited(after),
+    };
+    end == start
+}
+
+/// The end page value of `node_id`, whose inherited page value is
+/// `inherited_page_name`: the used value of its last in-flow child box, as
+/// CSS Page 3 derives it, or its own when nothing in it passes one up. A box
+/// that does not stack its children in block flow (a flex or grid container,
+/// a table) lays them out on the page its start value opens, so its start
+/// value is its end value too.
+fn end_page_name<'name>(
+    document: &Document,
+    cascade: &'name CascadeResult,
+    boxes: BoxTree<'_>,
+    mut node_id: usize,
+    mut page_name: Option<&'name str>,
+    pagination_on_transposed_axes: bool,
+) -> Option<&'name str> {
+    loop {
+        if !matches!(
+            boxes.identity(node_id).display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Contents
+        ) {
+            return match start_page_name(
+                document,
+                cascade,
+                node_id,
+                page_name,
+                true,
+                pagination_on_transposed_axes,
+                false,
+            ) {
+                (true, name) => name,
+                (false, _) => page_name,
+            };
+        }
+        if page_applies_with_boxes(boxes, node_id)
+            && let Some(own) = selected_page_name(cascade, node_id)
+        {
+            page_name = Some(own);
+        }
+        // Generated boxes after the children, and a monolithic box, end the
+        // box on its own page.
+        if crate::generated_content::is_in_flow_generated_text(
+            cascade,
+            node_id,
+            raikiri_style::PseudoElem::After,
+        ) || monolithic_with_boxes(
+            document,
+            cascade,
+            node_id,
+            boxes,
+            pagination_on_transposed_axes,
+        ) {
+            return page_name;
+        }
+        let child_order = pagination_child_order_borrowed(document, cascade, node_id);
+        let last = child_order.iter().rev().copied().find(|&child| {
+            document.get_node(child).is_some_and(|child_node| {
+                child_node.is_in_document()
+                    && boxes.identity(child).display() != DisplayValue::None
+                    && is_in_flow_page_child(cascade, boxes, child)
+                    && (!matches!(child_node.kind(), NodeKind::Text)
+                        || text_is_page_content(boxes, cascade, child))
+            })
+        });
+        match last {
+            Some(child) if !matches!(document.nodes[child].kind(), NodeKind::Text) => {
+                node_id = child;
+            }
+            _ => return page_name,
+        }
+    }
+}
+
 /// Whether the text node `id` is content of the page flow: text other than
 /// white space, or white space that the style preserves, which lays out a
 /// line as Chromium prints it. White space between flex or grid items, or

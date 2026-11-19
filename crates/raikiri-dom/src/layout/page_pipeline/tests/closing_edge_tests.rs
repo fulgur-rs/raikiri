@@ -1970,10 +1970,10 @@ fn a_last_box_whose_boxes_are_not_all_tied_by_avoided_breaks_keeps_its_place() {
         },
         ""
     ));
-    // A named page may start between the boxes whatever ties them.
-    assert!(keeps_place(&tied_pair, "page:chapter"));
-    // The same boxes without any of that move whole.
+    // The same boxes without any of that move whole, also when a named page
+    // starts later in the document: it forces no break between them.
     assert!(!keeps_place(&tied_pair, ""));
+    assert!(!keeps_place(&tied_pair, "page:chapter"));
 }
 
 #[test]
