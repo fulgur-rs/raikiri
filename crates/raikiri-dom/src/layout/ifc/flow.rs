@@ -443,6 +443,7 @@ pub(crate) fn place_lines(
         discarded_float_gap: 0.0,
         escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
+        leading_block_baseline: None,
         block_line_starts: Vec::new(),
         generated_block_starts: Vec::new(),
         generated_block_lines: Vec::new(),

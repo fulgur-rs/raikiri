@@ -32,6 +32,7 @@ mod inline_block_baseline_tests;
 mod intrinsic_keyword_tests;
 mod known_wrapper_height_tests;
 mod multiple_caption_tests;
+mod nested_first_line_baseline_tests;
 mod orthogonal_baseline_tests;
 mod part_border_tests;
 mod part_containing_block_tests;

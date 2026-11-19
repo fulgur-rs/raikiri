@@ -475,3 +475,48 @@ impl PartialEq for SourcePlacementId {
         self.0 == other.0
     }
 }
+
+#[test]
+fn a_block_ahead_of_the_lines_keeps_its_baseline_across_fragmentainers() {
+    let (mut doc, cascade, root) =
+        crate::layout::test_support::ahem_paragraph_with("", |doc, root| {
+            let block =
+                doc.append_element(Some(root), "div", Some("display:block;padding-top:7px"));
+            doc.append_text(block, "A");
+            doc.append_text(root, "U U");
+        });
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+    let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
+    let whole = layout_with_boxes(&mut doc, root, geometry, None, false);
+    // The block's line sits 7px down; the baseline is below its top.
+    assert!(
+        whole
+            .leading_block_baseline
+            .is_some_and(|baseline| baseline > 7.0)
+    );
+    let context = FragmentationContext {
+        rtl: false,
+        available_width: 100.0,
+        available_height: Some(15.0),
+        column_fill: raikiri_style::property::ColumnFillValue::Auto,
+        column_width: 100.0,
+        column_count: 2,
+        column_gap: 0.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+    let fragmented = layout_with_boxes_in_fragmentainers(&mut doc, root, geometry, context, false);
+    assert_eq!(
+        fragmented.leading_block_baseline,
+        whole.leading_block_baseline
+    );
+}
