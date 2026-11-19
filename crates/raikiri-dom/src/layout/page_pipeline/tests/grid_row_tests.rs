@@ -776,11 +776,13 @@ fn native_leading_gaps_and_mixed_atomic_blocks_keep_the_existing_pagination_path
             );
         } else {
             // The atomic line is real, but a block before it makes this a
-            // mixed paragraph whose fragmentation stays on the existing path.
+            // mixed paragraph whose fragmentation stays on the existing path:
+            // the page breaks between the block and the line.
             assert!(
-                super::super::unplaced_line(&tree, &cascade, second)
-                    .is_some_and(|line| line.atomic)
+                super::super::paragraph_unplaced_line(&tree, &cascade, second)
+                    .is_some_and(|line| line.atomic && line.after_block)
             );
+            assert!(super::super::unplaced_line(&tree, &cascade, second).is_none());
         }
         assert!(
             super::super::grid_rows::first_row(&tree, &cascade, body, grid).is_none(),

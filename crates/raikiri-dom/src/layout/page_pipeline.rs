@@ -6462,7 +6462,16 @@ impl AvoidedBreaks {
                         page_start,
                         page_end,
                         next_page_step,
-                    )));
+                    ))
+                || spanned_row_restarts(
+                    document,
+                    cascade,
+                    (body_id, candidate.page_name.as_deref()),
+                    node_id,
+                    flow_y,
+                    height,
+                    page_start,
+                ));
         let row_group_lead = row_group
             .filter(|&(end, _)| {
                 (item_tail && tail_fits)
@@ -9156,6 +9165,132 @@ fn table_row_moves(
         && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end)
 }
 
+/// Whether the table row `row`, of `height` at `flow_y`, starts on the page
+/// before the one that starts at `page_start`, beside a cell of an earlier
+/// row that spans it, and moves to that page whole because a cell of its own
+/// breaks before any of its content there. Chromium then starts the row's
+/// own cells at the top of the next page and keeps the row's height, while
+/// the spanning cell goes on from where it broke. The flow reaches a row
+/// beside a spanning cell only after that cell's content, which may have
+/// taken it to the next page already.
+fn spanned_row_restarts(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    (body_id, page_name): (usize, Option<&str>),
+    row: usize,
+    flow_y: f32,
+    height: f32,
+    page_start: f32,
+) -> bool {
+    if document.context.pagination_on_transposed_axes
+        || flow_y >= page_start - 0.001
+        || flow_y + height <= page_start + 0.001
+    {
+        return false;
+    }
+    let beside_span = document
+        .ancestors(row)
+        .find(|&id| {
+            matches!(
+                document.nodes[id].display(),
+                DisplayValue::Table | DisplayValue::InlineTable
+            )
+        })
+        .is_some_and(|table| {
+            super::table::row_moves::row_beside_spanning_cell(document, table, row)
+        });
+    let cells: Vec<usize> = document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            document.nodes[cell].display() == DisplayValue::TableCell
+                && sibling_renders(document, cell)
+        })
+        .collect();
+    let row_top = cells
+        .iter()
+        .map(|&cell| document.pagination_local_y(cell))
+        .fold(f32::INFINITY, f32::min);
+    beside_span
+        && cells.iter().any(|&cell| {
+            !super::table::row_moves::spans_rows(document, cell)
+                && first_content_breaks_before(
+                    document,
+                    cascade,
+                    (body_id, page_name),
+                    cell,
+                    flow_y + document.pagination_local_y(cell) - row_top,
+                    page_start,
+                )
+        })
+}
+
+/// Whether the first content in flow of `block`, whose border box starts at
+/// `top`, is a box that no break goes through, as it avoids one or is
+/// unbreakable, and that runs past `page_end`: nothing of the block's content
+/// goes before the break. Chromium starts the row on the next page also when
+/// that box is taller than the page and breaks inside it there. A break
+/// forced inside the box leaves only the content before it to fit.
+fn first_content_breaks_before(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    (body_id, page_name): (usize, Option<&str>),
+    block: usize,
+    top: f32,
+    page_end: f32,
+) -> bool {
+    let first = document.nodes[block]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| {
+            sibling_renders(document, child)
+                && !matches!(
+                    document.nodes[child].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && !is_floating_box_for_pagination(document, cascade, child)
+        });
+    first.is_some_and(|first| {
+        let node = &document.nodes[first];
+        if node.kind() != NodeKind::Element || node.display().is_inline_level() {
+            return false;
+        }
+        let top = top + document.pagination_local_y(first);
+        if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
+            || box_is_unbreakable(document, cascade, first, false)
+        {
+            // Only the content before a break forced inside the box has to
+            // fit, as for any box that avoids a break inside it.
+            let end = forced_break_inside(
+                document,
+                cascade,
+                body_id,
+                first,
+                page_name,
+                false,
+                page_end - top,
+            )
+            .map_or(top + node.layout.size.height, |offset| top + offset);
+            return top < page_end && end > page_end + 0.001;
+        }
+        // Content that a box clipped at a height of its own lets overflow
+        // past its end takes no room, so the box has to reach the page end
+        // itself for its content to start the row on the next page.
+        (!clips_at_bounded_height(document, cascade, first)
+            || top + node.layout.size.height > page_end + 0.001)
+            && first_content_breaks_before(
+                document,
+                cascade,
+                (body_id, page_name),
+                first,
+                top,
+                page_end,
+            )
+    })
+}
+
 /// Whether a run of `run_height` that avoids breaks inside it, starting at
 /// `effective_y` below a block-start `margin_top`, moves whole to the next
 /// page, whose block size is `next_page_step`.
@@ -9238,6 +9373,13 @@ struct UnplacedBlockLine {
     /// Whether the line holds atomic inlines and no text: no page break goes
     /// through it, as through the box of one.
     atomic: bool,
+    /// Whether the block child of the paragraph laid out right above the
+    /// line sits in no inline box and does not avoid a break after it, unless
+    /// it forces one. The
+    /// page then breaks between that block and the line, as before a line of
+    /// text there, instead of keeping the paragraph whole (see
+    /// [`unplaced_line_after_block`]).
+    after_block: bool,
 }
 
 impl UnplacedBlockLine {
@@ -9292,6 +9434,30 @@ fn unplaced_line(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> Option<UnplacedBlockLine> {
+    paragraph_unplaced_line(document, cascade, node_id).filter(|line| !line.after_block)
+}
+
+/// The single unplaced line of the in-flow block `node_id` (see
+/// [`unplaced_line`]) when a block child of the paragraph is laid out above
+/// it. Such a line does not keep the paragraph whole: Chromium breaks the
+/// page between the block and the line, as before a line of text there, and
+/// moves the line on, or truncates the block-end margin of the block above
+/// it at the page edge (see `PaginationState::break_before_line_after_block`).
+fn unplaced_line_after_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<UnplacedBlockLine> {
+    paragraph_unplaced_line(document, cascade, node_id).filter(|line| line.after_block)
+}
+
+/// The single unplaced line of the in-flow block `node_id`, whatever comes
+/// above it (see [`unplaced_line`] and [`unplaced_line_after_block`]).
+fn paragraph_unplaced_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<UnplacedBlockLine> {
     let node = &document.nodes[node_id];
     if !node.is_ifc_root()
         || !is_block_level_flow_box(node.display())
@@ -9305,12 +9471,41 @@ fn unplaced_line(
         return None;
     }
     let unplaced = single_unplaced_line(document, cascade, node_id)?;
-    let layout = document.ifc_layout_node(node_id)?.layout;
+    let ifc_node = document.ifc_layout_node(node_id)?;
+    let layout = ifc_node.layout;
+    let after_block = ifc_node
+        .ifc
+        .as_ref()
+        .and_then(|ifc| ifc.lines.as_ref())
+        .and_then(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .rev()
+                .find(|&&(_, after)| after <= unplaced.line.line)
+        })
+        .is_some_and(|&(block, _)| {
+            let (forced, avoided) = page_edge_constraint(document, cascade, block, false);
+            block_outside_inline(document, node_id, block) && (forced || !avoided)
+        });
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
+        after_block,
     })
+}
+
+/// Whether the block child `block` of the paragraph `root` sits in no inline
+/// box of it, in the tree of elements: the boxes of the paragraph place the
+/// block straight in the root. Chromium keeps a block inside an inline box
+/// together with the line after it, as part of the line of that inline box.
+fn block_outside_inline(document: &Document, root: usize, block: usize) -> bool {
+    std::iter::successors(document.nodes[block].parent, |&id| {
+        document.nodes[id].parent
+    })
+    .take_while(|&ancestor| ancestor != root)
+    .all(|ancestor| !document.nodes[ancestor].display().is_inline_level())
 }
 
 /// How far below the border-box top of the block `node_id` the piece that
@@ -18586,11 +18781,7 @@ fn candidate_ancestor_constraints(
             continue;
         }
         if id != body_id && !bounded_clipping {
-            let computed = &cascade.computed[id];
-            bounded_clipping = !matches!(computed.overflow.y, OverflowValue::Visible)
-                && crate::paint_rules::clips_element_overflow(document, cascade, id)
-                && (definite_content_height(document, id).is_some()
-                    || max_height_is_reached(document, cascade, id));
+            bounded_clipping = clips_at_bounded_height(document, cascade, id);
         }
         side_by_side = side_by_side || puts_boxes_side_by_side(document, id);
         if (side_by_side && bounded_clipping) || id == body_id {
@@ -18598,6 +18789,19 @@ fn candidate_ancestor_constraints(
         }
     }
     (side_by_side, bounded_clipping)
+}
+
+/// Whether `id` clips its overflow in the block direction at a height of its
+/// own, so that what overflows it takes no room on the pages.
+fn clips_at_bounded_height(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible)
+        && crate::paint_rules::clips_element_overflow(document, cascade, id)
+        && (definite_content_height(document, id).is_some()
+            || max_height_is_reached(document, cascade, id))
 }
 
 /// Whether `id` lays its children out beside one another rather than one
