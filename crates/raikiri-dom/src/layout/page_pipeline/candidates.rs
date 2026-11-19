@@ -1196,7 +1196,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !later_text_of_item
                     && matches!(
                         &node.data,
-                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                        crate::node::NodeData::Text(text)
+                            if crate::layout::ifc::text_lines::places_lines(cascade, node_id, &text.text_content)
                     )
                 {
                     // A text node of an ifc paragraph has no layout of its own:
@@ -1211,6 +1212,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
+                    // White space alone, preserved or a no-break space. When
+                    // it shows up on no line, such as a lone line feed that
+                    // only ends the line before it, it has nothing to place.
+                    let blank = matches!(&node.data, crate::node::NodeData::Text(text)
+                        if text.text_content.trim().is_empty());
+                    if blank && node.in_ifc_subtree() && self.text_lines.get(node_id).is_none() {
+                        return Ok(());
+                    }
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document
@@ -1282,7 +1291,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             context: BoxContext::text(CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
-                                page_name_in_flow: !inside_float && !inside_out_of_flow,
+                                // White space gives the flow no page value
+                                // (Chromium).
+                                page_name_in_flow: !inside_float && !inside_out_of_flow && !blank,
                                 lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),
@@ -1897,6 +1908,25 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         Some(previous) => {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
+                                // A margin of a box inside the one before it
+                                // that collapses through that box's bottom.
+                                // An anonymous box has no style of its own.
+                                || (cascade.computed.get(previous).is_some()
+                                    && super::adjoining_margin_extremes(
+                                        document, cascade, previous, false, None,
+                                    )
+                                    .0 > 0.0)
+                                // Margins that collapse through an empty box
+                                // put it below them. With no clearance, only
+                                // margins lie between two siblings.
+                                || (document.nodes[previous].parent == node.parent
+                                    && matches!(
+                                        computed.clear,
+                                        raikiri_style::property::ClearValue::None
+                                    )
+                                    && normal_flow_y(document, cascade, body_id, node_id)
+                                        - normal_flow_bottom(document, cascade, body_id, previous)
+                                        > 0.001)
                         }
                         None => {
                             generated_before().is_some_and(|(end, flow_top)| end < flow_top - 0.001)
