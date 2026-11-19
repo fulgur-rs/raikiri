@@ -19502,8 +19502,9 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_grows_as_a_block_in_block_f
 #[test]
 fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
     // The 20px root starts 95px down a 100px page: its first line ends at 105.
-    // A box among its lines keeps them from moving down inside it, so the
-    // block moves as a unit.
+    // An absolutely positioned box that both of its block-axis insets place
+    // keeps its lines from moving down inside it, so the block moves as a
+    // unit.
     let (mut doc, cascade, body, root, text) = unpaginated_paragraph_with_boxes_after_a_spacer(
         "aaaa bbbb",
         "height:20px",
@@ -19512,7 +19513,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
             doc.append_element(
                 Some(root),
                 "span",
-                Some("display:inline-block;width:10px;height:10px"),
+                Some("position:absolute;top:0;bottom:0;width:10px"),
             );
         },
     );

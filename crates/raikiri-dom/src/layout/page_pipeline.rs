@@ -14337,8 +14337,9 @@ fn box_leaves_lines_to_pagination(
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it: it
-/// is in one column and holds nothing but text, and out-of-flow boxes that
-/// stay where their insets put them or follow the moved lines (see
+/// is in one column and holds nothing but text, atomic inlines, which move
+/// with the lines that hold them, floats, and out-of-flow boxes that stay
+/// where their insets put them or follow the moved lines (see
 /// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_inside(
@@ -14352,7 +14353,7 @@ fn lines_can_shift_inside(
         .is_some_and(|ifc| {
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
-                    b.kind == IfcBoxKind::Float
+                    matches!(b.kind, IfcBoxKind::Float | IfcBoxKind::Atomic)
                         || (b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                 })

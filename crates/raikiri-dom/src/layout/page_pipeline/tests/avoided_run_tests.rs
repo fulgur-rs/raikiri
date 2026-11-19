@@ -304,7 +304,7 @@ fn a_heading_moves_with_a_box_whose_closing_edges_would_be_alone_on_the_next_pag
 }
 
 #[test]
-fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() {
+fn a_heading_stays_with_the_first_lines_of_a_paragraph_that_moves_lines_down() {
     // Three of the four lines fit after the heading, which ends at 70, and
     // `widows` is 2. A paragraph that can move lines down splits two and two.
     assert_eq!(
@@ -319,7 +319,8 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
             "{css}"
         );
     }
-    // Nor can one that lays out a box of its own among the lines.
+    // So can one that lays out an inline box among the lines: the box moves
+    // with the line that holds it.
     assert_eq!(
         heading_then(60, |doc, body| {
             let mixed = paragraph(doc, body, "", 3);
@@ -330,7 +331,7 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
             );
             mixed
         }),
-        (100.0, 110.0)
+        (60.0, 70.0)
     );
 }
 
