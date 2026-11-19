@@ -37,7 +37,7 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
-use super::ifc::boxes::{IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -14054,49 +14054,55 @@ fn lines_can_shift_inside(
         .ifc_layout_node(block_id)
         .and_then(|node| node.ifc.as_ref())
         .is_some_and(|ifc| {
+            let mut atomics_follow = None;
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
                     b.kind == IfcBoxKind::Float
                         || (b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                         || (b.kind == IfcBoxKind::Atomic
-                            && ifc
-                                .lines
-                                .as_ref()
-                                .is_some_and(|lines| atomics_follow_text(document, &lines.lines)))
+                            && *atomics_follow.get_or_insert_with(|| {
+                                atomics_follow_text(document, block_id, &ifc.boxes)
+                            }))
                 })
         })
 }
 
-/// Whether every atomic inline of the `lines` of a paragraph comes after the
-/// first of its text in tree order, the order in which its page candidates are
-/// placed. The text is what moves the lines, and the boxes before it are
-/// placed before it is: a move would leave them behind. The order the lines
-/// show is the visual one, which bidi reordering can change.
-fn atomics_follow_text(document: &Document, lines: &[shodo::Line]) -> bool {
-    let mut first_text: Option<usize> = None;
-    let mut atomics = Vec::new();
-    for fragment in lines.iter().flat_map(|line| line.fragments()) {
-        match fragment {
-            shodo::Fragment::Atomic(atomic) => atomics.push(atomic.node.0 as usize),
-            shodo::Fragment::GlyphRun(run) => {
-                let Some(text) = run.node().map(|node| node.0 as usize).filter(|&node| {
-                    document.nodes.get(node).is_some_and(|node| {
-                        matches!(&node.data, crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty())
-                    })
-                }) else {
-                    continue;
-                };
-                if first_text.is_none_or(|first| precedes_in_tree(document, text, first)) {
-                    first_text = Some(text);
-                }
+/// Whether every atomic inline among the `boxes` of the paragraph `root` comes
+/// after the first of its text in tree order, the order in which its page
+/// candidates are placed. The text is what moves the lines, and the boxes
+/// before it are placed before it is: a move would leave them behind. The
+/// walk stops at the first text or atomic inline, and does not enter the
+/// paragraph's boxes, whose content is not its text.
+fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bool {
+    let boxed: HashMap<usize, bool> = boxes
+        .iter()
+        .map(|b| (b.node, b.kind == IfcBoxKind::Atomic))
+        .collect();
+    let mut stack: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(node) = stack.pop() {
+        if let Some(&atomic) = boxed.get(&node) {
+            if atomic {
+                return false;
+            }
+            continue;
+        }
+        match &document.nodes[node].data {
+            crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty() => {
+                return true;
+            }
+            crate::node::NodeData::Element(_) if !document.nodes[node].generates_no_box() => {
+                stack.extend(document.nodes[node].children.iter().rev().copied());
             }
             _ => {}
         }
     }
-    atomics
-        .into_iter()
-        .all(|atomic| first_text.is_some_and(|text| precedes_in_tree(document, text, atomic)))
+    true
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
