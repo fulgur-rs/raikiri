@@ -1585,7 +1585,16 @@ impl PaginationState {
             let item = item_of(document, container, node_id).unwrap_or(node_id);
             (container, item, item_bottom_in(document, container, item))
         });
-        document.nodes[node_id].layout.size.height += gap;
+        // A forced break in the block left its height where the layout put
+        // it: the pass after pagination grows it to its content, which would
+        // end the edges back on this page. The block reaches below the gap.
+        let edges_end = end + gap + super::edges_below(document, node_id);
+        let flow_top = current_abs_y(document, node_id)
+            - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        let (_, max_height) = border_box_height_bounds(document, node_id);
+        let grown = document.nodes[node_id].layout.size.height + gap;
+        let height = grown.max((edges_end - flow_top).min(max_height));
+        document.nodes[node_id].layout.size.height = height;
         document.mark_pagination_extent_dirty(node_id);
         if let Some((container, item, before)) = beside {
             // The boxes in the item grow and follow the edges, but the items
