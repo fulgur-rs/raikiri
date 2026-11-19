@@ -3812,13 +3812,10 @@ fn page_break_after_is_forced(document: &Document, node_id: usize, value: BreakB
     }
     // Source order: column text after a spanner in an inline formatting
     // context is no layout child of its own.
-    let Some(parent) = document.parent_of(node_id) else {
-        return true;
-    };
-    let next = document.nodes[parent]
-        .children
-        .iter()
-        .copied()
+    let parent = document.parent_of(node_id);
+    let next = parent
+        .into_iter()
+        .flat_map(|parent| document.nodes[parent].children.iter().copied())
         .skip_while(|&child| child != node_id)
         .skip(1)
         .find(|&child| {
@@ -3835,7 +3832,7 @@ fn page_break_after_is_forced(document: &Document, node_id: usize, value: BreakB
         });
     match next {
         Some(next) => document.nodes[next].column_span_all,
-        None => document.nodes[parent].multicol.is_some(),
+        None => parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
     }
 }
 
