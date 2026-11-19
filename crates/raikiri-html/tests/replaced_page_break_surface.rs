@@ -1116,4 +1116,3 @@ fn a_nested_float_moves_with_its_first_replaced_child() {
         assert_eq!(extents_of(id, &body), [None, Some((0, 400))], "{id}");
     }
 }
-
