@@ -6431,8 +6431,8 @@ impl AvoidedBreaks {
         // the next one whole when a cell of it breaks before its content, as
         // Chromium does; otherwise it breaks there with its cells (see
         // `table_cell_fragments::row_splits`). A row whose cells would need
-        // their lines moved, or one of a table that repeats a header or
-        // footer, still moves whole.
+        // lines moved that cannot move inside them, or one of a table that
+        // repeats a header or footer, still moves whole.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
         // A row of a table that repeats its footer leaves room for the
@@ -6469,7 +6469,7 @@ impl AvoidedBreaks {
                     )
                     && !(repeated_header_height + repeated_footer_height <= 0.001
                         && table_cell_fragments::row_splits(
-                            document, cascade, node_id, flow_y, page_end,
+                            document, cascade, body_id, node_id, flow_y, page_end,
                         )))
                 || spanned_row_restarts(
                     document,
@@ -12883,6 +12883,72 @@ fn line_block_parent(
         })
 }
 
+/// The inline child of `block` from which the lines of the paragraph `block`
+/// reach the row of the table cell that holds it (see
+/// [`moves_reach_cell_row`]), when `block` is that cell or a block inside it
+/// whose lines can move down there at a page end, as those of a paragraph in
+/// block flow do: the row grows to hold them, the cells beside it keep their
+/// places, and the flow after the row follows its growth.
+///
+/// Every box from the paragraph up to the cell stays in its flow, keeps the
+/// moved lines in view (none clips at a set height or ignores its content),
+/// and the table is placed in plain block flow up to the body. A table that
+/// repeats a header or footer group on each page leaves no room for its
+/// copies here, and pagination on transposed axes moves no lines this way.
+pub(super) fn cell_flow_inline(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+) -> Option<usize> {
+    let node = &document.nodes[block];
+    if document.context.pagination_on_transposed_axes
+        || node.used_writing_mode.is_vertical()
+        || !matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::TableCell
+        )
+    {
+        return None;
+    }
+    let cell = document
+        .inclusive_ancestors(block)
+        .find(|&id| document.nodes[id].display() == DisplayValue::TableCell)?;
+    let (_, _, table) = cell_row_end(document, cell)?;
+    let in_view = document
+        .inclusive_ancestors(block)
+        .take_while(|&id| id != cell)
+        .all(|id| {
+            holds_moved_lines(document, cascade, id, false)
+                && !is_floating_box_for_pagination(document, cascade, id)
+                && !matches!(
+                    document.nodes[id].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        });
+    let repeats_groups = document.nodes[table].children.iter().any(|&child| {
+        matches!(
+            document.nodes[child].display(),
+            DisplayValue::TableHeaderGroup | DisplayValue::TableFooterGroup
+        )
+    });
+    if !in_view
+        || repeats_groups
+        || document.nodes[cell].size_containment.height
+        || !placed_in_block_flow(document, cascade, table, body_id)
+    {
+        return None;
+    }
+    node.children
+        .iter()
+        .copied()
+        .find(|&child| document.nodes[child].in_ifc_subtree())
+        .filter(|&inline| moves_reach_cell_row(document, inline))
+}
+
 /// Where block `block_id` now sits in the flow, given that its text at raw
 /// position `text_raw_y` now sits at `text_effective_y`. The block already
 /// sits `flow_shift` below its raw position, so this keeps the text's offset
@@ -16096,6 +16162,8 @@ fn move_paragraph_lines(
         .map(|&(float, _)| float)
         .chain(document.context.float_resumptions.pushed_floats())
         .collect();
+    let cell_lines = cell_flow_lines(document, cascade, body_id, moved);
+    let height = document.nodes[moved.block_id].layout.size.height;
     let (growth, floats) = shift_paragraph_lines(document, cascade, moved, Some(&went_ahead));
     if let Some((item, container)) = moved.flex_line {
         shift_later_flex_lines(document, container, item, growth);
@@ -16103,7 +16171,28 @@ fn move_paragraph_lines(
     // A box that keeps its height holds the moved lines as overflow: nothing
     // around it moves.
     let beside = edges_break_container(document, moved.block_id, body_id).flatten();
-    if growth > 0.0
+    if let Some((inline, end)) = cell_lines {
+        // Lines that move down in a table cell grow its row, as content that
+        // a forced break moves there does; the row measures the paragraph
+        // from its height before the lines moved. The flow after the
+        // paragraph takes its growth alone, as it does after one in block
+        // flow.
+        document
+            .table_layout_node_mut(moved.block_id)
+            .layout
+            .size
+            .height = height;
+        shift_flow_after(
+            document,
+            cascade,
+            inline,
+            Some(end),
+            body_id,
+            growth,
+            shifts,
+            flow_page,
+        );
+    } else if growth > 0.0
         && let Some(container) = beside
     {
         let item = item_of(document, container, moved.block_id).unwrap_or(moved.block_id);
@@ -16175,6 +16264,37 @@ fn move_paragraph_lines(
         shifts.line_moved_floats.insert(float);
     }
     growth
+}
+
+/// For lines of a paragraph in a table cell that move down (see
+/// [`cell_flow_inline`]), the inline child of the paragraph from which the
+/// walk to the cell's row starts, and how far below the top of the cell the
+/// first moved line starts once it moves: the top of the next page, where
+/// the row's fragment on the page the lines leave ends.
+fn cell_flow_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    moved: &LineMove,
+) -> Option<(usize, f32)> {
+    let root = moved.block_id;
+    if moved.shift <= 0.0 || moved.flex_line.is_some() {
+        return None;
+    }
+    let inline = cell_flow_inline(document, cascade, root, body_id)?;
+    let cell = document
+        .inclusive_ancestors(root)
+        .find(|&id| document.nodes[id].display() == DisplayValue::TableCell)?;
+    let node = document.ifc_layout_node(root)?;
+    let line_top = node.ifc.as_ref()?.lines.as_ref()?.line_top(moved.line);
+    Some((
+        inline,
+        offset_in_cell(document, cascade, body_id, root, cell)
+            + node.layout.border.top
+            + node.layout.padding.top
+            + line_top
+            + moved.shift,
+    ))
 }
 
 /// How far below the top of `moved` the block `block` starts in the normal
@@ -19077,6 +19197,27 @@ fn shift_block_flow_after(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> bool {
+    shift_flow_after(
+        document, cascade, node_id, None, body_id, flow_delta, shifts, flow_page,
+    )
+}
+
+/// [`shift_block_flow_after`] from `node_id`, where the fragment of the row
+/// of a table cell around it on the page the moved content leaves ends
+/// `break_end` below the top of the cell, once that content moved, when
+/// given, rather than where the margin box of `node_id` now starts: the
+/// lines of a paragraph that moved down to there take `node_id` along.
+#[allow(clippy::too_many_arguments)]
+fn shift_flow_after(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    break_end: Option<f32>,
+    body_id: usize,
+    flow_delta: f32,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) -> bool {
     let mut flow_delta = flow_delta;
     let mut bounded = false;
     let mut child = node_id;
@@ -19152,8 +19293,10 @@ fn shift_block_flow_after(
                     // the margin box of the moved box now starts, at the top
                     // of the next page. A break below the row, in a cell
                     // that spans the rows after it, leaves the row whole.
-                    let end = offset_in_cell(document, cascade, body_id, node_id, parent)
-                        - document.nodes[node_id].layout.margin.top;
+                    let end = break_end.unwrap_or_else(|| {
+                        offset_in_cell(document, cascade, body_id, node_id, parent)
+                            - document.nodes[node_id].layout.margin.top
+                    });
                     let breaks_row = end - flow_delta < document.nodes[row].layout.size.height;
                     let realigned = table_cell_fragments::realign_beside(
                         document,
