@@ -18,6 +18,9 @@ const AHEM: &[u8] = include_bytes!(concat!(
 
 /// The page index, top and bottom on that page of each fragment of the
 /// element with the id `id`.
+/// A document body and where its letters land: (id, page, top).
+type Case<'a> = (&'a str, &'a [(&'a str, usize, f32)]);
+
 fn fragments_of(body: &str, id: &str) -> Vec<(usize, f32, f32)> {
     let html = format!(
         "<!DOCTYPE html><style>@page{{size:200px 100px;margin:0}}\
@@ -80,7 +83,7 @@ fn assert_places(body: &str, expected: &[(&str, usize, f32)]) {
 
 #[test]
 fn a_tied_paragraph_breaks_between_its_lines_for_the_edges_that_close_its_block() {
-    let cases: &[(&str, &[(&str, usize, f32)])] = &[
+    let cases: &[Case] = &[
         (
             "<div style='padding-bottom:20px'><div style='height:20px'><span id=S>S</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:10px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
             &[
@@ -305,7 +308,7 @@ fn a_tied_paragraph_breaks_between_its_lines_for_the_edges_that_close_its_block(
 
 #[test]
 fn a_tied_paragraph_breaks_between_its_lines_for_the_boxes_tied_after_it() {
-    let cases: &[(&str, &[(&str, usize, f32)])] = &[
+    let cases: &[Case] = &[
         (
             "<div><div style='height:30px'><span id=S>S</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:20px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
             &[
@@ -484,7 +487,7 @@ fn a_tied_paragraph_breaks_between_its_lines_for_the_boxes_tied_after_it() {
 
 #[test]
 fn a_tied_paragraph_among_the_boxes_of_the_body_breaks_between_its_lines() {
-    let cases: &[(&str, &[(&str, usize, f32)])] = &[
+    let cases: &[Case] = &[
         (
             "<div style='height:30px'><span id=S>S</span></div><div style='break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:20px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
             &[
