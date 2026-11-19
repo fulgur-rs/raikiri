@@ -361,3 +361,24 @@ fn a_page_value_on_column_span_outside_columns_breaks_the_page() {
         &[("a", 0, 0.0, 0.0), ("b", 1, 0.0, 0.0)],
     );
 }
+
+/// Text after a spanner that renders, a no-break space or white space that
+/// the style preserves, is column content, so the page value of the spanner
+/// stays in the columns (Chromium: X on the first page below that line).
+#[test]
+fn a_page_value_before_rendered_white_space_changes_nothing() {
+    for (style, text) in [
+        ("", "&nbsp;"),
+        ("white-space:pre", "\n"),
+        ("white-space:pre", "  "),
+    ] {
+        check(
+            &format!(
+                "<div style='{COLUMNS};{style}'>A<div style='column-span:all;break-after:page'>S</div>\
+                 {text}</div><div id=x>X</div>"
+            ),
+            1,
+            &[("x", 0, 0.0, 30.0)],
+        );
+    }
+}

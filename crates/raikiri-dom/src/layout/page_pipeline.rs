@@ -3856,7 +3856,7 @@ fn page_break_after_is_forced(
 
 /// The first child of `parent`, after `after` when it is given, that the
 /// flow lays out: neither hidden nor out of flow, nor text of white space
-/// alone, nor a wrapper that generates no box and holds no such child.
+/// that its style collapses away, nor a wrapper that generates no box and holds no such child.
 fn first_flow_child(
     document: &Document,
     cascade: &CascadeResult,
@@ -3879,7 +3879,12 @@ fn first_flow_child(
                 PositionValue::Absolute | PositionValue::Fixed
             )
             && match &node.data {
-                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                crate::node::NodeData::Text(text) => {
+                    !crate::generated_content::is_collapsed_white_space(
+                        &text.text_content,
+                        cascade.computed[child].effective_white_space_collapse,
+                    )
+                }
                 _ => true,
             }
             && (cascade.computed[child].display != DisplayValue::Contents
