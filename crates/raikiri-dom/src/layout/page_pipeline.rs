@@ -9135,14 +9135,19 @@ fn first_content_breaks_before(
             .map_or(top + node.layout.size.height, |offset| top + offset);
             return top < page_end && end > page_end + 0.001;
         }
-        first_content_breaks_before(
-            document,
-            cascade,
-            (body_id, page_name),
-            first,
-            top,
-            page_end,
-        )
+        // Content that a box clipped at a height of its own lets overflow
+        // past its end takes no room, so the box has to reach the page end
+        // itself for its content to start the row on the next page.
+        (!clips_at_bounded_height(document, cascade, first)
+            || top + node.layout.size.height > page_end + 0.001)
+            && first_content_breaks_before(
+                document,
+                cascade,
+                (body_id, page_name),
+                first,
+                top,
+                page_end,
+            )
     })
 }
 
@@ -18512,11 +18517,7 @@ fn candidate_ancestor_constraints(
             continue;
         }
         if id != body_id && !bounded_clipping {
-            let computed = &cascade.computed[id];
-            bounded_clipping = !matches!(computed.overflow.y, OverflowValue::Visible)
-                && crate::paint_rules::clips_element_overflow(document, cascade, id)
-                && (definite_content_height(document, id).is_some()
-                    || max_height_is_reached(document, cascade, id));
+            bounded_clipping = clips_at_bounded_height(document, cascade, id);
         }
         side_by_side = side_by_side || puts_boxes_side_by_side(document, id);
         if (side_by_side && bounded_clipping) || id == body_id {
@@ -18524,6 +18525,19 @@ fn candidate_ancestor_constraints(
         }
     }
     (side_by_side, bounded_clipping)
+}
+
+/// Whether `id` clips its overflow in the block direction at a height of its
+/// own, so that what overflows it takes no room on the pages.
+fn clips_at_bounded_height(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible)
+        && crate::paint_rules::clips_element_overflow(document, cascade, id)
+        && (definite_content_height(document, id).is_some()
+            || max_height_is_reached(document, cascade, id))
 }
 
 /// Whether `id` lays its children out beside one another rather than one

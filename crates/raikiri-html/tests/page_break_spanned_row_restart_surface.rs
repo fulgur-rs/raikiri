@@ -400,3 +400,54 @@ fn only_the_content_before_a_break_forced_inside_the_first_box_has_to_fit() {
         ]
     );
 }
+
+/// The row beside the spanning cell, with `first` as the content of its own
+/// cell, followed by a row and a box after the table.
+fn row_beginning_with(first: &str) -> String {
+    format!(
+        r#"<table><tr><td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td><td><div style="height:50px">W</div></td></tr><tr><td>{first}</td></tr><tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+    )
+}
+
+#[test]
+fn content_clipped_at_a_height_of_its_own_keeps_the_row_on_its_page() {
+    // What overflows a box clipped at its own height takes no room, so a
+    // box that avoids a break, or an image, past its end does not start the
+    // row on the next page, whether the height is set or a maximum.
+    let stays = [
+        (0, 'A', 0, 5),
+        (0, 'B', 0, 35),
+        (0, 'W', 10, 5),
+        (1, 'D', 0, 5),
+        (1, 'R', 0, 45),
+        (1, 'S', 10, 45),
+        (1, 'V', 10, 5),
+        (1, 'X', 0, 65),
+    ];
+    for clipped in [
+        r#"<div style="height:30px;overflow:hidden"><div style="height:70px;break-inside:avoid"></div></div><div>V</div>"#,
+        r#"<div style="height:30px;overflow:hidden"><img style="display:block;width:20px;height:70px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></div><div>V</div>"#,
+        r#"<div style="max-height:30px;overflow:hidden"><div style="height:70px;break-inside:avoid"></div></div><div>V</div>"#,
+    ] {
+        assert_eq!(glyphs(&row_beginning_with(clipped)), stays, "{clipped}");
+    }
+}
+
+#[test]
+fn a_clipping_box_that_reaches_the_page_end_still_starts_the_row_there() {
+    assert_eq!(
+        glyphs(&row_beginning_with(
+            r#"<div style="height:80px;overflow:hidden"><div style="height:70px;break-inside:avoid">Y</div></div>"#
+        )),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (1, 'D', 0, 5),
+            (1, 'Y', 10, 5),
+            (2, 'R', 0, 5),
+            (2, 'S', 10, 5),
+            (2, 'X', 0, 25),
+        ]
+    );
+}
