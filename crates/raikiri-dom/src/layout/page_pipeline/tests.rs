@@ -883,17 +883,29 @@ fn table_row_moves_only_when_it_crosses_the_page_and_fits_the_next() {
 #[test]
 fn avoided_run_moves_only_when_it_crosses_the_page_and_fits_the_next() {
     // Crosses the end of the page from 0 to 100 and fits the next page.
-    assert!(avoided_run_moves(40.0, 0.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(avoided_run_moves(40.0, false, 0.0, 80.0, 0.0, 100.0, 100.0));
     // Fits before the page end.
-    assert!(!avoided_run_moves(40.0, 0.0, 50.0, 0.0, 100.0, 100.0));
+    assert!(!avoided_run_moves(
+        40.0, false, 0.0, 50.0, 0.0, 100.0, 100.0
+    ));
     // Starts at the page top.
-    assert!(!avoided_run_moves(140.0, 0.0, 0.0, 0.0, 100.0, 200.0));
+    assert!(!avoided_run_moves(
+        140.0, false, 0.0, 0.0, 0.0, 100.0, 200.0
+    ));
     // Its margin box is taller than the next page.
-    assert!(!avoided_run_moves(90.0, 20.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(!avoided_run_moves(
+        90.0, false, 20.0, 80.0, 0.0, 100.0, 100.0
+    ));
+    // A firm run moves all the same: no break inside it beats the one
+    // before it. It still stays when it starts at the page top.
+    assert!(avoided_run_moves(90.0, true, 20.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(avoided_run_moves(140.0, true, 0.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(!avoided_run_moves(140.0, true, 0.0, 0.0, 0.0, 100.0, 200.0));
     // Empty or unbounded runs never move.
-    assert!(!avoided_run_moves(0.0, 0.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(!avoided_run_moves(0.0, true, 0.0, 80.0, 0.0, 100.0, 100.0));
     assert!(!avoided_run_moves(
         f32::INFINITY,
+        true,
         0.0,
         80.0,
         0.0,
@@ -10046,7 +10058,11 @@ fn between_avoid_moves_siblings_without_an_inside_constraint() {
 }
 
 #[test]
-fn oversized_avoided_sibling_run_relaxes_the_between_constraint() {
+fn oversized_avoided_sibling_run_breaks_inside_its_last_box() {
+    // The second box moves for the break it avoids inside it. The run it
+    // starts does not fit the next page, and the break avoided before the
+    // third box is no better than one avoided inside that box: Chromium
+    // takes the later one and splits the third box.
     assert_eq!(
         page_sibling_positions(
             &[60, 70, 70],
@@ -10054,7 +10070,7 @@ fn oversized_avoided_sibling_run_relaxes_the_between_constraint() {
             "",
             "break-inside:avoid"
         ),
-        (vec![0.0, 100.0, 200.0], 3)
+        (vec![0.0, 100.0, 170.0], 3)
     );
 }
 
@@ -17490,6 +17506,7 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
         plain,
         AvoidedRunEnd {
             end: 140.0,
+            firm: false,
             closing: None,
         },
     );

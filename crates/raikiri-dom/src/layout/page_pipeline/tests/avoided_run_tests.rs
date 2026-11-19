@@ -576,11 +576,13 @@ fn a_heading_moves_with_a_table_that_the_page_cannot_break_inside() {
         )),
         (100.0, 110.0)
     );
-    // A table taller than a page breaks inside anyway, so the heading stays.
+    // A table taller than a page still takes the heading along: the break
+    // inside it is avoided as the one before it is, and the break before the
+    // heading is a better one than either, as Chromium finds.
     let (heading, _) = heading_then(70, |doc, body| {
         table_of_rows(doc, body, "break-inside:avoid", 3, "height:40px")
     });
-    assert_eq!(heading, 70.0);
+    assert_eq!(heading, 100.0);
 }
 
 #[test]

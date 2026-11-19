@@ -4191,7 +4191,18 @@ impl PaginationState {
         // The page breaks before a block that runs past its end when the
         // block starts past it, or when the first piece of the block's
         // content does not fit before it; else it breaks inside the block.
-        let block_height = document.nodes[block].layout.size.height;
+        // A block that avoids breaks inside it has to fit with the content
+        // that runs out past it, and is its own first piece.
+        let avoids_inside = super::box_avoids_page_break_inside(
+            document,
+            block,
+            cascade.computed[block].break_inside,
+        );
+        let block_height = if avoids_inside {
+            super::avoided_box_extent(document, cascade, env.body_id, block)
+        } else {
+            document.nodes[block].layout.size.height
+        };
         // The blocks next to each other there end where the line after them
         // starts.
         let group_height = paragraph_line_bounds(document, node_id, text_lines)
@@ -4203,6 +4214,7 @@ impl PaginationState {
             .max(block_height);
         let breaks_before_block = block_top + block_height > page_end + 0.001
             && (block_top >= page_end - 0.001
+                || avoids_inside
                 || super::block_first_piece_end(document, cascade, env.body_id, block)
                     .is_some_and(|piece| block_top + piece > page_end + 0.001));
         // A run that still crosses the page end is judged by a later

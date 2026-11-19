@@ -506,9 +506,12 @@ fn a_grid_without_edges_above_its_items_moves_with_its_first_row() {
 }
 
 #[test]
-fn a_container_whose_break_before_is_avoided_stays() {
+fn a_container_whose_break_before_is_avoided_still_moves_with_its_first_line() {
+    // The break avoided before the container is a better one than a break
+    // through the line that its padding leaves no room for, as Chromium
+    // prints it.
     let (container, _, _) = container_after(94, &format!("{FLEX};break-before:avoid"), &[""], 1);
-    assert_eq!(container, 94.0);
+    assert_eq!(container, 100.0);
 }
 
 #[test]
