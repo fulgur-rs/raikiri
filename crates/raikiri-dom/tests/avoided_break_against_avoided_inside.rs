@@ -236,6 +236,13 @@ fn content_running_out_of_a_box_that_avoids_breaks_inside_counts_as_the_box() {
             boxes(50, 1, &block(20, "break-inside:avoid")),
             [(1, 5.0), (1, 25.0)],
         ),
+        // Among the children of the body.
+        (
+            "<div style=\"height:50px\"></div><div style=\"break-after:avoid\">B</div>".to_owned()
+                + &block(20, "break-inside:avoid")
+                + "<div><span id=z>Z</span></div>",
+            [(1, 35.0), (1, 55.0)],
+        ),
         // The line ends at the page end.
         (
             paragraph(40, 1, &block(20, AVOID_BOTH)),

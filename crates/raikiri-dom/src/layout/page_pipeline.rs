@@ -5603,9 +5603,7 @@ fn avoided_run_ends(
             let unit = unit.end;
             ends.entry(candidate.node_id)
                 .and_modify(|known| {
-                    if end > known.end {
-                        known.firm = firm;
-                    }
+                    known.firm = if end > known.end { firm } else { known.firm };
                     known.end = known.end.max(end);
                     if let Some(closing) = &mut known.closing {
                         closing.height = closing.height.max(unit);
