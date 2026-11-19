@@ -176,7 +176,7 @@ fn a_page_value_on_a_spanner_breaks_the_page() {
     check(
         &format!(
             "<div style='{COLUMNS}'>A<div id=s style='column-span:all;break-after:page'>S</div>\
-             <div id=t style='column-span:all'>T</div>C</div>"
+             <!-- a comment --><div id=t style='column-span:all'>T</div>C</div>"
         ),
         2,
         &[("s", 0, 0.0, 10.0)],
@@ -184,7 +184,7 @@ fn a_page_value_on_a_spanner_breaks_the_page() {
     check(
         &format!(
             "<div style='{COLUMNS}'>A<br>B<div id=s style='column-span:all;break-after:page'>S</div>\
-             </div><div id=x>X</div>"
+             <!-- a comment --></div><div id=x>X</div>"
         ),
         2,
         &[("s", 0, 0.0, 20.0), ("x", 1, 0.0, 0.0)],

@@ -3825,7 +3825,8 @@ fn page_break_after_is_forced(document: &Document, node_id: usize, value: BreakB
         .skip(1)
         .find(|&child| {
             let node = &document.nodes[child];
-            node.display() != DisplayValue::None
+            node.is_in_document()
+                && node.display() != DisplayValue::None
                 && !matches!(
                     node.position(),
                     PositionValue::Absolute | PositionValue::Fixed
