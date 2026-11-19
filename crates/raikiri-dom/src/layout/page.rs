@@ -1643,9 +1643,9 @@ fn propagated_start_page_name_with_order<'name>(
 }
 
 /// Whether the text node `id` is content of the page flow: text other than
-/// white space, or white space that the style preserves, which lays out a
-/// line as Chromium prints it. White space between flex or grid items lays
-/// out none.
+/// white space, or white space that the style preserves, which
+/// lays out a line as Chromium prints it. White space between flex or grid
+/// items, or among table parts, lays out none.
 pub(crate) fn text_is_page_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -1653,10 +1653,31 @@ pub(crate) fn text_is_page_content(
 ) -> bool {
     document.nodes[id].text_content().is_some_and(|text| {
         !text.trim().is_empty()
-            || (!crate::generated_content::is_collapsed_white_space(
-                text,
-                cascade.computed[id].effective_white_space_collapse,
-            ) && !super::page_pipeline::in_flex_or_grid_container(document, id))
+            || (super::ifc::text_lines::places_lines(cascade, id, text)
+                && !super::page_pipeline::in_flex_or_grid_container(document, id)
+                && !in_table_part(document, id))
+    })
+}
+
+/// Whether the parent box of `id`, looking through `display: contents`, is a
+/// table, row group or row, among which white space renders nothing.
+fn in_table_part(document: &Document, id: usize) -> bool {
+    let mut parent = document.parent_of(id);
+    while let Some(node) =
+        parent.filter(|&node| document.nodes[node].display() == DisplayValue::Contents)
+    {
+        parent = document.parent_of(node);
+    }
+    parent.is_some_and(|node| {
+        matches!(
+            document.nodes[node].display(),
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+        )
     })
 }
 

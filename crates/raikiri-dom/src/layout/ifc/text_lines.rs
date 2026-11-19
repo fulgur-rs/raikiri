@@ -78,21 +78,23 @@ fn glyph_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
     owners
 }
 
-/// The text owners of `line` for pagination: the owners of its glyph runs,
-/// or, for a line with no glyph and no atomic inline that still takes a line
-/// box, the text it holds. Such a line is the line of preserved white space
-/// or of a preserved line feed alone, and it moves with that text.
+/// The text owners of `line`: the owners of its glyph runs, or, for a line
+/// with no glyph and no atomic inline, the text whose preserved line feed
+/// ends it. Such a line is the line of a preserved line feed alone, and it
+/// moves with that text. A `br` ends its line too, but it is no text.
 fn line_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
     let owners = glyph_owners_counted::<COUNT>(line);
     if !owners.is_empty()
-        || line.is_empty()
         || line
             .fragments()
             .any(|fragment| matches!(fragment, Fragment::Atomic(_)))
     {
         return owners;
     }
-    line.owners().map(|(node, _)| node.0 as usize).collect()
+    line.forced_break()
+        .map(|forced| forced.node.0 as usize)
+        .into_iter()
+        .collect()
 }
 
 /// Whether `owner`, the node a glyph run comes from, is a text node of an ifc
@@ -168,13 +170,13 @@ pub(crate) fn single_unplaced_line(
     let [line] = lines.lines.as_slice() else {
         return None;
     };
-    let owners = glyph_owners(line);
-    if owners
+    if line_owners_counted::<false>(line)
         .iter()
         .any(|&owner| is_placing_text_owner(doc, cascade, owner))
     {
         return None;
     }
+    let owners = glyph_owners(line);
     // The ids of generated text name no node of the document.
     let has_generated_text = owners.iter().any(|&owner| doc.nodes.get(owner).is_none());
     let atomic = !has_generated_text

@@ -1038,7 +1038,8 @@ impl Document {
     /// in the paragraph root's content box.
     ///
     /// `None` for any other node, for a paragraph without lines, and for a
-    /// text node that has no glyph on any line.
+    /// text node that has no glyph on any line and ends none with a
+    /// preserved line feed.
     pub fn ifc_text_lines(&self, node: usize) -> Option<crate::layout::IfcTextLines> {
         crate::layout::ifc::text_lines::lines_of(self, node)
     }

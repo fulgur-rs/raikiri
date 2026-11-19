@@ -2196,7 +2196,7 @@ fn pipeline_clears_a_named_page_after_a_non_rendered_element() {
 }
 
 #[test]
-fn pipeline_clears_a_named_page_after_preserved_white_space() {
+fn pipeline_keeps_preserved_white_space_before_a_named_page() {
     // Preserved white space lays out a line on the parent's page, as
     // Chromium prints it, so the parent starts on the first page and its
     // named child starts the second, clear of the float before it.

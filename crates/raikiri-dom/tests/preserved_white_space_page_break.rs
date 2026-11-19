@@ -138,3 +138,14 @@ fn leading_preserved_white_space_keeps_the_first_page_unnamed() {
         &[(1, "A", 0.0, 0.0)],
     );
 }
+
+#[test]
+fn preserved_white_space_among_table_parts_is_no_content() {
+    // White space directly in a table renders nothing, whatever the style,
+    // so the named cell names the first page.
+    check(
+        "<body style='white-space:pre-wrap'><table style='border-spacing:0'>\n\
+         <tr><td style='page:a;padding:0'>A</td></tr></table>",
+        &[(0, "A", 0.0, 0.0)],
+    );
+}
