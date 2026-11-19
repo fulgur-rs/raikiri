@@ -168,3 +168,62 @@ fn a_table_that_fits_with_the_box_after_it_stays() {
         ]
     );
 }
+
+#[test]
+fn a_table_that_avoids_breaks_inside_it_moves_whole() {
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><table style="break-inside:avoid">{ROWS}</table><div style="break-before:avoid">Z</div>"#
+        )),
+        [(0, 'S', 0), (1, 'L', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+}
+
+#[test]
+fn a_table_of_one_row_ties_the_boxes_on_both_sides() {
+    // The box before the table, its row and the box after it move together.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="break-after:avoid">B</div><table><tr><td>X</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'S', 0), (1, 'B', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+}
+
+#[test]
+fn a_forced_break_inside_the_last_row_group_keeps_the_rows_before_it() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><table><tbody><tr><td>K</td></tr></tbody><tbody style="break-inside:avoid"><tr style="break-after:page"><td>A</td></tr><tr><td>B</td></tr></tbody></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'A', 50),
+            (0, 'K', 30),
+            (0, 'S', 0),
+            (1, 'B', 0),
+            (1, 'Z', 20)
+        ]
+    );
+}
+
+#[test]
+fn an_empty_last_row_is_the_part_that_moves() {
+    // The empty row ends where the row before it does, and moves alone with
+    // the box after it.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><table>{ROWS}<tr></tr></table><div style="break-before:avoid">Z</div>"#
+        )),
+        [(0, 'L', 50), (0, 'S', 0), (0, 'X', 70), (1, 'Z', 0)]
+    );
+}
+
+#[test]
+fn the_last_row_of_an_anonymous_table_moves_with_the_box_after_it() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row"><div style="display:table-cell">L</div></div><div style="display:table-row"><div style="display:table-cell">X</div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)]
+    );
+}
