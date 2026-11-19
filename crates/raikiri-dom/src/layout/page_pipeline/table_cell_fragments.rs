@@ -399,8 +399,8 @@ fn breaks_between(
 /// then grows the row (see [`super::cell_flow_inline`]), and no edges that
 /// close a box are left without content to go with them. Rows whose lines
 /// cannot move that way, and content this cannot follow (boxes laid out side
-/// by side, floats across the page end, lines around a block), still move
-/// whole.
+/// by side, floats across the page end that do not move down inside the
+/// cell, see [`float_crosses`], lines around a block), still move whole.
 pub(super) fn row_splits(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -585,6 +585,7 @@ fn cell_breaks(
             document,
             cascade,
             cell,
+            cell,
             tops.0 - current_abs_y(document, cell),
             page_end,
         )
@@ -611,14 +612,19 @@ fn starts_with_forced_break(
     })
 }
 
-/// Whether a float inside `parent` that no break goes through, that does not
-/// stack its content in block flow, or whose content does not break where it
-/// is (see [`float_breaks`]), runs past `page_end`. `offset` takes
-/// a box from where it is in the document to where it is in the flow.
-/// Pagination does not move such a float down inside a table cell.
+/// Whether a float inside `parent` whose content does not break where it is
+/// runs past `page_end`: one that does not stack its content in block flow,
+/// or whose lines or boxes do not break cleanly there (see
+/// [`float_breaks`]). `offset` takes a box from where it is in the document
+/// to where it is in the flow, and `cell` is the cell the floats are in.
+///
+/// A float that avoids a break inside it crosses only when it cannot move
+/// down inside the cell (see [`moves_down`]). A replaced or other box that
+/// no break goes through crosses.
 fn float_crosses(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    cell: usize,
     parent: usize,
     offset: f32,
     page_end: f32,
@@ -630,15 +636,88 @@ fn float_crosses(
                 let top = offset + current_abs_y(document, child);
                 top < page_end - 0.001
                     && top + node.layout.size.height > page_end + 0.001
-                    && (box_avoids_page_break_inside(
-                        document,
-                        child,
-                        cascade.computed[child].break_inside,
-                    ) || box_is_unbreakable(document, cascade, child, false)
-                        || !plain_block(document, child)
-                        || !float_breaks(document, cascade, child, top, page_end))
-            } || float_crosses(document, cascade, child, offset, page_end))
+                    && (box_is_unbreakable(document, cascade, child, false)
+                        || if box_avoids_page_break_inside(
+                            document,
+                            child,
+                            cascade.computed[child].break_inside,
+                        ) {
+                            !moves_down(document, cascade, cell, (parent, child), offset, page_end)
+                        } else {
+                            !plain_block(document, child)
+                                || !float_breaks(document, cascade, child, top, page_end)
+                        })
+            } || float_crosses(document, cascade, cell, child, offset, page_end))
     })
+}
+
+/// Whether the float `float` in `parent`, which avoids a break inside it and
+/// crosses `page_end`, moves down to the next page inside the cell `cell`, as
+/// a block that avoids a break does, and the row grows with it: Chromium
+/// splits the row there, and keeps the content above the float and the cells
+/// beside it on the page. `offset` is as in [`float_crosses`].
+///
+/// Pagination does not lay out again what goes beside the float or below it
+/// once it moves, so the float stays where it is when that content depends
+/// on it: the lines of a paragraph it sits in, a later float that stays on
+/// the page (no float may start above an earlier one, CSS 2.1 §9.5.1), a box
+/// with `clear` (which pagination does not place again below the moved
+/// float, whichever side it clears), lines beside it after it that run past
+/// the page end, or an independent formatting context after it that does.
+fn moves_down(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    cell: usize,
+    (parent, float): (usize, usize),
+    offset: f32,
+    page_end: f32,
+) -> bool {
+    let float_bottom =
+        offset + current_abs_y(document, float) + document.nodes[float].layout.size.height;
+    let past_page_end =
+        |id: usize, bottom: f32| offset + current_abs_y(document, id) + bottom > page_end + 0.001;
+    !super::in_inline_context(document, parent)
+        && !super::later_in_float_context(
+            document,
+            cascade,
+            super::float_context_root(document, cascade, float, cell),
+            float,
+            |id| {
+                let node = &document.nodes[id];
+                if node.kind() != NodeKind::Element {
+                    return false;
+                }
+                if is_floating_box_for_pagination(document, cascade, id) {
+                    let top = offset + current_abs_y(document, id);
+                    // A later float that crosses the page end too moves
+                    // with it when it can.
+                    return top < page_end - 0.001
+                        && !(past_page_end(id, node.layout.size.height)
+                            && box_avoids_page_break_inside(
+                                document,
+                                id,
+                                cascade.computed[id].break_inside,
+                            )
+                            && !box_is_unbreakable(document, cascade, id, false));
+                }
+                let content_top = offset
+                    + current_abs_y(document, id)
+                    + node.layout.border.top
+                    + node.layout.padding.top;
+                // A line below the float is there for want of room beside
+                // it, and comes back up to where the flow puts it once the
+                // float moves on.
+                cascade.computed[id].clear != ClearValue::None && !node.display().is_inline_flow()
+                    || line_bounds(document, id).is_some_and(|bounds| {
+                        bounds.iter().any(|&(line_top, bottom)| {
+                            content_top + line_top < float_bottom - 0.001
+                                && content_top + bottom > page_end + 0.001
+                        })
+                    })
+                    || super::holds_floats(document, cascade, id)
+                        && past_page_end(id, node.layout.size.height)
+            },
+        )
 }
 
 /// Whether the content of the float `float`, with its border box at `top` in

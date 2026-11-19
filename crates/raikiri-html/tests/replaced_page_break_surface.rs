@@ -335,15 +335,18 @@ fn column_image_candidates_respect_parallel_and_clipping_ancestors() {
         "<div id=o style='display:flex;flex-direction:column;width:300px'>{}</div>",
         column_image(400, "")
     );
-    for wrapper in [
-        format!(
-            "<div style='display:flex;break-before:avoid'><div style='width:20px;height:20px'></div>{column}</div>"
-        ),
-        format!("<div style='height:400px;overflow:hidden'>{column}</div>"),
-    ] {
-        let body = format!("<div style='height:300px'></div>{wrapper}");
-        assert_eq!(extents_of("o", &body)[0], Some((308, 600)), "{wrapper}");
-    }
+    let body = format!(
+        "<div style='height:300px'></div><div style='height:400px;overflow:hidden'>{column}</div>"
+    );
+    assert_eq!(extents_of("o", &body)[0], Some((308, 600)));
+    // A row flex container around the column, with the break before it
+    // avoided, moves to the next page with the image that begins its row:
+    // Chromium breaks before the container rather than through the image.
+    let body = format!(
+        "<div style='height:300px'></div><div style='display:flex;break-before:avoid'>\
+         <div style='width:20px;height:20px'></div>{column}</div>"
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
 }
 
 #[test]
