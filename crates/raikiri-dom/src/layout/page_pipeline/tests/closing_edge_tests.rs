@@ -4917,3 +4917,44 @@ fn edges_that_end_above_a_float_the_block_holds_keep_the_margin_after_it() {
     });
     assert_eq!(page_flow_y(&doc, after), 235.0);
 }
+
+#[test]
+fn a_spanning_cell_is_beside_no_row_of_a_later_row_group() {
+    use crate::layout::table::row_moves::row_beside_spanning_cell;
+
+    // `table > [tbody > tr > [td(rowspan), td], tbody > [tr > td, tr > td]]`:
+    // the span stops at the end of its row group, whether it is `2` or `0`,
+    // as in layout, so neither row of the later group is beside it.
+    for rowspan in ["2", "0"] {
+        let (mut table, mut group_rows) = (0, Vec::new());
+        let (doc, _) = paged_body(|doc, body| {
+            table = block(doc, body, "display:table;border-spacing:0");
+            let first = block(doc, table, "display:table-row-group");
+            let row = block(doc, first, "display:table-row");
+            let span = block(doc, row, "display:table-cell;height:30px");
+            doc.set_element_attribute(span, "rowspan", rowspan).unwrap();
+            block(doc, row, "display:table-cell;height:10px");
+            let second = block(doc, table, "display:table-row-group");
+            for _ in 0..2 {
+                let row = block(doc, second, "display:table-row");
+                block(doc, row, "display:table-cell;height:10px");
+                group_rows.push(row);
+            }
+        });
+        for &row in &group_rows {
+            assert!(!row_beside_spanning_cell(&doc, table, row), "{rowspan}");
+        }
+    }
+    // In one row group, the row after the spanning cell's row is beside it.
+    let (mut table, mut later) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        table = block(doc, body, "display:table;border-spacing:0");
+        let row = block(doc, table, "display:table-row");
+        let span = block(doc, row, "display:table-cell;height:30px");
+        doc.set_element_attribute(span, "rowspan", "2").unwrap();
+        block(doc, row, "display:table-cell;height:10px");
+        later = block(doc, table, "display:table-row");
+        block(doc, later, "display:table-cell;height:10px");
+    });
+    assert!(row_beside_spanning_cell(&doc, table, later));
+}

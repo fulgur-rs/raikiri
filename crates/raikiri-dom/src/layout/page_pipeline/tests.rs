@@ -61,6 +61,7 @@ mod geometry_lookup_tests;
 mod grid_row_tests;
 mod inner_flex_tail_tests;
 mod leading_box_scan_tests;
+mod line_margin_tests;
 mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;

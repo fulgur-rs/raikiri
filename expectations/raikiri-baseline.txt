@@ -1678,6 +1678,7 @@ css/CSS2/pagination/block-page-break-inside-avoid-4-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-7-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-8-print.html
 css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
+css/CSS2/pagination/float-page-break-inside-avoid-8-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html

@@ -27,7 +27,8 @@ fn a_br_line_has_real_positive_metrics_without_a_text_owner() {
     assert_eq!(lines.lines.len(), 1);
     assert_eq!(lines.lines[0].block_size(), 10.0);
     assert!(super::glyph_owners(&lines.lines[0]).is_empty());
-    let unplaced = super::single_unplaced_line(&doc, root).expect("the br line needs placement");
+    let unplaced =
+        super::single_unplaced_line(&doc, &cascade, root).expect("the br line needs placement");
     assert_eq!((unplaced.line.top, unplaced.line.bottom), (0.0, 10.0));
     assert!(!unplaced.atomic);
 }
@@ -47,7 +48,8 @@ fn an_empty_outside_list_item_has_a_real_line_to_place() {
     assert_eq!(lines.lines.len(), 1);
     assert_eq!(lines.lines[0].block_size(), 10.0);
     assert!(super::glyph_owners(&lines.lines[0]).is_empty());
-    let unplaced = super::single_unplaced_line(&doc, root).expect("the empty item needs placement");
+    let unplaced =
+        super::single_unplaced_line(&doc, &cascade, root).expect("the empty item needs placement");
     assert_eq!((unplaced.line.top, unplaced.line.bottom), (0.0, 10.0));
     assert!(!unplaced.atomic);
 }
@@ -63,7 +65,7 @@ fn no_line_zero_height_and_multiple_lines_do_not_make_an_unplaced_single_line() 
         let (mut doc, cascade, root) = ahem_paragraph(text, css);
         lay_out(&mut doc, &cascade);
         assert!(
-            super::single_unplaced_line(&doc, root).is_none(),
+            super::single_unplaced_line(&doc, &cascade, root).is_none(),
             "{text:?}, {css}"
         );
     }
@@ -81,7 +83,7 @@ fn a_multicol_line_keeps_its_fragmented_placement() {
             .multicol_fragments
             .is_some()
     );
-    assert!(super::single_unplaced_line(&doc, root).is_none());
+    assert!(super::single_unplaced_line(&doc, &cascade, root).is_none());
 }
 
 #[test]
@@ -100,7 +102,7 @@ fn a_generated_block_and_a_br_are_not_a_single_line_paragraph() {
         .unwrap();
     assert_eq!(lines.lines.len(), 1);
     assert_eq!(lines.placed_blocks.len(), 1);
-    assert!(super::single_unplaced_line(&doc, root).is_none());
+    assert!(super::single_unplaced_line(&doc, &cascade, root).is_none());
 }
 
 #[test]

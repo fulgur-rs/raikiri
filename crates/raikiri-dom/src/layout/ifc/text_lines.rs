@@ -3,6 +3,7 @@
 use crate::Document;
 use crate::layout::LayoutError;
 use crate::node::{NodeData, NodeFlags};
+use raikiri_style::CascadeResult;
 use raikiri_traits::NodeKind;
 use shodo::Fragment;
 use std::collections::{HashMap, HashSet};
@@ -89,14 +90,25 @@ fn is_text_line_owner(doc: &Document, owner: usize) -> bool {
 }
 
 /// Whether `owner`, the node a glyph run comes from, is a text node that
-/// pagination places lines through. White space alone is never a page
-/// candidate, so a line it holds the only glyphs of is placed by no text.
-fn is_placing_text_owner(doc: &Document, owner: usize) -> bool {
+/// pagination places lines through (see [`places_lines`]).
+fn is_placing_text_owner(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
     is_text_line_owner(doc, owner)
         && matches!(
             &doc.nodes[owner].data,
-            NodeData::Text(text) if !text.text_content.trim().is_empty()
+            NodeData::Text(text) if places_lines(cascade, owner, &text.text_content)
         )
+}
+
+/// Whether the text node `node`, holding `text`, is a page candidate that
+/// places the lines it shows up on: anything but white space that its style
+/// collapses away. White space that the style preserves lays out a line of its
+/// own, which the page breaks before like any other line (Chromium), and so
+/// does a no-break space.
+pub(crate) fn places_lines(cascade: &CascadeResult, node: usize, text: &str) -> bool {
+    !crate::generated_content::is_collapsed_white_space(
+        text,
+        cascade.computed[node].effective_white_space_collapse,
+    )
 }
 
 /// The single line of a paragraph that no text node places (see
@@ -119,10 +131,15 @@ pub(crate) struct UnplacedLine {
 /// Pagination places the lines of a paragraph through the text nodes that own
 /// them, and generated text and atomic inlines belong to none, so a line like
 /// this one is never placed by itself and a page edge would cut it in two. A
-/// line whose only real text is white space is such a line: the white space of
-/// an unclosed `<li>` before the next one is a text node, but never a page
-/// candidate.
-pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<UnplacedLine> {
+/// line whose only real text is white space that the style collapses is such
+/// a line: the white space of an unclosed `<li>` before the next one is a text
+/// node, but never a page candidate. White space that the style preserves is
+/// one (see [`places_lines`]).
+pub(crate) fn single_unplaced_line(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Option<UnplacedLine> {
     let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
     // The lines of a multicol container sit in its columns, not at the offset
     // the paragraph lays them out at.
@@ -136,7 +153,7 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<Unplac
     let owners = glyph_owners(line);
     if owners
         .iter()
-        .any(|&owner| is_placing_text_owner(doc, owner))
+        .any(|&owner| is_placing_text_owner(doc, cascade, owner))
     {
         return None;
     }

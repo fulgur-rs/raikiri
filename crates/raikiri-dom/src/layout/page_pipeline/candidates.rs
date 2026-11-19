@@ -8,20 +8,20 @@ use super::{
     FlexDirectionValue, FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind,
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
-    avoids_page_break_inside, block_after_last_line, box_forces_break_after, box_is_unbreakable,
-    boxes_are_tied, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
-    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
-    end_margin_through, first_named_item_start_page, first_owned_text_line_top,
+    avoids_page_break_inside, block_after_last_line, box_is_unbreakable, boxes_are_tied,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
+    container_item_tail, content_bottom_edges, edges_break_container, end_margin_through,
+    first_named_item_start_page, first_owned_text_line_top, forces_page_break,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
     is_plain_container_box, is_plain_table_box, leading_holder, leading_piece_end,
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
     moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, paragraph_lines_keep_together, passes_closing_edges,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, unplaced_line,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    unplaced_line, unplaced_line_after_block,
 };
 use std::collections::HashMap;
 
@@ -199,7 +199,8 @@ pub(super) struct ElementContext {
     pub(super) clip_box: Option<usize>,
     pub(super) deferred_named_break_after: bool,
     /// The line of a paragraph of one line of generated text or of atomic
-    /// inlines that no text places: the box is kept whole by that line.
+    /// inlines that no text places: the box is kept whole by that line,
+    /// unless a block child of the paragraph comes above it.
     pub(super) unplaced_line: Option<UnplacedBlockLine>,
     /// The box is replaced content, full size containment, or an atomic
     /// inline-level box that no page break goes through (see
@@ -372,9 +373,20 @@ impl BoxContext {
             .is_some_and(|attributes| attributes.is_grid_item)
     }
 
+    /// The single unplaced line that keeps the box whole (see
+    /// [`super::unplaced_line`]).
     pub(super) fn unplaced_line(self) -> Option<UnplacedBlockLine> {
         self.element_attributes()
             .and_then(|attributes| attributes.unplaced_line)
+            .filter(|line| !line.after_block)
+    }
+
+    /// The single unplaced line of the paragraph laid out below a block child
+    /// of it (see [`super::unplaced_line_after_block`]).
+    pub(super) fn unplaced_line_after_block(self) -> Option<UnplacedBlockLine> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.unplaced_line)
+            .filter(|line| line.after_block)
     }
 
     pub(super) fn is_unbreakable(self) -> bool {
@@ -1196,7 +1208,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !later_text_of_item
                     && matches!(
                         &node.data,
-                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                        crate::node::NodeData::Text(text)
+                            if crate::layout::ifc::text_lines::places_lines(cascade, node_id, &text.text_content)
                     )
                 {
                     // A text node of an ifc paragraph has no layout of its own:
@@ -1211,6 +1224,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     self.text_lines
                         .prepare_for(document, node_id, || control.check_aborted())?;
+                    // White space alone, preserved or a no-break space. When
+                    // it shows up on no line, such as a lone line feed that
+                    // only ends the line before it, it has nothing to place.
+                    let blank = matches!(&node.data, crate::node::NodeData::Text(text)
+                        if text.text_content.trim().is_empty());
+                    if blank && node.in_ifc_subtree() && self.text_lines.get(node_id).is_none() {
+                        return Ok(());
+                    }
                     let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document
@@ -1282,7 +1303,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             context: BoxContext::text(CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
-                                page_name_in_flow: !inside_float && !inside_out_of_flow,
+                                // White space gives the flow no page value
+                                // (Chromium).
+                                page_name_in_flow: !inside_float && !inside_out_of_flow && !blank,
                                 lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),
@@ -1564,15 +1587,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // out-of-flow box, or a flex, grid or table keeps them, and
                 // so does a document paginated on transposed axes, whose
                 // lines do not run along y.
-                let unplaced_line = (!inside_float
+                let unplaced_base = !inside_float
                     && !inside_out_of_flow
-                    && !inside_flex
                     && !inside_table
-                    && !flex_item_candidate
-                    && !grid_item_candidate
                     && !is_rendered_leaf
-                    && !document.context.pagination_on_transposed_axes)
-                    .then(|| unplaced_line(document, cascade, node_id))
+                    && !document.context.pagination_on_transposed_axes;
+                let unplaced_line =
+                    (unplaced_base && !inside_flex && !flex_item_candidate && !grid_item_candidate)
+                        .then(|| unplaced_line(document, cascade, node_id))
+                        .flatten();
+                // A line after a block child keeps nothing whole: the page
+                // breaks between the block and the line, inside a flex or
+                // grid item too, as between the lines of text there.
+                let line_after_block = unplaced_base
+                    .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(
                     document,
@@ -1897,12 +1925,43 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         Some(previous) => {
                             node.layout.margin.top > 0.0
                                 || document.nodes[previous].layout.margin.bottom > 0.0
+                                // A margin of a box inside the one before it
+                                // that collapses through that box's bottom.
+                                // An anonymous box has no style of its own.
+                                || (cascade.computed.get(previous).is_some()
+                                    && super::adjoining_margin_extremes(
+                                        document, cascade, previous, false, None,
+                                    )
+                                    .0 > 0.0)
+                                // Margins that collapse through an empty box
+                                // put it below them. With no clearance, only
+                                // margins lie between two siblings.
+                                || (document.nodes[previous].parent == node.parent
+                                    && matches!(
+                                        computed.clear,
+                                        raikiri_style::property::ClearValue::None
+                                    )
+                                    && normal_flow_y(document, cascade, body_id, node_id)
+                                        - normal_flow_bottom(document, cascade, body_id, previous)
+                                        > 0.001)
                         }
                         None => {
                             generated_before().is_some_and(|(end, flow_top)| end < flow_top - 0.001)
                         }
                     };
+                // A paragraph whose single unplaced line comes after a block
+                // child of it breaks between the two: it is placed as a box
+                // to move that line on (see `break_before_line_after_block`).
+                // Not in columns, whose balance the move would change, nor
+                // beside boxes at more than one level.
+                let line_after_block_base = participates_in_flow
+                    && !out_of_flow_subtree
+                    && edges_break_container(document, node_id, body_id).is_some()
+                    && !inline_level
+                    && is_block_flow_box
+                    && line_after_block.is_some();
                 let needs_ancestor_constraints = margin_shape
+                    || line_after_block_base
                     || (nested_candidate_base
                         && ((!inline_level && is_block_flow_box && avoids_break)
                             || is_float
@@ -1923,8 +1982,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // `clip_holds_breaks`).
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
-                    || page_break_is_forced(document, cascade, node_id, computed.break_before)
-                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
+                    || forces_page_break(document, cascade, node_id, true)
+                    || forces_page_break(document, cascade, node_id, false);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that
@@ -1958,6 +2017,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
+                let line_after_block_candidate =
+                    line_after_block_base && !bounded_clipping_ancestor;
+                let line_after_block = line_after_block.filter(|_| line_after_block_candidate);
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 let first_grid_row =
                     first_grid_row.filter(|_| direct_body_child || can_move_nested);
@@ -2050,6 +2112,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
+                        || line_after_block_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
                         || leading_block_piece.is_some()
@@ -2098,7 +2161,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_out_of_flow_descendant: out_of_flow_subtree,
                                 page_name_in_flow: !float_subtree
                                     && (!out_of_flow_subtree || own_page_name.is_some()),
-                                lines_closing_edges: 0.0,
+                                // The edges that close the boxes around a
+                                // paragraph go with its line after a block.
+                                lines_closing_edges: if line_after_block.is_some() {
+                                    frame.closing_edges
+                                        + node.layout.padding.bottom
+                                        + node.layout.border.bottom
+                                } else {
+                                    0.0
+                                },
                             },
                             ElementContext {
                                 leading_inline_line: None,
@@ -2119,7 +2190,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     )
                                 }),
                                 deferred_named_break_after,
-                                unplaced_line,
+                                unplaced_line: unplaced_line.or(line_after_block),
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 closing_edges: if closing_edges_candidate
