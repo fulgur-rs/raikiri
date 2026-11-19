@@ -713,6 +713,28 @@ impl Document {
         self.is_anonymous_cell(key).then(|| &self.nodes[key])
     }
 
+    /// What the anonymous cell `key` wraps, in document order: source boxes
+    /// and the `::before` or `::after` of an element, or `None` when `key`
+    /// names no anonymous cell.
+    pub(crate) fn anonymous_cell_content(
+        &self,
+        key: usize,
+    ) -> Option<impl Iterator<Item = (usize, Option<PseudoElem>)> + '_> {
+        let Some(BoxKey::AnonymousCell(index)) = self.nodes.box_key(key) else {
+            return None;
+        };
+        Some(
+            self.table_objects.cells[index]
+                .content
+                .iter()
+                .map(|content| match *content {
+                    Content::Node(id) => (id, None),
+                    Content::Before(id) => (id, Some(PseudoElem::Before)),
+                    Content::After(id) => (id, Some(PseudoElem::After)),
+                }),
+        )
+    }
+
     /// The layout key of the anonymous cell that wraps the source box `id`,
     /// if table fixup wrapped it in one.
     pub(crate) fn anonymous_cell_of(&self, id: usize) -> Option<usize> {

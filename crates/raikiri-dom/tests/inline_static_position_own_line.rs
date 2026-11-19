@@ -29,6 +29,9 @@
 //! is aligned as a last line, and the indent narrows it only when nothing
 //! block-level comes before it in the paragraph.
 //!
+//! The content of an anonymous table cell is a paragraph like any other:
+//! a box there takes the same static position, inside the cell.
+//!
 //! The expected boxes are the ones Chromium computes for the same markup, with
 //! no body margin and `10px/10px Ahem` text: each is the box's left, top,
 //! width and height.
@@ -862,6 +865,141 @@ const CASES: &[(&str, &str, [f32; 4])] = &[
         "block flow, a float in an inline element keeps the next one on the first line",
         r#"<div id=c style="text-indent:15px;width:100px"><span><span style="float:right;width:5px;height:50px"></span></span><span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
         [15.0, 0.0, 25.0, 10.0],
+    ),
+    (
+        "anonymous table cell, centered alone",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, right aligned before a block",
+        r#"<div id=c style="display:table;width:100px;text-align:right"><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after a block",
+        r#"<div id=c style="display:table;width:100px"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, between blocks takes text-align, not text-align-last",
+        r#"<div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after an element block ::before",
+        r#"<style>.b::before{display:block;content:"Z"}</style><div id=c style="display:table;width:100px"><span class=b></span><span id=q style="position:absolute">Q</span></div>"#,
+        [0.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after an empty inline element, as a last line",
+        r#"<div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><p style="margin:0">A</p><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, indent narrows the first anonymous line",
+        r#"<div id=c style="display:table;width:100px;text-indent:15px;text-align:center"><span></span><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [57.5, 0.0, 25.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after text and a block",
+        r#"<div id=c style="display:table;width:100px;text-align:right">X<p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [100.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after text and a space",
+        r#"<div id=c style="display:table;width:100px;text-align:center">X <span id=q style="position:absolute">Q</span></div>"#,
+        [55.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before text that ends the line",
+        r#"<div id=c style="display:table;width:100px;text-align:right"><span id=q style="position:absolute">Q</span>X<p style="margin:0">A</p></div>"#,
+        [90.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, rtl indent moves the empty line",
+        r#"<div id=c style="display:table;width:100px;direction:rtl;text-indent:10px"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [70.0, 0.0, 20.0, 10.0],
+    ),
+    (
+        "anonymous table cell, beside a float after a block",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><p style="margin:0;width:50px">A</p><span id=q style="position:absolute">Q</span><div style="float:left;width:30px;height:20px"></div><p style="margin:0">B</p></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after an explicit cell",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><span style="display:table-cell;width:40px">C</span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [70.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before an explicit cell",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><span id=q style="position:absolute">Q</span><span style="display:table-cell;width:40px">C</span></div>"#,
+        [30.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, in an inline table",
+        r#"<div>X<span id=c style="display:inline-table;width:100px;text-align:right"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></span></div>"#,
+        [110.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after a row group",
+        r#"<div id=c style="display:table;width:100px;text-align:right"><span style="display:table-row-group"><span style="display:table-row"><span style="display:table-cell">R</span></span></span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after a caption",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><span style="display:table-caption">Cap</span><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, with a top inset",
+        r#"<div id=c style="display:table;width:100px;text-align:center"><span id=q style="position:absolute;top:5px">Q</span><p style="margin:0">A</p></div>"#,
+        [50.0, 5.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before an element whose block ::before precedes a line",
+        r#"<style>.b::before{display:block;content:"Z"}</style><div id=c style="display:table;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><span class=b></span>W<br></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before an element with a block ::before and text",
+        r#"<style>.b::before{display:block;content:"Z"}</style><div id=c style="display:table;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><span class=b>M</span><p style="margin:0">A</p></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before an element block ::after",
+        r#"<style>.a::after{display:block;content:"Y"}</style><div id=c style="display:table;text-align:left;width:100px"><span id=q style="position:absolute">Q</span><span class=a></span></div>"#,
+        [0.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after the table inline ::before, as a last line",
+        r#"<style>#c::before{content:"Z"}</style><div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [100.0, 0.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, after the table block ::before",
+        r#"<style>#c::before{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before the table block ::after",
+        r#"<style>#c::after{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></div>"#,
+        [50.0, 10.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, between blocks after the table block ::before",
+        r#"<style>#c::before{display:block;content:"Z"}</style><div id=c style="display:table;width:100px;text-align:center"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span><p style="margin:0">B</p></div>"#,
+        [50.0, 20.0, 10.0, 10.0],
+    ),
+    (
+        "anonymous table cell, indent after the table inline ::before",
+        r#"<style>#c::before{content:"Z"}</style><div id=c style="display:table;width:100px;text-indent:15px;text-align:center"><span id=q style="position:absolute">Q</span><p style="margin:0">A</p></div>"#,
+        [62.5, 0.0, 25.0, 10.0],
+    ),
+    (
+        "anonymous table cell, before the table inline ::after, as a last line",
+        r#"<style>#c::after{content:"Z"}</style><div id=c style="display:table;width:100px;text-align:left;text-align-last:right"><p style="margin:0">A</p><span id=q style="position:absolute">Q</span></div>"#,
+        [90.0, 10.0, 10.0, 10.0],
     ),
 ];
 

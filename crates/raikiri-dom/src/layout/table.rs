@@ -2649,6 +2649,11 @@ fn append_direct_table_oof_candidates(
             // fixed captions against the page area.
             || doc.nodes[child].display() == DisplayValue::TableCaption
                 && doc.nodes[child].position() == &PositionValue::Absolute
+            // A box among the children that an anonymous cell wraps was
+            // placed by that cell, at its static position there.
+            || candidates
+                .iter()
+                .any(|candidate| usize::from(candidate.node) == child)
         {
             continue;
         }
