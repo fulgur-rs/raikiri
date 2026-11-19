@@ -63,11 +63,14 @@ fn block(style: &str, before: &str, last: &str) -> String {
     format!("<div style=\"width:20px;{style}\"><div>X X X X</div>{before}{last}</div><div>Z</div>")
 }
 
+/// A label, the markup, and the places of `U` and `Z` it expects.
+type Case = (&'static str, String, [(usize, f32); 2]);
+
 const T: &str = "<div style=\"height:20px\">T</div>";
 
 #[test]
 fn a_last_box_whose_lines_run_past_the_page_end_stays_on_its_page() {
-    let cases: Vec<(&str, String, [(usize, f32); 2])> = vec![
+    let cases: Vec<Case> = vec![
         (
             "a last box whose line runs past it and the page end",
             block(
