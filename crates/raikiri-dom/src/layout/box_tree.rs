@@ -92,7 +92,7 @@ impl<'a> BoxTree<'a> {
         self.properties(id).map(BoxPropertiesRef::display)
     }
 
-    fn document(self) -> &'a Document {
+    pub(crate) fn document(self) -> &'a Document {
         match self {
             Self::Layout(document) | Self::Cascade(document, _) => document,
         }

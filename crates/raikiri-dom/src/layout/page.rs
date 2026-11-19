@@ -1,4 +1,4 @@
-use super::box_tree::BoxTree;
+use super::box_tree::{BoxParentScope, BoxTree};
 use super::*;
 use crate::node::FormattingContext;
 use raikiri_layout_style::values::Position;
@@ -631,7 +631,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
             continue;
         }
         match node.kind() {
-            NodeKind::Text if text_is_page_content(document, cascade, child_id) => return None,
+            NodeKind::Text if text_is_page_content(boxes, cascade, child_id) => return None,
             NodeKind::Text => {}
             NodeKind::Element => {
                 // An absolutely positioned box left at its static position
@@ -1643,30 +1643,30 @@ fn propagated_start_page_name_with_order<'name>(
 }
 
 /// Whether the text node `id` is content of the page flow: text other than
-/// white space, or white space that the style preserves, which
-/// lays out a line as Chromium prints it. White space between flex or grid
-/// items, or among table parts, lays out none.
-pub(crate) fn text_is_page_content(
-    document: &Document,
-    cascade: &CascadeResult,
-    id: usize,
-) -> bool {
+/// white space, or white space that the style preserves, which lays out a
+/// line as Chromium prints it. White space between flex or grid items, or
+/// among table parts, lays out none. `boxes` gives the display of the parent
+/// box, so the check also holds before layout.
+pub(crate) fn text_is_page_content(boxes: BoxTree<'_>, cascade: &CascadeResult, id: usize) -> bool {
+    let document = boxes.document();
     document.nodes[id].text_content().is_some_and(|text| {
         !text.trim().is_empty()
             || (super::ifc::text_lines::places_lines(cascade, id, text)
-                && !super::page_pipeline::in_flex_or_grid_container(document, id)
-                && !super::page_pipeline::parent_box_is(document, id, |display| {
-                    // White space among table parts renders nothing.
-                    matches!(
-                        display,
-                        DisplayValue::Table
-                            | DisplayValue::InlineTable
-                            | DisplayValue::TableRowGroup
-                            | DisplayValue::TableHeaderGroup
-                            | DisplayValue::TableFooterGroup
-                            | DisplayValue::TableRow
-                    )
-                }))
+                && !boxes
+                    .parent(id, BoxParentScope::Document)
+                    .and_then(|parent| boxes.display(parent))
+                    .is_some_and(|display| {
+                        display.is_flex_or_grid_container()
+                            || matches!(
+                                display,
+                                DisplayValue::Table
+                                    | DisplayValue::InlineTable
+                                    | DisplayValue::TableRowGroup
+                                    | DisplayValue::TableHeaderGroup
+                                    | DisplayValue::TableFooterGroup
+                                    | DisplayValue::TableRow
+                            )
+                    }))
     })
 }
 
@@ -1734,7 +1734,7 @@ fn start_page_name<'name>(
             continue;
         }
         if matches!(node.kind(), NodeKind::Text) {
-            if text_is_page_content(document, cascade, node_id) {
+            if text_is_page_content(boxes, cascade, node_id) {
                 return (true, inherited_page_name);
             }
             continue;

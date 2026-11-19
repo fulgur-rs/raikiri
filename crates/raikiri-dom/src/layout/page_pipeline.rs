@@ -22,7 +22,6 @@ mod page_start;
 mod pagination_state;
 mod positioned_flow;
 mod sibling_adjacency;
-pub(crate) use sibling_adjacency::{in_flex_or_grid_container, parent_box_is};
 mod sibling_shifts;
 mod source_walk;
 mod table_cell_fragments;
@@ -3477,7 +3476,11 @@ fn clear_floats_at_forced_breaks<'name>(
             let node = &document.nodes[child];
             if node.kind() == NodeKind::Text {
                 if node.is_in_document()
-                    && super::page::text_is_page_content(document, cascade, child)
+                    && super::page::text_is_page_content(
+                        BoxTree::for_layout(document),
+                        cascade,
+                        child,
+                    )
                 {
                     boxes.push(None);
                 }
