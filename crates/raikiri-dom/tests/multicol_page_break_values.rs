@@ -262,6 +262,38 @@ fn a_page_value_after_a_spanner_looks_through_display_contents() {
     );
 }
 
+/// An empty wrapper that generates no box is no content after a spanner,
+/// but an empty inline inside one is. Before a spanner, the break takes
+/// effect: two pages, as in Chromium.
+#[test]
+fn a_page_value_after_a_spanner_skips_empty_display_contents() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='column-span:all;break-after:page'>S</div>\
+             <div style='display:contents'></div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("x", 1, 0.0, 0.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='column-span:all;break-after:page'>S</div>\
+             <div style='display:contents'></div><div id=t style='column-span:all'>T</div></div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='column-span:all;break-after:page'>S</div>\
+             <div style='display:contents'><span></span></div></div><div id=x>X</div>"
+        ),
+        1,
+        &[("x", 0, 0.0, 20.0)],
+    );
+}
+
 /// A page value between a spanner and the column content after it falls in
 /// the columns, and so does one on a spanner of a multicol container that
 /// itself sits in columns.

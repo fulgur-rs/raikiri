@@ -3840,7 +3840,8 @@ fn page_break_after_is_forced(
     let mut current = node_id;
     loop {
         let parent = document.parent_of(current);
-        let next = parent.and_then(|parent| first_flow_child(document, parent, Some(current)));
+        let next =
+            parent.and_then(|parent| first_flow_child(document, cascade, parent, Some(current)));
         if let Some(next) = next {
             return starts_with_spanner(document, cascade, next);
         }
@@ -3855,8 +3856,13 @@ fn page_break_after_is_forced(
 
 /// The first child of `parent`, after `after` when it is given, that the
 /// flow lays out: neither hidden nor out of flow, nor text of white space
-/// alone.
-fn first_flow_child(document: &Document, parent: usize, after: Option<usize>) -> Option<usize> {
+/// alone, nor a wrapper that generates no box and holds no such child.
+fn first_flow_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    after: Option<usize>,
+) -> Option<usize> {
     let children = &document.nodes[parent].children;
     let start = after.map_or(0, |after| {
         children
@@ -3876,6 +3882,8 @@ fn first_flow_child(document: &Document, parent: usize, after: Option<usize>) ->
                 crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
                 _ => true,
             }
+            && (cascade.computed[child].display != DisplayValue::Contents
+                || first_flow_child(document, cascade, child, None).is_some())
     })
 }
 
@@ -3884,7 +3892,7 @@ fn first_flow_child(document: &Document, parent: usize, after: Option<usize>) ->
 fn starts_with_spanner(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
     super::is_spanner_in(document, cascade, node)
         || (cascade.computed[node].display == DisplayValue::Contents
-            && first_flow_child(document, node, None)
+            && first_flow_child(document, cascade, node, None)
                 .is_some_and(|first| starts_with_spanner(document, cascade, first)))
 }
 
