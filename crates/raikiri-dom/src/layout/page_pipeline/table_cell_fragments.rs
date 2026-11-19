@@ -390,17 +390,19 @@ fn breaks_between(
 /// were aligned to its top (see `split`), and their content goes on at the
 /// top of the next page.
 ///
-/// The row is split only where no line of its content has to move to break
-/// there: no line or replaced box runs past the page end (a box that avoids
-/// a break inside it moves down inside the cell, as in a taller row), the
-/// lines on either side of it are enough for their orphans and widows, and
-/// no edges that close a box are left without content to go with them. Rows
-/// whose lines would have to move inside the cell, and content this cannot
-/// follow (boxes laid out side by side, floats across the page end, lines
-/// around a block), still move whole.
+/// The row is split only where its content can break at the page end: no
+/// replaced box runs past it (a box that avoids a break inside it moves down
+/// inside the cell, as in a taller row), lines that cross it or that its
+/// orphans or widows pull below it can move down in their paragraph, which
+/// then grows the row (see [`super::cell_flow_inline`]), and no edges that
+/// close a box are left without content to go with them. Rows whose lines
+/// cannot move that way, and content this cannot follow (boxes laid out side
+/// by side, floats across the page end, lines around a block), still move
+/// whole.
 pub(super) fn row_splits(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    body_id: usize,
     row: usize,
     top: f32,
     page_end: f32,
@@ -433,24 +435,26 @@ pub(super) fn row_splits(
         && !cells.is_empty()
         && cells.iter().all(|&cell| {
             let cell_top = top + document.pagination_local_y(cell) - row_top;
-            cell_breaks(document, cascade, cell, cell_top, page_end, true)
+            cell_breaks(document, cascade, cell, cell_top, page_end, Some(body_id))
         })
         && spanning.iter().all(|&cell| {
             let cell_top = top + current_abs_y(document, cell) - row_abs_y;
-            cell_breaks(document, cascade, cell, cell_top, page_end, false)
+            cell_breaks(document, cascade, cell, cell_top, page_end, None)
         })
 }
 
 /// Whether the cell `cell`, with its border box at `cell_top` in the flow,
-/// lets a break at `page_end` go through it where its content is, and, for
-/// a cell of the row itself (`own`), puts some of that content before it.
+/// lets a break at `page_end` go through it where its content is. `own`
+/// holds the body for a cell of the row itself, which must also put some of
+/// its content before the break; only such a cell's lines move down inside
+/// it. A cell of an earlier row that spans the row passes `None`.
 fn cell_breaks(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     cell: usize,
     cell_top: f32,
     page_end: f32,
-    own: bool,
+    own: Option<usize>,
 ) -> bool {
     let node = &document.nodes[cell];
     let layout = &node.layout;
@@ -470,7 +474,7 @@ fn cell_breaks(
         && !node.used_writing_mode.is_vertical()
         && !box_avoids_page_break_inside(document, cell, computed.break_inside)
         && shift.is_finite()
-        && (!own
+        && (own.is_none()
             || !page_break_is_forced(document, cell, computed.break_before)
                 && !starts_with_forced_break(document, cascade, cell)
                 && content_fits(document, cascade, cell, tops, closing, page_end))
@@ -481,7 +485,7 @@ fn cell_breaks(
             tops.0 - current_abs_y(document, cell),
             page_end,
         )
-        && breaks_cleanly(document, cascade, cell, tops, closing, page_end)
+        && breaks_cleanly(document, cascade, cell, tops, closing, page_end, own)
 }
 
 /// Whether the first content of `block` in its flow, at any depth, is a box
@@ -544,7 +548,7 @@ fn float_breaks(
     let tops = (top, top + layout.border.top + layout.padding.top);
     let closing = layout.padding.bottom + layout.border.bottom;
     content_fits(document, cascade, float, tops, closing, page_end)
-        && breaks_cleanly(document, cascade, float, tops, closing, page_end)
+        && breaks_cleanly(document, cascade, float, tops, closing, page_end, None)
 }
 
 /// Whether some content of the block `block` goes before a break at
@@ -623,6 +627,7 @@ fn breaks_cleanly(
     (border_top, content_top): (f32, f32),
     closing: f32,
     page_end: f32,
+    own: Option<usize>,
 ) -> bool {
     let edges_fit = |content_end: f32| {
         closing <= 0.001
@@ -641,12 +646,17 @@ fn breaks_cleanly(
             .count();
         let orphans = computed.orphans.max(1) as usize;
         let widows = computed.widows.max(1) as usize;
-        // Lines that the widows pull to the next page would have to move,
-        // unless that leaves too few for the orphans: Chromium then breaks
-        // where the lines are and gives up the widows.
-        let split = before > 0 && after > 0;
-        return before + after == bounds.len()
+        // Lines that cross the page end, or that the orphans or widows pull
+        // to the next page, have to move down, which only a paragraph whose
+        // lines grow the row can do. Lines that cannot move keep the widows
+        // only when that leaves enough for the orphans: Chromium otherwise
+        // breaks where the lines are and gives up the widows.
+        let lines_move =
+            own.is_some_and(|body_id| lines_move_in_cell(document, cascade, block, body_id));
+        let split = before > 0 && before < bounds.len();
+        return (lines_move || before + after == bounds.len())
             && (!split
+                || lines_move
                 || before >= orphans && (after >= widows || before + after < orphans + widows))
             && bounds
                 .last()
@@ -681,8 +691,22 @@ fn breaks_cleanly(
                         (child_top, child_content_top),
                         layout.padding.bottom + layout.border.bottom,
                         page_end,
+                        own,
                     ))
     }) && edges_fit(content_end)
+}
+
+/// Whether the lines of the paragraph `block` in a table cell can move down
+/// inside it at a page end and grow the cell's row (see
+/// [`super::cell_flow_inline`]).
+fn lines_move_in_cell(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+) -> bool {
+    super::lines_can_shift_inside(document, cascade, block)
+        && super::cell_flow_inline(document, cascade, block, body_id).is_some()
 }
 
 /// The block-start and block-end edges of the lines of `block`, below the
