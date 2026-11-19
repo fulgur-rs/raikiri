@@ -3823,6 +3823,153 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
         .any(|id| document.nodes[id].multicol.is_some())
 }
 
+/// Whether `node_id` starts (`before`) or ends the block flow of the table
+/// cell around it: each box from it up to the cell is the first or last box
+/// of the next one up, which stacks its children in block flow. Floats,
+/// positioned boxes and empty `display: contents` boxes beside it do not
+/// count, as for [`page_edge_child`], and generated content does. The cell
+/// must sit in a row of its own element, which takes the break, and must not
+/// be a box that pagination does not break through, such as a cell in an
+/// orthogonal writing mode.
+///
+/// A forced break there lies at the edge of the cell, not inside it, so it
+/// goes to the row (CSS Fragmentation 3, 3.1): see [`row_takes_cell_break`].
+fn at_table_cell_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    if !is_block_level_flow_box(document.nodes[node_id].display()) {
+        return false;
+    }
+    let mut id = node_id;
+    loop {
+        let parent = document.ancestors(id).find(|&ancestor| {
+            document.nodes[ancestor].display() != DisplayValue::Contents
+                || document.nodes[ancestor].has_before_or_after_content
+        });
+        let Some(parent) = parent.filter(|&parent| {
+            page_edge_child(document, cascade, parent, before, 0) == Ok(Some(id))
+        }) else {
+            return false;
+        };
+        if document.nodes[parent].display() == DisplayValue::TableCell {
+            return !generated_on_side(cascade, parent, before)
+                && !is_monolithic_for_pagination_with_transposed_axes(
+                    document, cascade, parent, false,
+                )
+                && document
+                    .parent_of(parent)
+                    .is_some_and(|row| document.nodes[row].display() == DisplayValue::TableRow);
+        }
+        if !passes_edge_breaks(document, cascade, parent, before) {
+            return false;
+        }
+        id = parent;
+    }
+}
+
+/// Whether a forced break at the start (`before`) or the end of the block
+/// flow of one of the cells of `row` passes to the row, which then breaks
+/// before or after itself (see [`at_table_cell_edge`]).
+fn row_takes_cell_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    row: usize,
+    before: bool,
+) -> bool {
+    document.nodes[row].display() == DisplayValue::TableRow
+        && document.nodes[row].children.iter().any(|&cell| {
+            if document.nodes[cell].display() != DisplayValue::TableCell
+                || generated_on_side(cascade, cell, before)
+                || is_monolithic_for_pagination_with_transposed_axes(document, cascade, cell, false)
+            {
+                return false;
+            }
+            let mut edge = page_edge_child(document, cascade, cell, before, 0);
+            while let Ok(Some(id)) = edge {
+                let node = &document.nodes[id];
+                if node.kind() != NodeKind::Element || !is_block_level_flow_box(node.display()) {
+                    return false;
+                }
+                let computed = &cascade.computed[id];
+                if before && page_break_is_forced(document, id, computed.break_before)
+                    || !before
+                        && box_forces_break_after(document, cascade, id, computed.break_after)
+                {
+                    return true;
+                }
+                if !passes_edge_breaks(document, cascade, id, before) {
+                    return false;
+                }
+                edge = page_edge_child(document, cascade, id, before, 0);
+            }
+            false
+        })
+}
+
+/// Whether `node_id` forces a page break before (`before`) or after itself
+/// in the page flow: its own forced break, unless it lies at the edge of a
+/// table cell, or one that a row takes from the edge of one of its cells.
+fn forces_page_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    let computed = &cascade.computed[node_id];
+    let own = if before {
+        page_break_is_forced(document, node_id, computed.break_before)
+    } else {
+        box_forces_break_after(document, cascade, node_id, computed.break_after)
+    };
+    own && !at_table_cell_edge(document, cascade, node_id, before)
+        || row_takes_cell_break(document, cascade, node_id, before)
+}
+
+/// Whether `id` is a block container whose first and last boxes start and
+/// end its own block flow, so that a forced break at them passes to it.
+/// Generated content on that side of its boxes keeps the break inside it,
+/// and no break reaches out of a box that pagination does not break through.
+fn passes_edge_breaks(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    before: bool,
+) -> bool {
+    breaks_through_block_flow(document, cascade, id) && !generated_on_side(cascade, id, before)
+}
+
+/// Whether `id` stacks its children in block flow that pagination breaks
+/// through, so that a forced break between them breaks the page. A block
+/// with inline content beside its block children still does.
+pub(super) fn breaks_through_block_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    matches!(
+        document.nodes[id].display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) && document.nodes[id].multicol.is_none()
+        && !is_monolithic_for_pagination_with_transposed_axes(document, cascade, id, false)
+}
+
+/// Whether `id` has generated content in the flow before (`before`) or after
+/// its boxes. An inside list marker comes before them too.
+pub(super) fn generated_on_side(cascade: &CascadeResult, id: usize, before: bool) -> bool {
+    if before {
+        crate::generated_content::has_page_flow_generated_prefix(cascade, id)
+    } else {
+        crate::generated_content::is_in_flow_generated_text(
+            cascade,
+            id,
+            raikiri_style::PseudoElem::After,
+        )
+    }
+}
+
 // Find the first/last generated child box, eliding Contents without cloning
 // wide child lists. Nonempty text and generated content remain edge barriers.
 fn page_edge_child(
@@ -3855,7 +4002,11 @@ fn page_edge_child(
             continue;
         }
         if let crate::node::NodeData::Text(text) = &node.data {
-            if text.text_content.trim().is_empty() {
+            // White space that the style preserves still makes a line.
+            if crate::generated_content::is_collapsed_white_space(
+                &text.text_content,
+                cascade.computed[child].effective_white_space_collapse,
+            ) {
                 continue;
             }
             return Ok(Some(child));
@@ -4049,7 +4200,9 @@ fn layout_pages_core(
     // Each container whose columns are filled page by page may take one
     // more attempt, to fill them from where the walk moved it.
     let mut attempts = 0;
-    while attempts < 3 + page_filled_origins.len() {
+    // Floats moved whole to a later page take one more attempt to lay the
+    // content beside them out without them.
+    while attempts < 3 + page_filled_origins.len() + usize::from(resumptions.has_pushed_floats()) {
         attempts += 1;
         let next = layout_pages_attempt(
             document,
@@ -5116,7 +5269,8 @@ fn first_row_ends(
 }
 
 /// Whether a forced page break comes before `row`, the first row of `table`:
-/// its own `break-before`, or that of the row group around it. The page edge
+/// its own `break-before` or one it takes from its cells (see
+/// [`forces_page_break`]), or that of the row group around it. The page edge
 /// constraint of the table does not look inside it, so the box before the
 /// table would be tied to a row that starts a page of its own.
 fn forced_break_before_first_row(
@@ -5126,13 +5280,13 @@ fn forced_break_before_first_row(
     row: usize,
 ) -> bool {
     let boundary = document.table_parts_boundary(table);
-    [
-        Some(row),
-        document.parent_of(row).filter(|&group| group != boundary),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|id| page_break_is_forced(document, id, cascade.computed[id].break_before))
+    forces_page_break(document, cascade, row, true)
+        || document
+            .parent_of(row)
+            .filter(|&group| group != boundary)
+            .is_some_and(|group| {
+                page_break_is_forced(document, group, cascade.computed[group].break_before)
+            })
 }
 
 /// Whether `node_id` is a block-level table that stacks in the normal flow of
@@ -5214,17 +5368,10 @@ fn avoided_row_groups(
             .filter(|candidate| candidate.context.is_table_row())
         {
             let row = candidate.node_id;
-            let forced_before =
-                page_break_is_forced(document, row, cascade.computed[row].break_before)
-                    || previous_rows
-                        .insert(document.parent_of(row), row)
-                        .is_some_and(|previous| {
-                            page_break_is_forced(
-                                document,
-                                previous,
-                                cascade.computed[previous].break_after,
-                            )
-                        });
+            let forced_before = forces_page_break(document, cascade, row, true)
+                || previous_rows
+                    .insert(document.parent_of(row), row)
+                    .is_some_and(|previous| forces_page_break(document, cascade, previous, false));
             let Some(group) = document
                 .parent_of(row)
                 .filter(|&group| avoiding_row_group(group))
@@ -5726,8 +5873,8 @@ fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) ->
                 .into_iter()
                 .filter(|&sibling| document.nodes[sibling].display() == DisplayValue::TableRow);
             for next in rows.skip_while(|&sibling| sibling != row).skip(1) {
-                if page_break_is_forced(document, held, cascade.computed[held].break_after)
-                    || page_break_is_forced(document, next, cascade.computed[next].break_before)
+                if forces_page_break(document, cascade, held, false)
+                    || forces_page_break(document, cascade, next, true)
                 {
                     break;
                 }
@@ -6283,10 +6430,12 @@ impl AvoidedBreaks {
         // A box inside another that moves with its run lengthens the boxes
         // around it, as one that moves for a break it avoids does.
         let page = page || (avoided_run && !candidate.context.is_direct_body_element());
-        // Keep an ordinary table row intact when it would cross the current
-        // page. The row is a class-A boundary owned by the table engine; its
-        // cells and descendants follow the same flow shift below. Rowspans,
-        // cell-internal breaks remain out of this narrow row-boundary pass.
+        // An ordinary table row that would cross the current page moves to
+        // the next one whole when a cell of it breaks before its content, as
+        // Chromium does; otherwise it breaks there with its cells (see
+        // `table_cell_fragments::row_splits`). A row whose cells would need
+        // their lines moved, or one of a table that repeats a header or
+        // footer, still moves whole.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
         // A row of a table that repeats its footer leaves room for the
@@ -6320,7 +6469,11 @@ impl AvoidedBreaks {
                         page_start,
                         page_end,
                         next_page_step,
-                    ))
+                    )
+                    && !(repeated_header_height + repeated_footer_height <= 0.001
+                        && table_cell_fragments::row_splits(
+                            document, cascade, node_id, flow_y, page_end,
+                        )))
                 || spanned_row_restarts(
                     document,
                     cascade,
@@ -8834,12 +8987,7 @@ impl PendingBreak {
     ) {
         // A forced break held by a clip box around the node breaks nothing;
         // a change of page name after it still applies.
-        let breaks_after = (box_forces_break_after(
-            document,
-            cascade,
-            node_id,
-            cascade.computed[node_id].break_after,
-        ) && !held())
+        let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
             || deferred_named_break_after;
         let source_is_ancestor = self
             .source
@@ -9691,8 +9839,7 @@ fn lineless_piece(
     let node = &document.nodes[node_id];
     // A forced break before a box inside takes the page break there: moving
     // the block would only push that break on to one more page.
-    if depth > 0 && page_break_is_forced(document, node_id, cascade.computed[node_id].break_before)
-    {
+    if depth > 0 && forces_page_break(document, cascade, node_id, true) {
         return None;
     }
     // A paragraph of one line that no text places, of generated text or
@@ -11839,9 +11986,8 @@ fn has_mandatory_break_inside(
         {
             continue;
         }
-        let computed = &cascade.computed[id];
-        if page_break_is_forced(document, id, computed.break_before)
-            || box_forces_break_after(document, cascade, id, computed.break_after)
+        if forces_page_break(document, cascade, id, true)
+            || forces_page_break(document, cascade, id, false)
             || selected_page_name(cascade, id).is_some()
         {
             return true;
@@ -12683,6 +12829,10 @@ struct CheckedParagraphs {
     /// Runs of lines between the block children of a paragraph that were
     /// checked against the page end: `(paragraph root, first line)`.
     lines_after_blocks: HashSet<(usize, usize)>,
+    /// Runs of lines before a block inside an inline box of their paragraph
+    /// that were checked against a break before the block: `(paragraph
+    /// root, first line)`.
+    lines_before_inline_blocks: HashSet<(usize, usize)>,
 }
 
 impl CheckedParagraphs {
@@ -13688,6 +13838,32 @@ fn margin_above_line(
     let gap = line_top - block_bottom;
     let (positive, negative) = adjoining_margin_extremes(document, cascade, block, false, None);
     (gap > 0.001 && gap <= positive + negative + 0.01).then_some(gap)
+}
+
+/// The block child of the paragraph `root` laid out right after its line
+/// `end - 1`, when that block sits inside an inline box of the paragraph, in
+/// the tree of elements. Chromium lays such a block out on a line of its own
+/// in the paragraph, which `orphans` and `widows` count as one line: a page
+/// break before the block leaves that one line after it.
+fn inline_block_after_lines(document: &Document, root: usize, end: usize) -> Option<usize> {
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    lines
+        .block_line_starts
+        .iter()
+        .find(|&&(_, after)| after == end)
+        .map(|&(block, _)| block)
+        .filter(|&block| {
+            std::iter::successors(document.nodes[block].parent, |&id| {
+                document.nodes[id].parent
+            })
+            .take_while(|&ancestor| ancestor != root)
+            .any(|ancestor| document.nodes[ancestor].display().is_inline_level())
+        })
 }
 
 /// Whether the lines `run` of the paragraph `root` are the last of its content:
@@ -15875,10 +16051,13 @@ fn move_paragraph_lines(
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> f32 {
+    // A float an earlier walk moved whole to a later page stands where it
+    // went, as one this walk moves does.
     let went_ahead: Vec<usize> = shifts
         .floats_ahead
         .iter()
         .map(|&(float, _)| float)
+        .chain(document.context.float_resumptions.pushed_floats())
         .collect();
     let (growth, floats) = shift_paragraph_lines(document, cascade, moved, Some(&went_ahead));
     if let Some((item, container)) = moved.flex_line {
@@ -18405,6 +18584,44 @@ impl FloatShifts {
         let context = float_context_root(document, cascade, node_id, body_id);
         self.drop_edges_above(context, flow_top);
     }
+}
+
+/// Whether a float or a block with `clear` comes after the float `float` in
+/// the float context `root`, outside the float itself. Independent
+/// formatting contexts inside `root` place their own floats and are skipped.
+fn floats_or_clearance_follow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    float: usize,
+) -> bool {
+    let mut stack: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut after = false;
+    while let Some(id) = stack.pop() {
+        if id == float {
+            after = true;
+            continue;
+        }
+        if after
+            && (is_floating_box_for_pagination(document, cascade, id)
+                || cascade.computed.get(id).is_some_and(|computed| {
+                    computed.clear != ClearValue::None
+                        && !document.nodes[id].display().is_inline_flow()
+                }))
+        {
+            return true;
+        }
+        if after && holds_floats(document, cascade, id) {
+            continue;
+        }
+        stack.extend(document.nodes[id].children.iter().rev().copied());
+    }
+    false
 }
 
 /// The box whose block formatting context places the floats and clearance

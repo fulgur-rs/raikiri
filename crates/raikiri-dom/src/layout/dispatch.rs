@@ -3069,7 +3069,13 @@ fn measure_ifc_root(
         Some((first, last)) if inline_block => last.or(first),
         Some((first, _)) => first,
         None if inline_block => flow::last_baseline_of(&lines, kind),
-        None => flow::first_baseline_of(&lines, kind),
+        // A block child ahead of the first line supplies the first baseline
+        // of a horizontal root.
+        None => lines
+            .leading_block_baseline
+            .filter(|_| !vertical)
+            .map(|baseline| baseline + lines.shifts.aligned())
+            .or_else(|| flow::first_baseline_of(&lines, kind)),
     };
     let leading_margin = if measure.top_margin_escapes {
         lines
