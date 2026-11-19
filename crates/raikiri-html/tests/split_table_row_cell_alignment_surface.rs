@@ -14,7 +14,8 @@ use raikiri_html::{
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// The page, glyph and glyph top of every line of text in `body`.
+/// The page, glyph and glyph top of every line of text in `body`, where
+/// the painter draws it.
 fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
@@ -41,8 +42,15 @@ fn glyph_tops(body: &str) -> Vec<(u32, char, i32)> {
     for index in 0..result.page_count() {
         let page = result.page(index).unwrap();
         for run in page.text_runs() {
+            // A relative offset that layout leaves to paint (on a row, a row
+            // group or a cell) moves the run by its transform.
+            let top = (run.origin.0, run.origin.1 - run.ascent);
+            let top = run
+                .transform
+                .map_or(top, |transform| transform.apply(top))
+                .1;
             for glyph in run.text.chars().filter(|glyph| !glyph.is_whitespace()) {
-                tops.push((index, glyph, (run.origin.1 - run.ascent).round() as i32));
+                tops.push((index, glyph, top.round() as i32));
             }
         }
     }
@@ -334,6 +342,68 @@ fn relative_offsets_and_breaks_outside_the_cells_block_flow() {
         (
             "<table style='border-spacing:0'><tr><td style='padding:0;vertical-align:middle'><span style='break-after:page'>A</span>B</td><td style='padding:0'><div id='T' style='height:60px'>T</div></td></tr></table><div id='X'>X</div>",
             &[(0, 'A', 25), (0, 'B', 25), (0, 'T', 0), (0, 'X', 60)],
+        ),
+    ]);
+}
+
+/// A row whose place in the flow crosses the page end is split there, and
+/// its cells start at its top, also when a relative offset paints it above
+/// that place, whether the offset is on the table, a box around it, its row
+/// group or the row (Chromium splits at the flow place and paints the parts
+/// moved). A cell's own offset moves only that cell, and the flow after the
+/// table follows the row's place in the flow, not its painted one.
+#[test]
+fn rows_split_in_the_flow_and_moved_by_a_relative_offset() {
+    assert_rows(&[
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-30px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0;position:relative;bottom:30px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><div style='position:relative;top:-30px'><table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table></div><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0'><tbody style='position:relative;top:-30px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></tbody></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0'><tr style='position:relative;top:-30px'><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-30px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:middle'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-50px'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'B', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0;position:relative;top:-30px'><tr><td style='padding:0'><div id='D' style='height:20px'>D</div></td></tr><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[
+                (0, 'A', 30),
+                (0, 'B', 50),
+                (0, 'C', 30),
+                (0, 'D', 10),
+                (1, 'X', 30),
+            ],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom;position:relative;top:-30px'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 40), (0, 'B', 60), (0, 'C', 10), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0'><tr><td style='padding:0;vertical-align:top;position:relative;top:-30px'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 10), (0, 'B', 30), (0, 'C', 40), (1, 'X', 10)],
+        ),
+        (
+            "<div style='height:40px'></div><table style='border-spacing:0'><tr style='position:relative;top:20px'><td style='padding:0;vertical-align:top'><div id='A' style='height:20px'>A</div><div id='B' style='height:50px'>B</div></td><td style='padding:0;vertical-align:bottom'><div id='C'>C</div></td></tr></table><div id='X'>X</div>",
+            &[(0, 'A', 60), (0, 'B', 80), (0, 'C', 60), (1, 'X', 10)],
         ),
     ]);
 }
