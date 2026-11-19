@@ -1303,9 +1303,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             context: BoxContext::text(CandidateFlowContext {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
-                                // White space gives the flow no page value
-                                // (Chromium).
-                                page_name_in_flow: !inside_float && !inside_out_of_flow && !blank,
+                                // The lines of preserved white space are
+                                // content of the flow: they take forced
+                                // breaks and page names (Chromium). White
+                                // space that lays out no line, such as
+                                // between flex items, is none.
+                                page_name_in_flow: !inside_float
+                                    && !inside_out_of_flow
+                                    && (!blank || ifc_root.is_some()),
                                 lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),

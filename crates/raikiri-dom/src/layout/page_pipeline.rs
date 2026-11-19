@@ -3474,8 +3474,14 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             };
             let node = &document.nodes[child];
-            if let crate::node::NodeData::Text(text) = &node.data {
-                if node.is_in_document() && !text.text_content.trim().is_empty() {
+            if node.kind() == NodeKind::Text {
+                if node.is_in_document()
+                    && super::page::text_is_page_content(
+                        BoxTree::for_layout(document),
+                        cascade,
+                        child,
+                    )
+                {
                     boxes.push(None);
                 }
             } else if node.kind() == NodeKind::Element
