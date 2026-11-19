@@ -3820,6 +3820,113 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
         .any(|id| document.nodes[id].multicol.is_some())
 }
 
+/// Whether `node_id` starts (`before`) or ends the block flow of the table
+/// cell around it: each box from it up to the cell is the first or last box
+/// of the next one up, which stacks its children in block flow. Floats,
+/// positioned boxes and empty `display: contents` boxes beside it do not
+/// count, as for [`page_edge_child`].
+///
+/// A forced break there lies at the edge of the cell, not inside it, so it
+/// goes to the row (CSS Fragmentation 3, 3.1): see [`row_takes_cell_break`].
+fn at_table_cell_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    if !is_block_level_flow_box(document.nodes[node_id].display()) {
+        return false;
+    }
+    let mut id = node_id;
+    loop {
+        let Some(mut parent) = document.parent_of(id) else {
+            return false;
+        };
+        while document.nodes[parent].display() == DisplayValue::Contents
+            && !document.nodes[parent].has_before_or_after_content
+        {
+            let Some(next) = document.parent_of(parent) else {
+                return false;
+            };
+            parent = next;
+        }
+        if page_edge_child(document, cascade, parent, before, 0) != Ok(Some(id)) {
+            return false;
+        }
+        if document.nodes[parent].display() == DisplayValue::TableCell {
+            return true;
+        }
+        if !passes_edge_breaks(document, parent) {
+            return false;
+        }
+        id = parent;
+    }
+}
+
+/// Whether a forced break at the start (`before`) or the end of the block
+/// flow of one of the cells of `row` passes to the row, which then breaks
+/// before or after itself (see [`at_table_cell_edge`]).
+fn row_takes_cell_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    row: usize,
+    before: bool,
+) -> bool {
+    document.nodes[row].display() == DisplayValue::TableRow
+        && document.nodes[row].children.iter().any(|&cell| {
+            if document.nodes[cell].display() != DisplayValue::TableCell {
+                return false;
+            }
+            let mut edge = page_edge_child(document, cascade, cell, before, 0);
+            while let Ok(Some(id)) = edge {
+                let node = &document.nodes[id];
+                if node.kind() != NodeKind::Element || !is_block_level_flow_box(node.display()) {
+                    return false;
+                }
+                let computed = &cascade.computed[id];
+                if before && page_break_is_forced(document, id, computed.break_before)
+                    || !before
+                        && box_forces_break_after(document, cascade, id, computed.break_after)
+                {
+                    return true;
+                }
+                if !passes_edge_breaks(document, id) {
+                    return false;
+                }
+                edge = page_edge_child(document, cascade, id, before, 0);
+            }
+            false
+        })
+}
+
+/// Whether `node_id` forces a page break before (`before`) or after itself
+/// in the page flow: its own forced break, unless it lies at the edge of a
+/// table cell, or one that a row takes from the edge of one of its cells.
+fn forces_page_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    let computed = &cascade.computed[node_id];
+    let own = if before {
+        page_break_is_forced(document, node_id, computed.break_before)
+    } else {
+        box_forces_break_after(document, cascade, node_id, computed.break_after)
+    };
+    own && !at_table_cell_edge(document, cascade, node_id, before)
+        || row_takes_cell_break(document, cascade, node_id, before)
+}
+
+/// Whether `id` is a block container whose first and last boxes start and
+/// end its own block flow, so that a forced break at them passes to it.
+fn passes_edge_breaks(document: &Document, id: usize) -> bool {
+    matches!(
+        document.nodes[id].display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) && document.nodes[id].multicol.is_none()
+}
+
 // Find the first/last generated child box, eliding Contents without cloning
 // wide child lists. Nonempty text and generated content remain edge barriers.
 fn page_edge_child(
@@ -5113,7 +5220,8 @@ fn first_row_ends(
 }
 
 /// Whether a forced page break comes before `row`, the first row of `table`:
-/// its own `break-before`, or that of the row group around it. The page edge
+/// its own `break-before` or one it takes from its cells (see
+/// [`forces_page_break`]), or that of the row group around it. The page edge
 /// constraint of the table does not look inside it, so the box before the
 /// table would be tied to a row that starts a page of its own.
 fn forced_break_before_first_row(
@@ -5123,13 +5231,13 @@ fn forced_break_before_first_row(
     row: usize,
 ) -> bool {
     let boundary = document.table_parts_boundary(table);
-    [
-        Some(row),
-        document.parent_of(row).filter(|&group| group != boundary),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|id| page_break_is_forced(document, id, cascade.computed[id].break_before))
+    forces_page_break(document, cascade, row, true)
+        || document
+            .parent_of(row)
+            .filter(|&group| group != boundary)
+            .is_some_and(|group| {
+                page_break_is_forced(document, group, cascade.computed[group].break_before)
+            })
 }
 
 /// Whether `node_id` is a block-level table that stacks in the normal flow of
@@ -5211,17 +5319,10 @@ fn avoided_row_groups(
             .filter(|candidate| candidate.context.is_table_row())
         {
             let row = candidate.node_id;
-            let forced_before =
-                page_break_is_forced(document, row, cascade.computed[row].break_before)
-                    || previous_rows
-                        .insert(document.parent_of(row), row)
-                        .is_some_and(|previous| {
-                            page_break_is_forced(
-                                document,
-                                previous,
-                                cascade.computed[previous].break_after,
-                            )
-                        });
+            let forced_before = forces_page_break(document, cascade, row, true)
+                || previous_rows
+                    .insert(document.parent_of(row), row)
+                    .is_some_and(|previous| forces_page_break(document, cascade, previous, false));
             let Some(group) = document
                 .parent_of(row)
                 .filter(|&group| avoiding_row_group(group))
@@ -5723,8 +5824,8 @@ fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) ->
                 .into_iter()
                 .filter(|&sibling| document.nodes[sibling].display() == DisplayValue::TableRow);
             for next in rows.skip_while(|&sibling| sibling != row).skip(1) {
-                if page_break_is_forced(document, held, cascade.computed[held].break_after)
-                    || page_break_is_forced(document, next, cascade.computed[next].break_before)
+                if forces_page_break(document, cascade, held, false)
+                    || forces_page_break(document, cascade, next, true)
                 {
                     break;
                 }
@@ -8655,12 +8756,7 @@ impl PendingBreak {
     ) {
         // A forced break held by a clip box around the node breaks nothing;
         // a change of page name after it still applies.
-        let breaks_after = (box_forces_break_after(
-            document,
-            cascade,
-            node_id,
-            cascade.computed[node_id].break_after,
-        ) && !held())
+        let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
             || deferred_named_break_after;
         let source_is_ancestor = self
             .source

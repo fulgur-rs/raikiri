@@ -27,14 +27,14 @@ use super::{
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
     make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
     margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
-    move_box_for_transition, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
-    participates_in_margin_adjacency, place_first_table_header, place_table_footer,
-    place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
-    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
-    text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
+    move_box_for_transition, move_line_block, move_paragraph_lines, page_type_leaves_local_flow,
+    paragraph_line_bounds, paragraph_line_moves, participates_in_margin_adjacency,
+    place_first_table_header, place_table_footer, place_text_candidate, positioned_line_moves,
+    positioned_text_start_y, push_in_flow_boxes_rev, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
+    shift_paragraph_lines, shift_text_candidate, shrink_ancestors_after_content_change,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -1976,7 +1976,7 @@ impl PaginationState {
         // container, as the box does before it moves to `effective_y`.
         let line_y = current_abs_y(document, node_id);
         materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
+        let forced_before = super::forces_page_break(document, cascade, node_id, true)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
