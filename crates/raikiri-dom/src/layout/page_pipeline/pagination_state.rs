@@ -25,10 +25,10 @@ use super::{
     last_flow_box, lead_below_ancestor, lead_below_edges, leading_edges_move, leading_holder,
     line_block_parent, line_run_among_blocks, lines_between_blocks, lines_can_shift_above_blocks,
     lines_can_shift_between_blocks, lines_can_shift_inside, lines_move_grows_box,
-    make_room_for_caption_header, make_room_for_table_header, margin_box_starts_page,
-    margin_kept_by_floats, margins_adjoin_in_flow, materialize_y, move_box_by_truncated_margin,
-    move_box_for_transition, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
+    make_room_for_caption_header, make_room_for_table_header, margin_above_line,
+    margin_box_starts_page, margin_kept_by_floats, margins_adjoin_in_flow, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_line_block, move_paragraph_lines,
+    page_break_is_forced, page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
     participates_in_margin_adjacency, place_first_table_header, place_table_footer,
     place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
     reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
@@ -3712,6 +3712,28 @@ impl PaginationState {
         // the next page, and take the flow's page there before the lines are
         // reached; the lines still start on the page they are on.
         let mut page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+        // A page edge in the margin between the block before the run and its
+        // first line truncates that margin: the line starts the page.
+        let run_top = text.effective_y + metrics[0].0;
+        let page_start = page_origins.origin(page);
+        if page > 0
+            && run_top > page_start + 0.001
+            && margin_above_line(document, cascade, body_id, root, run.start)
+                .is_some_and(|gap| run_top - gap <= page_start + 0.001)
+        {
+            self.move_run_lines(
+                document,
+                env,
+                candidate,
+                entry,
+                text,
+                (root, first_owned_line),
+                (run.start, page_start - run_top, page),
+            );
+            if let Some(next) = run_metrics(document) {
+                metrics = next;
+            }
+        }
         let mut moved = false;
         loop {
             let page_start = page_origins.origin(page);
@@ -3779,36 +3801,15 @@ impl PaginationState {
             };
             for (line, shift, move_page) in moves {
                 reach_page(control, move_page)?;
-                let line = run.start + line;
-                let growth = move_paragraph_lines(
+                self.move_run_lines(
                     document,
-                    cascade,
-                    body_id,
-                    &LineMove {
-                        block_id: root,
-                        flex_line: None,
-                        line,
-                        shift,
-                        page: move_page,
-                    },
-                    &mut self.subtree_shifts,
-                    entry.page_before_candidate,
+                    env,
+                    candidate,
+                    entry,
+                    text,
+                    (root, first_owned_line),
+                    (run.start + line, shift, move_page),
                 );
-                self.float_shifts
-                    .record_grown_floats(document, cascade, body_id, candidate, root, growth);
-                if line <= first_owned_line {
-                    text.effective_y += shift;
-                    text.first_line_shift += shift;
-                } else if reaches_line(text_lines.get(node_id), line) {
-                    text.height += shift;
-                }
-                self.deferred_shifts.line_splits.push(LineSplit {
-                    root,
-                    first_moved: line,
-                    shift,
-                    growth,
-                    page: move_page,
-                });
             }
             if !repeat {
                 break;
@@ -3821,6 +3822,59 @@ impl PaginationState {
             }
         }
         Ok(())
+    }
+
+    /// Moves the lines of the paragraph `root` from `line` on by `shift` to
+    /// `page`, for the text `candidate`, whose first line is
+    /// `first_owned_line`, and keeps the split for the shifts that settle
+    /// later (see [`Self::keep_lines_after_block`]). The flow has reached
+    /// `page`.
+    #[allow(clippy::too_many_arguments)]
+    fn move_run_lines(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        text: &mut TextPosition,
+        (root, first_owned_line): (usize, usize),
+        (line, shift, page): LineBreakMove,
+    ) {
+        let FlowEnv {
+            cascade,
+            body_id,
+            text_lines,
+            ..
+        } = *env;
+        let growth = move_paragraph_lines(
+            document,
+            cascade,
+            body_id,
+            &LineMove {
+                block_id: root,
+                flex_line: None,
+                line,
+                shift,
+                page,
+            },
+            &mut self.subtree_shifts,
+            entry.page_before_candidate,
+        );
+        self.float_shifts
+            .record_grown_floats(document, cascade, body_id, candidate, root, growth);
+        if line <= first_owned_line {
+            text.effective_y += shift;
+            text.first_line_shift += shift;
+        } else if reaches_line(text_lines.get(candidate.node_id), line) {
+            text.height += shift;
+        }
+        self.deferred_shifts.line_splits.push(LineSplit {
+            root,
+            first_moved: line,
+            shift,
+            growth,
+            page,
+        });
     }
 
     /// Remembers the absolute owner of the paragraph holding `candidate` for
