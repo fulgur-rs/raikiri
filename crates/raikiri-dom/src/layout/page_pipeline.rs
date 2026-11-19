@@ -2,6 +2,7 @@ use super::box_tree::BoxTree;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::node::BoxPropertiesRef;
 mod candidates;
+mod cell_rows;
 mod column_first_piece;
 pub(crate) mod column_projection;
 mod column_replaced;
