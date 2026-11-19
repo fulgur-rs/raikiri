@@ -6297,14 +6297,12 @@ fn tied_to_box_before(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let Some(parent) = document.nodes[node_id].parent else {
-        return false;
-    };
-    let children = pagination_child_order(document, cascade, parent);
-    let Some(position) = children.iter().position(|&child| child == node_id) else {
-        return false;
-    };
-    children[..position]
+    let children = document.nodes[node_id]
+        .parent
+        .map(|parent| pagination_child_order(document, cascade, parent))
+        .unwrap_or_default();
+    let position = children.iter().position(|&child| child == node_id);
+    children[..position.unwrap_or(0)]
         .iter()
         .rev()
         .copied()
