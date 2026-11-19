@@ -157,6 +157,24 @@ fn a_last_box_whose_lines_run_past_the_page_end_stays_on_its_page() {
             block("padding-bottom:15px", T, "<div>U</div>"),
             [(3, 5.0), (3, 50.0)],
         ),
+        (
+            "a last box that clips its line moves with the padding",
+            block(
+                "padding-bottom:15px",
+                T,
+                "<div style=\"height:10px;overflow:hidden\">U</div>",
+            ),
+            [(3, 5.0), (3, 30.0)],
+        ),
+        (
+            "a last box that clips the box inside it moves with the padding",
+            block(
+                "padding-bottom:15px",
+                T,
+                "<div style=\"overflow:hidden\"><div style=\"height:10px\">U</div></div>",
+            ),
+            [(3, 5.0), (3, 30.0)],
+        ),
     ];
     let wrong: Vec<String> = cases
         .iter()
