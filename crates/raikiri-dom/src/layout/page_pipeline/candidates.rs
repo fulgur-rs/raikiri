@@ -9,9 +9,9 @@ use super::{
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, block_after_last_line, box_is_unbreakable, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, end_margin_through,
-    first_named_item_start_page, first_owned_text_line_top, forces_page_break,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, clears_in_cell_flow,
+    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
+    end_margin_through, first_named_item_start_page, first_owned_text_line_top, forces_page_break,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
@@ -212,6 +212,12 @@ pub(super) struct ElementContext {
     /// crosses the page end: Chromium does not move overflow of a block that
     /// ends on the page, it cuts it.
     pub(super) unbreakable_room: Option<f32>,
+    /// Content of its parent's flow comes before the box, and the page break
+    /// between the two is avoided, by the box or by the box before it. A
+    /// box that avoids a break inside it does not move past that break on
+    /// its own: Chromium rates both breaks alike and takes the later one,
+    /// inside the box (see [`BoxContext::avoids_break_before`]).
+    pub(super) avoided_break_before: bool,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
     /// stayed on a page they do not fit (see [`super::closing_edges_move`]).
@@ -234,7 +240,7 @@ pub(super) struct ElementContext {
     /// it holds at the start of its own boxes. The box moves to the next page
     /// with the run when the run would cross a page edge (see
     /// [`super::avoided_run_ends`]).
-    pub(super) avoided_unit: Option<f32>,
+    pub(super) avoided_unit: Option<super::RunUnit>,
     /// For a flex container or grid with padding or border above its items:
     /// how far below the border-box top the first piece of its content ends.
     /// The box moves to the next page when that crosses a page edge, so that
@@ -393,6 +399,13 @@ impl BoxContext {
             .filter(|line| line.after_block)
     }
 
+    /// Whether a page break is avoided between the box and content of its
+    /// parent's flow before it (see [`ElementContext::avoided_break_before`]).
+    pub(super) fn avoids_break_before(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.avoided_break_before)
+    }
+
     pub(super) fn is_unbreakable(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.unbreakable)
@@ -427,7 +440,7 @@ impl BoxContext {
             .map(|last| last as usize)
     }
 
-    pub(super) fn avoided_unit(self) -> Option<f32> {
+    pub(super) fn avoided_unit(self) -> Option<super::RunUnit> {
         self.element_attributes()
             .and_then(|attributes| attributes.avoided_unit)
     }
@@ -729,6 +742,9 @@ struct CandidateFrame<'name> {
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
+    /// Whether any in-flow content of the parent comes before the node, text
+    /// included, which `previous_box` leaves out.
+    box_before: bool,
     /// A free boundary before the leading plain blocks of this node. Only
     /// the column's leading-replaced-piece rule, and the leading piece and
     /// first row of a row flex container or grid, inherit this boundary.
@@ -758,7 +774,7 @@ struct CandidateFrame<'name> {
     tie: AvoidTie,
     /// How far below its border-box top the run of boxes tied by avoided
     /// breaks ends that the node starts among the boxes of its parent.
-    run_unit: Option<f32>,
+    run_unit: Option<super::RunUnit>,
     /// Whether the node is the last box of a run that avoided breaks tie it
     /// to, from a free break on, and ends its block: `closing_edges` follows
     /// it.
@@ -834,6 +850,7 @@ impl CandidateFrame<'_> {
             min_height_edges: None,
             capped_edges_block: None,
             previous_box: None,
+            box_before: false,
             column_break_before: false,
             lone_in_edges: true,
             tied_to_start: false,
@@ -1673,6 +1690,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && inside_table
                     && avoids_by_property
                     && moves_reach_cell_row(document, node_id);
+                // A block in the flow of a table cell that clears floats goes
+                // below a float that pagination moves to a later page, as in
+                // any block flow, and its row grows to hold it.
+                let cell_clear_base = nested_flow_base
+                    && inside_table
+                    && clears_float
+                    && !is_float
+                    && clears_in_cell_flow(document, cascade, node_id, body_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1855,9 +1880,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && (free_to_break_before || after_paragraph_content))
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
                         .filter(|held| held.tied)
-                        .and_then(|held| held.end);
+                        .and_then(|held| {
+                            held.end.map(|end| super::RunUnit {
+                                end,
+                                firm: held.firm,
+                            })
+                        });
                 let avoided_unit = match (frame.run_unit, leading_unit) {
-                    (Some(run), Some(leading)) => Some(run.max(leading)),
+                    (Some(run), Some(leading)) if leading.end > run.end => Some(leading),
                     (run, leading) => run.or(leading),
                 };
                 // A grid breaks between its padding or border and a first
@@ -1866,7 +1896,45 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // `grid_rows`).
                 // The first box of plain blocks that start after a free
                 // break takes that break too (see `column_break_before`).
-                let container_breaks_before = breaks_before_box || column_break_before;
+                // Content of the parent's flow comes before the box, and the
+                // page break between the two is avoided, by the box or by
+                // the box before it (see `ElementContext::avoided_break_before`).
+                let avoided_break_before =
+                    (frame.box_before || super::lines_before_block(document, node_id)) && {
+                        let (forced, avoided) =
+                            page_edge_constraint(document, cascade, node_id, true);
+                        !forced
+                            && (avoided
+                                || frame.previous_box.is_some_and(|previous| {
+                                    let (forced, avoided) =
+                                        page_edge_constraint(document, cascade, previous, false);
+                                    !forced && avoided
+                                }))
+                    };
+                // The part of that which the page passes on to the content
+                // before the box: lines of its paragraph, which give way
+                // for it (see `PaginationState::keep_lines_with_next_block`),
+                // or a plain block of the same parent tied to it, which
+                // moves on with it as a run (see `nested_run_units` and
+                // `avoided_run_ends`). Only then does a box that avoids
+                // breaks inside it split where it stands rather than move
+                // on alone.
+                let avoided_break_passed_on = avoided_break_before
+                    && (super::lines_before_block(document, node_id)
+                        || frame.previous_box.is_some_and(|previous| {
+                            let parent = document.nodes[node_id].parent;
+                            is_plain_block_box(document, previous)
+                                && document.nodes[previous].parent == parent
+                                && parent.is_some_and(|parent| {
+                                    document.nodes[parent].display() != DisplayValue::Contents
+                                })
+                        }));
+                // A break avoided before the box is still a better one than a
+                // break through the first piece of its content, which cuts a
+                // line or a monolithic box: Chromium takes it when that piece
+                // does not fit.
+                let container_breaks_before =
+                    breaks_before_box || column_break_before || avoided_break_before;
                 let first_grid_row = (in_flow_container && !is_body && container_breaks_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
@@ -1921,7 +1989,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .flatten();
                 let column_replaced_piece = (in_flow_container
                     && !is_body
-                    && column_break_before
+                    && (column_break_before || avoided_break_before)
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| {
                         super::column_replaced::first_piece(document, cascade, body_id, node_id)
@@ -1989,6 +2057,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             || is_float
                             || clears_float))
                     || (cell_avoid_base && !inline_level && is_block_flow_box)
+                    || cell_clear_base
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -2035,8 +2104,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && avoids_break
                     && !side_by_side_ancestor
                     && (!bounded_clipping_ancestor || unbreakable_box);
-                let nested_float_candidate =
-                    nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                let nested_float_candidate = (nested_candidate_base && (is_float || clears_float)
+                    || cell_clear_base)
+                    && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
@@ -2215,6 +2285,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unplaced_line: unplaced_line.or(line_after_block),
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
+                                avoided_break_before: avoided_break_passed_on,
                                 closing_edges: if closing_edges_candidate
                                     || lone_box_candidate.is_some()
                                 {
@@ -2756,6 +2827,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 })
                                 .flatten(),
                             previous_box: child_previous_box,
+                            box_before: child_box_before,
                             column_break_before: child_column_break,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
                                 && child_scope_is_lone,
