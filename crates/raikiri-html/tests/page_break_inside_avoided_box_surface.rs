@@ -191,6 +191,38 @@ fn the_content_before_the_break_is_measured_in_the_flow() {
             (2, 'X', 0, 25)
         ]
     );
+    // The first forced break in the flow is the one that counts, even when a
+    // negative margin puts a later one above it.
+    for (first, moved) in [("60", true), ("30", false)] {
+        let page = u32::from(moved);
+        let a = if moved { 5 } else { 55 };
+        let mut expected = [
+            (0, 'W', 0, 5),
+            (page, 'A', 0, a),
+            (page, 'C', 0, 65),
+            (page + 1, 'B', 0, 5),
+            (page + 2, 'D', 0, 5),
+            (page + 2, 'X', 0, 45),
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            glyphs(&format!(
+                r#"{ABOVE}<div style="break-inside:avoid"><div style="height:{first}px">A</div><div style="height:20px;break-before:page">B</div><div style="height:20px;margin-top:-60px">C</div><div style="height:40px;break-before:page">D</div></div><div>X</div>"#
+            )),
+            expected,
+            "first box {first}px tall"
+        );
+    }
+    // The content before the break can reach below the end of the box, when
+    // a box after it has a negative margin: it still moves the box. Only the
+    // boxes before the break are pinned here.
+    let before_break: Vec<_> = glyphs(&format!(
+        r#"{ABOVE}<div style="break-inside:avoid"><div style="height:60px">A</div><div style="height:20px;margin-top:-70px;break-before:page">B</div></div><div>X</div>"#
+    ))
+    .into_iter()
+    .filter(|&(_, glyph, ..)| matches!(glyph, 'W' | 'A'))
+    .collect();
+    assert_eq!(before_break, [(0, 'W', 0, 5), (1, 'A', 0, 5)]);
     // Generated content before the first box puts the break inside the box.
     assert_eq!(
         glyphs(&format!(

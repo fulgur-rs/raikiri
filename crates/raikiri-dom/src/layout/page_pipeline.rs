@@ -5907,10 +5907,24 @@ fn forced_break_inside(
         current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
     };
     let top = flow_top(node_id);
-    let mut first: Option<f32> = None;
-    let mut pending: Vec<usize> = document.nodes[node_id].children.clone();
-    while let Some(id) = pending.pop() {
+    // Walk the boxes in flow order, so that the first forced break found is
+    // the first one in the flow; with negative margins a later break can sit
+    // above an earlier one. An entry marked `true` is the end of a box,
+    // where its `break-after` applies.
+    let mut pending: Vec<(usize, bool)> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .map(|&id| (id, false))
+        .collect();
+    while let Some((id, after)) = pending.pop() {
         let node = &document.nodes[id];
+        if after {
+            if !at_block_edge(document, cascade, id, node_id, false) {
+                return Some(flow_top(id) + node.layout.size.height - top);
+            }
+            continue;
+        }
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || node.kind() != NodeKind::Element
@@ -5923,35 +5937,29 @@ fn forced_break_inside(
         {
             continue;
         }
+        let breaks = !node.display().is_inline_level() && node.display() != DisplayValue::Contents;
+        if breaks {
+            let computed = &cascade.computed[id];
+            let names_other_page =
+                selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
+            if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
+                && !at_block_edge(document, cascade, id, node_id, true)
+            {
+                return Some(flow_top(id) - node.layout.margin.top - top);
+            }
+            if page_break_is_forced(document, id, computed.break_after) {
+                pending.push((id, true));
+            }
+        }
         if matches!(
             node.display(),
             DisplayValue::Contents | DisplayValue::Inline
         ) || looks_through_for_breaks(document, cascade, id, transposed)
         {
-            pending.extend(node.children.iter().copied());
-        }
-        if node.display().is_inline_level() || node.display() == DisplayValue::Contents {
-            continue;
-        }
-        let computed = &cascade.computed[id];
-        let names_other_page =
-            selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
-        let at = if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
-            && !at_block_edge(document, cascade, id, node_id, true)
-        {
-            Some(flow_top(id) - node.layout.margin.top - top)
-        } else if page_break_is_forced(document, id, computed.break_after)
-            && !at_block_edge(document, cascade, id, node_id, false)
-        {
-            Some(flow_top(id) + node.layout.size.height - top)
-        } else {
-            None
-        };
-        if let Some(at) = at {
-            first = Some(first.map_or(at, |first| first.min(at)));
+            pending.extend(node.children.iter().rev().map(|&child| (child, false)));
         }
     }
-    first
+    None
 }
 
 /// Whether the breaks inside the box `node_id` are breaks of the block flow
@@ -6224,10 +6232,12 @@ impl AvoidedBreaks {
                 page_end,
             )
         };
-        // Only the content before a break forced inside the box has to fit.
+        // Only the content before a break forced inside the box has to fit,
+        // which can reach below the box's own end (a later child with a
+        // negative margin pulls the end up).
         let moves_for_avoided_end = avoided_end.is_some_and(|end| {
-            avoided_moves(end)
-                && forced_break_inside(
+            avoided_moves(
+                forced_break_inside(
                     document,
                     cascade,
                     body_id,
@@ -6235,7 +6245,8 @@ impl AvoidedBreaks {
                     candidate.page_name.as_deref(),
                     document.context.pagination_on_transposed_axes,
                 )
-                .is_none_or(|offset| avoided_moves(flow_y + offset))
+                .map_or(end, |offset| flow_y + offset),
+            )
         });
         let page = unbreakable || moves_for_avoided_end;
         // A box inside another that moves with its run lengthens the boxes
