@@ -1785,13 +1785,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // Such content gives the flow a break before the box, as a
                 // box there would: edges that would be left alone at the page
                 // end after it may move on with what they hold.
-                let breaks_before_box = free_to_break_before || generated_before().is_some();
+                // So do the lines of a paragraph before a block among them
+                // (an anonymous block holds them): Chromium breaks between
+                // the last of them and the block.
+                let breaks_before_box = free_to_break_before
+                    || generated_before().is_some()
+                    || frame.previous_box.is_none()
+                        && breaks_after_paragraph_content(document, cascade, node_id);
                 let column_break_before = (node.display() == DisplayValue::Contents
                     || !matches!(
                         computed.break_before,
                         BreakBetween::Avoid | BreakBetween::AvoidPage
                     ))
-                    && (free_to_break_before
+                    && (breaks_before_box
                         || frame.previous_box.is_none() && frame.column_break_before);
                 let leading_unit =
                     // A block among the lines of a paragraph may also break
