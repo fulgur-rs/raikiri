@@ -335,3 +335,21 @@ fn a_margin_below_the_content_of_a_box_that_avoids_breaks_inside_is_cut() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_forced_inside_a_box_that_avoids_breaks_inside_ends_what_it_holds() {
+    // Only the content before the forced break goes with the box before it.
+    let forced = |first: u32| {
+        format!(
+            "<div style=\"width:20px\"><div style=\"height:30px\"></div>\
+             <div><span id=t>T</span></div><div style=\"height:200px;{AVOID_BOTH}\">\
+             <div style=\"height:{first}px\"></div><div style=\"break-before:page\">\
+             <span id=z>Z</span></div></div></div>"
+        )
+    };
+    assert_places(&[
+        (forced(10), [(0, 35.0), (1, 5.0)]),
+        (forced(50), [(1, 5.0), (2, 5.0)]),
+        (forced(80), [(1, 5.0), (3, 5.0)]),
+    ]);
+}

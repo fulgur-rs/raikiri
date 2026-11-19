@@ -5975,6 +5975,22 @@ fn held_step(
     let node = &document.nodes[current];
     let is_table = is_plain_table_box(document, current);
     if avoids_page_break_inside(cascade.computed[current].break_inside) {
+        // A break forced inside the box still breaks it (see
+        // `forced_break_inside`): only the content before it is held.
+        let page_name = std::iter::once(current)
+            .chain(document.ancestors(current))
+            .find_map(|id| selected_page_name(cascade, id));
+        if let Some(end) = forced_break_inside(
+            document,
+            cascade,
+            body_id,
+            current,
+            page_name,
+            document.context.pagination_on_transposed_axes,
+            f32::INFINITY,
+        ) {
+            return HeldStep::End { end, firm: true };
+        }
         let extent = avoided_box_extent(document, cascade, body_id, current);
         return if extent > node.layout.size.height + 0.001 {
             HeldStep::End {
