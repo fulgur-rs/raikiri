@@ -209,7 +209,7 @@ pub(crate) struct IfcLines {
     /// The first baseline of the first block child laid out before any line
     /// that has one, measured like the lines' block offsets. The root takes
     /// it as its own first baseline, as a block container takes that of its
-    /// first child with one (CSS Inline 3 §5.1). `None` when a line comes
+    /// first child with one (CSS Box Alignment 3 §9.1). `None` when a line comes
     /// first or no such block exists.
     pub(crate) leading_block_baseline: Option<f32>,
     /// Each block child of the root with the index of the first line after

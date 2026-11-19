@@ -434,6 +434,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut next_start = LineStart::PARAGRAPH;
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
+    let mut leading_block_baseline = None;
+    let mut first_segment = true;
     let mut generated_block_lines = Vec::new();
     let mut shifts = super::root::LineShifts::default();
     let mut fragment_box_placements = Vec::new();
@@ -540,6 +542,12 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
+        // Only a block ahead of every line of the whole paragraph counts, in
+        // the first fragmentainer, whose offsets the lines start from.
+        if first_segment {
+            leading_block_baseline =
+                leading_block_baseline.or(outcome.lines.leading_block_baseline);
+        }
         if !has_next
             && let Some(height) = fragmentainer_height
             && let Some(last) = outcome.lines.lines.last()
@@ -586,6 +594,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             .unwrap_or_else(|_| unreachable!("column lines have a single owner"));
         all_lines.extend(column_lines);
 
+        first_segment = false;
         if let Some(next) = outcome.continuation {
             token = next;
         } else {
@@ -609,7 +618,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         discarded_float_gap: 0.0,
         escaping_margin,
         leading_block_margin: None,
-        leading_block_baseline: None,
+        leading_block_baseline,
         block_line_starts,
         generated_block_starts: Vec::new(),
         generated_block_lines,
@@ -1584,7 +1593,7 @@ fn run_boxes_segment(
                 }
                 // The first block with a baseline ahead of every line gives the
                 // root its first baseline.
-                if lines.is_empty() && generated_block_starts.is_empty() {
+                if lines.is_empty() {
                     leading_block_baseline = leading_block_baseline.or(block.first_baseline);
                 }
                 oof_candidates.append(&mut block.oof_candidates);

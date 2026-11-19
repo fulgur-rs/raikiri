@@ -116,3 +116,25 @@ fn a_grid_item_aligns_by_the_line_of_a_nested_first_block() {
     let display = "display:grid;grid-template-columns:50px 50px;align-items:baseline";
     assert_eq!(baseline_item_text_top(display), 12.0);
 }
+
+#[test]
+fn a_flex_item_with_a_float_in_columns_aligns_by_its_first_block() {
+    let mut span = 0;
+    let doc = laid_out(TEXT, |doc, body| {
+        let columns = div(
+            doc,
+            body,
+            "columns:2;column-gap:0;height:100px;column-fill:auto",
+        );
+        let flex = div(doc, columns, "display:flex;align-items:baseline");
+        let item = div(doc, flex, "display:block;width:40px");
+        div(doc, item, "float:right;width:5px;height:5px");
+        let first = div(doc, item, "display:block;padding-top:7px");
+        doc.append_text(first, "A");
+        doc.append_text(item, "U U");
+        let other = div(doc, flex, "display:block");
+        span = doc.append_element(Some(other), "span", Some(""));
+        doc.append_text(span, "C");
+    });
+    assert_eq!(absolute_rect(&doc, span).1, 12.0);
+}
