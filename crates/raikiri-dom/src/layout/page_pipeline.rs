@@ -3989,7 +3989,11 @@ fn page_edge_child(
             continue;
         }
         if let crate::node::NodeData::Text(text) = &node.data {
-            if text.text_content.trim().is_empty() {
+            // White space that the style preserves still makes a line.
+            if crate::generated_content::is_collapsed_white_space(
+                &text.text_content,
+                cascade.computed[child].effective_white_space_collapse,
+            ) {
                 continue;
             }
             return Ok(Some(child));

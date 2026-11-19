@@ -301,8 +301,8 @@ fn breaks_inside(
 }
 
 /// The children of `parent` that are content of its block flow, with the
-/// children of `display: contents` boxes in place of them. Floats and
-/// positioned boxes are not that content.
+/// children of `display: contents` boxes in place of them. Floats,
+/// positioned boxes and white space that collapses away are not that content.
 fn flow_children(
     document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -311,7 +311,18 @@ fn flow_children(
 ) {
     for &child in &document.nodes[parent].children {
         let node = &document.nodes[child];
-        if !sibling_renders(document, child)
+        // White space that the style preserves still makes a line.
+        let renders = if node.kind() == NodeKind::Text {
+            node.text_content().is_some_and(|text| {
+                !crate::generated_content::is_collapsed_white_space(
+                    text,
+                    cascade.computed[child].effective_white_space_collapse,
+                )
+            })
+        } else {
+            sibling_renders(document, child)
+        };
+        if !renders
             || matches!(
                 node.position(),
                 PositionValue::Absolute | PositionValue::Fixed

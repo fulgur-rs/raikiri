@@ -241,3 +241,24 @@ fn a_break_in_an_orthogonal_cell_does_not_reach_the_row() {
         ),
     ]);
 }
+
+/// White space that the style preserves makes a line before the first block
+/// of the cell, so a break before that block falls inside the cell, which
+/// Chromium breaks there and stretches to the end of the page.
+#[test]
+fn preserved_white_space_keeps_the_break_inside_the_cell() {
+    assert_rows(&[
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0;white-space:pre'>&#10;<div style='break-before:page'>B</div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (0, 'T', 50), (1, 'B', 0), (1, 'X', 10)],
+        ),
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0;white-space:pre-wrap'>  <div style='break-before:page'>B</div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (0, 'T', 50), (1, 'B', 0), (1, 'X', 10)],
+        ),
+        (
+            "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='white-space:pre'>&#10;<div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
+            &[(0, 'P', 0), (1, 'B', 0), (1, 'X', 10)],
+        ),
+    ]);
+}
