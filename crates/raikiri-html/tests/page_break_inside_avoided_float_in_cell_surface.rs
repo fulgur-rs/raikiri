@@ -216,3 +216,156 @@ fn floats_that_move_one_after_another_in_a_cell_grow_the_row_to_the_last() {
         );
     }
 }
+
+#[test]
+fn a_row_that_starts_down_the_page_breaks_where_the_float_moves() {
+    // The row starts below other content and the float alone crosses the
+    // page end: the row breaks there, its first fragment keeps the content
+    // above the float and the cell beside it, and the float starts the next
+    // page.
+    // The cell's bottom padding goes below the float.
+    for (cell, beside, end) in [
+        ("<td>", "<td>D</td>", 45),
+        ("<td>", r#"<td style="vertical-align:bottom">D</td>"#, 45),
+        (r#"<td style="padding-bottom:10px">"#, "<td>D</td>", 55),
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:30px">H</div><table><tr>{cell}<div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div></td>{beside}</tr></table><div>X</div>"#
+            )),
+            [
+                (0, 'D', 20, 35),
+                (0, 'H', 0, 5),
+                (0, 'W', 0, 35),
+                (1, 'F', 0, 5),
+                (1, 'X', 0, end),
+            ],
+            "{cell}{beside}"
+        );
+    }
+}
+
+#[test]
+fn a_row_down_the_page_breaks_for_floats_in_wrappers_and_rows() {
+    // The float sits in a wrapper, in an anonymous table, or among later
+    // floats and boxes that do not clear it.
+    for (body, expected) in [
+        (
+            r#"<table><tr><td><div style="height:40px">W</div><div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div></div></td><td>D</td></tr></table>"#,
+            vec![(0, 'D', 20, 35), (1, 'F', 0, 5)],
+        ),
+        (
+            r#"<div style="display:table-row"><div style="display:table-cell"><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div></div><div style="display:table-cell;vertical-align:top">D</div></div>"#,
+            vec![(0, 'D', 20, 35), (1, 'F', 0, 5)],
+        ),
+        (
+            r#"<table><tr><td><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div><div style="float:left;width:20px;height:40px;break-inside:avoid">G</div></td><td>D</td></tr></table>"#,
+            vec![(0, 'D', 40, 35), (1, 'F', 0, 5), (1, 'G', 20, 5)],
+        ),
+        (
+            r#"<table><tr><td><div style="height:40px">W</div><div style="float:left;display:flex;width:20px;height:40px;break-inside:avoid">F</div></td><td>D</td></tr></table>"#,
+            vec![(0, 'D', 20, 35), (1, 'F', 0, 5)],
+        ),
+        (
+            r#"<table><tr><td style="width:60px"><div style="height:40px">W</div><div style="float:right;width:20px;height:40px;break-inside:avoid">F</div></td><td>D</td></tr></table>"#,
+            vec![(0, 'D', 60, 35), (1, 'F', 40, 5)],
+        ),
+    ] {
+        let mut expected = expected;
+        expected.extend([(0, 'H', 0, 5), (0, 'W', 0, 35), (1, 'X', 0, 45)]);
+        expected.sort_unstable();
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:30px">H</div>{body}<div>X</div>"#
+            )),
+            expected,
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_box_after_the_float_stays_before_the_break() {
+    // A box after the float that does not clear it stays on the first page,
+    // and a box that clears the float only from inside an independent
+    // formatting context still lets the row break.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div><div style="height:20px">Y</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (0, 'W', 0, 35),
+            (0, 'Y', 0, 75),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 45),
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="height:40px">W</div><div style="display:flow-root"><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div></div><div style="clear:left">Y</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (0, 'W', 0, 35),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 65),
+            (1, 'Y', 0, 45),
+        ]
+    );
+}
+
+#[test]
+fn a_box_below_the_float_for_want_of_room_comes_back_up() {
+    // The cell is as wide as the float, so the box after it laid out below
+    // it; once the float moves, the box stays on the first page.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div><div style="height:40px">Y</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (0, 'W', 0, 35),
+            (0, 'Y', 0, 75),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 45),
+        ]
+    );
+}
+
+#[test]
+fn a_cell_that_holds_only_the_float_breaks_with_its_row() {
+    // The cell has no content in its flow to put before the break.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="float:left;width:20px;height:80px;break-inside:avoid">F</div></td><td>D</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (1, 'F', 0, 5),
+            (1, 'X', 0, 85)
+        ]
+    );
+}
+
+#[test]
+fn a_row_down_the_page_with_a_following_row_breaks_once() {
+    // The next row follows the grown row on the next page.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">H</div><table><tr><td><div style="height:40px">W</div><div style="float:left;width:20px;height:40px;break-inside:avoid">F</div></td><td>D</td></tr><tr><td>R</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'D', 20, 35),
+            (0, 'H', 0, 5),
+            (0, 'W', 0, 35),
+            (1, 'F', 0, 5),
+            (1, 'R', 0, 45),
+            (1, 'X', 0, 65),
+        ]
+    );
+}

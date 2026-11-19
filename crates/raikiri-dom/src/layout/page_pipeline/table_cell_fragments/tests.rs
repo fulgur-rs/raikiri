@@ -311,3 +311,97 @@ fn floats_positioned_and_contents_boxes_are_not_content_a_break_falls_after() {
     assert!(!breaks_after("display:contents", " "));
     assert!(breaks_after("display:contents", "Q"));
 }
+
+/// Whether a float that avoids a break inside it, after a block of 40px at
+/// the top of a cell 100px wide placed at 30px in the flow, crosses a page
+/// end at 100px. The float sits in a `span` when `in_span`, and `after`
+/// holds the style and text of the boxes after it.
+fn avoided_float_crosses(in_span: bool, after: &[(&str, &str)]) -> bool {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let table = doc.append_element(Some(body), "div", Some("display:table"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "div", Some("display:table-cell;width:100px"));
+    doc.append_element(Some(cell), "div", Some("display:block;height:40px"));
+    let parent = if in_span {
+        let paragraph = doc.append_element(Some(cell), "div", Some("display:block"));
+        doc.append_text(paragraph, "T");
+        doc.append_element(Some(paragraph), "span", Some("display:inline"))
+    } else {
+        cell
+    };
+    doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;float:left;width:20px;height:40px;break-inside:avoid"),
+    );
+    for &(style, text) in after {
+        let box_after = doc.append_element(Some(cell), "div", Some(style));
+        doc.append_text(box_after, text);
+    }
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    super::super::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
+    let offset = 30.0 - current_abs_y(&session, cell);
+    float_crosses(&session, &cascade, cell, cell, offset, 100.0)
+}
+
+#[test]
+fn an_avoided_float_moves_down_in_its_cell_alone() {
+    assert!(!avoided_float_crosses(false, &[]));
+    // A box that stays above the page end beside it.
+    assert!(!avoided_float_crosses(
+        false,
+        &[("display:block;height:20px", "Y")]
+    ));
+    // A later float that crosses the page end and moves with it.
+    assert!(!avoided_float_crosses(
+        false,
+        &[(
+            "display:block;float:left;width:20px;height:40px;break-inside:avoid",
+            "G"
+        )]
+    ));
+    // Lines that the float puts below itself come back up when it moves.
+    assert!(!avoided_float_crosses(
+        false,
+        &[("display:block;width:10px;height:20px", "YY YY YY")]
+    ));
+}
+
+#[test]
+fn an_avoided_float_stays_for_what_lays_out_beside_or_below_it() {
+    // The lines of its own paragraph.
+    assert!(avoided_float_crosses(true, &[]));
+    // A later float that stays on the page.
+    assert!(avoided_float_crosses(
+        false,
+        &[("display:block;float:left;width:20px;height:20px", "G")]
+    ));
+    // A box that clears.
+    assert!(avoided_float_crosses(
+        false,
+        &[("display:block;clear:left", "Y")]
+    ));
+    // Lines beside it that run past the page end.
+    assert!(avoided_float_crosses(
+        false,
+        &[("display:block", "AAA BBB CCC DDD EEE")]
+    ));
+    // An independent formatting context beside it that runs past the page end.
+    assert!(avoided_float_crosses(
+        false,
+        &[("display:flow-root;height:40px", "Y")]
+    ));
+}
