@@ -19638,6 +19638,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
             shift: 10.0,
             growth: 10.0,
             page: 1,
+            with_block_before: false,
         }]
     );
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
@@ -21545,6 +21546,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             line,
             shift: 12.0,
             page: 0,
+            with_block_before: false,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21577,12 +21579,12 @@ fn text_in_a_static_out_of_flow_child_follows_the_line_it_is_anchored_to() {
     // The static box is anchored to the last line, so its text goes with that
     // line and with the lines before it, and not with a move that starts
     // after.
-    assert!(follows_line_of_paragraph(&doc, texts[0], root, 0));
-    assert!(follows_line_of_paragraph(&doc, texts[0], root, 1));
-    assert!(!follows_line_of_paragraph(&doc, texts[0], root, 2));
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 0, false));
+    assert!(follows_line_of_paragraph(&doc, texts[0], root, 1, false));
+    assert!(!follows_line_of_paragraph(&doc, texts[0], root, 2, false));
     // A box placed against the bottom or the top is not anchored to a line.
     for text in &texts[1..] {
-        assert!(!follows_line_of_paragraph(&doc, *text, root, 0));
+        assert!(!follows_line_of_paragraph(&doc, *text, root, 0, false));
     }
 }
 
@@ -21621,6 +21623,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         line: 0,
         shift: 12.0,
         page: 0,
+        with_block_before: false,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),

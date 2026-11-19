@@ -51,6 +51,7 @@ pub(super) fn discard(
             line: 0,
             shift: -removed,
             page: 0,
+            with_block_before: false,
         },
         None,
     );

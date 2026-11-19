@@ -1680,7 +1680,8 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
     // "aa", a `<br>` and the span's "bb" make the first two 10px lines; the
     // 20px block follows at y = 20 and ends at 40, inside the 45px page. The
     // span's own location (10px down) is not added to the block's when
-    // pagination checks whether it fits.
+    // pagination checks whether it fits. No line follows the block: one
+    // that crossed the page end would take the block along as a widow.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
@@ -1698,7 +1699,6 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
         Some("display:block;height:20px;orphans:1;widows:1"),
     );
     let inner = doc.append_text(block, "cccc");
-    doc.append_text(body, " dd");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");

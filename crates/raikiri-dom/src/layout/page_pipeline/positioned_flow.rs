@@ -728,7 +728,7 @@ fn keep_run(
             .flat_map(|ifc| &ifc.boxes)
             .filter(|b| {
                 matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Atomic)
-                    && follows_line_of_paragraph(document, b.node, root, line)
+                    && follows_line_of_paragraph(document, b.node, root, line, false)
             })
             .map(|b| b.node)
             .chain(floats_on_moved_lines(
@@ -739,6 +739,7 @@ fn keep_run(
                     line,
                     shift,
                     page,
+                    with_block_before: false,
                 },
                 None,
             ))
