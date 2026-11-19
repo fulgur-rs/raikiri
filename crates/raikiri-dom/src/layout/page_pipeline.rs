@@ -5184,20 +5184,22 @@ fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usiz
 /// The block end, before pagination, of the first row of each plain block
 /// table among `candidates` whose rows start its grid and whose header does
 /// not repeat: the part of the table that a box tied to the one before it
-/// cannot be broken away from, since a row moves whole. A first row in a row
-/// group that avoids breaks inside it takes the whole group along
-/// (`row_groups`).
+/// cannot be broken away from. That is the row up to the first break that
+/// splits it, or the whole row when none does. A first row in a row group
+/// that avoids breaks inside it takes the whole group along (`row_groups`).
 fn first_row_ends(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
     table_headers: &HeaderRepeats,
     row_groups: &HashMap<usize, (f32, f32)>,
+    body_id: usize,
 ) -> HashMap<usize, f32> {
     // Each table's first row in visual order, with the block end of the row:
     // the table layout places a footer group after the body groups wherever
     // it is in the source.
     let mut first_rows = HashMap::<usize, (usize, f32)>::new();
+    let mut row_tops = HashMap::<usize, f32>::new();
     for candidate in candidates
         .iter()
         .filter(|candidate| candidate.context.is_table_row())
@@ -5205,6 +5207,7 @@ fn first_row_ends(
         // The rows of an inline table, nested in a cell or not, are not rows
         // of a block table: the plain-table filter below drops that table.
         if let Some(table) = document.table_of_row(candidate.node_id) {
+            row_tops.insert(candidate.node_id, candidate.raw_y);
             let end = candidate.raw_y + candidate.height;
             first_rows
                 .entry(table)
@@ -5256,6 +5259,18 @@ fn first_row_ends(
                     .any(|&child| table_headers.repeats_header(child))
         })
         .map(|(table, (row, end))| {
+            // A row that a break can split holds only its part before the
+            // first such break (see `table_cell_fragments::first_split_end`).
+            // A table that repeats its footer keeps its rows whole.
+            let split = (!row_groups.contains_key(&row)
+                && document.nodes[row].display() == DisplayValue::TableRow
+                && !has_footer_group(document, table))
+            .then(|| table_cell_fragments::first_split_end(document, cascade, body_id, row))
+            .flatten();
+            let end = match (split, row_tops.get(&row)) {
+                (Some(split), Some(&top)) => (top + split).min(end),
+                _ => end,
+            };
             let group_end = row_groups
                 .get(&row)
                 .map_or(end, |&(group_end, _)| group_end);
@@ -5455,7 +5470,14 @@ fn avoided_run_ends(
     body_id: usize,
     content_width: f32,
 ) -> HashMap<usize, AvoidedRunEnd> {
-    let first_row_ends = first_row_ends(document, cascade, candidates, table_headers, row_groups);
+    let first_row_ends = first_row_ends(
+        document,
+        cascade,
+        candidates,
+        table_headers,
+        row_groups,
+        body_id,
+    );
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
     let mut run_lasts = HashMap::<usize, (&PageCandidate, f32)>::new();
@@ -5714,9 +5736,15 @@ fn held_step(
             return HeldStep::Whole;
         }
     }
-    // A table holds its first row, which moves whole.
+    // A table holds its first row, or only the part of it before the first
+    // break that splits it.
     if is_table {
-        return held_table_end(document, cascade, current).map_or(HeldStep::Whole, HeldStep::End);
+        return held_table_end(document, cascade, current).map_or(HeldStep::Whole, |end| {
+            HeldStep::End(
+                first_row_split_end(document, cascade, body_id, current)
+                    .map_or(end, |split| split.min(end)),
+            )
+        });
     }
     // A block whose box is followed by closing edges alone moves whole
     // rather than leave them on the next page (see `lone_box_tail`), and
@@ -5829,8 +5857,9 @@ fn held_lines_end(
 
 /// How far below the border-box top of the plain block table `table` the part
 /// of it ends that the page cannot break away from the box before it: its
-/// first row, which moves whole, or the row group around that row when the
-/// group avoids breaks inside it. `None` when the table is held whole, which
+/// first row, or the row group around that row when the group avoids breaks
+/// inside it. A row that a break can split holds less (see
+/// [`first_row_split_end`]). `None` when the table is held whole, which
 /// is also the case when it may repeat a header group or something comes
 /// before its first row.
 fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) -> Option<f32> {
@@ -5842,23 +5871,7 @@ fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) ->
     {
         return None;
     }
-    let (row, _) = children
-        .iter()
-        .flat_map(|&child| {
-            let in_group = matches!(
-                document.nodes[child].display(),
-                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-            );
-            let inside = if in_group {
-                document.children_through_contents(child)
-            } else {
-                Vec::new()
-            };
-            std::iter::once(child).chain(inside)
-        })
-        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
-        .map(|row| (row, current_abs_y(document, row)))
-        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let row = first_table_row(document, &children)?;
     if forced_break_before_first_row(document, cascade, table, row) {
         return None;
     }
@@ -5889,6 +5902,60 @@ fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) ->
         current_abs_y(document, held) + document.nodes[held].layout.size.height
             - current_abs_y(document, table),
     )
+}
+
+/// Whether the table `table` has a footer group, whose copy it may repeat
+/// below a row that breaks: such a table keeps its rows whole.
+fn has_footer_group(document: &Document, table: usize) -> bool {
+    document
+        .children_through_contents(table)
+        .iter()
+        .any(|&child| document.nodes[child].display() == DisplayValue::TableFooterGroup)
+}
+
+/// The row of the table whose children are `children` that comes first in
+/// the flow, in or out of a row group.
+fn first_table_row(document: &Document, children: &[usize]) -> Option<usize> {
+    children
+        .iter()
+        .flat_map(|&child| {
+            let in_group = matches!(
+                document.nodes[child].display(),
+                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+            );
+            let inside = if in_group {
+                document.children_through_contents(child)
+            } else {
+                Vec::new()
+            };
+            std::iter::once(child).chain(inside)
+        })
+        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+        .map(|row| (row, current_abs_y(document, row)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(row, _)| row)
+}
+
+/// How far below the border-box top of the plain block table `table` the
+/// first break that splits its first row can go (see
+/// [`table_cell_fragments::first_split_end`]). `None` when no break splits
+/// that row, or when the row group around it avoids breaks inside it.
+fn first_row_split_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    table: usize,
+) -> Option<f32> {
+    let row = first_table_row(document, &document.children_through_contents(table))?;
+    if has_footer_group(document, table)
+        || document.parent_of(row).is_some_and(|group| {
+            group != table && avoids_page_break_inside(cascade.computed[group].break_inside)
+        })
+    {
+        return None;
+    }
+    let split = table_cell_fragments::first_split_end(document, cascade, body_id, row)?;
+    Some(current_abs_y(document, row) - current_abs_y(document, table) + split)
 }
 
 /// Whether `node_id` is a table that ends a run of boxes tied by avoided
