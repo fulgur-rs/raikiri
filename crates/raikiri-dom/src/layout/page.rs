@@ -1650,7 +1650,8 @@ fn propagated_start_page_name_with_order<'name>(
 ///
 /// Pagination leaves `page` alone where Chromium ignores it: on the items of
 /// a flex or grid container, and inside a multicol container, a float or an
-/// absolutely positioned box. Names there force no break, so they meet.
+/// absolutely positioned box. Names there force no break, so they meet. The
+/// own value of a multicol container still counts.
 pub(crate) fn page_names_meet(
     document: &Document,
     cascade: &CascadeResult,
@@ -1664,16 +1665,14 @@ pub(crate) fn page_names_meet(
             .parent(id, BoxParentScope::Document)
             .and_then(|parent| boxes.display(parent))
             .is_some_and(DisplayValue::is_flex_or_grid_container)
-            || std::iter::once(id)
-                .chain(document.ancestors(id))
-                .any(|ancestor| {
-                    document.nodes[ancestor].multicol.is_some()
-                        || floating_box_with_boxes(cascade, ancestor, boxes)
-                        || matches!(
-                            boxes.identity(ancestor).position(),
-                            PositionValue::Absolute | PositionValue::Fixed
-                        )
-                })
+            || document.ancestors(id).any(|ancestor| {
+                document.nodes[ancestor].multicol.is_some()
+                    || floating_box_with_boxes(cascade, ancestor, boxes)
+                    || matches!(
+                        boxes.identity(ancestor).position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    )
+            })
     };
     if ignores_names(before) || ignores_names(after) {
         return true;
@@ -1744,19 +1743,23 @@ fn end_page_name<'name>(
         {
             page_name = Some(own);
         }
-        // Generated boxes after the children, and a monolithic box, end the
+        // Generated boxes after the children, a monolithic box, and a
+        // multicol container, whose columns pass no page value up, end the
         // box on its own page.
-        if crate::generated_content::is_in_flow_generated_text(
-            cascade,
-            node_id,
-            raikiri_style::PseudoElem::After,
-        ) || monolithic_with_boxes(
-            document,
-            cascade,
-            node_id,
-            boxes,
-            pagination_on_transposed_axes,
-        ) {
+        if document.nodes[node_id].multicol.is_some()
+            || crate::generated_content::is_in_flow_generated_text(
+                cascade,
+                node_id,
+                raikiri_style::PseudoElem::After,
+            )
+            || monolithic_with_boxes(
+                document,
+                cascade,
+                node_id,
+                boxes,
+                pagination_on_transposed_axes,
+            )
+        {
             return page_name;
         }
         let child_order = pagination_child_order_borrowed(document, cascade, node_id);

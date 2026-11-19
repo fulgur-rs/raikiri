@@ -150,3 +150,23 @@ fn names_that_pagination_ignores_always_meet() {
         );
     }
 }
+
+#[test]
+fn a_multicol_container_keeps_its_own_page_value() {
+    // Its own value starts or ends a page; the names in its columns do not.
+    assert!(!pair(
+        "display:block",
+        "display:block",
+        "display:block",
+        "display:block;columns:2;page:b"
+    ));
+    assert!(!meet("", |doc, body| {
+        let first = div(doc, body, "display:block;columns:2;page:a");
+        (first, div(doc, body, "display:block"))
+    }));
+    assert!(meet("", |doc, body| {
+        let first = empty(doc, body, "display:block;columns:2");
+        div(doc, first, "display:block;page:x");
+        (first, div(doc, body, "display:block"))
+    }));
+}
