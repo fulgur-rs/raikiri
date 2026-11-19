@@ -40,14 +40,17 @@ impl CellFragment {
     }
 }
 
-/// The cells of `row`, placed with its top at `top`, that a break at
+/// The cells of `row`, placed with its top at `top` in the flow (without the
+/// relative offsets that only move where it is painted), that a break at
 /// `page_end` goes through and that their block-axis alignment moved down.
 /// Chromium lays a cell that fragments out as if it were top-aligned, whether
 /// it was aligned to the middle, the bottom or the row's baseline, so the
 /// room the alignment put above the content moves below it. A cell that
-/// spans rows is split the same way when its rows cross the page end.
+/// spans rows is split the same way when its rows cross the page end, and so
+/// is a cell with a forced break inside it.
 pub(super) fn split(
     document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     row: usize,
     top: f32,
     page_start: f32,
@@ -72,12 +75,15 @@ pub(super) fn split(
         .filter_map(|cell| {
             let layout = &document.nodes[cell].layout;
             let cell_top = top + layout.location.y;
-            if !starts_on_page_and_runs_past_it(
+            let runs_past = starts_on_page_and_runs_past_it(
                 cell_top,
                 cell_top + layout.size.height,
                 page_start,
                 page_end,
-            ) {
+            );
+            // A forced break inside the cell splits it too.
+            let starts_on_page = cell_top >= page_start && cell_top < page_end;
+            if !(runs_past || starts_on_page && breaks_inside(document, cascade, cell)) {
                 return None;
             }
             let padding = document
@@ -209,4 +215,137 @@ fn only_box(document: &Document, parent: usize) -> Option<usize> {
         .filter(|&child| sibling_renders(document, child));
     let child = boxes.next()?;
     boxes.next().is_none().then_some(child)
+}
+
+/// The cells of `row` beside `grown`, a cell that a forced break grew, aligned
+/// again within the part of the row on the page the break leaves, which ends
+/// `end` below the top of the row; `None` when the break falls below the row,
+/// in a cell that spans the rows after it, and leaves the row whole. Chromium
+/// lays such a row out at the height its fragment on that page has, so a cell
+/// aligned to the middle or the bottom keeps that alignment within the fragment, and one aligned to the baseline
+/// starts at its top. A cell that ends past `end` itself, or that has a forced
+/// break of its own, is split and already aligned to its top (see `split`).
+pub(super) fn realign_beside(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    grown: usize,
+    end: Option<f32>,
+    split_cells: &std::collections::HashSet<usize>,
+) -> Vec<CellFragment> {
+    // Only a forced break in the cell's own block flow splits the row there.
+    if document.context.pagination_on_transposed_axes
+        || document.nodes[row].display() != DisplayValue::TableRow
+        || end.is_none()
+        || !breaks_inside(document, cascade, grown)
+    {
+        return Vec::new();
+    }
+    let end = end.unwrap_or_default();
+    document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            let node = &document.nodes[cell];
+            cell != grown
+                && !split_cells.contains(&cell)
+                && node.display() == DisplayValue::TableCell
+                && sibling_renders(document, cell)
+                && !node.used_writing_mode.is_vertical()
+                && node.layout.location.y + node.layout.size.height <= end + 0.001
+                && !breaks_inside(document, cascade, cell)
+        })
+        .filter_map(|cell| {
+            let layout = &document.nodes[cell].layout;
+            let top = layout.location.y;
+            let padding = document
+                .physical_style(cell)
+                .padding()
+                .resolve_or_zero(Some(layout.size.width));
+            let shift = layout.padding.top - padding.top;
+            let room = shift + layout.padding.bottom - padding.bottom;
+            let fragment_room = (room + end - top - layout.size.height).max(0.0);
+            let aligned = match document.ifc_layout_node(cell)?.table_vertical_align {
+                VerticalAlign::Middle => fragment_room / 2.0,
+                VerticalAlign::Bottom => fragment_room,
+                _ => 0.0,
+            };
+            let moved = shift - aligned;
+            (moved.is_finite() && moved.abs() > 0.001)
+                .then_some(CellFragment { cell, shift: moved })
+        })
+        .collect()
+}
+
+/// Whether a forced page break falls between content inside `cell`: a box in
+/// its block flow forces a break before itself after content of the cell, or
+/// after itself before more of it. A break at the start or the end of the
+/// cell passes to the row and does not split the cell. Only block-level boxes
+/// break pages, so a break on an inline box, or inside a box that does not
+/// stack its children in block flow, or out of the flow, does not reach it.
+fn breaks_inside(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    cell: usize,
+) -> bool {
+    breaks_between(document, cascade, cell, false, false)
+}
+
+/// The children of `parent` that are content of its block flow, with the
+/// children of `display: contents` boxes in place of them. Floats and
+/// positioned boxes are not that content.
+fn flow_children(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    parent: usize,
+    out: &mut Vec<usize>,
+) {
+    for &child in &document.nodes[parent].children {
+        let node = &document.nodes[child];
+        if !sibling_renders(document, child)
+            || matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        if node.kind() == NodeKind::Element
+            && node.display() == DisplayValue::Contents
+            && !node.has_before_or_after_content
+        {
+            flow_children(document, cascade, child, out);
+        } else {
+            out.push(child);
+        }
+    }
+}
+
+/// Whether a forced break falls between content among the children of
+/// `parent` or inside them, with whether content of the cell comes before and
+/// after `parent`.
+fn breaks_between(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    parent: usize,
+    before: bool,
+    after: bool,
+) -> bool {
+    let mut children = Vec::new();
+    flow_children(document, cascade, parent, &mut children);
+    children.iter().enumerate().any(|(index, &child)| {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element || !is_block_level_flow_box(node.display()) {
+            return false;
+        }
+        let computed = &cascade.computed[child];
+        let before = before || index > 0;
+        let after = after || index + 1 < children.len();
+        page_break_is_forced(document, child, computed.break_before) && before
+            || page_break_is_forced(document, child, computed.break_after) && after
+            || stacks_children_in_block_flow(document, child)
+                && breaks_between(document, cascade, child, before, after)
+    })
 }

@@ -1748,8 +1748,8 @@ pub(super) fn parse_columns_shorthand(input: &mut Parser<'_, '_>) -> Option<Colu
 /// Fragmentation Module Level 3 §3.1
 /// <https://www.w3.org/TR/css-break-3/#break-between>).
 ///
-/// Accepts generic, page and column values, including Level 4 `always`.
-/// Unsupported page-spread and region values, and `all`, drop with `None`.
+/// Accepts generic, page, page-spread and column values, including Level 4
+/// `always`. Unsupported region values and `all` drop with `None`.
 /// Idents are compared ASCII case-insensitively, as in
 /// [`parse_word_break`](super::text::parse_word_break).
 pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
@@ -1775,18 +1775,16 @@ pub(super) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInsi
 /// CSS2.1 defines the `page-break-before` / `page-break-after` grammar as
 /// `auto | always | avoid | left | right` (verbatim,
 /// <https://www.w3.org/TR/CSS2/page.html#propdef-page-break-before>).
-/// This parser accepts only `auto`, `avoid`, and `always`. Because `left` and
-/// `right` would map to values not implemented for `break-before` or
-/// `break-after` (see "Scope carving" in the [`BreakBetween`] docs), the
-/// legacy shorthands do not accept them either. The spec's mapping table
-/// maps `always` to [`BreakBetween::Page`], rather than leaving it unchanged;
-/// `auto` and `avoid` map to themselves.
+/// The spec's mapping table maps `always` to [`BreakBetween::Page`], rather
+/// than leaving it unchanged; `auto`, `avoid`, `left` and `right` map to
+/// themselves.
 pub(super) fn parse_legacy_page_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(BreakBetween::Auto),
-        "avoid" => Some(BreakBetween::Avoid),
-        "always" => Some(BreakBetween::Page),
+    match BreakBetween::from_css_ident(input.expect_ident().ok()?)? {
+        BreakBetween::Always => Some(BreakBetween::Page),
+        value @ (BreakBetween::Auto
+        | BreakBetween::Avoid
+        | BreakBetween::Left
+        | BreakBetween::Right) => Some(value),
         _ => None,
     }
 }
