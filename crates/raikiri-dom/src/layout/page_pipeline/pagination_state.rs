@@ -3930,23 +3930,20 @@ impl PaginationState {
         let on_page = metrics.len() - first_on_page;
         let orphans = cascade.computed[root].orphans.max(1) as usize;
         let widows = cascade.computed[root].widows.max(1) as usize;
-        let moved = if on_page < orphans {
-            if first_on_page > 0 {
-                return Ok(());
-            }
-            // Lines that open the paragraph go with the whole paragraph, as
-            // the page breaks before it.
-            if after_block.is_none() {
-                return self.move_inline_block_paragraph(
-                    document, env, candidate, entry, blocks, text, page,
-                );
-            }
-            // A block child of the paragraph comes before the lines on the
-            // page, unless it ends the page before.
-            (text.effective_y + metrics[0].0 > page_start + 0.5).then_some(0)
-        } else {
+        // Too few orphans move only lines that all start on this page: those
+        // that went on from the page before keep the break above them.
+        let moved = if on_page >= orphans {
             let pulled = (widows - 1).min(on_page - orphans);
             (pulled > 0).then(|| metrics.len() - pulled)
+        } else if first_on_page == 0 && after_block.is_none() {
+            // Lines that open the paragraph go with the whole paragraph, as
+            // the page breaks before it.
+            return self
+                .move_inline_block_paragraph(document, env, candidate, entry, blocks, text, page);
+        } else {
+            // A block child of the paragraph comes before the lines on the
+            // page, unless it ends the page before.
+            (first_on_page == 0 && text.effective_y + metrics[0].0 > page_start + 0.5).then_some(0)
         };
         let Some(moved) = moved else {
             return Ok(());
