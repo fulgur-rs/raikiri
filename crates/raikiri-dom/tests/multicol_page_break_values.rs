@@ -191,6 +191,37 @@ fn a_page_value_on_a_spanner_breaks_the_page() {
     );
 }
 
+/// The boxes inside a spanner are outside the columns of its container too,
+/// so their page values break the page, unless they sit in columns of their
+/// own inside the spanner.
+#[test]
+fn a_page_value_inside_a_spanner_breaks_the_page() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div style='column-span:all'><div>A</div>\
+             <div id=b style='break-before:page'>B</div></div><div>C</div></div>"
+        ),
+        2,
+        &[("b", 1, 0.0, 0.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div style='column-span:all'>\
+             <div id=a style='break-after:page'>A</div><div id=b>B</div></div>C</div>"
+        ),
+        2,
+        &[("a", 0, 0.0, 0.0), ("b", 1, 0.0, 0.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div style='column-span:all'><div style='{COLUMNS}'>\
+             <div>A</div><div id=b style='break-before:page'>B</div></div></div>C</div>"
+        ),
+        1,
+        &[],
+    );
+}
+
 /// A page value between a spanner and the column content after it falls in
 /// the columns, and so does one on a spanner of a multicol container that
 /// itself sits in columns.

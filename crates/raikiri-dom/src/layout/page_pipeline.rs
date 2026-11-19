@@ -3864,14 +3864,21 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
     // A break inside a multicol container falls in its column context.
     // Chromium also ignores a page value there when it prints: the content
     // after it stays in the columns and on the page. A spanner leaves the
-    // columns of its own container, so only the containers above that one
-    // turn its page value into a column break.
-    let spanner = document.nodes[node_id].column_span_all;
-    document
-        .layout_ancestors(node_id)
-        .filter(|&id| document.nodes[id].multicol.is_some())
-        .nth(usize::from(spanner))
-        .is_none()
+    // columns of its own container, and so does everything inside it, so
+    // only a container above that one turns the page value into a column
+    // break.
+    let mut spanned = document.nodes[node_id].column_span_all;
+    for id in document.layout_ancestors(node_id) {
+        let node = &document.nodes[id];
+        if node.multicol.is_some() {
+            if !spanned {
+                return false;
+            }
+            spanned = false;
+        }
+        spanned |= node.column_span_all;
+    }
+    true
 }
 
 // Find the first/last generated child box, eliding Contents without cloning
