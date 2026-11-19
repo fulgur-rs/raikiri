@@ -631,11 +631,8 @@ pub(crate) fn first_page_name_with_transposed_axes(
             continue;
         }
         match node.kind() {
-            NodeKind::Text => {
-                if text_is_page_content(document, cascade, child_id) {
-                    return None;
-                }
-            }
+            NodeKind::Text if text_is_page_content(document, cascade, child_id) => return None,
+            NodeKind::Text => {}
             NodeKind::Element => {
                 // An absolutely positioned box left at its static position
                 // keeps the page names of its in-flow descendants, so a named
@@ -1654,14 +1651,13 @@ pub(crate) fn text_is_page_content(
     cascade: &CascadeResult,
     id: usize,
 ) -> bool {
-    let crate::node::NodeData::Text(text) = &document.nodes[id].data else {
-        return false;
-    };
-    !text.text_content.trim().is_empty()
-        || (!crate::generated_content::is_collapsed_white_space(
-            &text.text_content,
-            cascade.computed[id].effective_white_space_collapse,
-        ) && !super::page_pipeline::in_flex_or_grid_container(document, id))
+    document.nodes[id].text_content().is_some_and(|text| {
+        !text.trim().is_empty()
+            || (!crate::generated_content::is_collapsed_white_space(
+                text,
+                cascade.computed[id].effective_white_space_collapse,
+            ) && !super::page_pipeline::in_flex_or_grid_container(document, id))
+    })
 }
 
 /// The start page value of `node_id`. With `ignore_root_page_name`, the
