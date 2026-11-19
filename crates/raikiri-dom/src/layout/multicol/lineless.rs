@@ -280,8 +280,8 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        && node.break_before == BreakBetween::Auto
-        && node.break_after == BreakBetween::Auto
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
         && node.multicol.is_none()
         && !is_right_aligned_in_parent(tree, child)
         && holds_no_fragmenting_box(tree, child)
@@ -351,8 +351,8 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        || node.break_before != BreakBetween::Auto
-        || node.break_after != BreakBetween::Auto
+        || sets_break_in_columns(node.break_before)
+        || sets_break_in_columns(node.break_after)
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
@@ -474,8 +474,8 @@ fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        && node.break_before == BreakBetween::Auto
-        && node.break_after == BreakBetween::Auto
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
         && node.break_inside == BreakInside::Auto
         && !node.has_before_or_after_content
         && !node.column_span_all

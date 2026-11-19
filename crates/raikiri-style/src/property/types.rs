@@ -6776,9 +6776,9 @@ css_keywords!(BreakBetween {
 
 impl BreakBetween {
     /// Whether the value is `page` or one of the page-spread values `left`,
-    /// `right`, `recto` and `verso`, which force a page break wherever the
-    /// box is. `always` is not one of them: it forces a break only in the
-    /// nearest fragmentation context, see [`Self::may_force_page_break`].
+    /// `right`, `recto` and `verso`, which name a page break. `always` is
+    /// not one of them: it names a break in the nearest fragmentation
+    /// context, see [`Self::may_force_page_break`].
     pub const fn is_page_value(self) -> bool {
         matches!(
             self,
@@ -6787,10 +6787,10 @@ impl BreakBetween {
     }
 
     /// Whether the value can force a page break: a page value
-    /// ([`Self::is_page_value`]) or `always`. `always` forces a page break
-    /// only when no multicol container between the box and the page
-    /// takes the break as a column break; callers that know the context
-    /// check that too.
+    /// ([`Self::is_page_value`]) or `always`. Either forces one only when no
+    /// multicol container lies between the box and the page; inside columns
+    /// browsers ignore page values when printing. Callers that know the
+    /// context check that too.
     pub const fn may_force_page_break(self) -> bool {
         self.is_page_value() || matches!(self, Self::Always)
     }

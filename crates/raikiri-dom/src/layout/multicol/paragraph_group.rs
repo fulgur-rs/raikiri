@@ -790,8 +790,8 @@ fn collect(
             || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                 || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
             || is_right_aligned_in_parent(tree, child)
-            || node.break_before != BreakBetween::Auto
-            || node.break_after != BreakBetween::Auto
+            || sets_break_in_columns(node.break_before)
+            || sets_break_in_columns(node.break_after)
             || node.has_before_or_after_content
             || multicol_subtree_has_float(tree, child)
             || !margin_top.is_finite()
