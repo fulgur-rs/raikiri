@@ -1693,7 +1693,8 @@ pub(crate) fn page_names_meet(
         inherited(before),
         pagination_on_transposed_axes,
     );
-    let start = match start_page_name(
+    // An in-flow box always has a start value, its inherited one at least.
+    let (_, start) = start_page_name(
         document,
         cascade,
         after,
@@ -1701,10 +1702,7 @@ pub(crate) fn page_names_meet(
         true,
         pagination_on_transposed_axes,
         false,
-    ) {
-        (true, name) => name,
-        (false, _) => inherited(after),
-    };
+    );
     end == start
 }
 
@@ -1730,7 +1728,7 @@ fn end_page_name<'name>(
                 | DisplayValue::ListItem
                 | DisplayValue::Contents
         ) {
-            return match start_page_name(
+            return start_page_name(
                 document,
                 cascade,
                 node_id,
@@ -1738,10 +1736,8 @@ fn end_page_name<'name>(
                 true,
                 pagination_on_transposed_axes,
                 false,
-            ) {
-                (true, name) => name,
-                (false, _) => page_name,
-            };
+            )
+            .1;
         }
         if page_applies_with_boxes(boxes, node_id)
             && let Some(own) = selected_page_name(cascade, node_id)
