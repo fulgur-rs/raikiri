@@ -3838,30 +3838,31 @@ fn page_break_after_is_forced(
     // Source order: column text after a spanner in an inline formatting
     // context is no layout child of its own. A wrapper that generates no box
     // passes the edge on to its parent, and the first content inside one
-    // after the spanner is what follows it.
-    // Inside a box of its own, such as an enclosing spanner, what follows
-    // is no column content, so the page value breaks the page; at the end
-    // of such a box the break passes on to the box's own edge. A plain
-    // wrapper that layout leaves out ends in the columns.
+    // after the spanner is what follows it. Inside a box of its own, such as
+    // an enclosing spanner, what follows is no column content, so the page
+    // value breaks the page; at the end of such a box the break passes on to
+    // the box's own edge. A plain wrapper that layout leaves out ends in the
+    // columns.
     let mut current = node_id;
     loop {
-        let Some(parent) = document.parent_of(current) else {
-            return true;
-        };
-        if let Some(next) = first_flow_child(document, cascade, parent, Some(current)) {
+        let parent = document.parent_of(current);
+        let next = parent.and_then(|parent| {
+            first_flow_child(document, cascade, parent, Some(current)).map(|next| (parent, next))
+        });
+        if let Some((parent, next)) = next {
             return !lays_out_in_columns(document, parent)
                 || starts_with_spanner(document, cascade, next);
         }
-        let node = &document.nodes[parent];
-        if node.multicol.is_some() {
-            return true;
+        match parent {
+            Some(parent)
+                if cascade.computed[parent].display == DisplayValue::Contents
+                    || (document.nodes[parent].multicol.is_none()
+                        && document.nodes[parent].display() != DisplayValue::Contents) =>
+            {
+                current = parent
+            }
+            _ => return parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
         }
-        if cascade.computed[parent].display != DisplayValue::Contents
-            && node.display() == DisplayValue::Contents
-        {
-            return false;
-        }
-        current = parent;
     }
 }
 
