@@ -399,10 +399,23 @@ fn a_heading_moves_with_the_first_row_of_the_table_after_it() {
 }
 
 #[test]
-fn a_heading_moves_with_a_tall_first_row_that_fits_the_next_page() {
-    // The row would cross the edge, so it starts the next page.
+fn a_heading_stays_with_the_first_line_of_a_tall_first_row() {
+    // The row crosses the edge, but it breaks after its line, as in
+    // Chromium: the heading stays with the part of the row before the break.
     assert_eq!(
         heading_then(70, |doc, body| table_of_rows(
+            doc,
+            body,
+            "",
+            1,
+            "height:50px"
+        )),
+        (70.0, 80.0)
+    );
+    // When the line itself would cross the edge, the row starts the next
+    // page, and the heading moves with it.
+    assert_eq!(
+        heading_then(85, |doc, body| table_of_rows(
             doc,
             body,
             "",
@@ -585,16 +598,21 @@ fn a_heading_moves_with_a_table_that_the_page_cannot_break_inside() {
 
 #[test]
 fn a_heading_moves_with_the_first_row_of_a_table_that_holds_an_inline_table() {
-    // Only the row of the table around the inline table is what moves whole.
-    assert_eq!(
-        heading_then(70, |doc, body| {
+    let positions = |spacer| {
+        heading_then(spacer, |doc, body| {
             let cell = table_of_rows(doc, body, "", 1, "height:30px");
             let inline = block(doc, cell, "display:inline-table;border-spacing:0");
             row_with_cell(doc, inline, "");
             cell
-        }),
-        (100.0, 110.0)
-    );
+        })
+    };
+    // Only the row of the table around the inline table is what moves whole:
+    // its first line fits, but the orphans pull the line of the inline table
+    // along, and that one would cross the edge.
+    assert_eq!(positions(80), (100.0, 110.0));
+    // Both lines fit: the row breaks after them, below which only its set
+    // height runs on, and the heading stays.
+    assert_eq!(positions(70), (70.0, 80.0));
 }
 
 #[test]
@@ -1001,7 +1019,7 @@ fn a_heading_in_a_wrapper_moves_with_the_first_row_of_the_table_after_it() {
         )),
         (80.0, 90.0)
     );
-    // A tall first row that fits the next page starts it.
+    // A tall first row breaks after its line, which stays with the heading.
     assert_eq!(
         heading_in_wrapper_then(70, "", |doc, wrapper| table_of_rows(
             doc,
@@ -1010,7 +1028,7 @@ fn a_heading_in_a_wrapper_moves_with_the_first_row_of_the_table_after_it() {
             1,
             "height:50px"
         )),
-        (100.0, 110.0)
+        (70.0, 80.0)
     );
 }
 

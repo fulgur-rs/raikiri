@@ -443,6 +443,107 @@ pub(super) fn row_splits(
         })
 }
 
+/// How far below the top of the row `row` the first break that splits it
+/// can go (see [`row_splits`]): the end of the first content of its cells
+/// that a page can hold apart from the rest of the row, when a break at any
+/// later end of that content splits the row too, so that the page end can
+/// fall anywhere past it. `None` when no such break exists, and when the row
+/// avoids breaks inside it.
+pub(super) fn first_split_end(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    row: usize,
+) -> Option<f32> {
+    let node = &document.nodes[row];
+    if document.context.pagination_on_transposed_axes
+        || box_avoids_page_break_inside(document, row, cascade.computed[row].break_inside)
+    {
+        return None;
+    }
+    let height = node.layout.size.height;
+    let row_y = current_abs_y(document, row);
+    let mut ends = Vec::new();
+    let mut tops = Vec::new();
+    for &cell in &node.children {
+        let cell_node = &document.nodes[cell];
+        if cell_node.display() != DisplayValue::TableCell {
+            continue;
+        }
+        // A cell that breaks loses the room its alignment put above its
+        // content, so its content ends that much higher (see `cell_breaks`).
+        let padding = document
+            .physical_style(cell)
+            .padding()
+            .resolve_or_zero(Some(cell_node.layout.size.width));
+        let shift = cell_node.layout.padding.top - padding.top;
+        let origin = row_y + shift.max(0.0);
+        if let Some(bounds) = line_bounds(document, cell) {
+            let content_top = current_abs_y(document, cell) - origin
+                + cell_node.layout.border.top
+                + cell_node.layout.padding.top;
+            ends.extend(bounds.iter().map(|&(_, bottom)| content_top + bottom));
+            tops.extend(bounds.iter().map(|&(top, _)| content_top + top));
+        }
+        content_ends(document, cell, origin, &mut ends, &mut tops);
+    }
+    ends.sort_by(f32::total_cmp);
+    ends.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    ends.retain(|&end| end > 0.001 && end < height - 0.001);
+    // Every place a box or line starts or ends, so that a page end between
+    // two of them falls inside the same content as any other page end
+    // there.
+    let mut points: Vec<f32> = ends.iter().copied().chain(tops).collect();
+    points.retain(|&point| point > 0.001 && point < height - 0.001);
+    points.sort_by(f32::total_cmp);
+    points.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+    // Walk back from the bottom of the row while every page end, at a point
+    // and inside the gap after it, splits the row; the break must come
+    // after the latest place where it does not.
+    let mut first = None;
+    let mut next = height;
+    for &point in points.iter().rev() {
+        let gap = (point + next) / 2.0;
+        if !row_splits(document, cascade, body_id, row, 0.0, gap)
+            || !row_splits(document, cascade, body_id, row, 0.0, point)
+        {
+            break;
+        }
+        if ends.iter().any(|&end| (end - point).abs() < 0.001) {
+            first = Some(point);
+        }
+        next = point;
+    }
+    first
+}
+
+/// Pushes where each element inside `parent`, and each line of one that lays
+/// out lines, ends into `ends` and starts into `tops`, measured below
+/// `origin` in the document.
+fn content_ends(
+    document: &super::super::context::LayoutSession<'_>,
+    parent: usize,
+    origin: f32,
+    ends: &mut Vec<f32>,
+    tops: &mut Vec<f32>,
+) {
+    for &child in &document.nodes[parent].children {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element {
+            continue;
+        }
+        let top = current_abs_y(document, child) - origin;
+        tops.push(top);
+        ends.push(top + node.layout.size.height);
+        if let Some(bounds) = line_bounds(document, child) {
+            let content_top = top + node.layout.border.top + node.layout.padding.top;
+            ends.extend(bounds.iter().map(|&(_, bottom)| content_top + bottom));
+            tops.extend(bounds.iter().map(|&(top, _)| content_top + top));
+        }
+        content_ends(document, child, origin, ends, tops);
+    }
+}
+
 /// Whether the cell `cell`, with its border box at `cell_top` in the flow,
 /// lets a break at `page_end` go through it where its content is. `own`
 /// holds the body for a cell of the row itself, which must also put some of
