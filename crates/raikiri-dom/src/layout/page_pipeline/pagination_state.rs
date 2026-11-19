@@ -3862,13 +3862,13 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        let Some(root) = blocks.paragraph_root else {
+        let Some((root, (after_block, end, _))) = blocks
+            .paragraph_root
+            .and_then(|root| Some((root, super::line_run(document, text_lines, node_id, root)?)))
+        else {
             return Ok(());
         };
-        let Some((start, end, _)) = super::line_run(document, text_lines, node_id, root) else {
-            return Ok(());
-        };
-        let start = start.unwrap_or(0);
+        let start = after_block.unwrap_or(0);
         let Some(block) = super::inline_block_after_lines(document, root, end) else {
             return Ok(());
         };
@@ -3936,7 +3936,7 @@ impl PaginationState {
             }
             // Lines that open the paragraph go with the whole paragraph, as
             // the page breaks before it.
-            if start == 0 {
+            if after_block.is_none() {
                 return self.move_inline_block_paragraph(
                     document, env, candidate, entry, blocks, text, page,
                 );
@@ -3989,26 +3989,28 @@ impl PaginationState {
             root_flow_offset,
             ..
         } = *env;
-        let Some((root, nested)) = blocks
+        let page_start = page_origins.origin(page);
+        // Content of the flow must come before the paragraph on the page.
+        let Some((root, nested, block_top)) = blocks
             .block
             .filter(|&(block, _)| Some(block) == blocks.paragraph_root)
+            .map(|(root, nested)| {
+                let top = block_effective_y(
+                    document,
+                    root,
+                    candidate.raw_y,
+                    text.effective_y - text.first_line_shift,
+                    root_flow_offset,
+                    self.flow_shift,
+                );
+                (root, nested, top)
+            })
+            .filter(|&(root, _, top)| {
+                top > page_start + 0.001 && follows_flow_content(document, cascade, body_id, root)
+            })
         else {
             return Ok(());
         };
-        let block_top = block_effective_y(
-            document,
-            root,
-            candidate.raw_y,
-            text.effective_y - text.first_line_shift,
-            root_flow_offset,
-            self.flow_shift,
-        );
-        let page_start = page_origins.origin(page);
-        if block_top <= page_start + 0.001
-            || !follows_flow_content(document, cascade, body_id, root)
-        {
-            return Ok(());
-        }
         let next = page.saturating_add(1);
         reach_page(control, next)?;
         let (delta, consumed) = move_line_block(

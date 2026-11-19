@@ -178,3 +178,70 @@ fn a_block_whose_first_piece_fits_breaks_inside() {
         (paragraph(40, "", &in_span(1, 40)), [(0, 75.0), (1, 15.0)]),
     ]);
 }
+
+/// A block `height` px tall that holds `#t` and avoids a break inside it.
+fn whole_block(height: u32) -> String {
+    format!("<div style=\"height:{height}px;break-inside:avoid\"><span id=t>T</span></div>")
+}
+
+#[test]
+fn lines_after_a_block_child_break_from_it_for_their_orphans() {
+    assert_places(&[
+        // The line after the block child goes with the inline block.
+        (
+            paragraph(
+                0,
+                "",
+                &format!(
+                    "<div style=\"height:50px\"></div><span>A{}</span>",
+                    whole_block(40)
+                ),
+            ),
+            [(1, 35.0), (1, 75.0)],
+        ),
+        // A line that starts its page stays.
+        (
+            paragraph(
+                0,
+                "",
+                &format!(
+                    "<div style=\"height:100px\"></div><span>A{}</span>",
+                    whole_block(80)
+                ),
+            ),
+            [(2, 5.0), (3, 5.0)],
+        ),
+        // Enough orphans stay, and no line is left to give to the widows.
+        (
+            paragraph(
+                0,
+                "",
+                &format!(
+                    "<div style=\"height:20px\"></div><span>A<br>A{}</span>",
+                    whole_block(80)
+                ),
+            ),
+            [(1, 5.0), (2, 5.0)],
+        ),
+    ]);
+}
+
+#[test]
+fn lines_that_start_their_page_stay() {
+    assert_places(&[
+        // The paragraph starts the page.
+        (
+            paragraph(0, "", &format!("<span>A{}</span>", whole_block(80))),
+            [(1, 5.0), (2, 5.0)],
+        ),
+        // The line went on from the page before.
+        (
+            paragraph(
+                0,
+                "",
+                &format!("<span>A<br>A<br>A<br>A{}</span>", whole_block(80)),
+            ),
+            [(2, 5.0), (3, 5.0)],
+        ),
+    ]);
+}
