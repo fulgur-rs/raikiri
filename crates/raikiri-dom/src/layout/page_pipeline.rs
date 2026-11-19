@@ -3809,7 +3809,7 @@ fn box_forces_break_after(
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
-    if value.forces_page_break() {
+    if value.is_page_value() {
         return true;
     }
     if !matches!(value, BreakBetween::Always) {

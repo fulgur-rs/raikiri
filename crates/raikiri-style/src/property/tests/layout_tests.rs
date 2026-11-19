@@ -627,10 +627,15 @@ fn break_before_after_parse_page_spread_values() {
 }
 
 #[test]
-fn only_page_and_page_spread_values_force_a_page_break() {
+fn only_page_and_page_spread_values_are_page_values() {
     for value in BreakBetween::ALL {
         assert_eq!(
-            value.forces_page_break(),
+            value.may_force_page_break(),
+            value.is_page_value() || *value == BreakBetween::Always,
+            "{value:?}"
+        );
+        assert_eq!(
+            value.is_page_value(),
             matches!(
                 value,
                 BreakBetween::Page

@@ -229,8 +229,7 @@ impl GeneratedBlock {
         placed: Option<&PlacedBlock>,
         lines: usize,
     ) -> impl Iterator<Item = ForcedBreak> {
-        let forced =
-            |value: BreakBetween| value.forces_page_break() || value == BreakBetween::Always;
+        let forced = BreakBetween::may_force_page_break;
         let before = (forced(self.break_before) && open.lines_before > 0).then(|| ForcedBreak {
             line: open.lines_before,
             value: self.break_before,
