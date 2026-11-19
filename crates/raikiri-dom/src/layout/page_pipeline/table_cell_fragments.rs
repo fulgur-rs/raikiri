@@ -349,3 +349,252 @@ fn breaks_between(
                 && breaks_between(document, cascade, child, before, after)
     })
 }
+
+/// Whether a break at `page_end` splits `row`, placed with its top at `top`
+/// in the flow, rather than moving it whole to the next page. Chromium moves
+/// a row that crosses the page end only when a cell of it breaks before any
+/// of its content, as when its first line, or a first box that no break goes
+/// through, runs past the page end, or too few lines fit for its orphans.
+/// Otherwise the row breaks there with its cells, each laid out as if it
+/// were aligned to its top (see `split`), and their content goes on at the
+/// top of the next page.
+///
+/// The row is split only where no line of its content has to move to break
+/// there: no line or replaced box runs past the page end (a box that avoids
+/// a break inside it moves down inside the cell, as in a taller row), the
+/// lines on either side of it are enough for their orphans and widows, and
+/// no edges that close a box are left without content to go with them. Rows
+/// whose lines would have to move inside the cell, and content this cannot
+/// follow (boxes laid out side by side, floats across the page end, lines
+/// around a block), still move whole.
+pub(super) fn row_splits(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    top: f32,
+    page_end: f32,
+) -> bool {
+    let cells: Vec<usize> = document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| sibling_renders(document, cell))
+        .collect();
+    let row_top = cells
+        .iter()
+        .map(|&cell| document.pagination_local_y(cell))
+        .fold(f32::INFINITY, f32::min);
+    !document.context.pagination_on_transposed_axes
+        && !cells.is_empty()
+        && cells.iter().all(|&cell| {
+            let node = &document.nodes[cell];
+            let layout = &node.layout;
+            let padding = document
+                .physical_style(cell)
+                .padding()
+                .resolve_or_zero(Some(layout.size.width));
+            let cell_top = top + document.pagination_local_y(cell) - row_top;
+            // The room that the cell's alignment put above its content, which
+            // a cell that breaks loses.
+            let shift = layout.padding.top - padding.top;
+            let tops = (cell_top - shift, cell_top + layout.border.top + padding.top);
+            let closing = padding.bottom + layout.border.bottom;
+            let computed = &cascade.computed[cell];
+            // Chromium takes a break forced before a cell as one before its
+            // row, which then starts the next page whole.
+            node.display() == DisplayValue::TableCell
+                && !node.used_writing_mode.is_vertical()
+                && !box_avoids_page_break_inside(document, cell, computed.break_inside)
+                && !page_break_is_forced(document, cell, computed.break_before)
+                && shift.is_finite()
+                && content_fits(document, cascade, cell, tops, closing, page_end)
+                && breaks_cleanly(document, cascade, cell, tops, closing, page_end)
+        })
+}
+
+/// Whether some content of the block `block` goes before a break at
+/// `page_end`. `tops` holds where the block's border box and where its
+/// content start, and `closing` the padding and border below its content
+/// that stay with its last line or box, its own and those of the boxes it
+/// ends together with.
+fn content_fits(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    (border_top, content_top): (f32, f32),
+    closing: f32,
+    page_end: f32,
+) -> bool {
+    if let Some(bounds) = line_bounds(document, block) {
+        let count = bounds.len();
+        let mut fitting = bounds
+            .iter()
+            .take_while(|&&(_, bottom)| content_top + bottom <= page_end + 0.001)
+            .count();
+        // The last line goes to the next page with the edges that close the
+        // block when they do not fit after it.
+        if fitting == count
+            && bounds
+                .last()
+                .is_some_and(|&(_, bottom)| content_top + bottom + closing > page_end + 0.001)
+        {
+            fitting -= 1;
+        }
+        let orphans = cascade.computed[block].orphans.max(1) as usize;
+        return count == 0 || fitting >= orphans.min(count) && fitting > 0;
+    }
+    let mut children = Vec::new();
+    flow_children(document, cascade, block, &mut children);
+    // A box without content puts its own height before the break.
+    children.first().is_none_or(|&first| {
+        let layout = &document.nodes[first].layout;
+        let child_top = border_top + document.pagination_local_y(first);
+        let closing = if children.len() == 1 { closing } else { 0.0 };
+        let whole =
+            box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
+                || box_is_unbreakable(document, cascade, first, false);
+        block_level_element(document, first)
+            && child_top < page_end - 0.001
+            && if whole {
+                child_top + layout.size.height + closing <= page_end + 0.001
+            } else {
+                plain_block(document, first)
+                    && content_fits(
+                        document,
+                        cascade,
+                        first,
+                        (
+                            child_top,
+                            child_top + layout.border.top + layout.padding.top,
+                        ),
+                        layout.padding.bottom + layout.border.bottom + closing,
+                        page_end,
+                    )
+            }
+    })
+}
+
+/// Whether the content of the block `block`, with `tops` and `closing` as in
+/// [`content_fits`], breaks at `page_end` where it is, or with only boxes
+/// that avoid a break inside them moving down: no line, and no replaced or
+/// other box that no break goes through, runs past the page end, the lines
+/// of a paragraph on either side of it are enough for its orphans, and for
+/// its widows when the paragraph has lines enough for both, and the edges
+/// that close a box fit after its content or start past the break with it.
+fn breaks_cleanly(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    block: usize,
+    (border_top, content_top): (f32, f32),
+    closing: f32,
+    page_end: f32,
+) -> bool {
+    let edges_fit = |content_end: f32| {
+        closing <= 0.001
+            || content_end > page_end - 0.001
+            || content_end + closing <= page_end + 0.001
+    };
+    if let Some(bounds) = line_bounds(document, block) {
+        let computed = &cascade.computed[block];
+        let before = bounds
+            .iter()
+            .filter(|&&(_, bottom)| content_top + bottom <= page_end + 0.001)
+            .count();
+        let after = bounds
+            .iter()
+            .filter(|&&(line_top, _)| content_top + line_top >= page_end - 0.001)
+            .count();
+        let orphans = computed.orphans.max(1) as usize;
+        let widows = computed.widows.max(1) as usize;
+        // Lines that the widows pull to the next page would have to move,
+        // unless that leaves too few for the orphans: Chromium then breaks
+        // where the lines are and gives up the widows.
+        let split = before > 0 && after > 0;
+        return before + after == bounds.len()
+            && (!split
+                || before >= orphans && (after >= widows || before + after < orphans + widows))
+            && bounds
+                .last()
+                .is_none_or(|&(_, bottom)| edges_fit(content_top + bottom));
+    }
+    let node = &document.nodes[block];
+    let floats_stay_apart = node.children.iter().all(|&child| {
+        !is_floating_box_for_pagination(document, cascade, child) || {
+            let child_top = border_top + document.pagination_local_y(child);
+            let child_end = child_top + document.nodes[child].layout.size.height;
+            child_end <= page_end + 0.001 || child_top >= page_end - 0.001
+        }
+    });
+    let mut children = Vec::new();
+    flow_children(document, cascade, block, &mut children);
+    let mut content_end = content_top;
+    floats_stay_apart
+        && children.iter().all(|&child| {
+            let layout = &document.nodes[child].layout;
+            let child_top = border_top + document.pagination_local_y(child);
+            let child_end = child_top + layout.size.height;
+            let child_content_top = child_top + layout.border.top + layout.padding.top;
+            content_end = child_end;
+            // A box that avoids a break inside it moves to the next page
+            // inside the cell, and the row grows with it.
+            block_level_element(document, child)
+                && (child_end <= page_end + 0.001
+                    || child_top >= page_end - 0.001
+                    || box_avoids_page_break_inside(
+                        document,
+                        child,
+                        cascade.computed[child].break_inside,
+                    )
+                    || !box_is_unbreakable(document, cascade, child, false)
+                        && plain_block(document, child)
+                        && child_content_top <= page_end + 0.001
+                        && breaks_cleanly(
+                            document,
+                            cascade,
+                            child,
+                            (child_top, child_content_top),
+                            layout.padding.bottom + layout.border.bottom,
+                            page_end,
+                        ))
+        })
+        && edges_fit(content_end)
+}
+
+/// The block-start and block-end edges of the lines of `block`, below the
+/// top of its content box, when it lays its content out in lines with no
+/// block among them.
+fn line_bounds(
+    document: &super::super::context::LayoutSession<'_>,
+    block: usize,
+) -> Option<Vec<(f32, f32)>> {
+    let lines = document
+        .ifc_layout_node(block)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    // A block among the lines breaks between boxes, which this does not
+    // follow: the lines then count as one that no page holds.
+    Some(if lines.block_line_starts.is_empty() {
+        ifc_root_line_bounds(document, block).unwrap_or_default()
+    } else {
+        vec![(0.0, f32::INFINITY)]
+    })
+}
+
+/// Whether `child` is a block-level element.
+fn block_level_element(document: &Document, child: usize) -> bool {
+    let node = &document.nodes[child];
+    node.kind() == NodeKind::Element && is_block_level_flow_box(node.display())
+}
+
+/// Whether `block` stacks its children, or lays out its lines, in plain block
+/// flow, in which a break goes between them.
+fn plain_block(document: &Document, block: usize) -> bool {
+    let node = &document.nodes[block];
+    matches!(
+        node.display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) && node.multicol.is_none()
+        && !node.used_writing_mode.is_vertical()
+}

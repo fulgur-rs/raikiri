@@ -6310,6 +6310,10 @@ impl AvoidedBreaks {
         let table_row = candidate.context.is_table_row()
             && ((item_tail && tail_fits)
                 || (!cell_text_fits
+                    && !(repeated_header_height + repeated_footer_height <= 0.001
+                        && table_cell_fragments::row_splits(
+                            document, cascade, node_id, flow_y, page_end,
+                        ))
                     && table_row_moves(
                         flow_y,
                         height + repeated_footer_height,
