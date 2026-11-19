@@ -127,6 +127,24 @@ fn lines_of_atomic_inlines_before_text_keep_their_place() {
 }
 
 #[test]
+fn lines_of_atomic_inlines_in_a_contents_wrapper_before_text_keep_their_place() {
+    // A `display: contents` wrapper lays the inline-blocks out in its place,
+    // as in the test above.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><div style="width:20px"><span style="display:contents"><i>B</i><i>B</i></span> T T</div><div>Z</div>"#
+        ),
+        [
+            (0, 'B', 0, 45),
+            (0, 'B', 0, 75),
+            (1, 'T', 0, 5),
+            (1, 'T', 0, 35),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
 fn a_line_with_an_image_moves_with_the_text() {
     assert_eq!(
         glyphs(

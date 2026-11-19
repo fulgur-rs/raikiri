@@ -14096,7 +14096,10 @@ fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bo
             crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty() => {
                 return true;
             }
-            crate::node::NodeData::Element(_) if !document.nodes[node].generates_no_box() => {
+            // A `display: contents` element lays its children out in its
+            // place, so they are walked as the paragraph's own; a
+            // `display: none` one lays out nothing.
+            crate::node::NodeData::Element(_) if !document.nodes[node].is_display_none() => {
                 stack.extend(document.nodes[node].children.iter().rev().copied());
             }
             _ => {}
