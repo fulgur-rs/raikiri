@@ -431,12 +431,14 @@ fn contents_chains_pass_only_their_first_free_boundary_to_a_column() {
         assert_eq!(extents_of("w", &body), [None, Some((0, 400))]);
         assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
     }
-    for before in ["A", "<div style='height:0'></div>"] {
-        let body = format!(
-            "<div style='height:300px'></div><div><section style='display:contents'>{before}{column}</section></div>"
-        );
-        assert!(extents_of("o", &body)[0].is_some(), "{before}");
-    }
+    // An empty box before the column inside the contents element is the box
+    // before it in the flow, as it would be without the element: the column
+    // moves whole to the next page.
+    let body = format!(
+        "<div style='height:300px'></div><div><section style='display:contents'>\
+         <div style='height:0'></div>{column}</section></div>"
+    );
+    assert_eq!(extents_of("o", &body), [None, Some((0, 400))]);
 }
 
 #[test]
@@ -1114,3 +1116,4 @@ fn a_nested_float_moves_with_its_first_replaced_child() {
         assert_eq!(extents_of(id, &body), [None, Some((0, 400))], "{id}");
     }
 }
+
