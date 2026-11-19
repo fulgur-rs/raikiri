@@ -19280,6 +19280,25 @@ fn float_context_root(
     body_id
 }
 
+/// Whether the box `node_id` clears floats in the block formatting context
+/// of a table cell, as a child of the cell's flow, and the cell's table is
+/// not inside another table cell: a box that clearance moves there takes the
+/// boxes after it and the cell's row along (see [`shift_block_flow_after`]).
+fn clears_in_cell_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+) -> bool {
+    let context = float_context_root(document, cascade, node_id, body_id);
+    document.nodes[context].display() == DisplayValue::TableCell
+        && moves_reach_cell_row(document, node_id)
+        && !document
+            .ancestors(context)
+            .find(|&id| document.nodes[id].display() == DisplayValue::Table)
+            .is_some_and(|table| moves_reach_cell_row(document, table))
+}
+
 /// Whether `node_id` is the root of an inline formatting context or an
 /// inline inside one, whose boxes sit in the root's coordinates.
 fn in_inline_context(document: &Document, node_id: usize) -> bool {

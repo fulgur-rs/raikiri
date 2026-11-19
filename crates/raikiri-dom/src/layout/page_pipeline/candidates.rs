@@ -9,9 +9,9 @@ use super::{
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, block_after_last_line, box_is_unbreakable, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, end_margin_through,
-    first_named_item_start_page, first_owned_text_line_top, forces_page_break,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, clears_in_cell_flow,
+    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
+    end_margin_through, first_named_item_start_page, first_owned_text_line_top, forces_page_break,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
@@ -1668,6 +1668,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && inside_table
                     && avoids_by_property
                     && moves_reach_cell_row(document, node_id);
+                // A block in the flow of a table cell that clears floats goes
+                // below a float that pagination moves to a later page, as in
+                // any block flow, and its row grows to hold it.
+                let cell_clear_base = nested_flow_base
+                    && inside_table
+                    && clears_float
+                    && !is_float
+                    && clears_in_cell_flow(document, cascade, node_id, body_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1982,6 +1990,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             || is_float
                             || clears_float))
                     || (cell_avoid_base && !inline_level && is_block_flow_box)
+                    || cell_clear_base
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -2028,8 +2037,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && avoids_break
                     && !side_by_side_ancestor
                     && (!bounded_clipping_ancestor || unbreakable_box);
-                let nested_float_candidate =
-                    nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                let nested_float_candidate = (nested_candidate_base && (is_float || clears_float)
+                    || cell_clear_base)
+                    && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
