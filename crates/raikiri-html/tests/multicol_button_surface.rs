@@ -218,3 +218,43 @@ fn a_wrapped_button_moves_whole_after_a_paragraph() {
         ]
     );
 }
+
+#[test]
+fn a_button_taller_than_the_column_after_a_paragraph_overflows_the_next_column() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:30px;column-fill:auto'><p style='margin:0'>kl</p><button style='all:unset;display:block;width:20px'>ab cd ef gh</button></div>"
+        ),
+        [
+            (0, 'a', 108, 8),
+            (0, 'b', 118, 8),
+            (0, 'c', 108, 18),
+            (0, 'd', 118, 18),
+            (0, 'e', 108, 28),
+            (0, 'f', 118, 28),
+            (0, 'g', 108, 38),
+            (0, 'h', 118, 38),
+            (0, 'k', 8, 8),
+            (0, 'l', 18, 8)
+        ]
+    );
+}
+
+#[test]
+fn a_button_that_fits_a_column_but_not_below_its_margin_moves_to_the_next() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><button style='all:unset;display:block;width:20px;margin-top:20px'>cd ef gh ij</button></div>"
+        ),
+        [
+            (0, 'c', 108, 8),
+            (0, 'd', 118, 8),
+            (0, 'e', 108, 18),
+            (0, 'f', 118, 18),
+            (0, 'g', 108, 28),
+            (0, 'h', 118, 28),
+            (0, 'i', 108, 38),
+            (0, 'j', 118, 38)
+        ]
+    );
+}

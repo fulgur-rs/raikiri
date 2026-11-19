@@ -423,6 +423,9 @@ struct Paragraph {
     /// fragment of such a box reaches all of them, however many extents the
     /// plan gives it.
     held_lines: Option<usize>,
+    /// A monolithic box that stays whole at the top of an empty column even
+    /// when it is taller than the column, overflowing its end.
+    overflows: bool,
     /// A box with no lines whose one extent the columns cut wherever a column
     /// ends: a piece of it fills the rest of each column it reaches.
     sliced: bool,
@@ -443,6 +446,7 @@ impl Paragraph {
             edge_end: 0.0,
             cloned: false,
             held_lines: lines,
+            overflows: false,
             sliced: false,
         }
     }
@@ -664,6 +668,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                overflows: false,
                 sliced: edge > 0.0,
             }));
             continue;
@@ -751,12 +756,10 @@ fn collect(
                 .and_then(|root| root.lines.as_ref())
                 .map(|lines| lines.lines.len());
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
-            paragraphs.push(Some(Paragraph::whole_box(
-                output.size.height,
-                margin_top,
-                margin_bottom,
-                lines,
-            )));
+            paragraphs.push(Some(Paragraph {
+                overflows: true,
+                ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, lines)
+            }));
             paragraph_count += 1;
             continue;
         }
@@ -832,6 +835,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                overflows: false,
                 sliced: false,
             }));
             continue;
@@ -860,6 +864,7 @@ fn collect(
             edge_end,
             cloned: node.clones_box_decorations && edge_start + edge_end > 0.0,
             held_lines: None,
+            overflows: false,
             sliced: false,
         }));
         paragraph_count += 1;
@@ -950,6 +955,8 @@ fn fill_chunk(
     let mut cursor = 0.0f32;
     let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
+    // A monolithic box that runs past the end of its column.
+    let mut overflowed = false;
     let mut column_has_content = false;
     // The margins that adjoin through empty boxes and the paragraph after them
     // were cut at a break, and stay cut until that paragraph.
@@ -1141,6 +1148,11 @@ fn fill_chunk(
                     };
                 }
             }
+            // A monolithic box taller than an empty column stays there whole.
+            if end <= start && paragraph.overflows && !column_has_content {
+                end = line_count;
+                overflowed = true;
+            }
             if end <= start {
                 // An unforced break at a block boundary discards both adjoining
                 // margins. A too-tall paragraph at an empty column fails this trial.
@@ -1237,8 +1249,8 @@ fn fill_chunk(
     } else {
         cursor
     });
-    (used <= height + f32::EPSILON).then(|| Chunk {
-        group: finish_group(placements, used),
+    (used <= height + f32::EPSILON || overflowed).then(|| Chunk {
+        group: finish_group(placements, used.min(height)),
         next: None,
     })
 }

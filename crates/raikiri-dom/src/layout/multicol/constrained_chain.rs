@@ -289,19 +289,29 @@ pub(super) fn layout(
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut top = leaf_top;
-    // A button is monolithic: a column end never breaks between its lines,
-    // so it stays whole in its column, past the column end if it is taller.
+    // Whether the first piece left the column the chain starts in.
+    let mut moved = false;
+    // A button is monolithic: a column end never breaks between its lines.
+    // One that fits a column but not below the space above it goes whole to
+    // the next column, which truncates that space; one taller than a column
+    // stays whole where it is, past the column end.
     if !extents.is_empty()
         && chain
             .iter()
             .any(|&id| layout_node(tree, id).is_html_button())
     {
+        let size = extents[extents.len() - 1].1 - extents[0].0;
+        let next = top > 0.0 && top + size > height + f32::EPSILON && size <= height;
+        if next {
+            top = 0.0;
+            moved = true;
+        }
         pieces.push(Piece {
             start,
             end: extents.len(),
-            column: context.column_index,
+            column: context.column_index.checked_add(usize::from(next))?,
             top,
-            bottom: top + extents[extents.len() - 1].1 - extents[0].0,
+            bottom: top + size,
         });
         start = extents.len();
     }
@@ -422,7 +432,7 @@ pub(super) fn layout(
         let mut parent_position = Point::ZERO;
         for (depth, &id) in chain.iter().enumerate() {
             let source = tree.nodes[id].layout;
-            let y = if order == 0 {
+            let y = if order == 0 && !moved {
                 positions[depth].y
             } else {
                 origin.y + if id == leaf { piece.top } else { 0.0 }

@@ -1746,6 +1746,9 @@ pub(super) fn is_whole_button(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     node.is_html_button()
+        // A button that is a column container lays its own lines out in
+        // columns, which a single whole piece would replace.
+        && node.multicol.is_none()
         && !node.display().is_inline_level()
         && node.display() != DisplayValue::Contents
         && matches!(
