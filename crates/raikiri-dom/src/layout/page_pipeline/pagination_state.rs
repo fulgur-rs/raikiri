@@ -3291,7 +3291,11 @@ impl PaginationState {
             // its lines rather than between its last line and the edges. A box
             // taller than its lines, with a height of its own, say, has the
             // edges after the box and not after the lines: it is left whole.
+            // When an avoided break ties the paragraph to the box before it,
+            // a break between its lines beats that one, which moving it whole
+            // would take.
             let avoided_whole = closing_edges > 0.0
+                && !super::tied_to_box_before(document, cascade, block_id)
                 && box_avoids_page_break_inside(
                     document,
                     block_id,
