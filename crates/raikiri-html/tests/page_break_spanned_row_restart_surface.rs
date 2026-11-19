@@ -362,3 +362,41 @@ fn a_forced_break_before_the_row_still_opens_a_page_of_its_own() {
         ]
     );
 }
+
+#[test]
+fn only_the_content_before_a_break_forced_inside_the_first_box_has_to_fit() {
+    // The content before the break fits on the page, so the row stays; then
+    // it does not, so the row starts on the next page.
+    assert_eq!(
+        glyphs(
+            r#"<table><tr><td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td><td><div style="height:50px">W</div></td></tr><tr><td><div style="height:70px;break-inside:avoid"><div style="height:20px">Y</div><div style="break-before:page">Z</div></div></td></tr><tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (0, 'Y', 10, 63),
+            (1, 'D', 0, 5),
+            (1, 'R', 0, 45),
+            (1, 'S', 10, 45),
+            (1, 'X', 0, 65),
+            (1, 'Z', 10, 5),
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            r#"<table><tr><td rowspan=2><div style="height:30px">A</div><div style="height:70px">B</div><div style="height:40px">D</div></td><td><div style="height:50px">W</div></td></tr><tr><td><div style="height:70px;break-inside:avoid"><div style="height:50px">Y</div><div style="break-before:page">Z</div></div></td></tr><tr><td>R</td><td>S</td></tr></table><div>X</div>"#
+        ),
+        [
+            (0, 'A', 0, 5),
+            (0, 'B', 0, 35),
+            (0, 'W', 10, 5),
+            (1, 'D', 0, 5),
+            (1, 'Y', 10, 5),
+            (2, 'R', 0, 5),
+            (2, 'S', 10, 5),
+            (2, 'X', 0, 25),
+            (2, 'Z', 10, 5),
+        ]
+    );
+}

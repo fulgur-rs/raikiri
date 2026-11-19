@@ -6318,7 +6318,15 @@ impl AvoidedBreaks {
                         page_end,
                         next_page_step,
                     ))
-                || spanned_row_restarts(document, cascade, node_id, flow_y, height, page_start));
+                || spanned_row_restarts(
+                    document,
+                    cascade,
+                    (body_id, candidate.page_name.as_deref()),
+                    node_id,
+                    flow_y,
+                    height,
+                    page_start,
+                ));
         let row_group_lead = row_group
             .filter(|&(end, _)| {
                 (item_tail && tail_fits)
@@ -9028,6 +9036,7 @@ fn table_row_moves(
 fn spanned_row_restarts(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    (body_id, page_name): (usize, Option<&str>),
     row: usize,
     flow_y: f32,
     height: f32,
@@ -9069,6 +9078,7 @@ fn spanned_row_restarts(
                 && first_content_breaks_before(
                     document,
                     cascade,
+                    (body_id, page_name),
                     cell,
                     flow_y + document.pagination_local_y(cell) - row_top,
                     page_start,
@@ -9080,10 +9090,12 @@ fn spanned_row_restarts(
 /// `top`, is a box that no break goes through, as it avoids one or is
 /// unbreakable, and that runs past `page_end`: nothing of the block's content
 /// goes before the break. Chromium starts the row on the next page also when
-/// that box is taller than the page and breaks inside it there.
+/// that box is taller than the page and breaks inside it there. A break
+/// forced inside the box leaves only the content before it to fit.
 fn first_content_breaks_before(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
+    (body_id, page_name): (usize, Option<&str>),
     block: usize,
     top: f32,
     page_end: f32,
@@ -9109,9 +9121,28 @@ fn first_content_breaks_before(
         if box_avoids_page_break_inside(document, first, cascade.computed[first].break_inside)
             || box_is_unbreakable(document, cascade, first, false)
         {
-            return top < page_end && top + node.layout.size.height > page_end + 0.001;
+            // Only the content before a break forced inside the box has to
+            // fit, as for any box that avoids a break inside it.
+            let end = forced_break_inside(
+                document,
+                cascade,
+                body_id,
+                first,
+                page_name,
+                false,
+                page_end - top,
+            )
+            .map_or(top + node.layout.size.height, |offset| top + offset);
+            return top < page_end && end > page_end + 0.001;
         }
-        first_content_breaks_before(document, cascade, first, top, page_end)
+        first_content_breaks_before(
+            document,
+            cascade,
+            (body_id, page_name),
+            first,
+            top,
+            page_end,
+        )
     })
 }
 
