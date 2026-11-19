@@ -276,7 +276,13 @@ fn an_inside_marker_keeps_the_break_inside_the_cell() {
         ),
         (
             "<style>.g::before{content:'G'}</style><div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div class='g'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
-            &[(0, 'G', 10), (0, 'P', 0), (0, 'T', 50), (1, 'B', 0), (1, 'X', 10)],
+            &[
+                (0, 'G', 10),
+                (0, 'P', 0),
+                (0, 'T', 50),
+                (1, 'B', 0),
+                (1, 'X', 10),
+            ],
         ),
         (
             "<div>P</div><table style='border-spacing:0'><tr><td style='padding:0'><div style='display:list-item;list-style:inside none'><div style='break-before:page'>B</div></div></td><td style='padding:0'>T</td></tr></table><div>X</div>",
