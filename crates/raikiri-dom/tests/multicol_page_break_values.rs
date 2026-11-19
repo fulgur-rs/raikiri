@@ -222,6 +222,46 @@ fn a_page_value_inside_a_spanner_breaks_the_page() {
     );
 }
 
+/// A `display: contents` wrapper around a spanner, or around the spanner
+/// after it, generates no box, so the spanner keeps its page value at the
+/// container's edge or before the next spanner. A block wrapper keeps the
+/// spanner away from that edge, and Chromium then ignores the value.
+#[test]
+fn a_page_value_after_a_spanner_looks_through_display_contents() {
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='display:contents'>\
+             <div style='column-span:all;break-after:page'>S</div></div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("x", 1, 0.0, 0.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='column-span:all;break-after:page'>S</div>\
+             <div style='display:contents'><div style='column-span:all'>T</div></div>C</div>"
+        ),
+        2,
+        &[],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div><div style='column-span:all;break-after:page'>S</div>\
+             </div></div><div id=x>X</div>"
+        ),
+        1,
+        &[("x", 0, 0.0, 20.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div style='column-span:all;break-after:page'>S</div>\
+             <div><div id=t style='column-span:all'>T</div></div>C</div>"
+        ),
+        1,
+        &[("t", 0, 0.0, 20.0)],
+    );
+}
+
 /// A page value between a spanner and the column content after it falls in
 /// the columns, and so does one on a spanner of a multicol container that
 /// itself sits in columns.

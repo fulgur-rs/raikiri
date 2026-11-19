@@ -3834,30 +3834,58 @@ fn page_break_after_is_forced(
         return true;
     }
     // Source order: column text after a spanner in an inline formatting
-    // context is no layout child of its own.
-    let parent = document.parent_of(node_id);
-    let next = parent
-        .into_iter()
-        .flat_map(|parent| document.nodes[parent].children.iter().copied())
-        .skip_while(|&child| child != node_id)
-        .skip(1)
-        .find(|&child| {
-            let node = &document.nodes[child];
-            node.is_in_document()
-                && node.display() != DisplayValue::None
-                && !matches!(
-                    node.position(),
-                    PositionValue::Absolute | PositionValue::Fixed
-                )
-                && match &node.data {
-                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
-                    _ => true,
-                }
-        });
-    match next {
-        Some(next) => super::is_spanner_in(document, cascade, next),
-        None => parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
+    // context is no layout child of its own. A wrapper that generates no box
+    // passes the edge on to its parent, and the first content inside one
+    // after the spanner is what follows it.
+    let mut current = node_id;
+    loop {
+        let parent = document.parent_of(current);
+        let next = parent.and_then(|parent| first_flow_child(document, parent, Some(current)));
+        if let Some(next) = next {
+            return starts_with_spanner(document, cascade, next);
+        }
+        match parent {
+            Some(parent) if cascade.computed[parent].display == DisplayValue::Contents => {
+                current = parent
+            }
+            _ => return parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
+        }
     }
+}
+
+/// The first child of `parent`, after `after` when it is given, that the
+/// flow lays out: neither hidden nor out of flow, nor text of white space
+/// alone.
+fn first_flow_child(document: &Document, parent: usize, after: Option<usize>) -> Option<usize> {
+    let children = &document.nodes[parent].children;
+    let start = after.map_or(0, |after| {
+        children
+            .iter()
+            .position(|&child| child == after)
+            .map_or(children.len(), |index| index + 1)
+    });
+    children[start..].iter().copied().find(|&child| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && match &node.data {
+                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                _ => true,
+            }
+    })
+}
+
+/// Whether the content that starts at `node`, looking into wrappers that
+/// generate no box, is a spanner.
+fn starts_with_spanner(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
+    super::is_spanner_in(document, cascade, node)
+        || (cascade.computed[node].display == DisplayValue::Contents
+            && first_flow_child(document, node, None)
+                .is_some_and(|first| starts_with_spanner(document, cascade, first)))
 }
 
 /// Whether `value`, the `break-after` of the box `node_id`, forces a page
