@@ -1751,10 +1751,7 @@ pub(super) fn is_whole_button(tree: &LayoutSession<'_>, child: usize) -> bool {
         && node.multicol.is_none()
         && !node.display().is_inline_level()
         && node.display() != DisplayValue::Contents
-        && matches!(
-            node.layout_position(),
-            Position::Static | Position::Relative
-        )
+        && !node.layout_position().is_out_of_flow()
         && !style.float().is_floated()
         && style.clear() == Clear::None
         && !node
