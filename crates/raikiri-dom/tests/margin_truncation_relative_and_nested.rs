@@ -201,6 +201,49 @@ fn the_margin_between_blocks_inside_a_block_is_cut() {
     );
 }
 
+/// A `display: contents` element has no box of its own: the blocks inside it
+/// stand among its siblings, and the edge cuts the margin before them as it
+/// would without the element.
+#[test]
+fn the_margin_before_a_block_inside_display_contents_is_cut() {
+    let contents = |inner: &str| format!("<div style=\"display:contents\">{inner}</div>");
+    for (label, body) in [
+        (
+            "margin above b",
+            format!("<div>{}{}</div>{C}", first(""), contents(&b(""))),
+        ),
+        (
+            "margin below the block before",
+            format!(
+                "<div>{}{}</div>{C}",
+                first("margin-bottom:30px"),
+                contents("<div id=b style=\"height:20px\"></div>")
+            ),
+        ),
+        (
+            "nested contents",
+            format!("<div>{}{}</div>{C}", first(""), contents(&contents(&b("")))),
+        ),
+        (
+            "contents first in its parent",
+            format!(
+                "<div>{}</div>{C}",
+                contents(&format!("{}{}", first(""), b("")))
+            ),
+        ),
+        (
+            "c in the contents",
+            format!(
+                "<div>{}{}</div>",
+                first(""),
+                contents(&format!("{}{C}", b("")))
+            ),
+        ),
+    ] {
+        check(label, &body, &[("b", 1, 0.0, 20.0), ("c", 1, 20.0, 30.0)]);
+    }
+}
+
 /// In an item of a grid with two columns, the margin stays as it is, and the
 /// item beside it and the block after the grid keep their places (Chromium
 /// prints `y` and `c` there too): cutting it would move the shared flow.
