@@ -2757,7 +2757,11 @@ struct ForcedLineBreak {
 /// The forced page breaks that the block-level `::before` and `::after` of
 /// the paragraph `root` ask for between its lines, in line order. A
 /// `break-*: always` counts only where it breaks pages.
-fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> {
+fn forced_line_breaks(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Vec<ForcedLineBreak> {
     let lines = document
         .ifc_layout_node(root)
         .and_then(|node| node.ifc.as_ref())
@@ -2768,7 +2772,12 @@ fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> 
             lines
                 .forced_breaks
                 .iter()
-                .filter(|forced| page_break_is_forced(document, root, forced.value))
+                // Generated content of a multicol container sits in its
+                // columns, where a page value breaks nothing.
+                .filter(|forced| {
+                    document.nodes[root].multicol.is_none()
+                        && page_break_is_forced(document, cascade, root, forced.value)
+                })
                 .filter_map(move |forced| {
                     let lead = match forced.box_top {
                         Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
@@ -3680,7 +3689,12 @@ fn clear_floats_at_forced_breaks<'name>(
                 // page and is not the page before the box after it, which is
                 // compared with the box before the float, or names the first
                 // page when there is none.
-                if page_break_is_forced(document, child, cascade.computed[child].break_before) {
+                if page_break_is_forced(
+                    document,
+                    cascade,
+                    child,
+                    cascade.computed[child].break_before,
+                ) {
                     after_forced_break = true;
                     float_after_break = false;
                     float_own_break = true;
@@ -3725,8 +3739,12 @@ fn clear_floats_at_forced_breaks<'name>(
                 None
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
-            let breaks_before =
-                page_break_is_forced(document, child, cascade.computed[child].break_before);
+            let breaks_before = page_break_is_forced(
+                document,
+                cascade,
+                child,
+                cascade.computed[child].break_before,
+            );
             let own_break = named_break || breaks_before;
             let forced = after_forced_break || own_break;
             // Floats on either side belong to the earlier page, so a
@@ -3799,6 +3817,131 @@ fn clear_floats_at_forced_breaks<'name>(
 }
 
 /// Whether `value`, the `break-after` of the box `node_id`, forces a page
+/// break after it, before any float rule. A spanner's `break-after` sits
+/// between it and what follows: when that is column content, the break
+/// falls in the columns, so Chromium ignores a page value there. It breaks
+/// the page before another spanner, or after the last spanner of the
+/// multicol container where the container's own edge follows. A spanner
+/// inside another box, such as an enclosing spanner, has no column content
+/// after it within that box.
+fn page_break_after_is_forced(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    value: BreakBetween,
+) -> bool {
+    if !page_break_is_forced(document, cascade, node_id, value) {
+        return false;
+    }
+    // `column-span: all` outside a multicol container spans nothing.
+    if !super::is_spanner_in(document, cascade, node_id)
+        || !document
+            .layout_ancestors(node_id)
+            .any(|id| document.nodes[id].multicol.is_some())
+    {
+        return true;
+    }
+    // Source order: column text after a spanner in an inline formatting
+    // context is no layout child of its own. A wrapper that generates no box
+    // passes the edge on to its parent, and the first content inside one
+    // after the spanner is what follows it. Inside a box of its own, such as
+    // an enclosing spanner, what follows is no column content, so the page
+    // value breaks the page; at the end of such a box the break passes on to
+    // the box's own edge. A plain wrapper that layout leaves out ends in the
+    // columns.
+    let mut current = node_id;
+    loop {
+        let parent = document.parent_of(current);
+        // Generated content after the last child is not among the children
+        // but follows the spanner too.
+        let next = parent.and_then(|parent| {
+            first_flow_child(document, cascade, parent, Some(current))
+                .map(Some)
+                .or_else(|| generated_on_side(cascade, parent, false).then_some(None))
+                .map(|next| (parent, next))
+        });
+        if let Some((parent, next)) = next {
+            return !lays_out_in_columns(document, parent)
+                || next.is_some_and(|next| starts_with_spanner(document, cascade, next));
+        }
+        match parent {
+            Some(parent)
+                if cascade.computed[parent].display == DisplayValue::Contents
+                    || (document.nodes[parent].multicol.is_none()
+                        && document.nodes[parent].display() != DisplayValue::Contents) =>
+            {
+                current = parent
+            }
+            _ => return parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
+        }
+    }
+}
+
+/// Whether the children of `id` are laid out in the columns of a multicol
+/// container: `id` is that container, or a box that layout leaves out on the
+/// way up to it.
+fn lays_out_in_columns(document: &Document, id: usize) -> bool {
+    document
+        .inclusive_layout_ancestors(id)
+        .find(|&id| {
+            let node = &document.nodes[id];
+            node.multicol.is_some() || node.display() != DisplayValue::Contents
+        })
+        .is_some_and(|id| document.nodes[id].multicol.is_some())
+}
+
+/// The first child of `parent`, after `after` when it is given, that the
+/// flow lays out: neither hidden nor out of flow, nor text of white space
+/// that its style collapses away, nor a wrapper that generates no box and
+/// holds no such child or generated content.
+fn first_flow_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    after: Option<usize>,
+) -> Option<usize> {
+    let children = &document.nodes[parent].children;
+    let start = after.map_or(0, |after| {
+        children
+            .iter()
+            .position(|&child| child == after)
+            .map_or(children.len(), |index| index + 1)
+    });
+    children[start..].iter().copied().find(|&child| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && match &node.data {
+                crate::node::NodeData::Text(text) => {
+                    !crate::generated_content::is_collapsed_white_space(
+                        &text.text_content,
+                        cascade.computed[child].effective_white_space_collapse,
+                    )
+                }
+                _ => true,
+            }
+            && (cascade.computed[child].display != DisplayValue::Contents
+                || generated_on_side(cascade, child, true)
+                || generated_on_side(cascade, child, false)
+                || first_flow_child(document, cascade, child, None).is_some())
+    })
+}
+
+/// Whether the content that starts at `node`, looking into wrappers that
+/// generate no box, is a spanner.
+fn starts_with_spanner(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
+    super::is_spanner_in(document, cascade, node)
+        || (cascade.computed[node].display == DisplayValue::Contents
+            && !generated_on_side(cascade, node, true)
+            && first_flow_child(document, cascade, node, None)
+                .is_some_and(|first| starts_with_spanner(document, cascade, first)))
+}
+
+/// Whether `value`, the `break-after` of the box `node_id`, forces a page
 /// break after it. A float has no break after it: Chromium keeps the content
 /// after a float with it whatever the float names. The `break-before` of a
 /// float still applies, as the reftests for floats under CSS2 pagination
@@ -3809,21 +3952,43 @@ fn box_forces_break_after(
     node_id: usize,
     value: BreakBetween,
 ) -> bool {
-    page_break_is_forced(document, node_id, value)
+    page_break_after_is_forced(document, cascade, node_id, value)
         && (matches!(cascade.computed[node_id].float, FloatValue::None)
             || !is_floating_box_for_pagination(document, cascade, node_id))
 }
 
-fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
-    if value.is_page_value() {
-        return true;
-    }
-    if !matches!(value, BreakBetween::Always) {
+fn page_break_is_forced(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    value: BreakBetween,
+) -> bool {
+    if !value.may_force_page_break() {
         return false;
     }
-    !document
-        .layout_ancestors(node_id)
-        .any(|id| document.nodes[id].multicol.is_some())
+    // A break inside a multicol container falls in its column context.
+    // Chromium also ignores a page value there when it prints: the content
+    // after it stays in the columns and on the page. A spanner leaves the
+    // columns of its own container, and so does everything inside it, so
+    // only a container above that one turns the page value into a column
+    // break. A float or an out-of-flow box spans nothing, and neither does
+    // a spanner with a box between it and the container, such as a
+    // `flow-root`: only boxes that layout leaves out, `display: contents` and
+    // the plain wrappers it lays out like it, let a spanner reach the columns.
+    let mut spanned = super::is_spanner_in(document, cascade, node_id);
+    for id in document.layout_ancestors(node_id) {
+        let node = &document.nodes[id];
+        if node.multicol.is_some() {
+            if !spanned {
+                return false;
+            }
+            spanned = false;
+        } else if node.display() != DisplayValue::Contents {
+            spanned = false;
+        }
+        spanned |= super::is_spanner_in(document, cascade, id);
+    }
+    true
 }
 
 /// Whether `node_id` starts (`before`) or ends the block flow of the table
@@ -3897,7 +4062,7 @@ fn row_takes_cell_break(
                     return false;
                 }
                 let computed = &cascade.computed[id];
-                if before && page_break_is_forced(document, id, computed.break_before)
+                if before && page_break_is_forced(document, cascade, id, computed.break_before)
                     || !before
                         && box_forces_break_after(document, cascade, id, computed.break_after)
                 {
@@ -3923,7 +4088,7 @@ fn forces_page_break(
 ) -> bool {
     let computed = &cascade.computed[node_id];
     let own = if before {
-        page_break_is_forced(document, node_id, computed.break_before)
+        page_break_is_forced(document, cascade, node_id, computed.break_before)
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
@@ -4048,7 +4213,7 @@ fn page_edge_constraint(
                 computed.break_after
             };
             forced |= if before {
-                page_break_is_forced(document, id, edge)
+                page_break_is_forced(document, cascade, id, edge)
             } else {
                 box_forces_break_after(document, cascade, id, edge)
             };
@@ -5303,7 +5468,12 @@ fn forced_break_before_first_row(
             .parent_of(row)
             .filter(|&group| group != boundary)
             .is_some_and(|group| {
-                page_break_is_forced(document, group, cascade.computed[group].break_before)
+                page_break_is_forced(
+                    document,
+                    cascade,
+                    group,
+                    cascade.computed[group].break_before,
+                )
             })
 }
 
@@ -6188,13 +6358,14 @@ fn forced_break_inside(
             let computed = &cascade.computed[id];
             let names_other_page =
                 selected_page_name(cascade, id).is_some_and(|name| Some(name) != page_name);
-            if (page_break_is_forced(document, id, computed.break_before) || names_other_page)
+            if (page_break_is_forced(document, cascade, id, computed.break_before)
+                || names_other_page)
                 && !at_block_edge(document, cascade, id, node_id, true)
                 && !held(id, true)
             {
                 return Some(flow_top(id) - node.layout.margin.top - top);
             }
-            if page_break_is_forced(document, id, computed.break_after) {
+            if page_break_after_is_forced(document, cascade, id, computed.break_after) {
                 pending.push((id, true));
             }
         }
@@ -10440,8 +10611,8 @@ fn collapses_as_empty_box(
         // Clearance keeps the margins from collapsing through it, and a
         // forced break before or after it keeps them whole.
         && computed.clear == ClearValue::None
-        && !page_break_is_forced(document, node_id, computed.break_before)
-        && !page_break_is_forced(document, node_id, computed.break_after)
+        && !page_break_is_forced(document, cascade, node_id, computed.break_before)
+        && !page_break_after_is_forced(document, cascade, node_id, computed.break_after)
         && collapses_through(document, cascade, node_id, 0.0)
 }
 
@@ -10484,7 +10655,12 @@ fn margin_above_box(
             push_in_flow_boxes_rev(document, cascade, sibling, &mut boxes);
             for &id in &boxes {
                 if document.nodes[id].kind() != NodeKind::Element
-                    || page_break_is_forced(document, id, cascade.computed[id].break_after)
+                    || page_break_after_is_forced(
+                        document,
+                        cascade,
+                        id,
+                        cascade.computed[id].break_after,
+                    )
                 {
                     return false;
                 }

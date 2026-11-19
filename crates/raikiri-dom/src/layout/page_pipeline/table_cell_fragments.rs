@@ -364,8 +364,8 @@ fn breaks_between(
         let computed = &cascade.computed[child];
         let before = before || index > 0;
         let after = after || index + 1 < children.len();
-        page_break_is_forced(document, child, computed.break_before) && before
-            || page_break_is_forced(document, child, computed.break_after) && after
+        page_break_is_forced(document, cascade, child, computed.break_before) && before
+            || page_break_is_forced(document, cascade, child, computed.break_after) && after
             || (breaks_through_block_flow(document, cascade, child)
                 || stacks_children_in_block_flow(document, child)
                     && !is_monolithic_for_pagination_with_transposed_axes(
@@ -576,7 +576,7 @@ fn cell_breaks(
         && !box_avoids_page_break_inside(document, cell, computed.break_inside)
         && shift.is_finite()
         && (own.is_none()
-            || !page_break_is_forced(document, cell, computed.break_before)
+            || !page_break_is_forced(document, cascade, cell, computed.break_before)
                 && !starts_with_forced_break(document, cascade, cell)
                 && content_fits(document, cascade, cell, tops, closing, page_end))
         && !float_crosses(
@@ -600,8 +600,12 @@ fn starts_with_forced_break(
     flow_children(document, cascade, block, &mut children);
     children.first().is_some_and(|&first| {
         block_level_element(document, first)
-            && (page_break_is_forced(document, first, cascade.computed[first].break_before)
-                || starts_with_forced_break(document, cascade, first))
+            && (page_break_is_forced(
+                document,
+                cascade,
+                first,
+                cascade.computed[first].break_before,
+            ) || starts_with_forced_break(document, cascade, first))
     })
 }
 
