@@ -10101,6 +10101,83 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
+/// Where the lines in the flow of the box `node_id` end, from the top of its
+/// border box, in normal-flow positions: its own last line, or the lowest end
+/// of the lines inside a box in its flow. A box that clips its overflow keeps
+/// them. `None` when the flow holds no lines.
+fn lines_end_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    if element_clips_overflow(document, cascade, node_id) {
+        return None;
+    }
+    if document.nodes[node_id].is_ifc_root() {
+        return content_bottom(document, node_id);
+    }
+    let mut end: Option<f32> = None;
+    let mut stack: Vec<usize> = document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(child) = stack.pop() {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element || node.is_display_none() {
+            continue;
+        }
+        // The children of a box without one of its own are in the flow
+        // that holds it.
+        if node.display() == DisplayValue::Contents {
+            stack.extend(node.children.iter().rev().copied());
+            continue;
+        }
+        let style = document.physical_style(child);
+        if style.float().is_floated() || style.position().is_out_of_flow() {
+            continue;
+        }
+        if let Some(child_end) = lines_end_in_flow(document, cascade, body_id, child) {
+            // A relative offset moves the box after the page breaks.
+            let top = pagination_child_parent_y(
+                document,
+                node_id,
+                child,
+                document.pagination_local_y(child),
+            ) - layout_relative_offset_y(document, cascade, body_id, child);
+            let child_end = top + child_end;
+            end = Some(end.map_or(child_end, |end: f32| end.max(child_end)));
+        }
+    }
+    end
+}
+
+/// Whether the lines of the box that the closing edges of the candidate follow
+/// (the box itself, or the last of the run it starts) run past the end of that
+/// box and of the page that holds it. Such a box breaks inside its
+/// overflowing content, as Chromium does: it stays on its page, and the
+/// padding and border that close the block around it go on to the next page
+/// alone (see [`closing_edges_move`]).
+fn lines_cross_page_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+    fit: &BoxFit,
+) -> bool {
+    let last = candidate
+        .context
+        .closing_edges_last_box()
+        .unwrap_or(candidate.node_id);
+    let box_end = fit.flow_y + candidate.height + candidate.context.closing_edges_span();
+    lines_end_in_flow(document, cascade, body_id, last).is_some_and(|end| {
+        let overflow = end - document.nodes[last].layout.size.height;
+        overflow > 0.001 && box_end + overflow > fit.page_end + 0.001
+    })
+}
+
 /// Whether the last box of a run of boxes tied by avoided breaks moves to the
 /// next page with the edges that close its block, the avoided break before it
 /// giving way.
@@ -11003,15 +11080,15 @@ fn ends_with_collapsed_empty_box(
 }
 
 /// Whether the block `node_id` of auto `height` and `max-height` has grown
-/// past its `min-height` with its content, so that its height follows that
-/// content as if it had none.
+/// to or past its `min-height` with its content, so that its height follows
+/// that content as if it had none.
 fn min_height_left_behind(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
     let block_axis = document.block_axis(node_id);
     let (min_height, _) = border_box_height_bounds(document, node_id);
     block_axis.height().is_auto()
         && block_axis.max_height().is_auto()
         && !document.nodes[node_id].size_containment.height
-        && document.nodes[node_id].layout.size.height > min_height + 0.001
+        && document.nodes[node_id].layout.size.height > min_height - 0.001
 }
 
 /// The block size of the margin between the last box in the flow of the

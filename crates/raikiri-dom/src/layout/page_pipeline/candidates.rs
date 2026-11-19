@@ -225,6 +225,10 @@ pub(super) struct ElementContext {
     /// the last box of the run, which the edges in `closing_edges` follow. The
     /// run moves to the next page as one when they do not fit after it.
     pub(super) closing_edges_span: f32,
+    /// For the first box of such a run: the last box of the run, which the
+    /// edges in `closing_edges` follow.
+    /// Kept as `u32` to keep the context small.
+    pub(super) closing_edges_last_box: Option<u32>,
     /// How far below the border-box top the run of boxes tied by avoided
     /// breaks ends that the box starts among the boxes of its parent, or that
     /// it holds at the start of its own boxes. The box moves to the next page
@@ -415,6 +419,12 @@ impl BoxContext {
     pub(super) fn closing_edges_span(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_span)
+    }
+
+    pub(super) fn closing_edges_last_box(self) -> Option<usize> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.closing_edges_last_box)
+            .map(|last| last as usize)
     }
 
     pub(super) fn avoided_unit(self) -> Option<f32> {
@@ -787,8 +797,8 @@ enum AvoidTie {
     None,
     /// The box starts the run, which moves to the next page with the edges
     /// after it when they do not fit: `span` is the block size from the bottom
-    /// of the box to the bottom of the run.
-    RunStart { span: f32 },
+    /// of the box to the bottom of the run, and `last` the run's last box.
+    RunStart { span: f32, last: usize },
     /// The box ends a block whose boxes are all tied to the first of them, so
     /// that breaking before it is the only break left, the avoided one giving
     /// way.
@@ -2049,7 +2059,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             .max((frame.float_bottom - box_end).max(0.0))
                     } else if closing_edges_candidate || run_tail_candidate {
                         let span = match frame.tie {
-                            AvoidTie::RunStart { span } => span,
+                            AvoidTie::RunStart { span, .. } => span,
                             _ => 0.0,
                         };
                         let box_end = candidate_raw_y + candidate_height + span
@@ -2210,8 +2220,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 }),
                                 closing_edges_inside: lone_box_candidate.unwrap_or(0.0),
                                 closing_edges_span: match frame.tie {
-                                    AvoidTie::RunStart { span } if closing_edges_candidate => span,
+                                    AvoidTie::RunStart { span, .. } if closing_edges_candidate => {
+                                        span
+                                    }
                                     _ => 0.0,
+                                },
+                                closing_edges_last_box: match frame.tie {
+                                    AvoidTie::RunStart { last, .. } if closing_edges_candidate => {
+                                        u32::try_from(last).ok()
+                                    }
+                                    _ => None,
                                 },
                                 avoided_unit,
                                 leading_piece_end: leading_piece,
@@ -2510,6 +2528,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             first,
                             span,
                             last_box_edges,
+                            flow_flags[last].0.unwrap_or(child_order[last]),
                         ))
                     }
                     _ => None,
@@ -2578,7 +2597,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
                     let child_closing_edges = match at_chain_start {
-                        Some((_, _, edges)) => edges,
+                        Some((_, _, edges, _)) => edges,
                         None if last_in_flow == Some(index) => last_box_edges,
                         None => 0.0,
                     };
@@ -2588,8 +2607,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     // way. When the edges of a block around it follow it too, a
                     // break before this block is a better one, which is left to
                     // the rules for that.
-                    let tie = if let Some((_, span, _)) = at_chain_start {
-                        AvoidTie::RunStart { span }
+                    let tie = if let Some((_, span, _, last)) = at_chain_start {
+                        AvoidTie::RunStart { span, last }
                     } else if matches!(avoid_chain, Some(AvoidChain::Start))
                         && own_closing_edges.is_some_and(|own| own > 0.0)
                         && inherited_edges == 0.0
