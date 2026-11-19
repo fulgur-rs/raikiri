@@ -1070,13 +1070,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             )
                         })
                 }),
-            forces_break_after: cascade.computed.iter().any(|computed| {
-                matches!(
-                    computed.break_after,
-                    raikiri_style::property::BreakBetween::Page
-                        | raikiri_style::property::BreakBetween::Always
-                )
-            }),
+            forces_break_after: cascade
+                .computed
+                .iter()
+                .any(|computed| computed.break_after.may_force_page_break()),
             edges_breaks: Vec::new(),
             pending_bottoms: HashMap::new(),
             preceding_bottoms: HashMap::new(),
