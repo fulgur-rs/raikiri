@@ -3824,7 +3824,7 @@ fn clear_floats_at_forced_breaks<'name>(
 /// multicol container where the container's own edge follows. A spanner
 /// inside another box, such as an enclosing spanner, has no column content
 /// after it within that box.
-fn page_break_after_is_forced(
+pub(super) fn page_break_after_is_forced(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -3875,6 +3875,27 @@ fn page_break_after_is_forced(
             _ => return parent.is_none_or(|parent| document.nodes[parent].multicol.is_some()),
         }
     }
+}
+
+/// The spanner right before the spanner `node_id` among the children of
+/// their parent, with nothing that the flow lays out between the two. The
+/// lines of a paragraph keep no box before a spanner among them, so a break
+/// after the first one is found from here.
+fn spanner_before(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    if !super::is_spanner_in(document, cascade, node_id) {
+        return None;
+    }
+    let parent = document.parent_of(node_id)?;
+    let children = &document.nodes[parent].children;
+    let index = children.iter().position(|&child| child == node_id)?;
+    let previous = children[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&child| document.nodes[child].kind() == NodeKind::Element)?;
+    (super::is_spanner_in(document, cascade, previous)
+        && first_flow_child(document, cascade, parent, Some(previous)) == Some(node_id))
+    .then_some(previous)
 }
 
 /// Whether the children of `id` are laid out in the columns of a multicol
@@ -3957,7 +3978,7 @@ fn box_forces_break_after(
             || !is_floating_box_for_pagination(document, cascade, node_id))
 }
 
-fn page_break_is_forced(
+pub(super) fn page_break_is_forced(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -4089,11 +4110,48 @@ fn forces_page_break(
     let computed = &cascade.computed[node_id];
     let own = if before {
         page_break_is_forced(document, cascade, node_id, computed.break_before)
+            || starts_with_forced_spanner(document, cascade, node_id)
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
     own && !at_table_cell_edge(document, cascade, node_id, before)
         || row_takes_cell_break(document, cascade, node_id, before)
+}
+
+/// Whether `node_id` is a multicol container whose first box is a spanner
+/// that forces a page break before itself. No column content comes before
+/// that break, so it falls before the container, which moves to the next
+/// page whole (Chromium). Boxes that generate no box are looked through.
+fn starts_with_forced_spanner(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    if document.nodes[node_id].multicol.is_none() {
+        return false;
+    }
+    let mut id = node_id;
+    for depth in 0..128 {
+        if generated_on_side(cascade, id, true) {
+            return false;
+        }
+        let Ok(Some(child)) = page_edge_child(document, cascade, id, true, depth) else {
+            return false;
+        };
+        if document.nodes[child].kind() != NodeKind::Element {
+            return false;
+        }
+        if document.nodes[child].display() != DisplayValue::Contents {
+            return page_break_is_forced(
+                document,
+                cascade,
+                child,
+                cascade.computed[child].break_before,
+            );
+        }
+        id = child;
+    }
+    false
 }
 
 /// Whether `id` is a block container whose first and last boxes start and
@@ -20430,8 +20488,12 @@ fn forced_break_growth(
     let old = document.nodes[block].layout.size.height;
     let holds = holds_floats(document, cascade, block);
     // A height between its bounds follows the end of the in-flow content,
-    // which moves down by the whole shift.
-    if !holds && old > min + 0.001 && max.is_infinite() {
+    // which moves down by the whole shift. The columns after a spanner sit
+    // below it, floats and all, so a multicol container's content ends
+    // that much lower too.
+    let spanned =
+        document.nodes[block].multicol.is_some() && super::is_spanner_in(document, cascade, child);
+    if (!holds || spanned) && old > min + 0.001 && max.is_infinite() {
         return moved;
     }
     let growth = moved_content_growth(

@@ -179,7 +179,7 @@ fn a_page_value_on_a_spanner_breaks_the_page() {
              <!-- a comment --><div id=t style='column-span:all'>T</div>C</div>"
         ),
         2,
-        &[("s", 0, 0.0, 10.0)],
+        &[("s", 0, 0.0, 10.0), ("t", 1, 0.0, 0.0)],
     );
     check(
         &format!(
@@ -188,6 +188,143 @@ fn a_page_value_on_a_spanner_breaks_the_page() {
         ),
         2,
         &[("s", 0, 0.0, 20.0), ("x", 1, 0.0, 0.0)],
+    );
+}
+
+/// A forced break before a spanner, or between two spanners, moves the
+/// spanner and all after it to the next page: the columns after it, and the
+/// boxes after the container, which follow it there. A margin above the
+/// spanner stays above it. A break before the container's first box, a
+/// spanner, moves the container. The places are Chromium's.
+#[test]
+fn a_page_break_at_a_spanner_moves_what_follows_it() {
+    let spanner = "column-span:all";
+    // Column boxes before and after the spanner.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div>\
+             <div id=s style='{spanner};break-before:page'>S</div><div id=c>C</div></div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("c", 1, 0.0, 10.0), ("x", 1, 0.0, 20.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div><div>B</div><div>D</div>\
+             <div id=s style='{spanner};break-before:page'>S</div>\
+             <div id=c>C</div><div id=e>E</div><div id=f>F</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[
+            ("s", 1, 0.0, 0.0),
+            ("c", 1, 0.0, 10.0),
+            ("e", 1, 0.0, 20.0),
+            ("f", 1, 50.0, 10.0),
+            ("x", 1, 0.0, 30.0),
+        ],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div>\
+             <div id=s style='{spanner};break-before:page;margin-top:5px'>S</div>\
+             <div id=c>C</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 5.0), ("c", 1, 0.0, 15.0), ("x", 1, 0.0, 25.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div>\
+             <div id=s style='{spanner};break-before:page'>S</div><div id=c>C</div>\
+             <div id=t style='{spanner};break-before:page'>T</div><div id=d>D</div></div>\
+             <div id=x>X</div>"
+        ),
+        3,
+        &[
+            ("s", 1, 0.0, 0.0),
+            ("c", 1, 0.0, 10.0),
+            ("t", 2, 0.0, 0.0),
+            ("d", 2, 0.0, 10.0),
+            ("x", 2, 0.0, 20.0),
+        ],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div><div style='display:contents'>\
+             <div id=s style='{spanner};break-before:page'>S</div></div><div id=c>C</div></div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("c", 1, 0.0, 10.0), ("x", 1, 0.0, 20.0)],
+    );
+    // Between two spanners.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'><div>A</div>\
+             <div id=s style='{spanner};break-after:page'>S</div>\
+             <div id=t style='{spanner}'>T</div><div id=c>C</div></div><div id=x>X</div>"
+        ),
+        2,
+        &[
+            ("s", 0, 0.0, 10.0),
+            ("t", 1, 0.0, 0.0),
+            ("c", 1, 0.0, 10.0),
+            ("x", 1, 0.0, 20.0),
+        ],
+    );
+    // At the start of the container.
+    check(
+        &format!(
+            "<div>P</div><div style='{COLUMNS}'>\
+             <div id=s style='{spanner};break-before:page'>S</div><div id=c>C</div></div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("c", 1, 0.0, 10.0), ("x", 1, 0.0, 20.0)],
+    );
+    // Lines before and after the spanner: the box after the container
+    // starts below the lines that follow the break.
+    for (lines, x) in [("C", 20.0), ("C<br>E", 30.0), ("C<br>E<br>F", 30.0)] {
+        check(
+            &format!(
+                "<div style='{COLUMNS}'>A<div id=s style='{spanner};break-before:page'>S</div>\
+                 {lines}</div><div id=x>X</div>"
+            ),
+            2,
+            &[("s", 1, 0.0, 0.0), ("x", 1, 0.0, x)],
+        );
+    }
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<br>B<div id=s style='{spanner};break-before:page'>S</div>\
+             C</div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 1, 0.0, 0.0), ("x", 1, 0.0, 20.0)],
+    );
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div id=s style='{spanner}'>S</div>\
+             <div id=t style='{spanner};break-before:page'>T</div>C</div><div id=x>X</div>"
+        ),
+        2,
+        &[("s", 0, 0.0, 10.0), ("t", 1, 0.0, 0.0), ("x", 1, 0.0, 20.0)],
+    );
+    // The spanner after the break has no piece on the page before it.
+    check(
+        &format!(
+            "<div style='{COLUMNS}'>A<div id=s style='{spanner};break-after:page'>S</div>\
+             <div id=t style='{spanner}'>T</div><div id=u style='{spanner}'>U</div>C</div>\
+             <div id=x>X</div>"
+        ),
+        2,
+        &[
+            ("s", 0, 0.0, 10.0),
+            ("t", 1, 0.0, 0.0),
+            ("u", 1, 0.0, 10.0),
+            ("x", 1, 0.0, 30.0),
+        ],
     );
 }
 
