@@ -341,3 +341,33 @@ fn a_box_after_the_last_row_too_tall_for_a_page_breaks_inside_on_the_next() {
         ]
     );
 }
+
+#[test]
+fn a_break_forced_after_the_last_row_keeps_the_table_on_its_page() {
+    let expected = [(0, 'L', 50), (0, 'S', 0), (0, 'X', 70), (1, 'Z', 0)];
+    for rows in [
+        r#"<tr><td>L</td></tr><tr style="break-after:page"><td>X</td></tr>"#,
+        r#"<tr><td>L</td></tr><tr><td><div style="break-after:page">X</div></td></tr>"#,
+        r#"<tr><td>L</td></tr><tbody style="break-after:page"><tr><td>X</td></tr></tbody>"#,
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:50px">S</div><table>{rows}</table><div style="break-before:avoid">Z</div>"#
+            )),
+            expected,
+            "{rows}"
+        );
+    }
+    assert_eq!(
+        glyphs(
+            r#"<div><div style="height:50px">S</div><table><tr><td>L</td></tr><tr style="break-after:page"><td>X</td></tr></table><div style="break-before:avoid">Z</div></div>"#
+        ),
+        expected
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><table><tr style="break-after:page"><td>X</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'S', 0), (0, 'X', 50), (1, 'Z', 0)]
+    );
+}

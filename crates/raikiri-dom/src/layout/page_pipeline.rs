@@ -5896,6 +5896,9 @@ fn table_last_parts(
     }
     last_parts
         .into_iter()
+        // A break forced after the last part ends the table's page: no run
+        // goes on from it.
+        .filter(|&(_, (part, _))| !last_part_forces_break_after(document, cascade, part))
         .map(|(table, (part, end))| {
             // The rows of a group that avoids breaks inside it move together:
             // its first row carries the group, when no forced break comes
@@ -6414,13 +6417,46 @@ fn table_run_start(
                 DisplayValue::TableRow | DisplayValue::TableCaption
             )
         })
-        .map(|part| current_abs_y(document, part) + document.nodes[part].layout.size.height - top)
-        .fold(f32::NEG_INFINITY, f32::max);
+        .map(|part| {
+            (
+                part,
+                current_abs_y(document, part) + document.nodes[part].layout.size.height - top,
+            )
+        })
+        .fold(None, |last: Option<(usize, f32)>, (part, end)| match last {
+            Some((_, known)) if known > end => last,
+            _ => Some((part, end)),
+        });
+    let (part, last) = last?;
+    if last_part_forces_break_after(document, cascade, part) {
+        return None;
+    }
     Some(if held >= last - 0.001 {
         TableRunStart::Whole
     } else {
         TableRunStart::LastPart
     })
+}
+
+/// Whether a break is forced after the last row or caption `part` of a
+/// table: by the part itself, by the boxes that end its cells (see
+/// [`forces_page_break`]), or by the row group it ends.
+fn last_part_forces_break_after(document: &Document, cascade: &CascadeResult, part: usize) -> bool {
+    forces_page_break(document, cascade, part, false)
+        || document.parent_of(part).is_some_and(|group| {
+            matches!(
+                document.nodes[group].display(),
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            ) && document
+                .children_through_contents(group)
+                .into_iter()
+                .rev()
+                .find(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+                == Some(part)
+                && forces_page_break(document, cascade, group, false)
+        })
 }
 
 /// Whether `node_id` is a table that joins a run of boxes tied by avoided
