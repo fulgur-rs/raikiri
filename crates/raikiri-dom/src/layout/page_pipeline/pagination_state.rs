@@ -3971,10 +3971,8 @@ impl PaginationState {
             // Judged once more from the page the lines moved to, for the
             // lines that break again on the pages after it.
             moved = true;
-            match run_metrics(document, text.effective_y) {
-                Some(next) => (metrics, widows) = next,
-                // The moved lines all went past the clip.
-                None => break,
+            if let Some(next) = run_metrics(document, text.effective_y) {
+                (metrics, widows) = next;
             }
         }
         Ok(())
