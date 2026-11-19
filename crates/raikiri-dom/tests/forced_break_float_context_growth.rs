@@ -65,7 +65,8 @@ fn assert_places(cases: &[(String, (usize, f32))]) {
         .iter()
         .filter_map(|(body, expected)| {
             let (page, y) = place_of_z(body);
-            (page != expected.0 || !((y - expected.1).abs() < 0.01))
+            let off = (y - expected.1).abs();
+            (page != expected.0 || off.is_nan() || off >= 0.01)
                 .then(|| format!("{body}: #z expected {expected:?}, got ({page}, {y})"))
         })
         .collect();
