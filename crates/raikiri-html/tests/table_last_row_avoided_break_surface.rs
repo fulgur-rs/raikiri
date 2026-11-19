@@ -251,6 +251,26 @@ fn tables_inside_a_block_move_as_they_do_in_the_body() {
         )),
         [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)]
     );
+    // A caption below the rows moves alone.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><div><table style="caption-side:bottom"><caption>C</caption>{ROWS}</table><div style="break-before:avoid">Z</div></div>"#
+        )),
+        [
+            (0, 'L', 50),
+            (0, 'S', 0),
+            (0, 'X', 70),
+            (1, 'C', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    // Rows that are children of the table box itself.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div><div style="display:table"><div style="display:table-row"><div style="display:table-cell">L</div></div><div style="display:table-row"><div style="display:table-cell">X</div></div></div><div style="break-before:avoid">Z</div></div>"#
+        ),
+        [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)]
+    );
     // One with a footer group that fits stays.
     assert_eq!(
         glyphs(
