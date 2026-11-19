@@ -1605,7 +1605,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let line_after_block = unplaced_base
                     .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
-                let unplaced_line_attribute = unplaced_line.or(line_after_block);
                 let unbreakable_box = box_is_unbreakable(
                     document,
                     cascade,
@@ -1952,9 +1951,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A paragraph whose single unplaced line comes after a block
                 // child of it breaks between the two: it is placed as a box
                 // to move that line on (see `break_before_line_after_block`).
+                // Not in columns, whose balance the move would change, nor
+                // beside boxes at more than one level.
                 let line_after_block_base = participates_in_flow
-                    && !direct_body_child
                     && !out_of_flow_subtree
+                    && edges_break_container(document, node_id, body_id).is_some()
                     && !inline_level
                     && is_block_flow_box
                     && line_after_block.is_some();
@@ -2017,6 +2018,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
+                let line_after_block = line_after_block.filter(|_| line_after_block_candidate);
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 let first_grid_row =
                     first_grid_row.filter(|_| direct_body_child || can_move_nested);
@@ -2187,7 +2189,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     )
                                 }),
                                 deferred_named_break_after,
-                                unplaced_line: unplaced_line_attribute,
+                                unplaced_line: unplaced_line.or(line_after_block),
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 closing_edges: if closing_edges_candidate

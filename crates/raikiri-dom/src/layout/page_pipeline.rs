@@ -8932,7 +8932,8 @@ struct UnplacedBlockLine {
     /// through it, as through the box of one.
     atomic: bool,
     /// Whether the block child of the paragraph laid out right above the
-    /// line sits in no inline box and does not avoid a break after it. The
+    /// line sits in no inline box and does not avoid a break after it, unless
+    /// it forces one. The
     /// page then breaks between that block and the line, as before a line of
     /// text there, instead of keeping the paragraph whole (see
     /// [`unplaced_line_after_block`]).
@@ -9042,8 +9043,8 @@ fn paragraph_unplaced_line(
                 .find(|&&(_, after)| after <= unplaced.line.line)
         })
         .is_some_and(|&(block, _)| {
-            block_outside_inline(document, node_id, block)
-                && !page_edge_constraint(document, cascade, block, false).1
+            let (forced, avoided) = page_edge_constraint(document, cascade, block, false);
+            block_outside_inline(document, node_id, block) && (forced || !avoided)
         });
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
