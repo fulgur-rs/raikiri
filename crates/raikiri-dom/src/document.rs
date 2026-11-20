@@ -277,12 +277,13 @@ pub struct Document {
     /// whether the pseudo-element is `::after`, and the index of the image
     /// among the images of its `content` list.
     content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
-    /// The sizes of the images that page-margin boxes show with `content:
-    /// url()`, by authored URL; see [`Document::prepare_margin_box_images`].
-    /// Margin boxes are laid out per page after the document, so the table
-    /// outlives the preparation of the other generated images.
+    /// The natural dimensions of the images that page-margin boxes show with
+    /// `content: url()`, by authored URL; see
+    /// [`Document::prepare_margin_box_images`]. Margin boxes are laid out per
+    /// page after the document, so the table outlives the preparation of the
+    /// other generated images.
     pub(crate) margin_box_images:
-        std::collections::HashMap<String, raikiri_traits::ImageRasterSize>,
+        std::collections::HashMap<String, raikiri_traits::ImageIntrinsicSize>,
     /// Legacy owned counter snapshots, cached for explicit callers of
     /// [`Document::shared_counter_snapshots`] by the element cascade's
     /// [`CascadeResult::element_generation`]. Tree mutations clear it;

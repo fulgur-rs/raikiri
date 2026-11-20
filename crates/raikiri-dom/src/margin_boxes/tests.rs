@@ -1391,10 +1391,7 @@ fn a_deferred_placeholder_after_an_image_keeps_its_range() {
     );
     doc.margin_box_images.insert(
         "green.png".to_owned(),
-        raikiri_traits::ImageRasterSize {
-            width: 20.0,
-            height: 10.0,
-        },
+        raikiri_traits::ImageIntrinsicSize::new(Some(20.0), Some(10.0), None),
     );
     let boxes = page_margin_boxes(
         &doc,
@@ -1475,10 +1472,7 @@ fn a_deferred_placeholder_on_a_later_line_keeps_its_range_after_an_image() {
     );
     doc.margin_box_images.insert(
         "green.png".to_owned(),
-        raikiri_traits::ImageRasterSize {
-            width: 20.0,
-            height: 10.0,
-        },
+        raikiri_traits::ImageIntrinsicSize::new(Some(20.0), Some(10.0), None),
     );
     let boxes = page_margin_boxes(
         &doc,
@@ -1503,10 +1497,7 @@ fn a_deferred_placeholder_keeps_its_range_after_an_image_and_an_authored_replace
     );
     doc.margin_box_images.insert(
         "green.png".to_owned(),
-        raikiri_traits::ImageRasterSize {
-            width: 20.0,
-            height: 10.0,
-        },
+        raikiri_traits::ImageIntrinsicSize::new(Some(20.0), Some(10.0), None),
     );
     let boxes = page_margin_boxes(
         &doc,

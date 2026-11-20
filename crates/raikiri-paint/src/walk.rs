@@ -2860,7 +2860,6 @@ fn redacted_image_url(url: &url::Url) -> url::Url {
 /// (CSS Backgrounds 3 section 2.7). Callers with identical boxes (for example
 /// a borderless element with default origin/clip) pass the same [`Rect`] twice.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn paint_background_from_source(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,

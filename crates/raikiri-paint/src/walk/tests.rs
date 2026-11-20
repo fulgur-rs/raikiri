@@ -4065,6 +4065,14 @@ fn margin_box_image(
     origin: VisualBox,
     clip: VisualBox,
 ) -> Option<raikiri_dom::MarginBoxBackgroundImage> {
+    margin_box_image_from(origin, clip, "url(https://example.test/red.png)")
+}
+
+fn margin_box_image_from(
+    origin: VisualBox,
+    clip: VisualBox,
+    background_image: &str,
+) -> Option<raikiri_dom::MarginBoxBackgroundImage> {
     // The image layer comes from a laid-out box: the layer has no public
     // constructor.
     let (document, cascade) = {
@@ -4073,8 +4081,10 @@ fn margin_box_image(
         let style = document.append_element(Some(html), "style", None::<&str>);
         document.append_text(
             style,
-            "@page { margin: 10px; @top-center { content: ''; \
-               background-image: url(https://example.test/red.png) } }",
+            &format!(
+                "@page {{ margin: 10px; @top-center {{ content: ''; \
+                   background-image: {background_image} }} }}"
+            ),
         );
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -4097,6 +4107,54 @@ fn margin_box_image(
     image.origin = origin;
     image.clip = clip;
     Some(image)
+}
+
+#[test]
+fn a_margin_box_image_set_background_keeps_its_density() {
+    let image = margin_box_image_from(
+        VisualBox::PaddingBox,
+        VisualBox::BorderBox,
+        "image-set(url(https://example.test/red.png) 2x)",
+    )
+    .expect("image layer");
+    assert_eq!(
+        image.density,
+        raikiri_style::property::ImageDensity::new(2.0).unwrap()
+    );
+
+    let mut margin_box = fixed_margin_box();
+    margin_box.background_layers = vec![image];
+    struct TwoByTwo;
+    impl raikiri_traits::ImagePixelSource for TwoByTwo {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![255, 0, 0, 255].repeat(4),
+            )))
+        }
+    }
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        &PageBox::new(),
+        Some(&TwoByTwo),
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Fill(_))),
+        "the 2x image paints"
+    );
 }
 
 #[test]

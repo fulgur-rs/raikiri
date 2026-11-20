@@ -171,7 +171,7 @@ fn list_style_image_takes_an_image_set_url_with_its_density() {
     );
     assert_eq!(
         parse_entire("image-set(url(a.png) 0x)", "list-style-image"),
-        None
+        Some(PropertyValue::ListStyleImage(BackgroundImage::None))
     );
 }
 

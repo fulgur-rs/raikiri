@@ -1343,14 +1343,13 @@ fn margin_box_spec(
     let (image_urls, images): (Vec<_>, Vec<_>) = content_images
         .into_iter()
         .filter_map(|(offset, url, density)| {
-            let size = document.margin_box_image_size(&url)?;
-            let (width, height) = density.natural_size(size.width, size.height);
+            let size = document.margin_box_image_size_at(&url, density)?;
             Some((
                 url,
                 StandaloneImage {
                     offset,
-                    width,
-                    height,
+                    width: size.width,
+                    height: size.height,
                 },
             ))
         })
@@ -1706,20 +1705,14 @@ impl Document {
         base_url: Option<&url::Url>,
     ) {
         for raw in urls {
-            let size = crate::image_url::authored_image_url(raw, base_url)
+            let intrinsic = crate::image_url::authored_image_url(raw, base_url)
                 .and_then(|url| source.intrinsic_size(&url))
-                .map(|intrinsic| crate::document::content_image_size(intrinsic, None))
-                .filter(|size| {
-                    size.width.is_finite()
-                        && size.height.is_finite()
-                        && size.width > 0.0
-                        && size.height > 0.0
-                });
+                .filter(|intrinsic| margin_box_image_size(*intrinsic).is_some());
             // The latest source decides: an image that was loaded before and
             // is gone now represents nothing.
-            match size {
-                Some(size) => {
-                    self.margin_box_images.insert(raw.clone(), size);
+            match intrinsic {
+                Some(intrinsic) => {
+                    self.margin_box_images.insert(raw.clone(), intrinsic);
                 }
                 None => {
                     self.margin_box_images.remove(raw);
@@ -1732,8 +1725,30 @@ impl Document {
     /// `content`, from [`Self::prepare_margin_box_images`]. `None` for an
     /// image that could not be loaded, which represents nothing.
     pub fn margin_box_image_size(&self, url: &str) -> Option<raikiri_traits::ImageRasterSize> {
-        self.margin_box_images.get(url).copied()
+        self.margin_box_image_size_at(url, ImageDensity::ONE)
     }
+
+    /// [`Self::margin_box_image_size`] of an image an `image-set()` option
+    /// wrote for `density`: its natural dimensions are divided by the density
+    /// before a missing one falls back to the default object size.
+    fn margin_box_image_size_at(
+        &self,
+        url: &str,
+        density: ImageDensity,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        let intrinsic = self.margin_box_images.get(url)?;
+        margin_box_image_size(intrinsic.at_density(density))
+    }
+}
+
+/// The size a margin box gives an image of natural dimensions `intrinsic`,
+/// or `None` when it has no area, as an image that represents nothing.
+fn margin_box_image_size(
+    intrinsic: raikiri_traits::ImageIntrinsicSize,
+) -> Option<raikiri_traits::ImageRasterSize> {
+    Some(crate::document::content_image_size(intrinsic, None)).filter(|size| {
+        size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0
+    })
 }
 
 fn margin_box_text_width(

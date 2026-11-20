@@ -1619,11 +1619,11 @@ pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<Backg
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(BackgroundImage::None);
     }
-    if let Ok((url, density)) = input.try_parse(super::visual::parse_image_set_url) {
-        return Some(if density == ImageDensity::ONE {
-            BackgroundImage::Url(url)
-        } else {
-            BackgroundImage::DensityUrl { url, density }
+    if let Ok(chosen) = input.try_parse(super::visual::parse_image_set_url) {
+        return Some(match chosen {
+            None => BackgroundImage::None,
+            Some((url, density)) if density == ImageDensity::ONE => BackgroundImage::Url(url),
+            Some((url, density)) => BackgroundImage::DensityUrl { url, density },
         });
     }
     let url = input.expect_url().ok()?;
