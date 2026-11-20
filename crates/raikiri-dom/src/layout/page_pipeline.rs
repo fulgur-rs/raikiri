@@ -5380,6 +5380,13 @@ fn paginate_flow(
                 halted = true;
                 break;
             }
+            if let Err(halt) =
+                state.break_before_static_positioned_box(document, &env, Some(&candidate))
+            {
+                halt.finish()?;
+                halted = true;
+                break;
+            }
             done += 1;
             state.rebase_fragmented_cell_content(document, &mut candidate);
             let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
@@ -5399,6 +5406,9 @@ fn paginate_flow(
         if !halted {
             break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
             if let Err(halt) = state.break_before_line_after_forced_break(document, &env, None) {
+                halt.finish()?;
+            }
+            if let Err(halt) = state.break_before_static_positioned_box(document, &env, None) {
                 halt.finish()?;
             }
         }
@@ -10490,6 +10500,78 @@ fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
 /// box when `None`) may fall before `node_id`.
 fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
     scope.is_none_or(|scope| node_id != scope && is_descendant_or_self(document, node_id, scope))
+}
+
+/// The outermost absolutely positioned box around `node_id`, or `node_id`
+/// itself, when the flow puts it: it is left at its static position in block
+/// flow, with no positioned box around it placed by an inset or fixed, and
+/// no paragraph lays it out among its lines (a box there goes with them).
+/// A flex or grid container, or a table part, places its positioned
+/// children itself.
+fn static_positioned_root(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let positioned = std::iter::once(node_id)
+        .chain(document.layout_ancestors(node_id))
+        .filter(|&id| is_out_of_flow_positioned(document, id))
+        .last()?;
+    let parent = document.layout_parent_of(positioned)?;
+    let in_lines = document
+        .ifc_layout_node(parent)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| !lines.lines.is_empty());
+    (document.nodes[positioned].position() == &PositionValue::Absolute
+        && !in_inset_out_of_flow_subtree(document, cascade, node_id)
+        && !in_lines
+        && !is_flex_grid_or_table_display(document.nodes[parent].display())
+        && !moves_reach_cell_row(document, positioned))
+    .then_some(positioned)
+}
+
+/// The positioned boxes after the box `source` in document order and before
+/// `next` (up to the end of the document when `None`), outside both: the
+/// boxes around `next` are passed through, and the boxes inside a positioned
+/// box or one that generates no box are left out. None when `next` does not
+/// come after `source`, as a flex item that `order` moves may not.
+fn positioned_boxes_after(document: &Document, source: usize, next: Option<usize>) -> Vec<usize> {
+    let after_subtree = |mut id: usize| loop {
+        let parent = document.parent_of(id)?;
+        let siblings = &document.nodes[parent].children;
+        // Searched from the end: the boxes after a break are near it.
+        if let Some(&sibling) = siblings
+            .iter()
+            .rposition(|&child| child == id)
+            .and_then(|index| siblings.get(index + 1))
+        {
+            return Some(sibling);
+        }
+        id = parent;
+    };
+    let mut found = Vec::new();
+    let mut current = after_subtree(source);
+    while let Some(id) = current {
+        if Some(id) == next {
+            return found;
+        }
+        current = if next.is_some_and(|next| document.is_ancestor_or_self(id, next)) {
+            document.nodes[id].children.first().copied()
+        } else if is_out_of_flow_positioned(document, id) {
+            found.push(id);
+            after_subtree(id)
+        } else if document.nodes[id].display() == DisplayValue::None {
+            after_subtree(id)
+        } else {
+            document.nodes[id]
+                .children
+                .first()
+                .copied()
+                .or_else(|| after_subtree(id))
+        };
+    }
+    if next.is_some() { Vec::new() } else { found }
 }
 
 /// Whether `node_id` generates an absolutely or fixed positioned box. An
