@@ -1440,8 +1440,16 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
         last.margin_bottom = 0.0;
     }
     let high = stacked_height(&trimmed, usize::MAX).unwrap_or(0.0);
-    balanced_height_after(&trimmed, 0, &|_| 0.0, column_count, max_columns, high, false)
-        .max(stacked / column_count.max(1) as f32)
+    balanced_height_after(
+        &trimmed,
+        0,
+        &|_| 0.0,
+        column_count,
+        max_columns,
+        high,
+        false,
+    )
+    .max(stacked / column_count.max(1) as f32)
 }
 
 /// [`balanced_height`] for the `column_count` columns that follow the first

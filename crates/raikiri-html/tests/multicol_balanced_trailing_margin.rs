@@ -89,12 +89,26 @@ fn boxes_without_lines_truncate_the_last_margin_too() {
     assert_eq!(rects(&body, "b"), vec![(0.0, 10.0, 50.0, 10.0)]);
     let gap = "<div style='height:10px;margin-bottom:20px'></div><div style='height:10px'></div>";
     assert_eq!(height("", gap), (20.0, 20.0));
+    // The margin at the break is truncated, but counts in what is divided.
+    let avoid = "<div style='height:40px;break-inside:avoid;margin-bottom:20px'></div>\
+                 <div style='height:40px;break-inside:avoid;margin-top:10px'></div>";
+    assert_eq!(height("", avoid), (50.0, 50.0));
+}
+
+#[test]
+fn a_negative_trailing_margin_is_truncated_as_well() {
+    let one = "<div style='margin-bottom:-5px'>a</div>";
+    assert_eq!(height("", one), (10.0, 10.0));
 }
 
 #[test]
 fn a_float_and_a_spanner_end_the_columns_as_well() {
     let float = "<div style='float:left;width:10px;height:10px;margin-bottom:10px'></div>";
     assert_eq!(height("", float), (10.0, 10.0));
+    // A line beside the float does not keep the float's margin either.
+    let beside = "<div style='float:left;width:10px;height:10px;margin-bottom:10px'></div>\
+                  <div>a</div>";
+    assert_eq!(height("", beside), (10.0, 10.0));
     let spanner = "<div style='margin-bottom:10px'>a</div><div style='column-span:all'>s</div>";
     assert_eq!(height("", spanner), (20.0, 20.0));
 }

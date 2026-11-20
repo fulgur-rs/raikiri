@@ -2511,12 +2511,14 @@ struct FloatLine {
 }
 
 /// A float that the lines of the blocks after it flow beside: the size of its
-/// margin box, its side, and the block offset of its top in the column.
+/// margin box, its side, the block offset of its top in the column, and its
+/// block-end margin.
 #[derive(Clone, Copy)]
 struct WrappedFloat {
     size: Size<f32>,
     right: bool,
     top: f32,
+    margin_bottom: f32,
 }
 
 /// The floats of a column that the in-flow blocks after them flow beside
@@ -2527,6 +2529,9 @@ struct ColumnFloatRun {
     start: f32,
     next: f32,
     bottom: f32,
+    /// How low the border boxes of the floats reach, without the margins
+    /// below them, which the end of a column truncates.
+    end: f32,
     floats: Vec<WrappedFloat>,
     /// The floats a float after the blocks may still sit beside.
     line: Vec<PlacedFloat>,
@@ -2544,6 +2549,11 @@ impl ColumnFloatRun {
                 .placed
                 .iter()
                 .map(|float| float.top + float.size.height)
+                .fold(line.start, f32::max),
+            end: line
+                .placed
+                .iter()
+                .map(|float| float.top + float.size.height - float.margin_bottom)
                 .fold(line.start, f32::max),
             floats: line.placed.clone(),
             line: line.floats.clone(),
@@ -2657,17 +2667,19 @@ impl FloatLine {
             },
             right: float.right,
             top: spot.top,
+            margin_bottom: float.margin_bottom,
         });
     }
 }
 
 /// A float child of a column container: the side it floats to, the floats it
-/// clears, and the width of its margin box in a column.
+/// clears, the width of its margin box in a column, and its block-end margin.
 #[derive(Clone, Copy)]
 struct ColumnFloat {
     right: bool,
     clear: Clear,
     margin_box_width: f32,
+    margin_bottom: f32,
 }
 
 impl ColumnFloat {
@@ -2681,6 +2693,7 @@ impl ColumnFloat {
                 right: matches!(style.float(), Float::Right),
                 clear: style.clear(),
                 margin_box_width: left + width + right,
+                margin_bottom: column_child_layout(tree, child, column_width).margin.bottom,
             }
         })
     }
@@ -3833,7 +3846,7 @@ fn layout_column_group(
                 && is_floated(tree, child)
                 && let Some(run) = float_run.take_if(|run| run.column == column)
             {
-                let end = (cursor - trailing).max(run.bottom);
+                let end = (cursor - trailing).max(run.end);
                 cursor = cursor.max(run.bottom);
                 trailing = cursor - end;
                 float_line = Some(run.into_line());
@@ -3899,7 +3912,7 @@ fn layout_column_group(
                     }
                 }
                 if kept.is_none() && run.column == column {
-                    let end = (cursor - trailing).max(run.bottom);
+                    let end = (cursor - trailing).max(run.end);
                     cursor = cursor.max(run.bottom);
                     trailing = cursor - end;
                 }
@@ -4245,6 +4258,7 @@ fn layout_column_group(
             occupied.extend(column..=column + plan.columns);
             column += plan.columns;
             cursor = plan.end + margin_bottom;
+            trailing = margin_bottom;
             maximum = maximum.max(fragment_height.unwrap_or(0.0));
             if tree.nodes[child].kind() == NodeKind::Element {
                 avoid_column_break_after_previous =
@@ -4376,7 +4390,7 @@ fn layout_column_group(
     if let Some(run) = float_run
         && run.column == column
     {
-        let end = (cursor - trailing).max(run.bottom);
+        let end = (cursor - trailing).max(run.end);
         cursor = cursor.max(run.bottom);
         trailing = cursor - end;
     }
@@ -4384,7 +4398,9 @@ fn layout_column_group(
     // where the content in flow ends higher.
     if let Some(height) = out_of_flow_height {
         maximum = maximum.max(height);
+        let end = (cursor - trailing).min(height);
         cursor = cursor.min(height);
+        trailing = cursor - end;
     }
     // Columns that fill in turn with no height to fill are one column that
     // nothing ends, which holds the positioned boxes whole.
@@ -4398,7 +4414,10 @@ fn layout_column_group(
             .map(|&child| Some(tree.nodes[child].layout.location.y - content_origin.y))
             .collect();
         let boxes = out_of_flow_boxes(tree, index, children, &tops);
-        cursor = cursor.max(out_of_flow_floor(tree, &boxes, maximum.max(cursor), 1));
+        let floor = out_of_flow_floor(tree, &boxes, maximum.max(cursor), 1);
+        let end = (cursor - trailing).max(floor);
+        cursor = cursor.max(floor);
+        trailing = cursor - end;
     }
     // Balanced columns of a container with a definite height are as tall as
     // their content, which the rules between them follow.

@@ -413,7 +413,10 @@ fn placement_stops_at_the_piece_budget() {
 }
 
 #[test]
-fn balancing_ignores_margins_truncated_at_the_break() {
+fn balancing_starts_from_the_stream_with_its_margins_divided() {
+    // The margins between the boxes collapse to 20px and are truncated at
+    // the break, but the columns are as tall as the whole stream divided
+    // among them, 50px, as Chromium balances two such boxes.
     let first = Item {
         margin_bottom: 20.0,
         ..avoid(40.0)
@@ -422,7 +425,7 @@ fn balancing_ignores_margins_truncated_at_the_break() {
         margin_top: 10.0,
         ..avoid(40.0)
     };
-    assert_eq!(balanced_height(&[first, second], 2, usize::MAX), 40.0);
+    assert_eq!(balanced_height(&[first, second], 2, usize::MAX), 50.0);
 }
 
 #[test]
