@@ -109,6 +109,7 @@ fn options_hidden_root_skips_images() {
             images: Some(PageImageOptions {
                 resolver: &resolver,
                 base_url: None,
+                media_context: None,
             }),
             ..Default::default()
         },
@@ -132,6 +133,7 @@ fn options_cancel_before_resolver() {
             images: Some(PageImageOptions {
                 resolver: &resolver,
                 base_url: None,
+                media_context: None,
             }),
             control: Some(&control),
             ..Default::default()
@@ -154,6 +156,7 @@ fn options_zero_page_limit_before_resolver() {
             images: Some(PageImageOptions {
                 resolver: &resolver,
                 base_url: None,
+                media_context: None,
             }),
             control: Some(&control),
             ..Default::default()
@@ -204,6 +207,7 @@ fn options_preserves_preflight_reset_order() {
                 images: images.then_some(PageImageOptions {
                     resolver: &resolver,
                     base_url: None,
+                    media_context: None,
                 }),
                 control: Some(&control),
                 ..Default::default()
@@ -231,6 +235,7 @@ fn options_resolver_error_preserves_previous_limit_state() {
             images: Some(PageImageOptions {
                 resolver: &resolver,
                 base_url: None,
+                media_context: None,
             }),
             control: Some(&control),
             ..Default::default()
@@ -268,6 +273,7 @@ fn options_resolves_relative_urls_and_borrows_short_lived_settings() {
                 images: Some(PageImageOptions {
                     resolver: &resolver,
                     base_url: Some(&base),
+                    media_context: None,
                 }),
                 control: Some(&control),
             },

@@ -17,13 +17,40 @@
 use raikiri_traits::{ReplacedResolver, ResolverError, ResolverRequest};
 use url::Url;
 
+use raikiri_style::MediaContext;
+
 use crate::document::{DEFAULT_CANVAS_SIZE, Document};
 use crate::image_geometry::DEFAULT_OBJECT_SIZE;
+use crate::image_source::image_source;
 use crate::node::NodeData;
 
-/// Walks every element in `document`'s arena, resolves `<img src="...">`
-/// intrinsic size via `resolver`, and stores the result on each node (see
+/// [`resolve_images_in`] without a base URL, in the default print context.
+#[cfg(test)]
+pub(crate) fn resolve_images(
+    document: &mut Document,
+    resolver: &dyn ReplacedResolver,
+) -> Result<(), ResolverError> {
+    resolve_images_with_base(document, resolver, None)
+}
+
+/// [`resolve_images_in`] in the default print context.
+#[cfg(test)]
+pub(crate) fn resolve_images_with_base(
+    document: &mut Document,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&Url>,
+) -> Result<(), ResolverError> {
+    resolve_images_in(document, resolver, base_url, &MediaContext::default())
+}
+
+/// Walks every element in `document`'s arena, resolves the intrinsic size of
+/// each `<img>` via `resolver`, and stores the result on each node (see
 /// [`crate::node::Node::image_intrinsic_size`]).
+///
+/// The image's source is chosen from its `srcset`, a `<source>` of its
+/// `<picture>`, or its `src` (see [`image_source`]), with `media_context` as
+/// the environment for `media` and `sizes`. The natural size the resolver
+/// gives is divided by the density the chosen candidate was written for.
 ///
 /// Only nodes that are part of the rendered flat tree are visited —
 /// [`crate::node::Node::is_in_document`] gates the walk, so an `<img>`
@@ -37,12 +64,10 @@ use crate::node::NodeData;
 /// [`crate::layout::layout_single_page_with_resolver`] refreshes them
 /// immediately before calling here.
 ///
-/// Only absolute `src` URLs are resolved (`Url::parse` must succeed
-/// directly). Relative-URL resolution against a document base URL is out
-/// of scope, because no base URL is persisted on [`Document`] past parse
-/// time. An `<img>` with an unparsable/relative/missing `src` is left with
-/// `image_intrinsic_size = None` (renders as a 0×0 replaced box — no
-/// fallback size in this scope).
+/// A relative source resolves against `base_url`, which also becomes the
+/// document's base URL, so paint resolves the relative `url()` values of
+/// computed styles the same way. An `<img>` whose source does not resolve is
+/// left with `image_intrinsic_size = None`.
 ///
 /// # Errors
 /// [`ResolverError`] — propagated verbatim from the first
@@ -54,53 +79,48 @@ use crate::node::NodeData;
 /// a `Fallback` disposition exactly like `Ok` — it still uses the returned
 /// `intrinsic` — and never substitutes a fallback of its own by swallowing
 /// an `Err`.
-pub(crate) fn resolve_images(
-    document: &mut Document,
-    resolver: &dyn ReplacedResolver,
-) -> Result<(), ResolverError> {
-    resolve_images_with_base(document, resolver, None)
-}
-
-/// Resolve replaced-element URLs against the document base when they are not
-/// already absolute. A given base also becomes the document's base URL, so
-/// paint resolves the relative `url()` values of computed styles the same way.
-pub(crate) fn resolve_images_with_base(
+pub(crate) fn resolve_images_in(
     document: &mut Document,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&Url>,
+    media_context: &MediaContext,
 ) -> Result<(), ResolverError> {
     if let Some(base_url) = base_url {
         document.set_base_url(Some(base_url.clone()));
     }
+    let sources: Vec<_> = document
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.is_in_document() && node.tag_name() == Some("img"))
+        .map(|(id, _)| {
+            let source = image_source(document, id, media_context)
+                .map(|source| (source.url.to_owned(), source.density));
+            (id, source)
+        })
+        .collect();
     let mut intrinsic_size_changed = false;
     document.resolved_image_urls.clear();
     let result = (|| {
-        for (id, node) in document.nodes.iter_mut().enumerate() {
-            if !node.is_in_document() {
-                continue;
-            }
-            let NodeData::Element(element) = &mut node.data else {
+        for (id, source) in sources {
+            let key = image_source_key(&document.nodes[id]);
+            let selected = document.selected_image_urls.get(&id).cloned();
+            let NodeData::Element(element) = &mut document.nodes[id].data else {
                 continue;
             };
-            if element.tag_name.as_str() != "img" {
-                continue;
-            }
             let previous_size = element.image_intrinsic_size;
-            let src = element.attribute("src");
-            let next_size = if let Some(src) = src {
-                let url = document
-                    .selected_image_urls
-                    .get(&id)
-                    .filter(|(selected_for, _)| selected_for == src)
-                    .map(|(_, url)| url.clone())
-                    .or_else(|| Url::parse(src).ok())
-                    .or_else(|| base_url.and_then(|base| base.join(src).ok()));
+            let next_size = if let Some((src, density)) = source {
+                let url = selected
+                    .filter(|(selected_for, _)| {
+                        *selected_for == src && element.attribute("src") == Some(src.as_str())
+                    })
+                    .map(|(_, url)| url)
+                    .or_else(|| Url::parse(&src).ok())
+                    .or_else(|| base_url.and_then(|base| base.join(&src).ok()));
                 if let Some(url) = url {
-                    document
-                        .resolved_image_urls
-                        .insert(id, (src.to_owned(), url.clone()));
+                    document.resolved_image_urls.insert(id, (key, url.clone()));
                     match resolver.resolve(ResolverRequest::new(&url)) {
-                        Ok(resolved) => Some(resolved.intrinsic),
+                        Ok(resolved) => Some(divide_by_density(resolved.intrinsic, density)),
                         Err(error) => {
                             if previous_size.is_some() {
                                 element.image_intrinsic_size = None;
@@ -126,6 +146,29 @@ pub(crate) fn resolve_images_with_base(
         document.invalidate_layout_cache();
     }
     result
+}
+
+/// The natural size of an image written for `density` image pixels per CSS
+/// px. The ratio stays the image's own.
+fn divide_by_density(
+    intrinsic: raikiri_traits::IntrinsicBox,
+    density: f32,
+) -> raikiri_traits::IntrinsicBox {
+    let mut natural = intrinsic;
+    natural.width /= density;
+    natural.height /= density;
+    natural
+}
+
+/// What an image's resolved URL was chosen from: its `src` and `srcset`. A
+/// change to either leaves the URL stale until images are resolved again.
+pub(crate) fn image_source_key(node: &crate::node::Node) -> String {
+    let src = node.attribute("src");
+    let srcset = node.attribute("srcset");
+    match (src, srcset) {
+        (src, None) => src.unwrap_or_default().to_owned(),
+        (src, Some(srcset)) => format!("{}\u{0}{srcset}", src.unwrap_or_default()),
+    }
 }
 
 /// Populate CSS-defaulted layout sizes for outermost inline SVG roots.

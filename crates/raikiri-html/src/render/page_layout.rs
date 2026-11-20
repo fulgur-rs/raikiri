@@ -174,6 +174,7 @@ impl PageLayout<'_, '_> {
                 page_geometries: &page_geometries_for,
                 resolver: run.resolver,
                 base_url: run.base_url,
+                media_context: Some(&run.config.media_context),
                 max_pages: run.config.limits.max_document_pages,
                 abort_check: run.is_aborted,
                 skipped: &resume.skipped,
@@ -234,6 +235,7 @@ impl PageLayout<'_, '_> {
                 images: Some(raikiri_dom::PageImageOptions {
                     resolver: run.resolver,
                     base_url: run.base_url,
+                    media_context: Some(&run.config.media_context),
                 }),
                 control: Some(run.discovery_control),
                 ..Default::default()
@@ -268,6 +270,7 @@ impl PageLayout<'_, '_> {
                     page_geometries: &page_geometries_for,
                     resolver: run.resolver,
                     base_url: run.base_url,
+                    media_context: Some(&run.config.media_context),
                     max_pages: run.config.limits.max_document_pages,
                     abort_check: run.is_aborted,
                     skipped: &[],
@@ -359,6 +362,7 @@ impl PageLayout<'_, '_> {
                     images: Some(raikiri_dom::PageImageOptions {
                         resolver: run.resolver,
                         base_url: run.base_url,
+                        media_context: Some(&run.config.media_context),
                     }),
                     control: Some(scheduled_control),
                 },
@@ -384,6 +388,7 @@ impl PageLayout<'_, '_> {
                         images: Some(raikiri_dom::PageImageOptions {
                             resolver: run.resolver,
                             base_url: run.base_url,
+                            media_context: Some(&run.config.media_context),
                         }),
                         control: Some(run.page_control),
                     },

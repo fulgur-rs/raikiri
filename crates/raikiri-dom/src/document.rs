@@ -3870,11 +3870,11 @@ impl Document {
         if node.tag_name() != Some("img") {
             return None;
         }
-        let raw = node.attribute("src")?;
+        let key = crate::image_resolve::image_source_key(node);
         self.resolved_image_urls
             .get(&element)
-            .filter(|(source, _)| source == raw)
+            .filter(|(source, _)| *source == key)
             .map(|(_, url)| url.clone())
-            .or_else(|| url::Url::parse(raw).ok())
+            .or_else(|| url::Url::parse(node.attribute("src")?).ok())
     }
 }

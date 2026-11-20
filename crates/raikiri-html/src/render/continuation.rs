@@ -63,6 +63,9 @@ pub struct ContinuationInputs<'a> {
     pub page_geometries: &'a dyn Fn(&[PageSlice]) -> Vec<ResolvedPageGeometry>,
     pub resolver: &'a dyn ReplacedResolver,
     pub base_url: Option<&'a url::Url>,
+    /// The environment images choose their sources in (see
+    /// [`raikiri_dom::PageImageOptions::media_context`]).
+    pub media_context: Option<&'a raikiri_style::MediaContext>,
     pub max_pages: Option<u32>,
     pub abort_check: &'a dyn Fn() -> bool,
     /// Elements that every relayout lays out as `display: none`: content
@@ -587,6 +590,7 @@ impl<'a> Relayout<'a> {
                 images: Some(raikiri_dom::PageImageOptions {
                     resolver: self.inputs.resolver,
                     base_url: self.inputs.base_url,
+                    media_context: self.inputs.media_context,
                 }),
                 control: Some(control),
             },
@@ -685,6 +689,7 @@ impl<'a> Relayout<'a> {
                 images: Some(raikiri_dom::PageImageOptions {
                     resolver: self.inputs.resolver,
                     base_url: self.inputs.base_url,
+                    media_context: self.inputs.media_context,
                 }),
                 control: Some(control),
             },

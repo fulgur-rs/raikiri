@@ -432,6 +432,7 @@ fn assert_paged_resolver_error_clears_projection(with_geometry: bool) {
                 images: Some(crate::PageImageOptions {
                     resolver: &Fails,
                     base_url: None,
+                    media_context: None,
                 }),
                 ..Default::default()
             },
@@ -445,6 +446,7 @@ fn assert_paged_resolver_error_clears_projection(with_geometry: bool) {
                 images: Some(crate::PageImageOptions {
                     resolver: &Fails,
                     base_url: None,
+                    media_context: None,
                 }),
                 ..Default::default()
             },
