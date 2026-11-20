@@ -68,7 +68,7 @@ impl SiblingAdjacency {
                 return found;
             }
             if document.nodes[parent].display() != DisplayValue::Contents {
-                return None;
+                break;
             }
             current = parent;
         }
