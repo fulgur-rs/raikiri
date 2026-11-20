@@ -353,7 +353,7 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
         && node.ifc_boxes().is_empty()
         && !node.column_span_all
         && !lineless::has_block_edge_decorations(&style_of(tree, id))
-        && !is_sized_paragraph(tree, id)
+        && (!is_sized_paragraph(tree, id) || insets_are_a_relative_offset(tree, id))
 }
 
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
@@ -423,6 +423,10 @@ struct Paragraph {
     /// fragment of such a box reaches all of them, however many extents the
     /// plan gives it.
     held_lines: Option<usize>,
+    /// For a box the columns hold whole or slice, the block offset its held
+    /// lines reach from the top of its border box: a sliced box keeps them all
+    /// in its first piece.
+    held_reach: f32,
     /// A monolithic box that stays whole at the top of an empty column even
     /// when it is taller than the column, overflowing its end.
     overflows: bool,
@@ -446,6 +450,7 @@ impl Paragraph {
             edge_end: 0.0,
             cloned: false,
             held_lines: lines,
+            held_reach: 0.0,
             overflows: false,
             sliced: false,
         }
@@ -470,11 +475,14 @@ pub(super) fn balance(
         has_empty,
         high,
         room,
-    } = collect(tree, &flow, true, BlockEdges::Refused, None)?;
+        sized_leaf,
+    } = collect(tree, &flow, true, BlockEdges::Refused, true, None)?;
     // A chain of wrappers around one paragraph keeps the strategies of such
-    // chains, unless the wrappers hold room that those cannot place.
+    // chains, unless the wrappers hold room that those cannot place, or a
+    // sized box with no lines stands beside the paragraph, which the columns
+    // slice.
     if paragraph_count == 0
-        || (paragraph_count == 1 && !has_empty && !room)
+        || (paragraph_count == 1 && !has_empty && !room && !sized_leaf)
         || !high.is_finite()
         || context.column_count == 0
     {
@@ -482,6 +490,7 @@ pub(super) fn balance(
     }
     let (group, height) = balanced(&paragraphs, context, high)?;
     let mut group = finish_group(group.placements, height);
+    holds_lines_in_first_pieces(&paragraphs, &group).then_some(())?;
     group.flow = flow.has_wrappers().then_some(flow);
     Some(group)
 }
@@ -512,7 +521,10 @@ fn balanced(
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(paragraphs, context, trial, false).is_some() {
+        // A trial must hold every piece of a sliced box: dropping a remainder
+        // below a layout unit as rounding would let a height just short of
+        // the one that holds it pass.
+        if fill_strictly(paragraphs, context, trial).is_some() {
             high = trial;
         } else {
             low = trial;
@@ -562,7 +574,7 @@ pub(super) fn fill_definite(
         high: ceiling,
         room,
         ..
-    } = collect(tree, &flow, true, BlockEdges::Sliced, Some(height))?;
+    } = collect(tree, &flow, true, BlockEdges::Sliced, true, Some(height))?;
     let flow = flow.has_wrappers().then_some(flow);
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place.
@@ -598,10 +610,10 @@ pub(super) fn fill_definite(
             .sum();
         if let Some((group, balanced)) = balanced(&paragraphs, context, ceiling + edges)
             && let Some(balanced) = balanced_below(balanced, height)
+            && let group = finish_group(group.placements, balanced)
+            && holds_lines_in_first_pieces(&paragraphs, &group)
         {
-            let mut group = finish_group(group.placements, balanced);
-            group.flow = flow;
-            return Some(group);
+            return Some(Group { flow, ..group });
         }
     }
     let unbounded = FragmentationContext {
@@ -611,9 +623,26 @@ pub(super) fn fill_definite(
     // A piece broken at a column's end runs to that end, as the columns
     // share the container's height.
     let group = fill(&paragraphs, unbounded, height, false)?;
-    let mut group = finish_group(group.placements, height);
-    group.flow = flow;
-    Some(group)
+    let group = finish_group(group.placements, height);
+    holds_lines_in_first_pieces(&paragraphs, &group).then_some(Group { flow, ..group })
+}
+
+/// Whether every sliced box of lines in `group` holds its lines in its first
+/// piece. One whose lines a column end cuts is left to the other strategies:
+/// the pieces of a sliced box place no lines of their own.
+fn holds_lines_in_first_pieces(paragraphs: &[Option<Paragraph>], group: &Group) -> bool {
+    paragraphs
+        .iter()
+        .zip(&group.placements)
+        .all(|(paragraph, placement)| match (paragraph, placement) {
+            (Some(paragraph), Some(placement))
+                if paragraph.sliced && paragraph.held_lines.is_some() =>
+            {
+                placement.fragments.len() < 2
+                    || paragraph.held_reach <= placement.first_height + f32::EPSILON
+            }
+            _ => true,
+        })
 }
 
 /// The paragraphs of `entries` with their line extents, when each entry is a
@@ -622,11 +651,13 @@ pub(super) fn fill_definite(
 /// so they pass `false` and leave such a paragraph to the other strategies.
 /// With `edges` sliced, a paragraph may have padding and border above its
 /// first line and below its last, which its pieces slice; only a stream that
-/// places those edges with the lines passes that. With `boxes`, the height of
-/// the columns of a stream that fills definite-height columns, a sized box with
-/// nothing inside it may stand between the paragraphs, which a column end
-/// slices, and so may a box that makes a formatting context of its own and
-/// holds one row of lines no taller than a column, which goes whole to one.
+/// places those edges with the lines passes that. With `sized`, a sized box
+/// with nothing inside it, or with lines inside its height, may stand between
+/// the paragraphs, which a column end slices; only the streams that place the
+/// pieces of such a box pass that. With `boxes`, the height of the columns of
+/// a stream that fills definite-height columns, a box that makes a formatting
+/// context of its own and holds one row of lines no taller than a column may
+/// stand there too, which goes whole to one.
 /// The entries of `flow` inside its wrappers may also be sized boxes with no
 /// lines, and the start and end of a wrapper may have padding: both are room
 /// besides the paragraphs, which [`Collected::room`] notes.
@@ -635,6 +666,7 @@ fn collect(
     flow: &Flow,
     atomics: bool,
     edges: BlockEdges,
+    sized: bool,
     boxes: Option<f32>,
 ) -> Option<Collected> {
     let entries = &flow.entries;
@@ -643,6 +675,7 @@ fn collect(
     let mut has_empty = false;
     let mut high = 0.0;
     let mut room = false;
+    let mut sized_leaf = false;
     for (index, &(child, ref output, layout, margin_top, margin_bottom, _)) in
         entries.iter().enumerate()
     {
@@ -677,6 +710,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                held_reach: 0.0,
                 overflows: false,
                 sliced: edge > 0.0,
             }));
@@ -712,7 +746,8 @@ fn collect(
         // extent that a column end cuts.
         // One that avoids breaks, or that a cut would paint wrong, goes whole
         // to a column that holds it.
-        if boxes.is_some() && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+        if sized && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+            sized_leaf = true;
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
             paragraphs.push(Some(Paragraph {
@@ -721,10 +756,13 @@ fn collect(
             }));
             continue;
         }
-        // A box of lines with a height of its own goes whole to a column that
-        // holds it, unlike a box with no lines, and is cut nowhere. Its lines
-        // must lie inside its height, or they would reach past the column.
-        if boxes.is_some() && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
+        // A box of lines with a height of its own is a block the columns slice
+        // where they end, as one with no lines is, unless it avoids breaks or
+        // a cut would paint it wrong: then it goes whole to a column that
+        // holds it. Its lines must lie inside its height, or they would reach
+        // past the column, and a sliced one keeps them all in its first piece
+        // (see `holds_lines_in_first_pieces`).
+        if sized && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
             let lines = node.ifc.as_ref()?.lines.as_ref()?;
             let (before, after) = block_edges(&layout);
             let reach = lines
@@ -743,12 +781,19 @@ fn collect(
                 return None;
             }
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
-            paragraphs.push(Some(Paragraph::whole_box(
+            let whole = Paragraph::whole_box(
                 output.size.height,
                 margin_top,
                 margin_bottom,
                 Some(lines.lines.len()),
-            )));
+            );
+            // Nothing places the pieces of a box inside a wrapper that a
+            // column end would cut, so one there goes whole to a column.
+            paragraphs.push(Some(Paragraph {
+                sliced: flow.parents[index].is_none() && lineless::slices_sized_leaf(tree, child),
+                held_reach: before + reach,
+                ..whole
+            }));
             // The plan needs a paragraph, and this box holds lines, unlike one
             // with none.
             paragraph_count += 1;
@@ -844,6 +889,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                held_reach: 0.0,
                 overflows: false,
                 sliced: false,
             }));
@@ -873,6 +919,7 @@ fn collect(
             edge_end,
             cloned: node.clones_box_decorations && edge_start + edge_end > 0.0,
             held_lines: None,
+            held_reach: 0.0,
             overflows: false,
             sliced: false,
         }));
@@ -884,6 +931,7 @@ fn collect(
         has_empty,
         high,
         room,
+        sized_leaf,
     })
 }
 
@@ -899,6 +947,9 @@ struct Collected {
     /// Whether wrappers hold room besides their paragraphs: padding above or
     /// below their boxes, or a sized box with no lines.
     room: bool,
+    /// Whether one of them is a sized box with no lines that the columns
+    /// slice, outside any wrapper.
+    sized_leaf: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -949,6 +1000,24 @@ fn fill(
     chunk.next.is_none().then_some(chunk.group)
 }
 
+/// [`fill`] that fails when a sliced box would leave a remainder, however
+/// small, past its last piece.
+fn fill_strictly(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    height: f32,
+) -> Option<Group> {
+    let chunk = fill_chunk_with(
+        paragraphs,
+        context,
+        height,
+        FlowCursor::default(),
+        false,
+        true,
+    )?;
+    chunk.next.is_none().then_some(chunk.group)
+}
+
 /// Fill columns of `height` from `resume`. The margin below the last
 /// paragraph adds to the height used when `trailing_margin` is set; without
 /// it, the margin ends with the content, as it does at a break.
@@ -958,6 +1027,20 @@ fn fill_chunk(
     height: f32,
     resume: FlowCursor,
     trailing_margin: bool,
+) -> Option<Chunk> {
+    fill_chunk_with(paragraphs, context, height, resume, trailing_margin, false)
+}
+
+/// [`fill_chunk`] that, when `strict` is set, fails when a sliced box would
+/// leave a remainder below a layout unit past its last piece, which it drops
+/// as rounding otherwise.
+fn fill_chunk_with(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    height: f32,
+    resume: FlowCursor,
+    trailing_margin: bool,
+    strict: bool,
 ) -> Option<Chunk> {
     let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
@@ -1063,9 +1146,16 @@ fn fill_chunk(
                     if fragments.is_empty() {
                         (first_column, first_y, first_height) = (column, top, used);
                     }
+                    // The lines a sliced box holds lie in its first piece.
+                    let held = paragraph.held_lines.unwrap_or(1);
+                    let line_start = if fragments.is_empty() || paragraph.held_lines.is_none() {
+                        0
+                    } else {
+                        held
+                    };
                     fragments.push(MulticolTextFragment {
-                        line_start: 0,
-                        line_end: 1,
+                        line_start,
+                        line_end: held,
                         fragmentainer: column,
                         x: context.column_offset_x(column) - context.column_offset_x(first_column),
                         y: top - first_y,
@@ -1074,6 +1164,7 @@ fn fill_chunk(
                     cursor = top + used;
                     maximum = maximum.max(cursor);
                     if left < SLICE_MIN_ROOM {
+                        (!strict || left <= 0.0).then_some(())?;
                         break;
                     }
                 }
@@ -1382,6 +1473,7 @@ pub(super) fn fill_rows(
         &Flow::plain(entries),
         false,
         BlockEdges::Refused,
+        false,
         None,
     )
     .ok_or(RowsStop::Unsupported)?;
@@ -1597,7 +1689,7 @@ pub(super) fn paginate(
         high: ceiling,
         room: false,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Refused, None)
+    }) = collect(tree, &flow, false, BlockEdges::Refused, false, None)
     else {
         return Ok(None);
     };

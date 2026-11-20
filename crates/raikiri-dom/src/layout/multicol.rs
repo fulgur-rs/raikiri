@@ -3945,7 +3945,17 @@ fn layout_column_group(
         leave_block_offset_to_painter(tree, child);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
-                root.multicol_fragments = Some(placement.fragments.clone());
+                // A sliced box holds its lines in its first piece; the pieces
+                // after it hold none, and are recorded as the pieces of a box
+                // with no lines (see `push_sliced_box_pieces`).
+                root.multicol_fragments = Some(
+                    placement
+                        .fragments
+                        .iter()
+                        .filter(|range| !placement.sliced || range.line_start < range.line_end)
+                        .copied()
+                        .collect(),
+                );
                 root.multicol_fragment_origins_recorded = true;
             }
             refresh_paragraph_boxes(
