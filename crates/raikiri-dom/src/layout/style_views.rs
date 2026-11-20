@@ -110,12 +110,27 @@ pub(crate) struct StyleViews<'a> {
     prepared_stamp: Option<PreparedStamp>,
     preparation_batch: bool,
     deferred_calc_prefix: Option<usize>,
+    /// Whether any element of the cascade names a page, found on first use.
+    names_pages: OnceCell<bool>,
 }
 
 impl<'a> StyleViews<'a> {
     /// The cascade the views read.
     pub(crate) fn cascade(&self) -> &'a CascadeResult {
         self.cascade
+    }
+
+    /// Whether any element of `cascade` names a page. The answer for the
+    /// cascade the views read is found once; another one, such as the
+    /// transposed cascade of pagination along the inline axis, is searched.
+    pub(crate) fn names_pages(&self, cascade: &CascadeResult) -> bool {
+        if std::ptr::eq(cascade, self.cascade) {
+            *self
+                .names_pages
+                .get_or_init(|| super::page::has_named_pages(self.cascade))
+        } else {
+            super::page::has_named_pages(cascade)
+        }
     }
 
     pub(crate) fn new(cascade: &'a CascadeResult) -> Self {
@@ -127,6 +142,7 @@ impl<'a> StyleViews<'a> {
             prepared_stamp: None,
             preparation_batch: false,
             deferred_calc_prefix: None,
+            names_pages: OnceCell::new(),
         }
     }
 

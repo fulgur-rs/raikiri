@@ -21,6 +21,16 @@ pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usiz
 
 /// `column-span: all` applies to the block-level boxes that are in the flow
 /// (CSS Multi-column Layout 1, 6.1), whatever their inner display is.
+/// Whether `child`, a box in the flow of a multicol container, puts content
+/// in its columns: a box that is not hidden, or text that takes room.
+pub(super) fn holds_column_content(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    match node.kind() {
+        NodeKind::Text => node.layout.size.height != 0.0 || node.ifc.is_some(),
+        _ => !node.is_display_none(),
+    }
+}
+
 fn spans_all_columns(node: &crate::node::Node) -> bool {
     node.column_span_all
         && node.is_in_document()
@@ -76,10 +86,10 @@ pub(super) fn layout(
         if end < children.len() && spanner.is_none() {
             continue;
         }
-        if children[start..end].iter().any(|&child| {
-            let node = layout_node(tree, child);
-            node.kind() != NodeKind::Text || node.layout.size.height != 0.0 || node.ifc.is_some()
-        }) {
+        if children[start..end]
+            .iter()
+            .any(|&child| holds_column_content(tree, child))
+        {
             previous_margin = None;
             // A group preceding a spanner is balanced even under auto fill.
             let group_context = FragmentationContext {
