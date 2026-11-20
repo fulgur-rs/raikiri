@@ -2457,15 +2457,16 @@ impl PaginationState {
                 // behind, or back over a page edge the break would share,
                 // which the break then moves the box over.
                 // The break before a flex item sits at the top of its line.
+                let lead = if collapses_with_previous_block {
+                    self.forced_break_lead(document, env, node_id, margin_top)
+                } else {
+                    margin_top
+                };
                 let margin_box_y = effective_y
                     - relative_offset
-                    - if collapses_with_previous_block {
-                        self.forced_break_lead(document, cascade, node_id, margin_top)
-                    } else {
-                        margin_top
-                    }
+                    - lead
                     - flex_line.as_ref().map_or(0.0, |line| line.offset);
-                let starts_page = if margin_top < 0.0 {
+                let starts_page = if lead < 0.0 {
                     (margin_box_y - page_start).abs() <= 0.001
                 } else {
                     margin_box_starts_page(
@@ -2514,21 +2515,36 @@ impl PaginationState {
     /// right after the block before it, whose block-end margin the break
     /// cuts although the layout collapsed it with the box's own `margin_top`.
     /// Only that own margin follows the break (CSS Fragmentation 3, 5.2).
-    /// `margin_top` when no block adjoins the box.
+    /// `margin_top` when no block adjoins the box, when clearance may lie
+    /// between the two, or in a vertical flow.
     fn forced_break_lead(
         &mut self,
         document: &LayoutSession<'_>,
-        cascade: &CascadeResult,
+        env: &FlowEnv<'_>,
         node: usize,
         margin_top: f32,
     ) -> f32 {
+        let cascade = env.cascade;
+        if document.nodes[node].used_writing_mode.is_vertical()
+            || !matches!(
+                cascade.computed[node].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        {
+            return margin_top;
+        }
+        // Both boxes are measured where the flow put them, without the
+        // relative offsets that only move where they are painted.
+        let flow_y = |id: usize| {
+            current_abs_y(document, id)
+                - accumulated_relative_offset_y(document, cascade, env.body_id, id)
+        };
         self.sibling_margins
             .adjacency
             .previous_block(document, cascade, node)
             .map_or(margin_top, |previous| {
-                let bottom =
-                    current_abs_y(document, previous) + document.nodes[previous].layout.size.height;
-                let gap = current_abs_y(document, node) - bottom;
+                let gap =
+                    flow_y(node) - (flow_y(previous) + document.nodes[previous].layout.size.height);
                 if gap.is_finite() {
                     margin_top.max(gap)
                 } else {
@@ -2631,7 +2647,7 @@ impl PaginationState {
             && forced_holder.is_none()
             && page_break.collapses_with_previous_block
         {
-            self.forced_break_lead(document, cascade, node_id, margin_top)
+            self.forced_break_lead(document, env, node_id, margin_top)
         } else {
             margin_top
         };

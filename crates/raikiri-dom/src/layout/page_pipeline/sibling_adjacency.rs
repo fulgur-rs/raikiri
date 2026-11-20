@@ -98,8 +98,6 @@ impl SiblingAdjacency {
     }
 }
 
-/// Return a decision at the first preceding matching or nonempty box,
-/// without visiting the rest of the sibling prefix or copying it to a stack.
 /// The last box of `node_id` that takes block space, `Some(None)` when
 /// something else that takes space comes first, and `None` when it holds
 /// nothing in the flow.
@@ -122,6 +120,8 @@ fn last_block(
     }
 }
 
+/// Return a decision at the first preceding matching or nonempty box,
+/// without visiting the rest of the sibling prefix or copying it to a stack.
 fn preceding_box(
     document: &Document,
     cascade: &CascadeResult,
