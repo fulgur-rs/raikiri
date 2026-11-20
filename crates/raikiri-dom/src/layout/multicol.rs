@@ -665,10 +665,7 @@ fn column_content_extent(tree: &LayoutSession<'_>, index: usize, from: usize) ->
     let mut placed = fragments.records_of(index)[from..]
         .iter()
         .filter(|&&record| !fragments.is_retired(record));
-    let &container = placed.next()?;
-    if placed.next().is_some() {
-        return None;
-    }
+    let &container = placed.next().filter(|_| placed.next().is_none())?;
     fragments
         .children_of(container)
         .iter()
