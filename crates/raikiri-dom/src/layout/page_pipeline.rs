@@ -19674,13 +19674,11 @@ fn shift_columns_after_spanner(
     spanner: usize,
     delta: f32,
 ) {
-    if delta == 0.0 || !delta.is_finite() {
-        return;
-    }
     let children = document.children_through_contents(container);
-    let Some(index) = children.iter().position(|&id| id == spanner) else {
-        return;
-    };
+    let after = children
+        .iter()
+        .position(|&id| id == spanner)
+        .map_or(children.len(), |index| index + 1);
     // The column groups and rules after the spanner start below its top,
     // whatever its block-end margin, and those before it start above.
     let tree = &document.fragment_tree;
@@ -19712,17 +19710,18 @@ fn shift_columns_after_spanner(
         .filter(|&record| !tree.is_retired(record))
         .collect();
     let mut moved = Vec::new();
-    for &later in &children[index + 1..] {
+    for &later in &children[after..] {
         // The records of the box, or of the boxes inside it that a wrapper
         // without a record of its own left to the container's. What a box
         // with a record holds is placed in that record and moves with it.
         let mut stack = vec![later];
         while let Some(id) = stack.pop() {
             let mut recorded = false;
-            for &record in tree.records_of(id) {
-                if tree.is_retired(record) {
-                    continue;
-                }
+            let live = tree
+                .records_of(id)
+                .iter()
+                .filter(|&&record| !tree.is_retired(record));
+            for &record in live {
                 recorded = true;
                 if tree.fragments[record]
                     .parent
@@ -19739,7 +19738,7 @@ fn shift_columns_after_spanner(
     for record in moved {
         document.fragment_tree.fragments[record].rect.y += delta;
     }
-    for &later in &children[index + 1..] {
+    for &later in &children[after..] {
         shift_block_sibling(document, later, delta);
     }
 }

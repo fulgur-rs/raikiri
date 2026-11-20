@@ -134,7 +134,8 @@ fn the_columns_after_a_spanner_follow_its_forced_break() {
         ),
         (
             BREAK_BEFORE,
-            "<div style='display:contents'><div>C</div></div>",
+            "<div style='display:contents'><div>C</div></div>\
+             <div style='display:none'><div>H</div></div>",
             "A@0:0,0 S@0:0,10 R@1:0,0 C@1:0,10 X@1:0,20",
         ),
     ];
