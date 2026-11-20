@@ -163,7 +163,7 @@ fn a_paragraph_after_other_content_keeps_its_orphans() {
     ]);
 }
 
-/// The lines of the box in [`glyph_tops`] whose glyphs `visible` lists: a box
+/// The lines of the box in `glyph_tops` whose glyphs `visible` lists: a box
 /// that clips its overflow keeps runs for the lines it hides.
 fn visible_tops(body: &str, visible: &str) -> Vec<(u32, char, i32)> {
     glyph_tops(body)
