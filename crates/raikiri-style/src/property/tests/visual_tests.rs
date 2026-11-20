@@ -1313,11 +1313,41 @@ fn background_images(source: &str) -> Option<Vec<BackgroundImage>> {
     }
 }
 
-/// The one image a parsed `background-image` holds.
+/// The one image a parsed `background-image` holds, as the option an
+/// `image-set()` chose: its density is left out (see
+/// `image_set_keeps_the_density_of_the_option_it_chose`).
 fn background_image(source: &str) -> Option<BackgroundImage> {
     let mut images = background_images(source)?;
     assert_eq!(images.len(), 1, "{source}");
-    images.pop()
+    images.pop().map(|image| match image {
+        BackgroundImage::DensityUrl { url, .. } => BackgroundImage::Url(url),
+        other => other,
+    })
+}
+
+#[test]
+fn image_set_keeps_the_density_of_the_option_it_chose() {
+    let chosen = |source: &str| {
+        let images = background_images(source).expect("parses");
+        assert_eq!(images.len(), 1, "{source}");
+        (images[0].url().cloned(), images[0].density().dppx())
+    };
+    assert_eq!(
+        chosen("image-set(url(a.png) 1x, url(b.png) 2x)"),
+        (Some("a.png".into()), 1.0)
+    );
+    assert_eq!(
+        chosen("image-set(url(c.png) 3x, url(b.png) 2x)"),
+        (Some("b.png".into()), 2.0)
+    );
+    assert_eq!(
+        chosen("image-set(url(a.png) 192dpi)"),
+        (Some("a.png".into()), 2.0)
+    );
+    assert_eq!(
+        chosen("image-set(url(a.png) 0.5x)"),
+        (Some("a.png".into()), 0.5)
+    );
 }
 
 fn url_image(url: &str) -> Option<BackgroundImage> {
