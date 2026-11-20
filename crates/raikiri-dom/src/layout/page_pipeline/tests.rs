@@ -16825,35 +16825,83 @@ fn positioned_line_moves_start_the_next_page_with_the_line_that_crosses() {
         .map(|line| (line as f32 * 30.0, line as f32 * 30.0 + 30.0))
         .collect();
     // Lines that fit need no move.
-    assert_eq!(positioned_line_moves(&lines[..3], 0.0, &pages), Vec::new());
-    // The line that crosses each page end starts the next page, whatever the
-    // orphans and widows say, and the lines after it follow.
     assert_eq!(
-        positioned_line_moves(&lines, 0.0, &pages),
+        positioned_line_moves(&lines[..3], 0.0, &pages, 1, 1),
+        Vec::new()
+    );
+    // The line that crosses each page end starts the next page, and the lines
+    // after it follow.
+    assert_eq!(
+        positioned_line_moves(&lines, 0.0, &pages, 1, 1),
         vec![(3, 10.0, 1), (6, 10.0, 2)]
     );
     // The first line moves too: the page breaks before the box that holds it.
     assert_eq!(
-        positioned_line_moves(&lines, 80.0, &pages),
+        positioned_line_moves(&lines, 80.0, &pages, 1, 1),
         vec![(0, 20.0, 1), (3, 10.0, 2), (6, 10.0, 3)]
     );
     // A box that starts on a later page breaks at the end of that page.
     assert_eq!(
-        positioned_line_moves(&lines[..3], 150.0, &pages),
+        positioned_line_moves(&lines[..3], 150.0, &pages, 1, 1),
         vec![(1, 20.0, 2)]
     );
     // A line that starts a page stays, though it is taller than the page, and
     // so does a line that crosses a page end but fits no page.
     assert_eq!(
-        positioned_line_moves(&[(0.0, 150.0)], 100.0, &pages),
+        positioned_line_moves(&[(0.0, 150.0)], 100.0, &pages, 1, 1),
         Vec::new()
     );
     assert_eq!(
-        positioned_line_moves(&[(0.0, 120.0)], 50.0, &pages),
+        positioned_line_moves(&[(0.0, 120.0)], 50.0, &pages, 1, 1),
         Vec::new()
     );
+    // The last break moves up to leave the widows on the last page, while the
+    // page before it keeps its orphans.
+    assert_eq!(
+        positioned_line_moves(&lines, 0.0, &pages, 1, 2),
+        vec![(3, 10.0, 1), (5, 40.0, 2)]
+    );
+    assert_eq!(
+        positioned_line_moves(&lines, 0.0, &pages, 3, 3),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    assert_eq!(
+        positioned_line_moves(&lines[..5], 0.0, &pages, 2, 3),
+        vec![(2, 40.0, 1)]
+    );
+    assert_eq!(
+        positioned_line_moves(&lines[..5], 0.0, &pages, 3, 3),
+        vec![(3, 10.0, 1)]
+    );
+    // Widows that fit no page still move the break of the first page up, as
+    // in the flow, but no later break.
+    let tall = [(0.0, 30.0), (30.0, 90.0), (90.0, 150.0)];
+    assert_eq!(
+        positioned_line_moves(&tall, 0.0, &pages, 1, 2),
+        vec![(1, 70.0, 1), (2, 40.0, 2)]
+    );
+    assert_eq!(
+        positioned_line_moves(&lines, 0.0, &pages, 1, 4),
+        vec![(3, 10.0, 1), (6, 10.0, 2)]
+    );
+    // A line taller than a page breaks the paragraph only where lines cross.
+    let taller = [(0.0, 30.0), (30.0, 150.0), (150.0, 180.0), (180.0, 210.0)];
+    assert_eq!(
+        positioned_line_moves(&taller, 0.0, &pages, 2, 2),
+        vec![(3, 20.0, 2)]
+    );
+    // A line that would run over a shorter page after it stays where it
+    // crosses, and the lines break only where they cross.
+    let shrinking = PageOrigins::new(&[100.0, 100.0, 40.0, 40.0], 100.0);
+    let sixty: Vec<(f32, f32)> = (0..4)
+        .map(|line| (line as f32 * 60.0, line as f32 * 60.0 + 60.0))
+        .collect();
+    assert_eq!(
+        positioned_line_moves(&sixty, 0.0, &shrinking, 1, 1),
+        vec![(1, 40.0, 1)]
+    );
     // A box without lines has nothing to move.
-    assert_eq!(positioned_line_moves(&[], 50.0, &pages), Vec::new());
+    assert_eq!(positioned_line_moves(&[], 50.0, &pages, 1, 1), Vec::new());
 }
 
 #[test]
