@@ -19859,8 +19859,14 @@ fn shift_columns_after_spanner(
             }
         }
     }
+    // The clip of a record that a column cuts is in the same space as the
+    // record, and moves with it.
     for record in moved {
-        document.fragment_tree.fragments[record].rect.y += delta;
+        let fragment = &mut document.fragment_tree.fragments[record];
+        fragment.rect.y += delta;
+        if let Some(clip) = &mut fragment.fragmentainer_clip {
+            clip.rect.y += delta;
+        }
     }
     for &later in &children[after..] {
         shift_block_sibling(document, later, delta);

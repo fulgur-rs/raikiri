@@ -45,18 +45,37 @@ fn lay_out(body: &str) -> DocumentLayout {
     result
 }
 
-/// Every word of `body` as `word@page:x,y`, the left and top of its glyphs on
-/// its page, sorted.
+/// Every word of `body` that the clips in effect leave visible, as
+/// `word@page:x,y`, the left and top of its glyphs on its page, sorted.
 fn words(body: &str) -> String {
     let result = lay_out(body);
     let mut words = Vec::new();
     for index in 0..result.page_count() {
         let page = result.page(index).expect("a page");
-        for run in page.text_runs() {
+        let runs = page.text_runs();
+        let mut clips = Vec::new();
+        for event in page.paint_order_for_text_runs(&runs) {
+            let line = match event {
+                PaintEvent::PushClip(clip, _) => {
+                    clips.push(clip.rect);
+                    continue;
+                }
+                PaintEvent::PopClip => {
+                    clips.pop();
+                    continue;
+                }
+                PaintEvent::TextLine(line) => line,
+                _ => continue,
+            };
+            let run = runs.iter().find(|run| run.line == line).expect("a run");
             let mut x = run.origin.0;
             let y = (run.origin.1 - ASCENT).round();
             for word in run.text.split(' ') {
-                if !word.trim().is_empty() {
+                let visible = clips.iter().all(|clip| {
+                    (clip.x..clip.x + clip.width).contains(&x)
+                        && (clip.y..clip.y + clip.height).contains(&y)
+                });
+                if visible && !word.trim().is_empty() {
                     words.push(format!("{}@{index}:{},{}", word.trim(), x.round(), y));
                 }
                 x += ADVANCE * (word.chars().count() + 1) as f32;
@@ -126,6 +145,13 @@ fn the_columns_after_a_spanner_follow_its_forced_break() {
             BREAK_BEFORE,
             "<div>C</div><div style='column-span:all'>T</div><div>D</div>",
             "A@0:0,0 S@0:0,10 R@1:0,0 C@1:0,10 T@1:0,20 D@1:0,30 X@1:0,40",
+        ),
+        // A paragraph that the columns split keeps the clips of its pieces
+        // with them.
+        (
+            BREAK_BEFORE,
+            "<div>C<br>D<br>E<br>F</div>",
+            "A@0:0,0 S@0:0,10 R@1:0,0 C@1:0,10 D@1:0,20 E@1:50,10 F@1:50,20 X@1:0,30",
         ),
         (
             BREAK_BEFORE,
