@@ -390,7 +390,7 @@ pub(super) struct PaginationState {
     /// Alignment room removed above the text of a cell that spans pages.
     fragmented_cell_shifts: HashMap<usize, f32>,
     /// The paragraphs placed with a single unplaced line after a block child
-    /// (see `unplaced_line_after_block`), for the break forced at the end of
+    /// (see [`super::unplaced_line_after_block`]), for the break forced at the end of
     /// that child to move the line.
     lines_after_blocks: HashMap<usize, LineAfterBlock>,
     /// Footnotes are collected in source order and stacked upward from the
@@ -407,7 +407,7 @@ pub(super) struct PaginationState {
 }
 
 /// A paragraph placed with a single unplaced line after a block child (see
-/// `PaginationState::break_before_line_after_forced_break`).
+/// [`PaginationState::break_before_line_after_forced_break`]).
 #[derive(Clone)]
 struct LineAfterBlock {
     /// The page the flow was on before the paragraph.
@@ -1593,7 +1593,7 @@ impl PaginationState {
     /// Moves the single unplaced line of a paragraph that follows the box
     /// that forced the pending break to the top of the page after the one
     /// the box ends on, and takes the break there, before the flow at `next`
-    /// (see `line_after_forced_break`): the line lies between that box and
+    /// (see [`super::line_after_forced_break`]): the line lies between that box and
     /// `next`, and no text candidate places it. The flow after the paragraph
     /// follows the line, as after a line of text that a forced break moves.
     /// A paragraph that keeps its height holds the moved line as overflow:
