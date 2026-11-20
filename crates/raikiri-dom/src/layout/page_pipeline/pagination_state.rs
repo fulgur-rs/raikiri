@@ -2525,10 +2525,18 @@ impl PaginationState {
         margin_top: f32,
     ) -> f32 {
         let cascade = env.cascade;
+        // An empty box whose margins collapse through it keeps those margins
+        // below the page top on its own.
         if document.nodes[node].used_writing_mode.is_vertical()
             || !matches!(
                 cascade.computed[node].clear,
                 raikiri_style::property::ClearValue::None
+            )
+            || super::collapses_through(
+                document,
+                cascade,
+                node,
+                document.nodes[node].layout.size.height,
             )
         {
             return margin_top;
