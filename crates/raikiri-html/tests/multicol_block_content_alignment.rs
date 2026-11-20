@@ -167,6 +167,17 @@ fn overflowing_columns_stay_at_the_start() {
         "<div id=d>a</div>",
     );
     assert_eq!(top(&between, "d"), 0.0);
+    // Balanced columns that size the container leave no room to move into,
+    // even with unsafe alignment.
+    let unsafe_end = columns("align-content:unsafe end", "<div id=d>a</div>");
+    assert_eq!(rects(&unsafe_end, "d"), vec![(0.0, 0.0, 50.0, 10.0)]);
+    let unsafe_center = columns("align-content:unsafe center", "<div id=d>a</div>");
+    assert_eq!(rects(&unsafe_center, "d"), vec![(0.0, 0.0, 50.0, 10.0)]);
+    let minimum = columns(
+        "min-height:30px;align-content:unsafe end",
+        "<div id=d>a</div>",
+    );
+    assert_eq!(top(&minimum, "d"), 20.0);
 }
 
 #[test]

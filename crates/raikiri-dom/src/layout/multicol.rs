@@ -580,12 +580,13 @@ pub(crate) fn compute_multicol_layout(
             && let Some(end) = column_content_extent(tree, index, records)
         {
             // Balanced columns are as tall as their content, so only a
-            // minimum height leaves room. Columns of a set height end where
+            // minimum height leaves room, and never less than none: the
+            // container grows to hold them. Columns of a set height end where
             // the border box of the lowest box in them ends, as in Chromium:
             // a trailing margin is left out, as the end of a column
             // truncates it.
             let free = if balances_height {
-                minimum - used_height
+                (minimum - used_height).max(0.0)
             } else {
                 output.size.height - block_end_inset - end
             };
