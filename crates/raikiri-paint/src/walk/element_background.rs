@@ -234,10 +234,10 @@ impl ElementBackgroundLayer<'_> {
 
     /// What the layer paints, or `None` when it paints nothing.
     fn visible(&self) -> Option<Visible> {
-        let url = match self.image {
-            BackgroundImage::Url(raw_url) => self.image_cache.resolve_url(raw_url),
-            _ => None,
-        };
+        let url = self
+            .image
+            .url()
+            .and_then(|raw_url| self.image_cache.resolve_url(raw_url));
         let color = if self.image_color_fallback {
             background_color_with_image_source(
                 self.bg,
@@ -505,7 +505,7 @@ impl ElementBackgroundLayer<'_> {
             paint_background_from_source(
                 self.image_cache,
                 scene,
-                url,
+                (url, self.image.density()),
                 areas.positioning,
                 self.image_slice
                     .map_or(painting, |slice| painting.intersect(slice)),

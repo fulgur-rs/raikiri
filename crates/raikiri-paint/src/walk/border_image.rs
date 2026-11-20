@@ -84,7 +84,12 @@ impl<'a> BorderImage<'a> {
         warnings: &mut Vec<RenderWarning>,
     ) -> bool {
         match &self.image.source {
-            BackgroundImage::Url(raw_url) => self.paint_url(scene, raw_url, pixel_source, warnings),
+            // Chromium slices an image an `image-set()` option wrote for
+            // another density in its own pixels, as if it were `1x`: the
+            // density changes neither the slices nor an `auto` width.
+            BackgroundImage::Url(raw_url) | BackgroundImage::DensityUrl { url: raw_url, .. } => {
+                self.paint_url(scene, raw_url, pixel_source, warnings)
+            }
             BackgroundImage::Gradient(gradient) => self.paint_gradient(scene, gradient),
             _ => false,
         }

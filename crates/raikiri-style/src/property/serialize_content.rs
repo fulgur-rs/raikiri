@@ -8,7 +8,7 @@ use cssparser::{Parser, ParserInput, serialize_identifier, serialize_string};
 
 use super::css_component_values_are_bounded;
 use super::parse::parse_content_with_alt;
-use super::types::{ContentComponent, CounterStyle};
+use super::types::{ContentComponent, CounterStyle, ImageDensity};
 
 /// Serializes `raw_value` for `content`, or `None` for other properties and
 /// for values holding a component this function does not spell (callers
@@ -56,6 +56,20 @@ pub(super) fn push_url(out: &mut String, url: &str) {
     out.push(')');
 }
 
+/// A URL image, written as `image-set()` when its option was written for a
+/// density other than `1x`, the form browsers keep (CSS Images 4 §2.4).
+pub(super) fn push_image_url(out: &mut String, url: &str, density: ImageDensity) {
+    if density == ImageDensity::ONE {
+        push_url(out, url);
+        return;
+    }
+    out.push_str("image-set(");
+    push_url(out, url);
+    out.push(' ');
+    out.push_str(&super::serialize::serialize_number(density.dppx()));
+    out.push_str("x)");
+}
+
 fn serialize_component(item: &ContentComponent) -> Option<String> {
     let mut out = String::new();
     // Writing into a `String` cannot fail.
@@ -63,7 +77,7 @@ fn serialize_component(item: &ContentComponent) -> Option<String> {
         ContentComponent::Literal(text) => {
             let _ = serialize_string(text, &mut out);
         }
-        ContentComponent::Image { url } => push_url(&mut out, url),
+        ContentComponent::Image { url, density } => push_image_url(&mut out, url, *density),
         ContentComponent::Quote(keyword) => out.push_str(keyword.as_css_str()),
         ContentComponent::Contents => out.push_str("contents"),
         ContentComponent::Counter { name, style } => {

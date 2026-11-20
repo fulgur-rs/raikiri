@@ -180,12 +180,20 @@ fn content_bridge_maps_before_after_first_letter_verbatim() {
 
 #[test]
 fn image_bridge_parses_url() {
+    let density = ImageDensity::new(2.0).expect("a density above zero");
     let cc = ContentComponent::Image {
         url: String::from("https://example.com/logo.png"),
+        density,
     };
     let cvi = ContentValueItem::try_from(cc).expect("valid URL");
     let expected_url = Url::parse("https://example.com/logo.png").expect("URL literal parses");
-    assert_eq!(cvi, ContentValueItem::Image { url: expected_url });
+    assert_eq!(
+        cvi,
+        ContentValueItem::Image {
+            url: expected_url,
+            density
+        }
+    );
 }
 
 #[test]
@@ -237,6 +245,7 @@ fn image_bridge_returns_invalid_url_error() {
     // (same pattern as sibling target_counter_bridge_returns_invalid_url_error).
     let cc = ContentComponent::Image {
         url: String::from("not a url"),
+        density: ImageDensity::ONE,
     };
     let err = ContentValueItem::try_from(cc).expect_err("relative URL fails without base");
     assert!(matches!(err, ContentValueConvertError::InvalidUrl(_)));

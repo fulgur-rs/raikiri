@@ -143,6 +143,39 @@ fn list_style_image_parses_none_and_url() {
 }
 
 #[test]
+fn list_style_image_takes_an_image_set_url_with_its_density() {
+    assert_eq!(
+        parse_entire(
+            "image-set(url(a.png) 1x, url(b.png) 2x)",
+            "list-style-image"
+        ),
+        Some(PropertyValue::ListStyleImage(BackgroundImage::Url(
+            "a.png".into()
+        )))
+    );
+    assert_eq!(
+        parse_entire("-webkit-image-set('b.png' 2x)", "list-style-image"),
+        Some(PropertyValue::ListStyleImage(BackgroundImage::DensityUrl {
+            url: "b.png".into(),
+            density: ImageDensity::new(2.0).unwrap(),
+        }))
+    );
+    // An image-set() whose chosen option is a gradient, or that has no
+    // option it can choose, is not an image a marker can show.
+    assert_eq!(
+        parse_entire(
+            "image-set(linear-gradient(red, blue) 1x)",
+            "list-style-image"
+        ),
+        None
+    );
+    assert_eq!(
+        parse_entire("image-set(url(a.png) 0x)", "list-style-image"),
+        Some(PropertyValue::ListStyleImage(BackgroundImage::None))
+    );
+}
+
+#[test]
 fn list_style_type_rejects_reserved_or_trailing_values() {
     assert_eq!(parse_entire("default", "list-style-type"), None);
     assert_eq!(parse_entire("disc none", "list-style-type"), None);
