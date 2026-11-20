@@ -319,7 +319,8 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
             "{css}"
         );
     }
-    // Nor can one that lays out a box of its own among the lines.
+    // Nor can one that lays out a box of its own among the lines that would
+    // not follow them: an absolutely positioned box that both insets place.
     assert_eq!(
         heading_then(60, |doc, body| {
             let mixed = paragraph(doc, body, "", 3);
@@ -327,6 +328,11 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
                 Some(mixed),
                 "span",
                 Some("display:inline-block;width:10px;height:10px"),
+            );
+            doc.append_element(
+                Some(mixed),
+                "span",
+                Some("position:absolute;top:0;bottom:0;width:10px"),
             );
             mixed
         }),

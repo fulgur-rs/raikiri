@@ -18,8 +18,8 @@ use crate::{
     StandaloneText, TextShadow,
 };
 use raikiri_style::property::{
-    BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
-    CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
+    BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
+    FontFamilyName, ImageDensity, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
     StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
     ZIndexValue,
 };
@@ -109,6 +109,8 @@ impl MarginBoxBorder {
 pub struct MarginBoxBackgroundImage {
     /// Authored `url()` value.
     pub url: String,
+    /// The density the image was written for by its `image-set()` option.
+    pub density: ImageDensity,
     /// Used `background-size`.
     pub size: ComputedBackgroundSize,
     /// Used `background-position`.
@@ -130,11 +132,10 @@ fn margin_box_background_layers(style: &ComputedValues) -> Vec<MarginBoxBackgrou
         .iter()
         .take(MAX_PAINTED_BACKGROUND_LAYERS)
         .filter_map(|layer| {
-            let BackgroundImage::Url(url) = &layer.image else {
-                return None;
-            };
+            let url = layer.image.url()?;
             Some(MarginBoxBackgroundImage {
                 url: url.to_string(),
+                density: layer.image.density(),
                 size: layer.size.clone(),
                 position: layer.position,
                 repeat: layer.repeat,
@@ -1114,8 +1115,9 @@ struct ResolvedContent {
     /// The placeholders of values not known yet, as ranges of `text`.
     deferred: Vec<(Range<usize>, CounterStyle)>,
     /// The images of the content in order, with the byte offset of `text` each
-    /// one is inserted at.
-    images: Vec<(usize, String)>,
+    /// one is inserted at and the density its `image-set()` option was
+    /// written for.
+    images: Vec<(usize, String, ImageDensity)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1197,10 +1199,10 @@ fn resolved_margin_content(
                 text.push_str(quote_depth.apply(*keyword, quotes, quotes_auto));
             }
             // An image goes in the line of the text where it is listed.
-            ContentComponent::Image { url }
+            ContentComponent::Image { url, density }
                 if images.len() < crate::generated_content::MAX_GENERATED_IMAGES =>
             {
-                images.push((text.len(), url.clone()));
+                images.push((text.len(), url.clone(), *density));
             }
             // Attributes and target-dependent content need a document-wide
             // generated-content pass. They remain absent rather than leaking
@@ -1223,7 +1225,11 @@ fn margin_box_content(
     style: &ComputedValues,
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
-) -> (String, Vec<DeferredSlot>, Vec<(usize, String)>) {
+) -> (
+    String,
+    Vec<DeferredSlot>,
+    Vec<(usize, String, ImageDensity)>,
+) {
     let ResolvedContent {
         text,
         deferred,
@@ -1336,8 +1342,8 @@ fn margin_box_spec(
     // nothing (CSS Content 3 §2.2).
     let (image_urls, images): (Vec<_>, Vec<_>) = content_images
         .into_iter()
-        .filter_map(|(offset, url)| {
-            let size = document.margin_box_image_size(&url)?;
+        .filter_map(|(offset, url, density)| {
+            let size = document.margin_box_image_size_at(&url, density)?;
             Some((
                 url,
                 StandaloneImage {
@@ -1641,7 +1647,7 @@ pub fn margin_box_content_image_urls(rules: &[PageMarginBoxCascadeResult]) -> Ve
             components
                 .iter()
                 .filter_map(|component| match component {
-                    ContentComponent::Image { url } => Some(url.clone()),
+                    ContentComponent::Image { url, .. } => Some(url.clone()),
                     _ => None,
                 })
                 .take(crate::generated_content::MAX_GENERATED_IMAGES),
@@ -1699,20 +1705,14 @@ impl Document {
         base_url: Option<&url::Url>,
     ) {
         for raw in urls {
-            let size = crate::image_url::authored_image_url(raw, base_url)
+            let intrinsic = crate::image_url::authored_image_url(raw, base_url)
                 .and_then(|url| source.intrinsic_size(&url))
-                .map(|intrinsic| crate::document::content_image_size(intrinsic, None))
-                .filter(|size| {
-                    size.width.is_finite()
-                        && size.height.is_finite()
-                        && size.width > 0.0
-                        && size.height > 0.0
-                });
+                .filter(|intrinsic| margin_box_image_size(*intrinsic).is_some());
             // The latest source decides: an image that was loaded before and
             // is gone now represents nothing.
-            match size {
-                Some(size) => {
-                    self.margin_box_images.insert(raw.clone(), size);
+            match intrinsic {
+                Some(intrinsic) => {
+                    self.margin_box_images.insert(raw.clone(), intrinsic);
                 }
                 None => {
                     self.margin_box_images.remove(raw);
@@ -1725,8 +1725,30 @@ impl Document {
     /// `content`, from [`Self::prepare_margin_box_images`]. `None` for an
     /// image that could not be loaded, which represents nothing.
     pub fn margin_box_image_size(&self, url: &str) -> Option<raikiri_traits::ImageRasterSize> {
-        self.margin_box_images.get(url).copied()
+        self.margin_box_image_size_at(url, ImageDensity::ONE)
     }
+
+    /// [`Self::margin_box_image_size`] of an image an `image-set()` option
+    /// wrote for `density`: its natural dimensions are divided by the density
+    /// before a missing one falls back to the default object size.
+    fn margin_box_image_size_at(
+        &self,
+        url: &str,
+        density: ImageDensity,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        let intrinsic = self.margin_box_images.get(url)?;
+        margin_box_image_size(intrinsic.at_density(density))
+    }
+}
+
+/// The size a margin box gives an image of natural dimensions `intrinsic`,
+/// or `None` when it has no area, as an image that represents nothing.
+fn margin_box_image_size(
+    intrinsic: raikiri_traits::ImageIntrinsicSize,
+) -> Option<raikiri_traits::ImageRasterSize> {
+    Some(crate::document::content_image_size(intrinsic, None)).filter(|size| {
+        size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0
+    })
 }
 
 fn margin_box_text_width(

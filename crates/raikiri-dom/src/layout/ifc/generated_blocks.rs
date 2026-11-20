@@ -111,6 +111,10 @@ pub(crate) struct GeneratedBlock {
     /// content of the paragraph; `None` for one of a descendant, which can
     /// sit anywhere among it.
     pub(crate) of_root: Option<raikiri_style::PseudoElem>,
+    /// The box has content set in the paragraph's lines and on its axes,
+    /// which is measured apart for the paragraph's intrinsic widths (see
+    /// [`super::projection::BlockIntrinsics`]).
+    pub(crate) content_apart: bool,
 }
 
 /// `sides` on the axes of a vertical root: `top` and `bottom` become the
@@ -180,6 +184,7 @@ impl GeneratedBlock {
             break_after: cv.break_after,
             on_root_axes: false,
             of_root: None,
+            content_apart: false,
         }
     }
 
@@ -543,6 +548,36 @@ impl GeneratedBlock {
             .unwrap_or_else(|| self.clamp_width(0.0, None, &edges));
         let margins = self.margins(0.0);
         (content + edges.left + edges.right + margins.left + margins.right).max(0.0)
+    }
+
+    /// The margin-box min- and max-content widths the box adds to its
+    /// paragraph when its own lines are `content` min- and max-content wide
+    /// (CSS Sizing 3 §5.1): its definite width, or for an `auto` width those
+    /// of its content, which a size-contained box does not have (CSS
+    /// Containment 2 §3.1), clamped by its minimum and maximum widths; with
+    /// its edges and margins. Percentages count as zero, as for
+    /// [`Self::intrinsic_width`].
+    pub(crate) fn intrinsic_widths(&self, (min, max): (f32, f32)) -> (f32, f32) {
+        let edges = self.edges(0.0);
+        let margins = self.margins(0.0);
+        let outer = edges.left + edges.right + margins.left + margins.right;
+        let width = |content: f32| {
+            let content = self.auto_size(self.contained.0, self.contain_intrinsic.0, content);
+            let content = self
+                .content_width(None, &edges)
+                .unwrap_or_else(|| self.clamp_width(content, None, &edges));
+            (content + outer).max(0.0)
+        };
+        (width(min), width(max))
+    }
+
+    /// The options the box's own lines are measured with for its intrinsic
+    /// widths: a percentage in `text-indent` counts as zero, as it has no
+    /// width to resolve against.
+    pub(crate) fn intrinsic_line_options(&self) -> LineOptions {
+        let (mut options, indent) = self.own_lines;
+        options.text_indent.length = super::flow::resolve_indent(indent, 0.0);
+        options
     }
 }
 
