@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
-    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+    AvailableSpace, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId, RequestedAxis,
+    RunMode, SizingMode,
 };
 use crate::layout::style_views::ReadRole;
 use crate::node::FormattingContext;
@@ -1225,6 +1226,39 @@ fn column_child_input(
             height: available_height,
         },
         vertical_margins_are_collapsible: Line::FALSE,
+    }
+}
+
+/// `input` for a child of a column container whose margins collapse with
+/// the margins of its own children (CSS 2, 8.3.1): the column container
+/// holds them, not the child.
+fn collapsing_through(input: LayoutInput) -> LayoutInput {
+    LayoutInput {
+        vertical_margins_are_collapsible: Line::TRUE,
+        ..input
+    }
+}
+
+/// The block-start and block-end margins of a child of a column container
+/// laid out with [`collapsing_through`]: its own margins collapsed with the
+/// ones of its children that adjoin them. The margins of a box with no block
+/// size collapse into one: its own block-start margin stays above it, and
+/// the rest of that margin counts below it.
+fn collapsed_margins(output: &LayoutOutput, layout: &BoxLayout) -> (f32, f32) {
+    let (own_top, own_bottom) = (layout.margin.top, layout.margin.bottom);
+    let top = output.top_margin.collapse_with_margin(own_top);
+    let bottom = output.bottom_margin.collapse_with_margin(own_bottom);
+    if !output.margins_can_collapse_through {
+        return (top.resolve(), bottom.resolve());
+    }
+    let total = top.collapse_with_set(bottom).resolve();
+    let own = CollapsibleMarginSet::from_margin(own_top)
+        .collapse_with_margin(own_bottom)
+        .resolve();
+    if total == own {
+        (own_top, own_bottom)
+    } else {
+        (own_top, total - own_top)
     }
 }
 
@@ -3448,13 +3482,13 @@ fn layout_column_group(
         let mut stacked_children = Vec::new();
         measured_beside = vec![false; children.len()];
         for (local_order, &child) in children.iter().enumerate() {
-            let child_inputs = column_child_layout_input(
+            let child_inputs = collapsing_through(column_child_layout_input(
                 tree,
                 child,
                 context.column_width,
                 context.available_height,
                 AvailableSpace::MaxContent,
-            );
+            ));
             // A direct text child is measured again against the column
             // width instead of reusing a size cached for another width.
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
@@ -3462,8 +3496,7 @@ fn layout_column_group(
             }
             let mut output = tree.compute_child_layout(NodeId::from(child), child_inputs);
             let layout = column_child_layout(tree, child, context.column_width);
-            let margin_top = layout.margin.top;
-            let margin_bottom = layout.margin.bottom;
+            let (margin_top, margin_bottom) = collapsed_margins(&output, &layout);
             let mut needed = margin_top + output.size.height + margin_bottom;
             if let Some(float) =
                 ColumnFloat::of(tree, child, context.column_width, output.size.width)
@@ -3732,13 +3765,13 @@ fn layout_column_group(
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
                     None => AvailableSpace::MaxContent,
                 };
-                let child_inputs = column_child_layout_input(
+                let child_inputs = collapsing_through(column_child_layout_input(
                     tree,
                     child,
                     context.column_width,
                     context.available_height,
                     child_height,
-                );
+                ));
 
                 // A direct text child is measured again against the column
                 // width instead of reusing a size cached for another width.
@@ -3751,8 +3784,7 @@ fn layout_column_group(
                 }
                 refresh_nested_text_fragments(tree, child, context);
                 let layout = column_child_layout(tree, child, context.column_width);
-                let margin_top = layout.margin.top;
-                let margin_bottom = layout.margin.bottom;
+                let (margin_top, margin_bottom) = collapsed_margins(&output, &layout);
                 let needed = margin_top + output.size.height + margin_bottom;
                 (output, layout, margin_top, margin_bottom, needed)
             };
@@ -4510,7 +4542,6 @@ fn collapsed_stream(
     measurements: &[(usize, LayoutOutput, BoxLayout, f32, f32, f32)],
     total: f32,
 ) -> f32 {
-    use crate::layout::protocol::CollapsibleMarginSet;
     if measurements
         .iter()
         .any(|&(child, ..)| is_floated(tree, child))
