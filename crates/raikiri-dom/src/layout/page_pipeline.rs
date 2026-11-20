@@ -5850,8 +5850,9 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
     let &(last, last_group) = rows.last()?;
     // A caption below the rows is the last part, unless a break it may not
     // take ties it to the last row: then it goes with the rows tied to that
-    // row.
-    if let Some(caption) = bottom_caption(document, table, last).filter(|_| !table_avoids_inside) {
+    // row. A table that avoids breaks inside it ties them too, unless a break
+    // is forced there.
+    if let Some(caption) = bottom_caption(document, table, last) {
         let edges = [(caption, true), (last, false)]
             .into_iter()
             .chain(last_group.map(|group| (group, false)));
@@ -5862,7 +5863,7 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
                 avoided || own_avoided,
             )
         });
-        if forced || !avoided {
+        if forced || !(avoided || table_avoids_inside) {
             return Some(caption);
         }
     }

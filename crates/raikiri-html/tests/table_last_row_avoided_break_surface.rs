@@ -596,3 +596,32 @@ fn a_break_forced_after_a_caption_below_the_rows_keeps_the_table_on_its_page() {
         [(0, 'C', 70), (0, 'L', 50), (0, 'S', 0), (1, 'Z', 0)]
     );
 }
+
+#[test]
+fn a_break_forced_at_a_caption_below_the_rows_of_a_table_that_avoids_breaks_inside_it_counts() {
+    // A break forced before the caption or after the last row.
+    for caption in [
+        r#"<caption style="caption-side:bottom;break-before:page">C</caption><tr><td>L</td></tr>"#,
+        r#"<caption style="caption-side:bottom">C</caption><tr style="break-after:page"><td>L</td></tr>"#,
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:50px">S</div><table style="break-inside:avoid">{caption}</table><div style="break-before:avoid">Z</div>"#
+            )),
+            [(0, 'L', 50), (0, 'S', 0), (1, 'C', 0), (1, 'Z', 20)]
+        );
+    }
+    // The rows before the caption stay too.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><table style="break-inside:avoid"><caption style="caption-side:bottom;break-before:page">C</caption><tr><td>K</td></tr><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'K', 30),
+            (0, 'L', 50),
+            (0, 'S', 0),
+            (1, 'C', 0),
+            (1, 'Z', 20)
+        ]
+    );
+}
