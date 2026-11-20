@@ -136,6 +136,36 @@ fn a_definite_or_minimum_width_counts_for_intrinsic_widths() {
 }
 
 #[test]
+fn the_content_widths_count_through_the_box_sizing() {
+    // A definite width replaces them; an auto one is clamped.
+    assert_eq!(
+        block("width: 40px").intrinsic_widths((20.0, 80.0)),
+        (40.0, 40.0)
+    );
+    assert_eq!(
+        block("max-width: 30px; padding-left: 10px").intrinsic_widths((20.0, 80.0)),
+        (30.0, 40.0)
+    );
+    assert_eq!(
+        block("min-width: 50px").intrinsic_widths((20.0, 80.0)),
+        (50.0, 80.0)
+    );
+    assert_eq!(
+        block("padding: 0 5px; margin-left: 3px").intrinsic_widths((20.0, 50.0)),
+        (33.0, 63.0)
+    );
+    // A size-contained box has no content along its width.
+    assert_eq!(
+        block("contain: inline-size").intrinsic_widths((20.0, 80.0)),
+        (0.0, 0.0)
+    );
+    assert_eq!(
+        block("contain: inline-size; contain-intrinsic-width: 30px").intrinsic_widths((20.0, 80.0)),
+        (30.0, 30.0)
+    );
+}
+
+#[test]
 fn a_clamped_auto_width_is_placed_as_a_definite_one() {
     assert_eq!(
         insets("max-width: 40px; margin: 0 auto", false),

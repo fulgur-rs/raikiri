@@ -61,6 +61,38 @@ pub(crate) struct Projected<P> {
     pub(crate) paragraph: P,
     /// Everything of the projection besides the paragraph.
     pub(crate) meta: ProjectedMeta,
+    /// The paragraphs its intrinsic widths are measured from when block-level
+    /// `::before` or `::after` boxes break its lines: see
+    /// [`BlockIntrinsics`].
+    pub(crate) block_intrinsics: Option<Box<BlockIntrinsics<P>>>,
+}
+
+/// The paragraphs a paragraph with block-level `::before` and `::after`
+/// boxes is measured from. Such a box is a block between the lines, whose
+/// content is laid out in the paragraph's lines between its tokens but sized
+/// by the box itself: its width, its minimum and maximum widths, and its
+/// edges decide what the box adds to the intrinsic widths of the paragraph
+/// (CSS Sizing 3 §5.1), as for any block child. So the box's content is
+/// measured as a paragraph of its own, and the rest of the paragraph without
+/// it.
+#[derive(Debug)]
+pub(crate) struct BlockIntrinsics<P> {
+    /// The paragraph with only the tokens of the boxes in `contents`.
+    pub(crate) paragraph: P,
+    /// The content of each box.
+    pub(crate) contents: Vec<BlockContent<P>>,
+}
+
+/// A block-level pseudo-element's content measured apart from the paragraph
+/// (see [`BlockIntrinsics`]).
+#[derive(Debug)]
+pub(crate) struct BlockContent<P> {
+    /// The id of the box's start token.
+    pub(crate) start: u64,
+    /// The content as a paragraph of its own.
+    pub(crate) paragraph: P,
+    /// The content holds an image, which breaks are found around.
+    has_images: bool,
 }
 
 /// A built paragraph together with the block's line options.
@@ -307,6 +339,10 @@ struct GeneratedImages {
     percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// The root's `direction` is `rtl`.
     rtl: bool,
+    /// With the limits of the root's paragraph, the contents of its
+    /// block-level pseudo-elements, which are left out of the paragraph and
+    /// measured apart; `None` when the content stays in the paragraph.
+    block_contents: Option<(Limits, Vec<BlockContent<ParagraphBuilder>>)>,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -518,6 +554,45 @@ fn push_generated(
     if let Some(block) = &block {
         builder.push_block_in_inline(NodeId(block.start));
         images.blocks.push(block.clone());
+    }
+    // A box whose content is measured apart keeps only its tokens here.
+    if let Some(block) = &block
+        && !orthogonal
+        && let Some((limits, contents)) = images.block_contents.as_mut()
+    {
+        let paragraph_style = style::paragraph_style(cv, element, inline_style.clone())?;
+        let mut paragraph = ParagraphBuilder::new(&paragraph_style, limits);
+        let mut has_images = false;
+        for piece in &pieces {
+            match piece {
+                GeneratedPiece::Text(text) => {
+                    paragraph.push_text(TextSource::Generated { node: id }, text);
+                }
+                GeneratedPiece::Image(image) => {
+                    has_images = true;
+                    paragraph.push_atomic(
+                        NodeId(*image as u64),
+                        &inline_style,
+                        InlineEdges::default(),
+                    );
+                }
+            }
+        }
+        // A limit the content exceeds is reported when it is built.
+        contents.push(BlockContent {
+            start: block.start,
+            paragraph,
+            has_images,
+        });
+        // The box's content would have held the first letter.
+        if !empty {
+            first_letter.stop();
+        }
+        builder.push_block_in_inline(NodeId(block.end));
+        return match builder.error() {
+            Some(error) => Err(IfcError::Limit(error)),
+            None => Ok(()),
+        };
     }
     if empty && atomic {
         // An atomic box without content is still a box: an empty atomic
@@ -777,9 +852,42 @@ impl ProjectedBuilder {
                 .with_line_break_override(super::atomic_breaks::around_atomics);
         }
         let paragraph = self.paragraph.build(cx, fonts).map_err(IfcError::Limit)?;
+        let block_intrinsics = match self.block_intrinsics {
+            Some(apart) => {
+                let BlockIntrinsics {
+                    mut paragraph,
+                    contents,
+                } = *apart;
+                if has_atomic && !has_out_of_flow {
+                    paragraph.with_line_break_override(super::atomic_breaks::around_atomics);
+                }
+                let contents = contents
+                    .into_iter()
+                    .map(|mut content| {
+                        if content.has_images {
+                            content
+                                .paragraph
+                                .with_line_break_override(super::atomic_breaks::around_atomics);
+                        }
+                        Ok(BlockContent {
+                            start: content.start,
+                            paragraph: content.paragraph.build(cx, fonts)?,
+                            has_images: content.has_images,
+                        })
+                    })
+                    .collect::<Result<_, _>>()
+                    .map_err(IfcError::Limit)?;
+                Some(Box::new(BlockIntrinsics {
+                    paragraph: paragraph.build(cx, fonts).map_err(IfcError::Limit)?,
+                    contents,
+                }))
+            }
+            None => None,
+        };
         Ok(Projected {
             paragraph,
             meta: self.meta,
+            block_intrinsics,
         })
     }
 }
@@ -951,6 +1059,7 @@ pub(crate) fn project_ifc_text_run_builder(
             first_line_opacity: None,
             first_line_styles: FirstLineStyles::none(),
         },
+        block_intrinsics: None,
     })
 }
 
@@ -1010,6 +1119,10 @@ pub(crate) fn project_anonymous_cell_builder(
     project_children_builder(doc, cascade, owner, Some(children), fonts, limits, counters)
 }
 
+/// Project `root`'s content (see [`project_children_builder_as`]); a
+/// horizontal paragraph with block-level `::before` or `::after` boxes is
+/// projected once more with their content apart, for its intrinsic widths
+/// (see [`BlockIntrinsics`]).
 #[allow(clippy::too_many_arguments)]
 fn project_children_builder(
     doc: &Document,
@@ -1020,6 +1133,47 @@ fn project_children_builder(
     limits: &Limits,
     counters: &GeneratedCounters,
 ) -> Result<ProjectedBuilder, IfcError> {
+    let project = |blocks_apart| {
+        project_children_builder_as(
+            doc,
+            cascade,
+            root,
+            anonymous_children,
+            fonts,
+            limits,
+            counters,
+            blocks_apart,
+        )
+    };
+    let (mut projected, _) = project(false)?;
+    if projected.meta.writing_mode == WritingMode::HorizontalTb
+        && !projected.meta.generated_blocks.is_empty()
+    {
+        let (apart, contents) = project(true)?;
+        if !contents.is_empty() {
+            projected.block_intrinsics = Some(Box::new(BlockIntrinsics {
+                paragraph: apart.paragraph,
+                contents,
+            }));
+        }
+    }
+    Ok(projected)
+}
+
+/// Project `root`'s content. With `blocks_apart`, the content of its
+/// block-level `::before` and `::after` boxes is left out of the paragraph and
+/// kept in [`Projected::block_intrinsics`] with that paragraph.
+#[allow(clippy::too_many_arguments)]
+fn project_children_builder_as(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    anonymous_children: Option<&[crate::layout::table::anonymous::Content]>,
+    fonts: &FontCollection,
+    limits: &Limits,
+    counters: &GeneratedCounters,
+    blocks_apart: bool,
+) -> Result<(ProjectedBuilder, Vec<BlockContent<ParagraphBuilder>>), IfcError> {
     let root_node = doc.get_node(root).ok_or(IfcError::InvalidNode(root))?;
     let root_cv = cascade
         .computed
@@ -1071,6 +1225,7 @@ fn project_children_builder(
         boxes: Vec::new(),
         percent_insets: Vec::new(),
         rtl: root_cv.direction == Direction::Rtl,
+        block_contents: blocks_apart.then(|| (limits.clone(), Vec::new())),
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1591,51 +1746,60 @@ fn project_children_builder(
             .into_iter()
             .find(|&pseudo| block.start == generated_node_id(root, pseudo) as u64);
     }
-    Ok(Projected {
-        paragraph: builder,
-        meta: ProjectedMeta {
-            ruby_containers: ruby_containers.into_shared(),
-            writing_mode,
-            options,
-            indent,
-            boxes,
-            marker_atomic,
-            outside_marker_height: super::outside_marker::height(doc, cascade, root),
-            generated_atomics: generated_images.atomics,
-            generated_blocks: generated_images.blocks,
-            generated_boxes: generated_images.boxes,
-            rtl: root_cv.direction == Direction::Rtl,
-            percent_insets: {
-                // The generated boxes' offsets follow the elements'.
-                let first = offsets.len();
-                percent_insets.extend(
-                    generated_images
-                        .percent_insets
-                        .into_iter()
-                        .map(|(index, insets)| (first + index, insets)),
-                );
-                percent_insets
+    let contents = generated_images
+        .block_contents
+        .take()
+        .map(|(_, contents)| contents)
+        .unwrap_or_default();
+    Ok((
+        Projected {
+            paragraph: builder,
+            meta: ProjectedMeta {
+                ruby_containers: ruby_containers.into_shared(),
+                writing_mode,
+                options,
+                indent,
+                boxes,
+                marker_atomic,
+                outside_marker_height: super::outside_marker::height(doc, cascade, root),
+                generated_atomics: generated_images.atomics,
+                generated_blocks: generated_images.blocks,
+                generated_boxes: generated_images.boxes,
+                rtl: root_cv.direction == Direction::Rtl,
+                percent_insets: {
+                    // The generated boxes' offsets follow the elements'.
+                    let first = offsets.len();
+                    percent_insets.extend(
+                        generated_images
+                            .percent_insets
+                            .into_iter()
+                            .map(|(index, insets)| (first + index, insets)),
+                    );
+                    percent_insets
+                },
+                offsets: {
+                    offsets.extend(generated_images.offsets);
+                    offsets
+                },
+                cleared_breaks,
+                run_tail: Vec::new(),
+                fixed: anonymous_children.is_none()
+                    && super::super::fixed::is_page_fixed(doc, cascade, root),
+                ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
+                nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                text_nowrap: Arc::new(text_nowrap),
+                letter_styles: first_letter.styles,
+                first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
+                first_line_styles: first_letter
+                    .first_line
+                    .map_or_else(FirstLineStyles::none, |first_line| {
+                        Arc::new(first_line.into_styles())
+                    }),
             },
-            offsets: {
-                offsets.extend(generated_images.offsets);
-                offsets
-            },
-            cleared_breaks,
-            run_tail: Vec::new(),
-            fixed: anonymous_children.is_none()
-                && super::super::fixed::is_page_fixed(doc, cascade, root),
-            ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
-            nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-            text_nowrap: Arc::new(text_nowrap),
-            letter_styles: first_letter.styles,
-            first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
-            first_line_styles: first_letter
-                .first_line
-                .map_or_else(FirstLineStyles::none, |first_line| {
-                    Arc::new(first_line.into_styles())
-                }),
+            block_intrinsics: None,
         },
-    })
+        contents,
+    ))
 }
 
 /// The product of the opacities below one of the `::first-line` boxes
