@@ -154,6 +154,8 @@ fn invalid_descriptors_drop_their_candidate() {
         ("b.png 2x 40h", None),
         ("b.png 2x 2x", None),
         ("b.png 0w", None),
+        ("b.png 1.5w", None),
+        ("b.png w", None),
         ("b.png 2x 160w", None),
         ("b.png 160w 2x", None),
         ("b.png 160w 80h 80h", None),
@@ -170,10 +172,13 @@ fn invalid_descriptors_drop_their_candidate() {
         assert_eq!(chosen(&[], &[("srcset", srcset)]), expected, "{srcset}");
     }
     // A src stands in when every candidate is dropped.
-    assert_eq!(
-        chosen(&[], &[("src", "a.png"), ("srcset", "b.png 2x 3x")]),
-        shows("a.png", 1.0)
-    );
+    for srcset in ["b.png 2x 3x", "b.png 1.5w", "b.png w"] {
+        assert_eq!(
+            chosen(&[], &[("src", "a.png"), ("srcset", srcset)]),
+            shows("a.png", 1.0),
+            "{srcset}"
+        );
+    }
 }
 
 #[test]

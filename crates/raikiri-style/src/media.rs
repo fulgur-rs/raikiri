@@ -409,6 +409,7 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
 /// none.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#matches-the-environment>
+#[doc(hidden)]
 pub fn media_list_matches(source: &str, context: &MediaContext) -> bool {
     source.trim_ascii().is_empty()
         || parse_media_prelude(source).is_some_and(|condition| condition.matches(context))
@@ -424,6 +425,7 @@ pub fn media_list_matches(source: &str, context: &MediaContext) -> bool {
 /// `context`.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/images.html#parse-a-sizes-attribute>
+#[doc(hidden)]
 pub fn source_size(source: &str, context: &MediaContext) -> f32 {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
