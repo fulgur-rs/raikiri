@@ -8863,3 +8863,20 @@ fn a_formatting_context_box_in_definite_height_columns_paints_its_text_in_its_co
         assert_eq!(pixel(5, 25), [255, 255, 255], "{display}");
     }
 }
+
+#[test]
+fn an_image_set_background_infers_its_color_from_the_chosen_url() {
+    let image = BackgroundImage::DensityUrl {
+        url: "blue.png".into(),
+        density: ImageDensity::new(2.0).unwrap(),
+    };
+    assert_eq!(
+        effective_background_color(CssColor::TRANSPARENT, &image, CssColor::BLACK),
+        Some(CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        })
+    );
+}

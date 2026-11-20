@@ -32,6 +32,13 @@ impl ReplacedResolver for Pixels {
 }
 
 fn raster(body: &str) -> Vec<u8> {
+    raster_with(body, "url(marker.png)", true)
+}
+
+/// Rasters `body` with `marker` as the list items' `list-style-image`. Without
+/// `resolve_sizes`, layout gives the marker images no size, so paint takes
+/// their natural size from the decoded pixels.
+fn raster_with(body: &str, marker: &str, resolve_sizes: bool) -> Vec<u8> {
     let pixels = Pixels;
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
@@ -43,10 +50,14 @@ fn raster(body: &str) -> Vec<u8> {
     let resources = RenderResources::new()
         .fonts(fonts)
         .base_url(url::Url::parse("https://images.test/document.html").unwrap())
-        .replaced_resolver(&pixels)
         .image_pixel_source(&pixels);
+    let resources = if resolve_sizes {
+        resources.replaced_resolver(&pixels)
+    } else {
+        resources
+    };
     let html = format!(
-        "<!doctype html><style>@page{{size:200px 200px;margin:0}}body{{margin:0;background:white}}body{{font:20px/20px Ahem}}ul{{padding:0;margin:0}}li{{margin-left:20px;list-style-image:url(marker.png);color:transparent}}</style>{body}"
+        "<!doctype html><style>@page{{size:200px 200px;margin:0}}body{{margin:0;background:white}}body{{font:20px/20px Ahem}}ul{{padding:0;margin:0}}li{{margin-left:20px;list-style-image:{marker};color:transparent}}</style>{body}"
     );
     let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -118,5 +129,23 @@ fn translated_png_markers_match_literal_pixels() {
         raster(
             "<div style='position:absolute;left:25px;top:15px;width:8px;height:4px;background:red'></div>",
         ),
+    );
+}
+
+fn red_pixels(raster: &[u8]) -> usize {
+    raster
+        .chunks_exact(4)
+        .filter(|pixel| pixel[0] > 200 && pixel[1] < 50 && pixel[2] < 50)
+        .count()
+}
+
+#[test]
+fn an_unsized_image_set_marker_paints_at_its_natural_size() {
+    // The 8x4 image written for 2x has a 4x2 natural size.
+    let body = "<ul><li style='list-style-position:inside'>A</li></ul>";
+    assert_eq!(red_pixels(&raster_with(body, "url(marker.png)", false)), 32);
+    assert_eq!(
+        red_pixels(&raster_with(body, "image-set(url(marker.png) 2x)", false)),
+        8
     );
 }
