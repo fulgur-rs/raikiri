@@ -974,6 +974,7 @@ pub(crate) fn pick_winners(
 pub(crate) fn flow_mapping(
     candidates: ElementCandidates<'_>,
     inherited: &ComputedValues,
+    blockified: bool,
     mut resolve: impl FnMut(PropertyKey, usize) -> Option<PropertyValue>,
 ) -> Option<FlowMapping> {
     let decls = candidates.decls();
@@ -1040,7 +1041,9 @@ pub(crate) fn flow_mapping(
         Some(PropertyValue::Display(display)) => display,
         _ => DisplayValue::Inline,
     };
+    // A blockified element computes its display as a float does.
     let float = match winner(PropertyKey::Float, float) {
+        _ if blockified => FloatValue::Left,
         Some(PropertyValue::Float(float)) => float,
         _ => FloatValue::None,
     };

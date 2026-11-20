@@ -777,6 +777,10 @@ pub struct SpecifiedValues {
     pub column_width: ColumnWidthValue,
     /// Non-inherited column rule; resolves without contributing to box geometry.
     pub column_rule: Border,
+    /// Whether the element is blockified whatever its `float`, as Chromium
+    /// does an HTML `legend`: its `display` computes as a float's does (CSS
+    /// 2.1 §9.7). Not inherited, and not a CSS property.
+    pub(crate) blockified: bool,
     /// Whether an ancestor is a multicol container or inside one, copied from
     /// the parent's [`ComputedValues::multicol_flow`]. Not a CSS property.
     pub(crate) inside_multicol: bool,
@@ -1246,6 +1250,7 @@ impl SpecifiedValues {
             aspect_ratio: AspectRatioValue::AUTO,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
+            blockified: false,
             inside_multicol: false,
             parent_horizontal_block_children: true,
             parent_horizontal_children: false,
@@ -1412,6 +1417,7 @@ impl SpecifiedValues {
             aspect_ratio: AspectRatioValue::AUTO,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
+            blockified: false,
             inside_multicol: parent.multicol_flow,
             parent_horizontal_block_children: parent.horizontal_block_children,
             parent_horizontal_children: parent.horizontal_children,
@@ -1648,7 +1654,7 @@ impl SpecifiedValues {
         normal_line_height: Option<&dyn NormalLineHeight>,
     ) -> ComputedValues {
         if is_inter_character_annotation(
-            resolve_display_for_float(self.display, self.float),
+            box_display(self.display, self.float, self.blockified),
             parent,
         ) {
             self.writing_mode = WritingMode::VerticalRl;
@@ -2328,8 +2334,8 @@ impl SpecifiedValues {
         let logical_min = logical_min.filter(|_| logical_min_wins);
         // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
-        // phase 3 like overflow cross-axis coupling.
-        let display = resolve_display_for_float(self.display, self.float);
+        // phase 3 like overflow cross-axis coupling. A blockified element computes as a float.
+        let display = box_display(self.display, self.float, self.blockified);
         // A `display: contents` element has no box to be a multicol container.
         let generates_box = !matches!(display, DisplayValue::Contents | DisplayValue::None);
         let orthogonal_root = orthogonal_multicol_root(
@@ -3227,6 +3233,13 @@ fn is_table_box(display: DisplayValue) -> bool {
             | DisplayValue::TableCell
             | DisplayValue::TableCaption
     )
+}
+
+/// `display` as it computes with `float`, or as a float's when `blockified`
+/// (CSS 2.1 §9.7).
+fn box_display(display: DisplayValue, float: FloatValue, blockified: bool) -> DisplayValue {
+    let float = if blockified { FloatValue::Left } else { float };
+    resolve_display_for_float(display, float)
 }
 
 /// Whether an element in a multicol flow (`inside_multicol`) is the root of

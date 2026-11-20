@@ -14219,3 +14219,36 @@ fn a_legend_and_a_sibling_with_the_same_rules_keep_their_own_display() {
     assert_eq!(result.computed[second_legend].display, DisplayValue::Block);
     assert_eq!(result.computed[last_span].display, DisplayValue::Inline);
 }
+
+/// A blockified legend is not a ruby annotation, so neither its writing mode
+/// nor the sides its flow-relative margins map onto are forced to
+/// `vertical-rl` in an inter-character ruby.
+#[test]
+fn a_legend_in_an_inter_character_ruby_is_not_an_annotation() {
+    let mut doc = TestDoc::new();
+    let ruby = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character"),
+    );
+    let legend = doc.push_element(
+        ruby,
+        "legend",
+        Some("display: ruby-text; margin-inline-start: 5px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[legend].display, DisplayValue::Block);
+    assert_eq!(
+        r.computed[legend].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        r.computed[legend].margin.left,
+        ComputedLengthPercentageOrAuto::Px(5.0)
+    );
+    assert_eq!(
+        r.computed[legend].margin.top,
+        ComputedLengthPercentageOrAuto::Px(0.0)
+    );
+}
