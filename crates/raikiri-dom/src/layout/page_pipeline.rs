@@ -5863,6 +5863,22 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
         let (forced, avoided) = page_edge_constraint(document, cascade, caption, true);
         return (forced || !avoided).then_some(caption);
     }
+    tied_rows_start(document, cascade, &rows, table_avoids_inside)
+}
+
+/// The first of the `rows` (each with the row group that holds it, if any,
+/// in visual order) that the last row may not break from: walking back from
+/// the last row, a break between two rows that the rows or their row groups
+/// avoid, that falls inside a row group that avoids breaks inside it, or any
+/// break when `all_avoided`, ties the two rows together unless a break is
+/// forced there. `None` when the walk reaches the first row.
+fn tied_rows_start(
+    document: &Document,
+    cascade: &CascadeResult,
+    rows: &[(usize, Option<usize>)],
+    all_avoided: bool,
+) -> Option<usize> {
+    let avoids_inside = |id: usize| avoids_page_break_inside(cascade.computed[id].break_inside);
     rows.windows(2)
         .rev()
         .find(|pair| {
@@ -5886,7 +5902,7 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
                         )
                     });
             let avoided = avoided
-                || table_avoids_inside
+                || all_avoided
                 || (before_group == after_group && after_group.is_some_and(avoids_inside));
             forced || !avoided
         })
@@ -5928,17 +5944,13 @@ fn body_table_break_start(
     let Some(parts) = document.anonymous_table_parts(table) else {
         return run_break_start(document, cascade, table);
     };
-    let rows: Vec<usize> = parts
+    let rows: Vec<(usize, Option<usize>)> = parts
         .iter()
         .copied()
         .filter(|&part| document.nodes[part].display() == DisplayValue::TableRow)
+        .map(|row| (row, None))
         .collect();
-    let [.., before, last] = rows[..] else {
-        return None;
-    };
-    let (forced_after, avoided_after) = page_edge_constraint(document, cascade, before, false);
-    let (forced_before, avoided_before) = page_edge_constraint(document, cascade, last, true);
-    (forced_after || forced_before || !(avoided_after || avoided_before)).then_some(last)
+    tied_rows_start(document, cascade, &rows, false)
 }
 
 /// Whether the table `table` starts a run of boxes tied by avoided breaks

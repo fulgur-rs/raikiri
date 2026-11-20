@@ -525,3 +525,40 @@ fn a_table_whose_rows_are_all_tied_moves_whole() {
         );
     }
 }
+
+#[test]
+fn rows_of_an_anonymous_table_tied_to_its_last_row_move_with_it() {
+    let row = "display:table-row";
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:30px">S</div><div style="{row}">K</div><div style="{row};break-after:avoid">M</div><div style="{row}">X</div><div style="break-before:avoid">Z</div>"#
+        )),
+        [
+            (0, 'K', 30),
+            (0, 'S', 0),
+            (1, 'M', 0),
+            (1, 'X', 20),
+            (1, 'Z', 40)
+        ]
+    );
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:10px">S</div><div style="{row}">K</div><div style="{row}">J</div><div style="{row};break-before:avoid">M</div><div style="{row};break-before:avoid">X</div><div style="break-before:avoid">Z</div>"#
+        )),
+        [
+            (0, 'K', 10),
+            (0, 'S', 0),
+            (1, 'J', 0),
+            (1, 'M', 20),
+            (1, 'X', 40),
+            (1, 'Z', 60)
+        ]
+    );
+    // All its rows are tied: the table moves whole.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><div style="{row};break-after:avoid">M</div><div style="{row}">X</div><div style="break-before:avoid">Z</div>"#
+        )),
+        [(0, 'S', 0), (1, 'M', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+}
