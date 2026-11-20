@@ -39,6 +39,7 @@ fn generated_image_preparation_probe() {
         "text" | "none" => ContentComponent::Literal("x".into()),
         "image" => ContentComponent::Image {
             url: "https://example.test/pixel.png".into(),
+            density: raikiri_style::property::ImageDensity::ONE,
         },
         _ => panic!("unsupported preparation probe mode"),
     };

@@ -682,3 +682,52 @@ fn generated_alt_text_resolves_attributes_and_counters() {
         .expect("the ::before text has a run");
     assert_eq!(page.generated_alt_text(owner, GeneratedKind::Before), None);
 }
+
+/// An `image-set()` in `content` stands for the image of the option it
+/// chooses, and that image's natural size is its size divided by the density
+/// the option was written for (CSS Images 4 §2.4), as Chromium lays it out.
+#[test]
+fn image_set_content_image_takes_the_size_its_density_gives() {
+    let pixels = Pixels::new();
+    for (density, width, height) in [
+        ("2x", 4.0, 2.0),
+        ("0.5x", 16.0, 8.0),
+        ("1x", 8.0, 4.0),
+        ("192dpi", 4.0, 2.0),
+    ] {
+        let document = lay_out(
+            "<p id=p>AB</p>",
+            &format!("p::before{{content:image-set(url(icon.png) {density})}}"),
+            &pixels,
+        );
+        let (images, runs) = images_and_runs(&document, &pixels);
+        assert_eq!(images.len(), 1, "{density}");
+        let image = &images[0];
+        assert_eq!(image.url.as_str(), "https://content.test/icon.png");
+        // The bottom edge sits on the baseline, 16px down the 20px line.
+        assert_eq!(
+            image.rect,
+            PaintRect::new(0.0, 16.0 - height, width, height),
+            "{density}"
+        );
+        assert_eq!(run(&runs, "AB").origin.0, width, "{density}");
+    }
+}
+
+/// `image-set()` picks its option as it does for a background: the smallest
+/// density at least `1x`, with `-webkit-image-set()` as an alias, and a
+/// string option naming a URL.
+#[test]
+fn image_set_content_chooses_one_option() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>AB</p>",
+        "p::before{content:-webkit-image-set('a.png' 0.5x, url(b.png) 4x, url(c.png) 2x) 'x'}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].url.as_str(), "https://content.test/c.png");
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 14.0, 4.0, 2.0));
+    assert_eq!(run(&runs, "x").origin.0, 4.0);
+}

@@ -1365,10 +1365,7 @@ fn boxes_with_images(css: &str) -> Vec<MarginBox> {
     let (mut doc, cascade) = page_cascade_fixture(css);
     doc.margin_box_images.insert(
         "green.png".to_owned(),
-        raikiri_traits::ImageRasterSize {
-            width: 100.0,
-            height: 50.0,
-        },
+        raikiri_traits::ImageIntrinsicSize::new(Some(100.0), Some(50.0), None),
     );
     layout_page(&doc, &cascade, small_page())
 }
@@ -1408,6 +1405,45 @@ fn a_content_image_follows_the_text_on_its_baseline() {
     assert_eq!(first_glyph.0, 40.0);
     // The Ahem ascent of 10px text is 8px, over a baseline 50px down.
     assert_eq!(first_glyph.1, 50.0);
+}
+
+/// An `image-set()` image takes its natural size divided by the density its
+/// option was written for (CSS Images 4 §2.4). An image with no natural size
+/// keeps the default object size, which no density scales.
+#[test]
+fn an_image_set_content_image_takes_the_size_its_density_gives() {
+    for (image, rect) in [
+        (
+            "image-set(url(green.png) 2x)",
+            ("green.png", [60.0, 0.0, 50.0, 25.0]),
+        ),
+        (
+            "image-set(url(green.png) 0.5x)",
+            ("green.png", [60.0, 0.0, 200.0, 100.0]),
+        ),
+        (
+            "image-set(url(none.svg) 2x)",
+            ("none.svg", [60.0, 0.0, 300.0, 150.0]),
+        ),
+    ] {
+        let (mut doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; @top-left {{ content: 'ab' {image}; \
+               vertical-align: top; {AHEM} }} }}"
+        ));
+        doc.margin_box_images.insert(
+            "green.png".to_owned(),
+            raikiri_traits::ImageIntrinsicSize::new(Some(100.0), Some(50.0), None),
+        );
+        doc.margin_box_images.insert(
+            "none.svg".to_owned(),
+            raikiri_traits::ImageIntrinsicSize::default(),
+        );
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [margin_box] = boxes.as_slice() else {
+            panic!("{image}: one box: {boxes:?}");
+        };
+        assert_eq!(image_rects(margin_box), [rect], "{image}");
+    }
 }
 
 #[test]
@@ -1460,7 +1496,7 @@ fn content_images_keep_their_order_and_their_authored_urls() {
     for (url, width, height) in [("a.png", 30.0, 20.0), ("b.png", 40.0, 10.0)] {
         doc.margin_box_images.insert(
             url.to_owned(),
-            raikiri_traits::ImageRasterSize { width, height },
+            raikiri_traits::ImageIntrinsicSize::new(Some(width), Some(height), None),
         );
     }
     let boxes = layout_page(&doc, &cascade, small_page());

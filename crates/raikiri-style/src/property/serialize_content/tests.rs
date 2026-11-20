@@ -68,3 +68,20 @@ fn contents_and_attr_items_read_back() {
         assert_eq!(content(value).as_deref(), Some(value), "{value}");
     }
 }
+
+#[test]
+fn an_image_set_reads_back_as_the_option_it_chose() {
+    assert_eq!(
+        content("image-set(url(a.png) 1x, url(b.png) 2x)").as_deref(),
+        Some("url(\"a.png\")")
+    );
+    assert_eq!(
+        content("image-set(\"b.png\" 192dpi) \"x\"").as_deref(),
+        Some("image-set(url(\"b.png\") 2x) \"x\"")
+    );
+    assert_eq!(
+        content("image-set(url(c.png) 0.5x)").as_deref(),
+        Some("image-set(url(\"c.png\") 0.5x)")
+    );
+    assert_eq!(content("image-set(linear-gradient(red, blue) 1x)"), None);
+}

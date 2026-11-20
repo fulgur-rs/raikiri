@@ -413,6 +413,7 @@ fn content_parse_image_url_quoted_form() {
         items[0],
         ContentComponent::Image {
             url: String::from("cat.png"),
+            density: ImageDensity::ONE,
         }
     );
 }
@@ -426,6 +427,7 @@ fn content_parse_image_url_unquoted_form() {
         items[0],
         ContentComponent::Image {
             url: String::from("cat.png"),
+            density: ImageDensity::ONE,
         }
     );
 }
@@ -575,6 +577,7 @@ fn content_parse_mixed_sequence_with_new_alternatives() {
             ContentComponent::Leader(LeaderType::Dotted),
             ContentComponent::Image {
                 url: String::from("icon.png"),
+                density: ImageDensity::ONE,
             },
             ContentComponent::Contents,
         ]
@@ -1407,4 +1410,21 @@ fn content_keeps_its_alternative_text() {
         panic!("expected PropertyValue::Content");
     };
     assert_eq!(list.alt(), None);
+}
+
+#[test]
+fn content_image_set_takes_the_chosen_option_or_an_empty_string() {
+    assert_eq!(
+        content_items("image-set(url(a.png) 2x)"),
+        vec![ContentComponent::Image {
+            url: "a.png".into(),
+            density: ImageDensity::new(2.0).unwrap(),
+        }]
+    );
+    // No option has a usable density: the image represents nothing, but the
+    // declaration stays valid.
+    assert_eq!(
+        content_items("image-set(url(a.png) 0x)"),
+        vec![ContentComponent::Literal(SmolStr::default())]
+    );
 }

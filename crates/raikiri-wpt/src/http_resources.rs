@@ -82,7 +82,8 @@ pub(crate) fn prepare_background_image(
     base_url: &Url,
     resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
-    let BackgroundImage::Url(source) = image else {
+    let (BackgroundImage::Url(source) | BackgroundImage::DensityUrl { url: source, .. }) = image
+    else {
         return;
     };
     let Some(absolute) = Url::parse(source)
@@ -159,7 +160,7 @@ pub(crate) fn prefetch_generated_content_images(
                 .content
                 .iter()
                 .filter_map(|component| match component {
-                    raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                    raikiri_style::property::ContentComponent::Image { url, .. } => Some(url),
                     _ => None,
                 })
                 .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES)

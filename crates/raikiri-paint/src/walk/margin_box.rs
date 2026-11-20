@@ -187,7 +187,7 @@ impl<'a> MarginBoxPaint<'a> {
                             paint_background_from_source(
                                 image_cache,
                                 scene,
-                                &url,
+                                (&url, image.density),
                                 positioning,
                                 painting,
                                 &image.size,
