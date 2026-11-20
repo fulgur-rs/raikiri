@@ -19677,69 +19677,31 @@ fn shift_columns_after_spanner(
     grows: bool,
 ) {
     let children = document.children_through_contents(container);
-    let after = children
-        .iter()
-        .position(|&id| id == spanner)
-        .map_or(children.len(), |index| index + 1);
-    // The container keeps one column group for each run of column content
-    // between its spanners, and the rules of each group in turn, in the
-    // order of the flow. The groups after the spanner are told apart by that
-    // order: a negative margin can start them at or above the spanner's top,
-    // and pull the spanner up over the group before it.
-    let mut runs = 0;
-    let mut runs_before = None;
-    let mut content = false;
-    for &id in &super::multicol::flow_children(document, container) {
-        if id == spanner || super::is_spanner(document, id) {
-            runs += usize::from(content);
-            content = false;
-            if id == spanner {
-                runs_before = Some(runs);
-            }
-        } else {
-            content |= super::multicol::spanning::holds_column_content(document, id);
-        }
-    }
-    runs += usize::from(content);
+    let spanner_index = children.iter().position(|&id| id == spanner);
+    let after = spanner_index.map_or(children.len(), |index| index + 1);
+    // The column groups keep the order of the flow, each with the first box
+    // of the run of column content it lays out, and the rules follow the
+    // groups in turn. The groups after the spanner are told apart by that
+    // order, not by where they lie: a negative margin can start them at or
+    // above the spanner's top, and pull the spanner up over the group before
+    // it.
+    let before = &children[..spanner_index.unwrap_or(0)];
     let groups = &document.nodes[container].multicol_groups;
-    let rules = document.column_rules.get(&container);
-    let (first_group, first_rule) = match runs_before {
-        Some(runs_before) if groups.len() == runs => {
-            let rules_before: usize = groups[..runs_before]
+    let first_group = groups
+        .iter()
+        .take_while(|group| group.run_start.is_some_and(|run| before.contains(&run)))
+        .count();
+    let first_rule: usize = groups[..first_group]
+        .iter()
+        .filter(|group| group.height > 0.0)
+        .map(|group| {
+            group
+                .occupied
                 .iter()
-                .filter(|group| group.height > 0.0)
-                .map(|group| {
-                    group
-                        .occupied
-                        .iter()
-                        .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
-                        .count()
-                })
-                .sum();
-            (runs_before, rules_before)
-        }
-        // Pages split some runs into several groups, or the columns keep no
-        // group per run: those before the spanner start above its top, where
-        // it was before it moved.
-        _ => {
-            let layout_top = document.nodes[spanner].layout.location.y;
-            let top = if grows {
-                layout_top
-            } else {
-                layout_top - delta
-            };
-            let above = |y: f32| y < top - 0.001;
-            (
-                groups
-                    .iter()
-                    .take_while(|group| above(group.context.origin_y))
-                    .count(),
-                rules.map_or(0, |rules| {
-                    rules.iter().take_while(|rule| above(rule.y)).count()
-                }),
-            )
-        }
-    };
+                .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
+                .count()
+        })
+        .sum();
     for group in document.nodes[container]
         .multicol_groups
         .iter_mut()

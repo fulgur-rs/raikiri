@@ -4247,6 +4247,7 @@ fn layout_column_group(
                 height: maximum.max(cursor),
                 occupied,
                 slice: None,
+                run_start: children.first().copied(),
             });
     }
     let minimum_height = if auto_measurements.is_some()
@@ -4753,6 +4754,7 @@ fn apply_nested_continuation(
                 height,
                 occupied: std::collections::BTreeSet::new(),
                 slice: (!plan.cloned).then_some(slice),
+                run_start: None,
             }
         })
         .collect();

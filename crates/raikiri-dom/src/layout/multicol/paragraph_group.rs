@@ -1769,6 +1769,7 @@ pub(super) fn paginate(
             height,
             slice: None,
             occupied,
+            run_start: None,
         });
         result.end = group_y + height;
         let Some(next) = chunk.next else {

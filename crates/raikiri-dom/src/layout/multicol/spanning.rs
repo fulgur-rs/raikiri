@@ -21,7 +21,7 @@ pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usiz
 
 /// Whether `child`, a box in the flow of a multicol container, puts content
 /// in its columns: a box that is not hidden, or text that takes room.
-pub(in crate::layout) fn holds_column_content(tree: &LayoutSession<'_>, child: usize) -> bool {
+pub(super) fn holds_column_content(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     match node.kind() {
         NodeKind::Text => node.layout.size.height != 0.0 || node.ifc.is_some(),

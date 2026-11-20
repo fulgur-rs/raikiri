@@ -199,6 +199,10 @@ pub(crate) struct MulticolGroup {
     /// The block range of this row's box within the whole box that the rows
     /// of a continued nested container slice; other groups have none.
     pub(crate) slice: Option<(f32, f32)>,
+    /// The first box of the run of column content between spanners that
+    /// this group lays out, where the columns keep one: the groups after a
+    /// spanner are the ones whose run starts after it.
+    pub(crate) run_start: Option<usize>,
 }
 
 /// A resumable point in a fragmented child flow.

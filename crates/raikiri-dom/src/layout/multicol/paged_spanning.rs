@@ -174,7 +174,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 .transpose()?
                 .flatten()
             {
-                groups.extend(planned.groups);
+                groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
+                    run_start: old.run_start,
+                    ..group
+                }));
                 let placed = (planned.pieces, planned.nested);
                 refilled_lineless |= install_lineless_pieces(
                     tree,
@@ -191,7 +194,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
                 let new_end = planned.end;
-                groups.extend(planned.groups);
+                groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
+                    run_start: old.run_start,
+                    ..group
+                }));
                 // A wrapper whose boxes joined the flow gets one record from
                 // its first piece to its lowest, and the records of what it
                 // holds are placed in it. A wrapper that has no record of its
