@@ -305,6 +305,41 @@ fn only_inline_content_after_a_paragraph_block_takes_the_edges_along() {
     );
 }
 
+/// Content after a block of the paragraph that renders nothing in the line,
+/// such as collapsed white space, a box that is not displayed, an
+/// out-of-flow box or an empty `display: contents` box, leaves no closing
+/// line: the edges stay below the paragraph. A box inside a `display:
+/// contents` box makes that line.
+#[test]
+fn a_paragraph_block_ends_with_a_line_only_for_inline_content_after_it() {
+    for (after, z) in [
+        (" ", (1, 5.0)),
+        ("<span style='display: none'></span>", (1, 5.0)),
+        ("<span style='position: absolute'></span>", (1, 5.0)),
+        ("<b style='display: contents'></b>", (1, 5.0)),
+        ("<b style='display: contents'> </b>", (1, 5.0)),
+        ("<b style='display: contents'><span></span></b>", (1, 15.0)),
+    ] {
+        assert_places(
+            &edges_case(40, "", after, "padding-bottom: 10px"),
+            &[("t", (0, 45.0)), ("z", z)],
+        );
+    }
+}
+
+/// A break inside an inline-block in a span stays inside the inline-block:
+/// the paragraph's edges stay below the paragraph.
+#[test]
+fn a_break_inside_an_inline_block_in_a_span_leaves_the_edges() {
+    let html = edges_case(40, "span", "", "padding-bottom: 10px").replace(
+        "<span><div style='height: 20px; break-after: page'><span id=t>T</span></div></span>",
+        "<span><span style='display: inline-block; width: 20px'>\
+         <div style='height: 20px; break-after: page'><span id=t>T</span></div></span></span>",
+    );
+    assert!(html.contains("inline-block"));
+    assert_places(&html, &[("t", (0, 45.0)), ("z", (1, 5.0))]);
+}
+
 /// Edges that do not fit below a block in a span that ends in a break start
 /// the next page with the closing line, which takes the break: the box after
 /// them follows on that page.

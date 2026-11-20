@@ -4288,19 +4288,28 @@ fn line_follows_paragraph_block(
     root: usize,
     block: usize,
 ) -> bool {
-    let node = &document.nodes[block];
-    if matches!(
-        node.position(),
-        PositionValue::Absolute | PositionValue::Fixed
-    ) || is_floating_box_for_pagination(document, cascade, block)
-    {
-        return false;
-    }
     let mut id = block;
-    for _ in 0..128 {
+    while id != root {
+        // A break inside a box out of the flow, a float or an atomic inline
+        // stays inside that box: no line of the paragraph follows it.
+        let node = &document.nodes[id];
+        let display = node.display();
         let Some(parent) = document.parent_of(id) else {
             return false;
         };
+        if matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || is_floating_box_for_pagination(document, cascade, id)
+            || !(display == DisplayValue::Inline
+                || display == DisplayValue::Contents
+                || is_block_level_flow_box(display))
+        {
+            return false;
+        }
+        if id != block && display == DisplayValue::Inline {
+            return true;
+        }
         let children = &document.nodes[parent].children;
         let after = children
             .iter()
@@ -4310,26 +4319,6 @@ fn line_follows_paragraph_block(
             .iter()
             .any(|&child| makes_inline_content(document, cascade, child, 0))
         {
-            return true;
-        }
-        if parent == root {
-            return false;
-        }
-        // A break inside a box out of the flow, a float or an atomic inline
-        // stays inside that box: no line of the paragraph follows it.
-        let node = &document.nodes[parent];
-        let display = node.display();
-        if matches!(
-            node.position(),
-            PositionValue::Absolute | PositionValue::Fixed
-        ) || is_floating_box_for_pagination(document, cascade, parent)
-            || !(display == DisplayValue::Inline
-                || display == DisplayValue::Contents
-                || is_block_level_flow_box(display))
-        {
-            return false;
-        }
-        if node.kind() == NodeKind::Element && display == DisplayValue::Inline {
             return true;
         }
         id = parent;
