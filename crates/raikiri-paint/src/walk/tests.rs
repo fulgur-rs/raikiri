@@ -4081,7 +4081,7 @@ fn margin_box_image_from(
         let style = document.append_element(Some(html), "style", None::<&str>);
         document.append_text(
             style,
-            &format!(
+            format!(
                 "@page {{ margin: 10px; @top-center {{ content: ''; \
                    background-image: {background_image} }} }}"
             ),
@@ -4133,7 +4133,7 @@ fn a_margin_box_image_set_background_keeps_its_density() {
             Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
                 2,
                 2,
-                vec![255, 0, 0, 255].repeat(4),
+                [255, 0, 0, 255].repeat(4),
             )))
         }
     }
