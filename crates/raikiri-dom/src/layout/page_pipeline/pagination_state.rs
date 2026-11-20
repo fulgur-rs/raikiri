@@ -2553,8 +2553,16 @@ impl PaginationState {
             .map_or(margin_top, |previous| {
                 let gap =
                     flow_y(node) - (flow_y(previous) + document.nodes[previous].layout.size.height);
+                // The gap holds no more than the margins between the two
+                // boxes collapse into; a break that moved the box further
+                // down, on content between them, is no margin.
+                let (after_positive, after_negative) =
+                    super::adjoining_margin_extremes(document, cascade, previous, false, None);
+                let (positive, negative) =
+                    super::adjoining_margin_extremes(document, cascade, node, true, None);
+                let collapsed = after_positive.max(positive) + after_negative.min(negative);
                 if gap.is_finite() {
-                    margin_top.max(gap)
+                    margin_top.max(gap.min(collapsed))
                 } else {
                     margin_top
                 }
