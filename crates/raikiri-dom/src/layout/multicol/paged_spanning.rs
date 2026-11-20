@@ -352,16 +352,26 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let (_, top_origin, top_height) = page_for(margin_top);
             let top_end = top_origin + top_height;
             if forced && margin_top > top_origin + EPSILON {
-                // A forced break keeps the margin above the spanner.
-                let shift = top_end - margin_top;
+                // A forced break keeps the margin above the spanner, unless
+                // the margin runs past the end of the page the break opens:
+                // it is cut there, and the spanner starts the page after it,
+                // as a block does (Chromium).
+                let (_, next_origin, next_height) = page_for(top_end + EPSILON);
+                let next_end = next_origin + next_height;
+                let shift = if y + top_end - margin_top >= next_end - EPSILON {
+                    next_end - y
+                } else {
+                    top_end - margin_top
+                };
                 shift_child(tree, &mut shifts, id, shift);
                 delta += shift;
             } else if layout.margin.top > 0.0
-                && margin_top > top_origin + EPSILON
+                && (margin_top > top_origin + EPSILON || forced)
                 && y > top_end + EPSILON
             {
                 // A margin that runs past the end of its page is truncated
-                // there: the spanner starts the next page.
+                // there: the spanner starts the next page. So is one that a
+                // forced break at the top of the page keeps.
                 let shift = top_end - y;
                 shift_child(tree, &mut shifts, id, shift);
                 delta += shift;

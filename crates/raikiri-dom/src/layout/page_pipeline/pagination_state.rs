@@ -2631,16 +2631,19 @@ impl PaginationState {
             } else {
                 0.0
             };
+        // A margin that runs past the end of that page on its own is cut at
+        // that end too, and the box starts the next page (Chromium).
         let margin_pushes_box_on = forced_transition
             && margin_top > 0.0
-            && candidate.context.is_unbreakable()
             && is_block_flow_box(document, cascade, candidate)
-            && starts_on_page_and_runs_past_it(
-                landing_top,
-                landing_top + candidate.height,
-                page_origins.origin(target_page),
-                page_origins.page_end(target_page),
-            );
+            && (landing_top >= page_origins.page_end(target_page) - 0.001
+                || candidate.context.is_unbreakable()
+                    && starts_on_page_and_runs_past_it(
+                        landing_top,
+                        landing_top + candidate.height,
+                        page_origins.origin(target_page),
+                        page_origins.page_end(target_page),
+                    ));
         if margin_pushes_box_on {
             target_page = target_page.saturating_add(1);
             reach_page(control, target_page)?;
