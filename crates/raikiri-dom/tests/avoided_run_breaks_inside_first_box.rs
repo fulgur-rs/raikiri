@@ -343,3 +343,18 @@ fn a_table_of_rows_with_no_row_group_breaks_before_its_last_row() {
         [(0, 50.0), (1, 20.0)],
     )]);
 }
+
+#[test]
+fn runs_at_two_levels_that_start_at_the_same_box_hold_the_longer_one() {
+    // The runs ending at `Y` and at `Z` both start inside the first box.
+    check(&[
+        (
+            "<div><div>S</div><div><div>K</div><div><div><span id=t>L</span></div><div>X</div></div><div style=\"break-before:avoid\">Y</div></div><div style=\"break-before:avoid\"><span id=z>Z</span></div></div>",
+            [(0, 40.0), (1, 40.0)],
+        ),
+        (
+            "<div><div>S</div><div><div>K</div><div><div>X</div><div><span id=t>L</span></div></div><div style=\"break-before:avoid\">Y</div></div><div style=\"break-before:avoid\"><span id=z>Z</span></div></div>",
+            [(1, 0.0), (1, 40.0)],
+        ),
+    ]);
+}

@@ -13054,8 +13054,15 @@ fn nested_run_units(
                 breaks_inside: key.is_some() && may_break_inside(document, cascade, first),
             };
             match key {
+                // Runs of blocks at more than one level can start at the
+                // same box: the longest of them holds the page.
                 Some(key) => {
-                    run_breaks.insert(key, unit);
+                    run_breaks
+                        .entry(key)
+                        .and_modify(|known| {
+                            *known = if unit.end > known.end { unit } else { *known }
+                        })
+                        .or_insert(unit);
                 }
                 None => units[start] = Some(unit),
             }
