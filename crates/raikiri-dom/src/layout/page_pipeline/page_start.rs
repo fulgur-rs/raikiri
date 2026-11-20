@@ -302,7 +302,8 @@ fn before_block_among_lines(
     let plain = entries.next().is_none()
         && ifc.multicol_fragments.is_none()
         && lines.generated_block_starts.is_empty()
-        && ifc.boxes.iter().all(|b| b.kind != IfcBoxKind::Float);
+        && ifc.boxes.iter().all(|b| b.kind != IfcBoxKind::Float)
+        && !generates_content_within(document, root);
     plain.then_some(())?;
     let flow_y = |id: usize| {
         current_abs_y(document, id) - layout_relative_offset_y(document, cascade, body_id, id)
@@ -327,6 +328,21 @@ fn before_block_among_lines(
         top: content_top + top,
         bottom: content_top + bottom,
     })
+}
+
+/// Whether `root` or an element inside it generates `::before` or `::after`
+/// content, which the paragraph lays out without a line or box of its own
+/// that the lines record.
+fn generates_content_within(document: &Document, root: usize) -> bool {
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        if node.has_before_or_after_content {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
 }
 
 /// Whether a page does not break between the start of `parent` and its first
