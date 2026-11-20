@@ -19498,21 +19498,35 @@ fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) 
 }
 
 /// Whether `parent` is a block container whose later children follow a
-/// moved child. Flex, grid and table containers place their children
-/// themselves, and a paragraph's lines follow a moved block child through
-/// its line shifts.
+/// moved child, or an inline box that lays only blocks out as one does (see
+/// [`lays_blocks_out_inline_box`]). Flex, grid and table containers place
+/// their children themselves, and a paragraph's lines follow a moved block
+/// child through its line shifts.
 fn moves_later_siblings(document: &Document, parent: usize) -> bool {
-    matches!(
-        document.nodes[parent].display(),
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::ListItem
-            | DisplayValue::InlineBlock
-            | DisplayValue::TableCaption
-    ) && document.nodes[parent].multicol.is_none()
-        && document
-            .ifc_layout_node(parent)
-            .is_none_or(|node| node.ifc.is_none())
+    lays_blocks_out_inline_box(document, parent)
+        || matches!(
+            document.nodes[parent].display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::InlineBlock
+                | DisplayValue::TableCaption
+        ) && document.nodes[parent].multicol.is_none()
+            && document
+                .ifc_layout_node(parent)
+                .is_none_or(|node| node.ifc.is_none())
+}
+
+/// Whether `node_id` is an inline box that holds no line of a paragraph,
+/// only blocks (see [`crate::layout::multicol::block_in_inline_wrapper`]),
+/// with no block-axis padding or border of its own: it stacks those blocks
+/// in block flow, as the anonymous block around a block inside an inline box
+/// does.
+fn lays_blocks_out_inline_box(document: &Document, node_id: usize) -> bool {
+    let layout = &document.nodes[node_id].layout;
+    crate::layout::multicol::block_in_inline_wrapper(document, node_id)
+        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+            <= 0.0
 }
 
 /// Moves the boxes that follow `child` in the block container `parent`
