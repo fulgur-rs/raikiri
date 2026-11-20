@@ -207,15 +207,38 @@ fn rules(body: &str) -> Vec<(u32, f32, f32)> {
 
 #[test]
 fn the_column_rules_after_the_spanner_move_with_its_columns() {
-    for (margin, top) in [(0, 10.0), (-5, 5.0)] {
+    // A margin as negative as the spanner is tall starts the columns after it
+    // at its top, and Chromium leaves them on the first page, 80px down.
+    for (margin, page, top) in [(0, 1, 10.0), (-5, 1, 5.0), (-20, 0, 90.0)] {
         assert_eq!(
             rules(&format!(
                 "<div style='{COLUMNS};column-rule:2px solid'><div>A</div><div>B</div>\
                  <div style='column-span:all;margin-bottom:{margin}px'>{BREAK_BEFORE}</div>\
                  <div>C</div><div>D</div></div>"
             )),
-            [(0, 0.0, 10.0), (1, top, 10.0)],
+            [(0, 0.0, 10.0), (page, top, 10.0)],
             "{margin}"
         );
     }
+}
+
+#[test]
+fn a_spanner_that_moves_whole_keeps_its_height() {
+    let body = format!(
+        "<div style='{COLUMNS};background:silver'><div>A</div>\
+         <div style='column-span:all;background:green;break-before:page'><div>S</div></div>\
+         <div>C</div></div><div>X</div>"
+    );
+    assert_eq!(words(&body), sorted("A@0:0,0 S@1:0,0 C@1:0,10 X@1:0,20"));
+    // The container and then the spanner, on the page the spanner moved to.
+    let result = lay_out(&body);
+    let second: Vec<_> = result
+        .page(1)
+        .expect("a page")
+        .fragments()
+        .filter(|fragment| fragment.kind() == FragmentKind::Box && fragment.rect().width == 100.0)
+        .map(|fragment| (fragment.rect().y, fragment.rect().height))
+        .collect();
+    assert!(second.len() >= 4, "{second:?}");
+    assert_eq!(second[2..4], [(0.0, 20.0), (0.0, 10.0)], "{second:?}");
 }

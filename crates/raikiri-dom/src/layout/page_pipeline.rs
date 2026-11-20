@@ -19667,20 +19667,24 @@ fn spans_box_columns(
 /// columns after a spanner start below it (CSS Multi-column Layout 1, 6.1),
 /// and so does every later spanner. The column boxes are painted from the
 /// records the columns placed under the container's record, so those move
-/// along with the boxes.
+/// along with the boxes. `grows` tells that a break inside the spanner grew
+/// it, rather than the spanner moving whole.
 fn shift_columns_after_spanner(
     document: &mut super::context::LayoutSession<'_>,
     container: usize,
     spanner: usize,
     delta: f32,
+    grows: bool,
 ) {
     let children = document.children_through_contents(container);
     let after = children
         .iter()
         .position(|&id| id == spanner)
         .map_or(children.len(), |index| index + 1);
-    // The column groups and rules after the spanner start below its top,
-    // whatever its block-end margin, and those before it start above.
+    // The column groups and rules keep the order of the flow: those before
+    // the spanner come first and end above its top. Those after it may start
+    // at or above its top when its block-end margin is negative enough, so
+    // they are told apart by order rather than by where they start.
     let tree = &document.fragment_tree;
     let spanner_top = tree
         .records_of(spanner)
@@ -19690,18 +19694,29 @@ fn shift_columns_after_spanner(
         .map_or(document.nodes[spanner].layout.location.y, |&record| {
             tree.fragments[record].rect.y
         });
-    for group in &mut document.nodes[container].multicol_groups {
-        if group.context.origin_y > spanner_top + 0.001 {
-            group.context.origin_y += delta;
-        }
+    let before = |top: f32, height: f32| top + height <= spanner_top + 0.001;
+    let groups = &mut document.nodes[container].multicol_groups;
+    let first_after = groups
+        .iter()
+        .take_while(|group| before(group.context.origin_y, group.height))
+        .count();
+    for group in &mut groups[first_after..] {
+        group.context.origin_y += delta;
     }
     if let Some(rules) = document.column_rules.get_mut(&container) {
-        for rule in rules.iter_mut().filter(|rule| rule.y > spanner_top + 0.001) {
+        let first_after = rules
+            .iter()
+            .take_while(|rule| before(rule.y, rule.height))
+            .count();
+        for rule in &mut rules[first_after..] {
             rule.y += delta;
         }
     }
-    // The spanner's record holds the moved content too.
-    grow_last_record(document, spanner, delta);
+    // The spanner's record holds the content that a break inside it moved;
+    // a spanner that moved whole keeps its height.
+    if grows {
+        grow_last_record(document, spanner, delta);
+    }
     let tree = &document.fragment_tree;
     let container_records: HashSet<usize> = tree
         .records_of(container)
@@ -21008,7 +21023,7 @@ fn shift_flow_after(
         if !moved_lines {
             shift_later_block_siblings(document, parent, child, flow_delta);
             if spans_box_columns(document, cascade, child, parent) {
-                shift_columns_after_spanner(document, parent, child, flow_delta);
+                shift_columns_after_spanner(document, parent, child, flow_delta, child != node_id);
             }
         }
         // The moved box moved whole; an ancestor of it keeps its stored
