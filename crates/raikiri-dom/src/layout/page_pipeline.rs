@@ -5907,10 +5907,17 @@ fn table_last_parts(
                     first != part && document.parent_of(first) == group && group_end >= end - 0.001
                 })
                 .map_or(part, |(&first, _)| first);
-            let whole = avoids_page_break_inside(cascade.computed[table].break_inside)
-                || first_row_ends
-                    .get(&table)
-                    .is_some_and(|&held| held >= end - 0.001);
+            // A table that avoids breaks inside it moves whole, from the
+            // last break forced between its rows on.
+            if avoids_page_break_inside(cascade.computed[table].break_inside) {
+                return (
+                    table,
+                    row_after_last_forced_break(document, cascade, table).unwrap_or(table),
+                );
+            }
+            let whole = first_row_ends
+                .get(&table)
+                .is_some_and(|&held| held >= end - 0.001);
             (table, if whole { table } else { first })
         })
         .collect()
@@ -6378,7 +6385,9 @@ enum TableRunStart {
     /// last part is the part it holds with the box before it.
     Whole,
     /// The run begins with the table's last row or caption, and the page
-    /// breaks inside the table before it.
+    /// breaks inside the table before it. For a table that avoids breaks
+    /// inside it, the run begins after the last break forced between its
+    /// rows (see [`row_after_last_forced_break`]).
     LastPart,
 }
 
@@ -6394,10 +6403,6 @@ fn table_run_start(
     if has_footer_group(document, table) {
         return None;
     }
-    if avoids_page_break_inside(cascade.computed[table].break_inside) {
-        return Some(TableRunStart::Whole);
-    }
-    let held = held_table_end(document, cascade, table)?;
     let top = current_abs_y(document, table);
     let last = document
         .children_through_contents(table)
@@ -6428,11 +6433,62 @@ fn table_run_start(
     if last_part_forces_break_after(document, cascade, part) {
         return None;
     }
+    // A table that avoids breaks inside it moves whole, from the last break
+    // forced between its rows on.
+    if avoids_page_break_inside(cascade.computed[table].break_inside) {
+        return Some(
+            if row_after_last_forced_break(document, cascade, table).is_some() {
+                TableRunStart::LastPart
+            } else {
+                TableRunStart::Whole
+            },
+        );
+    }
+    let held = held_table_end(document, cascade, table)?;
     Some(if held >= last - 0.001 {
         TableRunStart::Whole
     } else {
         TableRunStart::LastPart
     })
+}
+
+/// The first row after the last break forced between two rows of the table
+/// `table`, by the rows, the boxes that end or start their cells (see
+/// [`forces_page_break`]), or the row groups between them. The page breaks
+/// there whatever the table avoids, so a table that avoids breaks inside it
+/// moves with a run of boxes after it only from that row on, as in Chromium.
+fn row_after_last_forced_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    table: usize,
+) -> Option<usize> {
+    let boundary = document.table_parts_boundary(table);
+    let rows: Vec<usize> = document
+        .children_through_contents(table)
+        .into_iter()
+        .flat_map(|child| match document.nodes[child].display() {
+            DisplayValue::TableRowGroup | DisplayValue::TableHeaderGroup => {
+                document.children_through_contents(child)
+            }
+            _ => vec![child],
+        })
+        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+        .collect();
+    let group = |row: usize| document.parent_of(row).filter(|&group| group != boundary);
+    rows.windows(2)
+        .filter(|pair| {
+            let (before, after) = (pair[0], pair[1]);
+            forces_page_break(document, cascade, before, false)
+                || forces_page_break(document, cascade, after, true)
+                || (group(before) != group(after)
+                    && (group(before)
+                        .is_some_and(|group| forces_page_break(document, cascade, group, false))
+                        || group(after).is_some_and(|group| {
+                            forces_page_break(document, cascade, group, true)
+                        })))
+        })
+        .last()
+        .map(|pair| pair[1])
 }
 
 /// Whether a break is forced after the last row or caption `part` of a

@@ -371,3 +371,21 @@ fn a_break_forced_after_the_last_row_keeps_the_table_on_its_page() {
         [(0, 'S', 0), (0, 'X', 50), (1, 'Z', 0)]
     );
 }
+
+#[test]
+fn a_table_that_avoids_breaks_inside_it_moves_only_after_a_forced_break() {
+    let expected = [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)];
+    let table = r#"<table style="break-inside:avoid"><tr style="break-after:page"><td>L</td></tr><tr><td>X</td></tr></table>"#;
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div>{table}<div style="break-before:avoid">Z</div>"#
+        )),
+        expected
+    );
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div><div style="height:50px">S</div>{table}<div style="break-before:avoid">Z</div></div>"#
+        )),
+        expected
+    );
+}
