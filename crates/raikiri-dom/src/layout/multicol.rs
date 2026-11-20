@@ -4453,6 +4453,12 @@ fn layout_column_group(
         trailing = cursor - end;
     }
     maximum = maximum.max(divided_stream);
+    // Columns filled in turn with no height to fill, as after the last
+    // spanner of a container with `column-fill: auto`, are one column that
+    // nothing ends, so the margin below its last box stays.
+    if context.column_fill == ColumnFillValue::Auto && fragment_height.is_none() {
+        trailing = 0.0;
+    }
     // Balanced columns of a container with a definite height are as tall as
     // their content, which the rules between them follow.
     if retain_group

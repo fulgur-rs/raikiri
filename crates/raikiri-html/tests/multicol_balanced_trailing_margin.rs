@@ -111,6 +111,11 @@ fn a_float_and_a_spanner_end_the_columns_as_well() {
     assert_eq!(height("", beside), (10.0, 10.0));
     let spanner = "<div style='margin-bottom:10px'>a</div><div style='column-span:all'>s</div>";
     assert_eq!(height("", spanner), (20.0, 20.0));
+    // Columns filled in turn after the last spanner keep the margin.
+    let after =
+        "<div style='column-span:all'>s</div><div style='height:10px;margin-bottom:10px'></div>";
+    assert_eq!(height("column-fill:auto", after), (30.0, 30.0));
+    assert_eq!(height("", after), (20.0, 20.0));
 }
 
 #[test]
