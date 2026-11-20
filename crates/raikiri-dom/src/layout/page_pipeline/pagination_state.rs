@@ -2550,6 +2550,7 @@ impl PaginationState {
         self.sibling_margins
             .adjacency
             .previous_block(document, cascade, node)
+            .filter(|&previous| !super::generated_box_separates(document, node, previous))
             .map_or(margin_top, |previous| {
                 let gap =
                     flow_y(node) - (flow_y(previous) + document.nodes[previous].layout.size.height);

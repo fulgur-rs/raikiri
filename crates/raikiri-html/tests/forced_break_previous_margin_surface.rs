@@ -153,3 +153,66 @@ fn the_margin_of_a_nested_or_padded_block_is_cut() {
         "A@0:0,0 S@3:0,0 X@3:0,10"
     );
 }
+
+#[test]
+fn the_block_before_is_found_past_empty_boxes_and_contents_wrappers() {
+    let cases = [
+        // An empty box between the two, even one whose margins do not
+        // collapse through it, leaves the break after the block.
+        (
+            "<div style='overflow:hidden'></div><div style='break-before:page'>S</div>",
+            "A@0:0,0 S@2:0,0 X@2:0,10",
+        ),
+        (
+            "<div style='clear:both'></div><div style='break-before:page'>S</div>",
+            "A@0:0,0 S@2:0,0 X@2:0,10",
+        ),
+        // A box whose `display: contents` parent comes right after the block.
+        (
+            "<div style='display:contents'><div style='break-before:page'>S</div></div>",
+            "A@0:0,0 S@1:0,0 X@1:0,10",
+        ),
+    ];
+    for (after, expected) in cases {
+        assert_eq!(
+            words(&format!(
+                "<div style='height:50px;margin-bottom:250px'>A</div>{after}<div>X</div>"
+            )),
+            expected,
+            "{after}"
+        );
+    }
+}
+
+/// The page of `word` in `words`.
+fn page_of(words: &str, word: &str) -> u32 {
+    words
+        .split(' ')
+        .find_map(|entry| entry.strip_prefix(&format!("{word}@")))
+        .and_then(|rest| rest.split(':').next())
+        .and_then(|page| page.parse().ok())
+        .unwrap_or_else(|| panic!("{word} in {words}"))
+}
+
+#[test]
+fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
+    // The margin of an inline-block is part of its line, which Chromium ends
+    // on the fourth page with the box after it: no block margin to cut.
+    let inline = words(
+        "<div style='height:40px'></div><span style='display:inline-block;width:10px;\
+         height:10px;margin-bottom:250px;vertical-align:top'></span>\
+         <div style='break-before:page'>S</div><div>X</div>",
+    );
+    assert!(page_of(&inline, "S") >= 3, "{inline}");
+    // A generated block between the two comes before the box, on an earlier
+    // page.
+    let generated = words(
+        "<style>.w::after{content:'G';display:block}</style>\
+         <div style='display:contents' class=w><div style='height:50px;margin-bottom:250px'>A</div></div>\
+         <div style='break-before:page'>S</div><div>X</div>",
+    );
+    assert!(
+        page_of(&generated, "G") < page_of(&generated, "S"),
+        "{generated}"
+    );
+}
