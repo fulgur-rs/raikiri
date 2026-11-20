@@ -769,7 +769,7 @@ impl PaginationState {
         let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
         if step.consumes_pending_break {
-            self.pending_break.clear();
+            self.pending_break.take(document, node_id);
         }
         self.pending_break.note_after(
             document,
@@ -834,7 +834,7 @@ impl PaginationState {
         text.effective_y += delta;
         self.current_page = target_page;
         self.page_names.current = candidate.page_name.clone();
-        self.pending_break.clear();
+        self.pending_break.take(document, node_id);
         Ok(true)
     }
 
@@ -1107,7 +1107,7 @@ impl PaginationState {
             self.move_delegated_line(document, env, entry, owner, shift, target);
         }
         if pending {
-            self.pending_break.clear();
+            self.pending_break.take(document, candidate.node_id);
         }
         self.saw_child = true;
         self.current_page = self.current_page.max(target);
@@ -2555,11 +2555,16 @@ impl PaginationState {
                 // behind, or back over a page edge the break would share,
                 // which the break then moves the box over.
                 // The break before a flex item sits at the top of its line.
+                let lead = if collapses_with_previous_block {
+                    self.forced_break_lead(document, env, node_id, margin_top)
+                } else {
+                    margin_top
+                };
                 let margin_box_y = effective_y
                     - relative_offset
-                    - margin_top
+                    - lead
                     - flex_line.as_ref().map_or(0.0, |line| line.offset);
-                let starts_page = if margin_top < 0.0 {
+                let starts_page = if lead < 0.0 {
                     (margin_box_y - page_start).abs() <= 0.001
                 } else {
                     margin_box_starts_page(
@@ -2602,6 +2607,61 @@ impl PaginationState {
             starts_after_forced_break: false,
         };
         (page_break, position)
+    }
+
+    /// How far above the border box of `node` a forced break before it sits:
+    /// right after the block before it, whose block-end margin the break
+    /// cuts although the layout collapsed it with the box's own `margin_top`.
+    /// Only that own margin follows the break (CSS Fragmentation 3, 5.2).
+    /// `margin_top` when no block adjoins the box, when clearance may lie
+    /// between the two, or in a vertical flow.
+    fn forced_break_lead(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node: usize,
+        margin_top: f32,
+    ) -> f32 {
+        let cascade = env.cascade;
+        // An empty box whose margins collapse through it keeps those margins
+        // below the page top on its own.
+        if document.nodes[node].used_writing_mode.is_vertical()
+            || !matches!(
+                cascade.computed[node].clear,
+                raikiri_style::property::ClearValue::None
+            )
+            || super::collapses_through(
+                document,
+                cascade,
+                node,
+                document.nodes[node].layout.size.height,
+            )
+        {
+            return margin_top;
+        }
+        // Both boxes are measured where the flow put them, without the
+        // relative offsets that only move where they are painted.
+        let flow_y = |id: usize| {
+            current_abs_y(document, id)
+                - accumulated_relative_offset_y(document, cascade, env.body_id, id)
+        };
+        self.sibling_margins
+            .adjacency
+            .previous_block(document, cascade, node)
+            .filter(|&previous| !super::generated_box_separates(document, node, previous))
+            .map_or(margin_top, |previous| {
+                let gap =
+                    flow_y(node) - (flow_y(previous) + document.nodes[previous].layout.size.height);
+                // The gap holds no more than the margins between the two
+                // boxes collapse into; a break that moved the box further
+                // down, on content between them, is no margin.
+                let (after_positive, after_negative) =
+                    super::adjoining_margin_extremes(document, cascade, previous, false, None);
+                let (positive, negative) =
+                    super::adjoining_margin_extremes(document, cascade, node, true, None);
+                let collapsed = after_positive.max(positive) + after_negative.min(negative);
+                margin_top.max(gap.min(collapsed))
+            })
     }
 
     /// Opens the page a box starts on when it meets a page transition: a
@@ -2694,9 +2754,17 @@ impl PaginationState {
         } else {
             position.effective_y - relative_offset
         };
+        let break_lead = if forced_transition
+            && forced_holder.is_none()
+            && page_break.collapses_with_previous_block
+        {
+            self.forced_break_lead(document, env, node_id, margin_top)
+        } else {
+            margin_top
+        };
         let natural_page = page_origins.transition_natural_page(
             natural_y,
-            margin_top,
+            break_lead,
             self.current_page,
             self.flow_reach(document, env, node_id, natural_y),
             forced_transition,
@@ -2940,7 +3008,7 @@ impl PaginationState {
                     .source
                     .map(|source| (source, target_page));
             }
-            self.pending_break.clear();
+            self.pending_break.take(document, node_id);
         }
         Ok(())
     }
@@ -5001,8 +5069,8 @@ impl PaginationState {
 
     /// Keeps each line of the absolutely positioned boxes whole on one page:
     /// the line that crosses a page end starts the next page, and the lines
-    /// after it move down with it. Such a box breaks only between its lines,
-    /// without regard to `orphans` and `widows`, and the padding above its
+    /// after it move down with it, or earlier lines move to keep `widows`.
+    /// Such a box breaks only between its lines, and the padding above its
     /// first line stays where the box is. A box with nothing above its first
     /// line moves whole when that line moves. This waits for the whole flow to
     /// be placed, as the containing block of a box moves the box when its own
@@ -5086,6 +5154,7 @@ impl PaginationState {
             else {
                 continue;
             };
+            let all_lines = line_metrics.len();
             // A clip hides the lines past its edge, and they do not count.
             let fresh_edge = reflowed
                 .then(|| super::positioned_flow::clip_bounds(document, env, root).lines_end);
@@ -5103,7 +5172,17 @@ impl PaginationState {
             let nothing_above_first_line = document
                 .ifc_layout_node(root)
                 .is_some_and(|node| node.layout.border.top + node.layout.padding.top <= 0.001);
-            for (line, shift, page) in positioned_line_moves(&line_metrics, start, page_origins) {
+            // The hidden lines still follow every break, and count as widows.
+            let hidden = i32::try_from(all_lines - line_metrics.len()).unwrap_or(i32::MAX);
+            let style = &cascade.computed[root];
+            let moves = positioned_line_moves(
+                &line_metrics,
+                start,
+                page_origins,
+                style.orphans,
+                style.widows.saturating_sub(hidden),
+            );
+            for (line, shift, page) in moves {
                 reach_page(control, page)?;
                 self.reach.include_checked(control, page, false)?;
                 if line == 0 && nothing_above_first_line {
@@ -5231,9 +5310,9 @@ impl PaginationState {
         // content that follows a nested named box.  Carry the containing
         // box's page type so that content after `page:b` inside a
         // `page:a` box resumes on an `a` page rather than becoming an
-        // anonymous page.  Only direct body text consumes a pending
-        // break-after; descendants must wait until their containing box
-        // has finished.
+        // anonymous page.  Text consumes a pending break-after only
+        // outside the box that forced it and off that box's flex line or
+        // grid row (see `PendingBreak::applies_to`).
         let named_page_change = text_changes_page_name(
             entry.name_context_seen,
             name_participates_in_flow,

@@ -262,3 +262,28 @@ fn relayout_keeps_the_content_alignment_of_the_lines() {
         assert_eq!(stored_lines(&doc, root).line_top(0), top, "{css}");
     }
 }
+
+#[test]
+fn relayout_keeps_the_content_alignment_of_vertical_lines() {
+    // A vertical paragraph aligns its lines along its width, the block axis.
+    for (css, offset) in [("align-content:end", 50.0), ("align-content:center", 25.0)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Some(&format!(
+                "display:block;writing-mode:vertical-rl;width:60px;height:100px;\
+                 font-family:Ahem;font-size:10px;line-height:10px;{css}"
+            )),
+        );
+        doc.append_text(root, "aaaa");
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        lay_out(&mut doc, &cascade);
+        assert_eq!(stored_lines(&doc, root).shifts.aligned(), offset, "{css}");
+        relayout_text_for_width(&mut doc, &cascade, 800.0);
+        assert_eq!(stored_lines(&doc, root).shifts.aligned(), offset, "{css}");
+    }
+}
