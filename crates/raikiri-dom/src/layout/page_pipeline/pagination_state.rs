@@ -133,6 +133,7 @@ fn flow_relative_offset_y(
 }
 
 /// What the start of a candidate settled for its placement.
+#[derive(Clone)]
 pub(super) struct CandidateEntry {
     /// Whether content already placed in the candidate's flow lets a named
     /// page change open a new page.
@@ -705,6 +706,20 @@ impl PaginationState {
                 })
             });
         text.effective_y -= relative_offset;
+        let broken_after_block =
+            self.break_after_paragraph_block(document, env, candidate, &mut text)?;
+        // The break opened the text's page with the text's own page type, so
+        // the type of the block before it opens no further page.
+        let entry_after_break;
+        let entry = if broken_after_block {
+            entry_after_break = CandidateEntry {
+                comparison_page_name: candidate.page_name.clone(),
+                ..entry.clone()
+            };
+            &entry_after_break
+        } else {
+            entry
+        };
         self.reach_paragraph_page(document, env, candidate, entry, &blocks, &text)?;
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
@@ -724,7 +739,8 @@ impl PaginationState {
             text_ifc_root,
             text.effective_y,
         );
-        let step = self.step_text_page(document, env, candidate, entry, &mut text)?;
+        let mut step = self.step_text_page(document, env, candidate, entry, &mut text)?;
+        step.consumes_pending_break |= broken_after_block;
         if text_sets_page_name(
             text.height,
             name_participates_in_flow,
@@ -766,6 +782,60 @@ impl PaginationState {
         );
 
         Ok(())
+    }
+
+    /// Takes the forced break after a block laid out among the lines of the
+    /// paragraph that holds `candidate` before the lines are judged: the
+    /// text starts the next page, and its lines break from there. Judged
+    /// where the flow puts them before the break, the lines would move for
+    /// a page end that the break leaves behind, and the break would then
+    /// move them again. Returns whether the text took the break.
+    fn break_after_paragraph_block(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        text: &mut TextPosition,
+    ) -> Result<bool, Halt> {
+        let node_id = candidate.node_id;
+        let Some(source) = self.pending_break.source else {
+            return Ok(false);
+        };
+        let in_paragraph = candidate.ifc_root.is_some_and(|(root, _)| {
+            root != source
+                && super::is_descendant_or_self(document, source, root)
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+        });
+        if !self.saw_child
+            || !in_paragraph
+            || !candidate.context.page_name_in_flow()
+            || !self.pending_break.applies_to(document, node_id)
+            || super::moves_reach_cell_row(document, node_id)
+        {
+            return Ok(false);
+        }
+        let page_origins = env.page_origins;
+        // The break opens the page after the one the block ends on; the
+        // margin after the block is truncated at the break.
+        let block_end = self.pending_break.source_end;
+        let end_page = page_origins
+            .page_index_in_flow(block_end)
+            .unwrap_or(self.current_page);
+        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
+            end_page.saturating_add(1)
+        } else {
+            end_page
+        };
+        let target_page = super::forced_target_page(self.current_page, past_block);
+        reach_page(env.control, target_page)?;
+        let delta = page_origins.origin(target_page) - text.effective_y;
+        self.flow_shift += delta;
+        text.effective_y += delta;
+        self.current_page = target_page;
+        self.page_names.current = candidate.page_name.clone();
+        self.pending_break.clear();
+        Ok(true)
     }
 
     /// Move a single-item holder before its paragraph's oversized own edges.
@@ -1466,6 +1536,12 @@ impl PaginationState {
             candidate.context.deferred_named_break_after(),
             || super::clip_holds_breaks(document, env, node_id, false, effective_y + height),
         );
+        // A relative offset only paints the box elsewhere: the break follows
+        // where the box ends in the flow.
+        if self.pending_break.source == Some(node_id) {
+            self.pending_break.source_end = effective_y + height
+                - accumulated_relative_offset_y(document, cascade, env.body_id, node_id);
+        }
 
         Ok(())
     }
