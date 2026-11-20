@@ -1646,7 +1646,7 @@ impl PaginationState {
                 && edges_break.edges > 0.001
                 && (gap <= 0.001 || end <= page_origins.origin(page) + 0.001)
             {
-                self.pending_break.clear();
+                self.pending_break.take_by_closing_line(document, node_id);
             }
             // The pages of a block leave out the margins in it that a page
             // edge may truncate, so edges that stay where they are reach
@@ -1662,7 +1662,7 @@ impl PaginationState {
         let next_page = page.saturating_add(1);
         // The edges start the page the break opens: the break is taken.
         if forced {
-            self.pending_break.clear();
+            self.pending_break.take_by_closing_line(document, node_id);
         }
         let visible = self.visible_edges(edges_break, gap);
         if visible > 0.001 {

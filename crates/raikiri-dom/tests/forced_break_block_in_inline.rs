@@ -373,3 +373,47 @@ fn a_break_inside_a_float_in_a_span_leaves_the_edges() {
         &[("t", (0, 45.0)), ("z", (0, 65.0))],
     );
 }
+
+/// A break forced after the paragraph, or after a box around it, still
+/// falls after it once the line that closes the paragraph has taken the
+/// break after a block in a span, and the paragraph's bottom edges with it:
+/// the box after it starts a third page. Breaks after boxes that end before
+/// that line go with the one it takes.
+#[test]
+fn a_break_after_the_paragraph_follows_the_closing_line_that_takes_the_inner_break() {
+    let block = "<div style='height: 20px; break-after: page'><span id=t>T</span></div>";
+    for (above, outer, inner, t) in [
+        (
+            "",
+            "break-after: page; padding-bottom: 10px",
+            format!("<span>{block}</span>"),
+            (0, 5.0),
+        ),
+        (
+            "",
+            "break-after: page; padding-bottom: 10px",
+            format!("<span><div style='break-after: page'>{block}</div></span>"),
+            (0, 5.0),
+        ),
+        (
+            "",
+            "break-after: page",
+            format!("<div style='padding-bottom: 10px'><span>{block}</span></div>"),
+            (0, 5.0),
+        ),
+        (
+            "<div style='height: 40px'></div>",
+            "break-after: page; padding-bottom: 10px",
+            format!("<span>{block}</span>"),
+            (0, 45.0),
+        ),
+    ] {
+        assert_places(
+            &format!(
+                "<div style='width: 20px'>{above}<div style='{outer}'>{inner}</div>\
+                 <div><span id=z>Z</span></div></div>"
+            ),
+            &[("t", t), ("z", (2, 5.0))],
+        );
+    }
+}

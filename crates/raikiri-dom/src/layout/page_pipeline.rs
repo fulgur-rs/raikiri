@@ -10337,6 +10337,25 @@ impl PendingBreak {
         }
     }
 
+    /// Take the pending break forced after a block inside `node_id` with the
+    /// line that closes the paragraph of `node_id` after that block. The
+    /// breaks forced after the boxes that end before that line go with it;
+    /// a break forced after `node_id` or a box around it is pending again,
+    /// since the line separates it from the one taken.
+    fn take_by_closing_line(&mut self, document: &Document, node_id: usize) {
+        self.source = None;
+        self.line_peers.clear();
+        while let Some(outer) = self.enclosing.pop() {
+            if is_descendant_or_self(document, node_id, outer.source) {
+                self.source = Some(outer.source);
+                self.line_peers = outer.line_peers;
+                self.source_end = outer.source_end;
+                self.ends_enclosing = outer.ends_enclosing;
+                break;
+            }
+        }
+    }
+
     /// Make `node_id` the source of the pending break when it forces a break
     /// after itself, unless that source is already the node itself. A break
     /// forced after a box inside the source falls before the next box in the
