@@ -816,9 +816,14 @@ fn collect(
                 Some(lines.lines.len()),
             );
             // Nothing places the pieces of a box inside a wrapper that a
-            // column end would cut, so one there goes whole to a column.
+            // column end would cut, so one there goes whole to a column. So
+            // does one with block margins, as a sized box with no lines
+            // needs none to be sliced (see `lineless::is_sized_leaf`).
             paragraphs.push(Some(Paragraph {
-                sliced: flow.parents[index].is_none() && lineless::slices_sized_leaf(tree, child),
+                sliced: flow.parents[index].is_none()
+                    && margin_top == 0.0
+                    && margin_bottom == 0.0
+                    && lineless::slices_sized_leaf(tree, child),
                 held_reach: before + reach,
                 ..whole
             }));
