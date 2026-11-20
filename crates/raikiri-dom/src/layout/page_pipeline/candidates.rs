@@ -19,9 +19,10 @@ use super::{
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
     moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    unplaced_line, unplaced_line_after_block,
+    paragraph_has_lines_to_split, paragraph_lines_keep_together, passes_closing_edges,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
+    unplaced_line_after_block,
 };
 use std::collections::HashMap;
 
@@ -1054,6 +1055,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     sole_table_holders: HashMap<usize, bool>,
     /// The selected inner tail of each plain block on its column-item path.
     inner_tail_paths: HashMap<usize, usize>,
+    /// The runs of boxes tied by avoided breaks that start inside their first
+    /// box, keyed by the box they start at (see `nested_run_units`).
+    run_breaks: HashMap<usize, super::RunUnit>,
+    run_break_starts: super::RunBreakStarts,
     has_named_pages: bool,
     /// Whether runs of boxes tied by avoided breaks may be looked for inside
     /// blocks: some box avoids a break before or after it, and no box names a
@@ -1101,6 +1106,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             named_page_subtree_cache: HashMap::new(),
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
+            run_breaks: HashMap::new(),
+            run_break_starts: super::RunBreakStarts::default(),
             has_named_pages,
             finds_nested_runs: cascade.computed.iter().any(|computed| {
                 [computed.break_before, computed.break_after]
@@ -1723,9 +1730,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && in_any_flow
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
-                    && frame.previous_box.is_some_and(|previous| {
-                        page_edge_constraint(document, cascade, previous, false).0
-                    });
+                    && frame
+                        .previous_box
+                        .or_else(|| super::spanner_before(document, cascade, node_id))
+                        .is_some_and(|previous| {
+                            page_edge_constraint(document, cascade, previous, false).0
+                        });
                 // A flex container, grid or table is a box that can end a block
                 // too, and move to the next page for the edges it ends.
                 let in_flow_container =
@@ -1770,6 +1780,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it is the one between boxes, which beats one between
                 // lines that leaves too few at either end.
                 let unbreakable = lines_shape
+                    && !frame.lines_tail
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
@@ -1800,8 +1811,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it, it is still a candidate: the run those boxes
                 // make is kept together only while its first box leaves the
                 // page room for it.
+                // The last box of a tied run whose lines break for the edges
+                // breaks there instead (see `lines_tail`).
                 let lone_tail = (in_flow_block
                     && frame.previous_box.is_some()
+                    && !frame.lines_tail
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
                 .then(|| {
                     lone_box_with_floats(
@@ -1883,9 +1897,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             held.end.map(|end| super::RunUnit {
                                 end,
                                 firm: held.firm,
+                                breaks_inside: false,
                             })
                         });
-                let avoided_unit = match (frame.run_unit, leading_unit) {
+                // A run that starts at the box inside the first box of the run
+                // (see `nested_run_units`).
+                // The box may also start a run among the boxes of its parent:
+                // the page holds the longer of the two.
+                let run_unit = [frame.run_unit, self.run_breaks.remove(&node_id)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|own, inner| if inner.end > own.end { inner } else { own });
+                let avoided_unit = match (run_unit, leading_unit) {
                     (Some(run), Some(leading)) if leading.end > run.end => Some(leading),
                     (run, leading) => run.or(leading),
                 };
@@ -2055,7 +2078,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let flex_margins_base = nested_candidate_base
                     && !inline_level
                     && super::has_flex_trailing_space(document, node_id);
+                let run_break_base = self.finds_nested_runs
+                    && in_flow_block
+                    && !direct_body_child
+                    && self
+                        .run_break_starts
+                        .starts_break(document, cascade, body_id, node_id);
                 let needs_ancestor_constraints = margin_shape
+                    || run_break_base
                     || line_after_block_base
                     || (nested_candidate_base
                         && ((!inline_level && is_block_flow_box && avoids_break)
@@ -2118,6 +2148,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // cuts: the clip box moves along with the container.
                 let flex_margins_candidate = flex_margins_base && !side_by_side_ancestor;
                 let run_tail_candidate = run_tail_base && can_move_nested;
+                // A block that a run of boxes tied by avoided breaks starts at,
+                // inside the first box of the run.
+                let run_break_candidate = run_break_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
                 let line_after_block = line_after_block.filter(|_| line_after_block_candidate);
@@ -2214,6 +2247,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
+                        || run_break_candidate
                         || line_after_block_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
@@ -2615,7 +2649,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             normal_flow_bottom(document, cascade, body_id, child_order[index])
                         };
                         let span = bottom(last) - bottom(first);
-                        (span > 0.0).then_some((first, span + last_box_edges))
+                        (span >= 0.0).then_some((first, span + last_box_edges))
                     }
                     _ => None,
                 };
@@ -2642,13 +2676,26 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // candidates (see `avoided_run_ends`); only the lines a
                         // paragraph among them keeps with the boxes after it
                         // are found here.
-                        let (_, tails) =
-                            nested_run_units(document, cascade, body_id, &child_order, &flow_flags);
+                        let (_, tails) = nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &flow_flags,
+                            &mut HashMap::new(),
+                        );
                         (Vec::new(), tails)
                     } else if !self.finds_nested_runs || !in_flow_block || is_body {
                         (Vec::new(), Vec::new())
                     } else if !flow_flags.is_empty() {
-                        nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
+                        nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &flow_flags,
+                            &mut self.run_breaks,
+                        )
                     } else if node.is_ifc_root()
                         && child_order
                             .iter()
@@ -2660,7 +2707,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // among them still moves together; text between them is
                         // a box of the flow that ends the run.
                         let paragraph_flags = child_flow_flags(document, cascade, &child_order);
-                        nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
+                        nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &paragraph_flags,
+                            &mut self.run_breaks,
+                        )
                     } else {
                         (Vec::new(), Vec::new())
                     };
@@ -2738,8 +2792,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     };
                     // The last box of a run that avoided breaks tie to the boxes
                     // before it, from a free break on.
+                    // A paragraph with lines to break between breaks there
+                    // instead, when a box of the run before it takes block
+                    // space: a break that leaves fewer lines than `widows`
+                    // beats one that an avoided break forbids (see
+                    // `edge_break_lines`).
+                    let tail_splits = match avoid_chain {
+                        Some(AvoidChain::Run { first }) => {
+                            last_in_flow == Some(index)
+                                && run_paragraph(document, cascade, child_id).is_some_and(
+                                    |paragraph| paragraph_has_lines_to_split(document, paragraph),
+                                )
+                                && flow_flags[first..index].iter().any(|&(in_flow, floated)| {
+                                    in_flow.is_some_and(|id| {
+                                        !floated && !super::takes_no_block_space(document, id)
+                                    })
+                                })
+                        }
+                        _ => false,
+                    };
                     let run_tail = matches!(avoid_chain, Some(AvoidChain::Run { .. }))
-                        && last_in_flow == Some(index);
+                        && last_in_flow == Some(index)
+                        && !tail_splits;
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
                     let child_column_break = can_inherit_column_break && !column_box_before;
@@ -2843,7 +2917,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 && child_scope_is_lone,
                             tied_to_start: child_tied_to_start,
                             lines_closing_edges,
-                            lines_tail: lines_tail.is_some() || run_line_tail > 0.0,
+                            // The last box of a tied run that moved to the
+                            // next page breaks between its lines there
+                            // rather than before itself, away from the run.
+                            lines_tail: lines_tail.is_some()
+                                || run_line_tail > 0.0
+                                || (chain_run.is_some() && tail_splits),
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,

@@ -83,15 +83,21 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // of a container that is a paragraph of its own are kept for the rules
     // between its columns; the pages cut its columns as they cut those of a
     // container without spanners.
-    if old_groups.is_empty()
-        || tree.context.pagination_on_transposed_axes
-        || tree.nodes[owner].is_ifc_root()
-    {
+    if tree.context.pagination_on_transposed_axes || tree.nodes[owner].is_ifc_root() {
         return Ok(0.0);
     }
     let children = flow_children(tree, owner);
     work.charge(children.len())?;
     let spanner_free = !children.iter().any(|&id| spanning::is_spanner(tree, id));
+    // A container of spanners alone keeps no groups, yet breaks between them.
+    if old_groups.is_empty()
+        && (spanner_free
+            || children.iter().any(|&id| {
+                !spanning::is_spanner(tree, id) && spanning::holds_column_content(tree, id)
+            }))
+    {
+        return Ok(0.0);
+    }
     // The columns of a container without a spanner are filled page by page
     // only where it runs onto a later page. One inside a line stays whole, as
     // the cut of its page is not the cut of a box in the flow.
@@ -125,6 +131,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
     let mut group_index = 0;
     let mut delta = 0.0;
     let mut refilled_lineless = false;
+    // The last spanner before the current segment, and whether column
+    // content or a spanner came before it.
+    let mut previous_spanner = None;
+    let mut content_before = false;
     for end in 0..=children.len() {
         let spanner = children
             .get(end)
@@ -134,10 +144,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
             continue;
         }
         let segment = &children[start..end];
-        if segment.iter().any(|&id| {
-            let node = layout_node(tree, id);
-            node.kind() != NodeKind::Text || node.layout.size.height != 0.0 || node.ifc.is_some()
-        }) {
+        let segment_has_content = segment
+            .iter()
+            .any(|&id| spanning::holds_column_content(tree, id));
+        if segment_has_content {
             let old = &old_groups[group_index];
             group_index += 1;
             let context = FragmentationContext {
@@ -325,9 +335,37 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let layout = tree.nodes[id].layout;
             let y = owner_y + layout.location.y;
             let (_, origin, height) = page_for(y);
-            // A spanner that can be cut where each page ends continues on the
-            // next page, as a block of the flow does; the others move whole.
-            if layout.size.height <= height
+            // A page value between column content, or another spanner, and
+            // this spanner breaks the page there (Chromium): the spanner and
+            // all after it start the next page. One at the start of the
+            // container is the container's own break, which the flow around
+            // it takes.
+            let forced = (content_before || segment_has_content)
+                && forced_page_break_before_spanner(
+                    tree,
+                    id,
+                    previous_spanner.filter(|_| !segment_has_content),
+                );
+            content_before = true;
+            previous_spanner = Some(id);
+            let margin_top = y - layout.margin.top;
+            let (_, top_origin, top_height) = page_for(margin_top);
+            let top_end = top_origin + top_height;
+            if forced && margin_top > top_origin + EPSILON {
+                // A forced break keeps the margin above the spanner.
+                let shift = top_end - margin_top;
+                shift_child(tree, &mut shifts, id, shift);
+                delta += shift;
+            } else if layout.margin.top > 0.0
+                && margin_top > top_origin + EPSILON
+                && y > top_end + EPSILON
+            {
+                // A margin that runs past the end of its page is truncated
+                // there: the spanner starts the next page.
+                let shift = top_end - y;
+                shift_child(tree, &mut shifts, id, shift);
+                delta += shift;
+            } else if layout.size.height <= height
                 && y > origin + 0.001
                 && y + layout.size.height > origin + height + 0.001
                 && !breaks_at_every_page_end(tree, id, y, origin + height, page_for, work)?
@@ -337,6 +375,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 delta += shift;
             }
         }
+        content_before |= segment_has_content;
         start = end + 1;
     }
     edits.shift_children(container, &shifts);
@@ -356,6 +395,31 @@ pub(in crate::layout) fn paginate_spanning_columns(
     tree.nodes[owner].layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
+}
+
+/// Whether a page break is forced before the spanner `id`: by its own
+/// `break-before`, or by the `break-after` of `previous`, a spanner with no
+/// column content between the two.
+fn forced_page_break_before_spanner(
+    tree: &LayoutSession<'_>,
+    id: usize,
+    previous: Option<usize>,
+) -> bool {
+    let cascade = tree.style_views.cascade();
+    let document: &Document = tree;
+    crate::layout::page_pipeline::page_break_is_forced(
+        document,
+        cascade,
+        id,
+        cascade.computed[id].break_before,
+    ) || previous.is_some_and(|previous| {
+        crate::layout::page_pipeline::page_break_after_is_forced(
+            document,
+            cascade,
+            previous,
+            cascade.computed[previous].break_after,
+        )
+    })
 }
 
 /// Whether the spanner `id`, whose border box starts at `y` on a page that

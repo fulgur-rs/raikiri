@@ -17550,6 +17550,8 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
             end: 140.0,
             firm: false,
             closing: None,
+            breaks_inside_start: false,
+            shorter: None,
         },
     );
     let overflow = measure(&breaks, plain, Default::default(), &fit);

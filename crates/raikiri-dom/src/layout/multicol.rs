@@ -1542,7 +1542,10 @@ fn multicol_has_only_paragraph_children(
         // A box of lines with a height of its own goes whole to a column, so
         // it needs the planner as a box of lines does. So does a box that
         // makes a formatting context of its own.
-        if is_sized_paragraph(tree, child) || is_whole_formatting_context_box(tree, child) {
+        if is_sized_paragraph(tree, child)
+            || is_whole_formatting_context_box(tree, child)
+            || is_whole_button(tree, child)
+        {
             paragraphs += 1;
             return insets_are_a_relative_offset(tree, child);
         }
@@ -1675,6 +1678,8 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0;
     (undecorated || edges == BlockEdges::Sliced && cuts_block_edges(node))
+        // A button is monolithic: its lines never break between columns.
+        && !node.is_html_button()
         && (matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
             // A `flow-root` box of lines breaks between them as a paragraph
             // does; an empty one starts a formatting context, so margins do
@@ -1732,6 +1737,31 @@ pub(super) fn is_whole_formatting_context_box(tree: &LayoutSession<'_>, child: u
         && !style.margin().top.is_auto()
         && !style.margin().bottom.is_auto()
         && holds_text_and_no_breaking_box(tree, child)
+}
+
+/// Whether `child` is an in-flow block-level `<button>`. A button is
+/// monolithic: a column end never breaks inside it, so it goes whole to a
+/// column that holds it, as pagination keeps it whole on a page.
+pub(super) fn is_whole_button(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    node.is_html_button()
+        // A button that is a column container lays its own lines out in
+        // columns, which a single whole piece would replace.
+        && node.multicol.is_none()
+        && !node.display().is_inline_level()
+        && node.display() != DisplayValue::Contents
+        && !node.layout_position().is_out_of_flow()
+        && !style.float().is_floated()
+        && style.clear() == Clear::None
+        && !node
+            .authored_writing_mode
+            .is_some_and(WritingMode::is_vertical)
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
+        && !style.margin().top.is_auto()
+        && !style.margin().bottom.is_auto()
+        && insets_are_a_relative_offset(tree, child)
 }
 
 /// The most boxes a formatting-context box may hold for the planner to place
