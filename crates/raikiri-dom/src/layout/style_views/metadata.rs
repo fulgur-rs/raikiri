@@ -42,6 +42,13 @@ pub(super) fn prepare_metadata(
     if source && !neutral_contents && avoids_floats(doc, idx) {
         flags = flags.union(StyleFlags::AVOIDS_FLOATS);
     }
+    if source
+        && !neutral_contents
+        && node.is_html_button()
+        && matches!(node.layout_display(), Display::Block | Display::FlowRoot)
+    {
+        flags = flags.union(StyleFlags::CENTERED_CONTENT);
+    }
     if source && !neutral_contents && inline_box {
         flags = flags.union(StyleFlags::INLINE_BOX);
     }

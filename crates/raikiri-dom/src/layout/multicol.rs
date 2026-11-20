@@ -6173,7 +6173,8 @@ pub(crate) struct AncestorFacts {
 
 /// Whether the block `id` makes a block formatting context of its own: a
 /// scroll container, a box with layout or paint containment or with
-/// `align-content` other than `normal`, or a multicol container. Overflow
+/// `align-content` other than `normal`, an HTML `button` (whose content button
+/// layout centers as such an `align-content` does), or a multicol container. Overflow
 /// propagated to the viewport is not the box's own.
 /// Normal projection queries the source lazily; rebreaking supplies a value
 /// cached before its additional walk.
@@ -6191,6 +6192,7 @@ fn roots_formatting_context(
             .contains(raikiri_style::property::Contain::LAYOUT)
         || cv.contain.contains(raikiri_style::property::Contain::PAINT)
         || cv.align_content != raikiri_style::property::ContentAlignmentValue::Normal
+        || doc.nodes[id].is_html_button()
         || doc.nodes[id].multicol.is_some()
 }
 
