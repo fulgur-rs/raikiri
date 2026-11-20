@@ -19681,57 +19681,66 @@ fn shift_columns_after_spanner(
     let Some(index) = children.iter().position(|&id| id == spanner) else {
         return;
     };
-    // The column groups and rules after the spanner start below it.
-    let spanner_end = document
-        .fragment_tree
+    // The column groups and rules after the spanner start below its top,
+    // whatever its block-end margin, and those before it start above.
+    let tree = &document.fragment_tree;
+    let spanner_top = tree
         .records_of(spanner)
         .iter()
         .rev()
-        .find(|&&record| !document.fragment_tree.is_retired(record))
-        .map_or(f32::INFINITY, |&record| {
-            let rect = document.fragment_tree.fragments[record].rect;
-            rect.y + rect.height
+        .find(|&&record| !tree.is_retired(record))
+        .map_or(document.nodes[spanner].layout.location.y, |&record| {
+            tree.fragments[record].rect.y
         });
     for group in &mut document.nodes[container].multicol_groups {
-        if group.context.origin_y >= spanner_end - 0.001 {
+        if group.context.origin_y > spanner_top + 0.001 {
             group.context.origin_y += delta;
         }
     }
     if let Some(rules) = document.column_rules.get_mut(&container) {
-        for rule in rules
-            .iter_mut()
-            .filter(|rule| rule.y >= spanner_end - 0.001)
-        {
+        for rule in rules.iter_mut().filter(|rule| rule.y > spanner_top + 0.001) {
             rule.y += delta;
         }
     }
     // The spanner's record holds the moved content too.
     grow_last_record(document, spanner, delta);
-    let container_records: HashSet<usize> = document
-        .fragment_tree
+    let tree = &document.fragment_tree;
+    let container_records: HashSet<usize> = tree
         .records_of(container)
         .iter()
         .copied()
-        .filter(|&record| !document.fragment_tree.is_retired(record))
+        .filter(|&record| !tree.is_retired(record))
         .collect();
+    let mut moved = Vec::new();
     for &later in &children[index + 1..] {
-        shift_block_sibling(document, later, delta);
         // The records of the box, or of the boxes inside it that a wrapper
-        // without a record of its own left to the container's.
+        // without a record of its own left to the container's. What a box
+        // with a record holds is placed in that record and moves with it.
         let mut stack = vec![later];
         while let Some(id) = stack.pop() {
-            stack.extend(document.nodes[id].children.iter().copied());
-            let tree = &mut document.fragment_tree;
-            for record in tree.records_of(id).to_vec() {
-                if !tree.is_retired(record)
-                    && tree.fragments[record]
-                        .parent
-                        .is_some_and(|parent| container_records.contains(&parent))
+            let mut recorded = false;
+            for &record in tree.records_of(id) {
+                if tree.is_retired(record) {
+                    continue;
+                }
+                recorded = true;
+                if tree.fragments[record]
+                    .parent
+                    .is_some_and(|parent| container_records.contains(&parent))
                 {
-                    tree.fragments[record].rect.y += delta;
+                    moved.push(record);
                 }
             }
+            if !recorded {
+                stack.extend(document.nodes[id].children.iter().copied());
+            }
         }
+    }
+    for record in moved {
+        document.fragment_tree.fragments[record].rect.y += delta;
+    }
+    for &later in &children[index + 1..] {
+        shift_block_sibling(document, later, delta);
     }
 }
 

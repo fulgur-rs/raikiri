@@ -180,18 +180,17 @@ fn the_backgrounds_of_the_spanner_and_its_container_continue_on_the_next_page() 
             .collect()
     };
     let first = wide(0);
+    assert!(first.len() >= 4, "{first:?}");
     assert_eq!(first[2..4], [(0.0, 100.0), (10.0, 90.0)], "{first:?}");
     let second = wide(1);
+    assert!(second.len() >= 4, "{second:?}");
     assert_eq!(second[2..4], [(0.0, 20.0), (0.0, 10.0)], "{second:?}");
 }
 
-#[test]
-fn the_column_rules_after_the_spanner_move_with_its_columns() {
-    let result = lay_out(&format!(
-        "<div style='{COLUMNS};column-rule:2px solid'><div>A</div><div>B</div>\
-         <div style='column-span:all'>{BREAK_BEFORE}</div><div>C</div><div>D</div></div>"
-    ));
-    let rules: Vec<_> = (0..result.page_count())
+/// The page, top and height of every column rule in `body`.
+fn rules(body: &str) -> Vec<(u32, f32, f32)> {
+    let result = lay_out(body);
+    (0..result.page_count())
         .flat_map(|index| {
             let page = result.page(index).expect("a page");
             page.paint_order()
@@ -202,6 +201,20 @@ fn the_column_rules_after_the_spanner_move_with_its_columns() {
                 })
                 .collect::<Vec<_>>()
         })
-        .collect();
-    assert_eq!(rules, [(0, 0.0, 10.0), (1, 10.0, 10.0)]);
+        .collect()
+}
+
+#[test]
+fn the_column_rules_after_the_spanner_move_with_its_columns() {
+    for (margin, top) in [(0, 10.0), (-5, 5.0)] {
+        assert_eq!(
+            rules(&format!(
+                "<div style='{COLUMNS};column-rule:2px solid'><div>A</div><div>B</div>\
+                 <div style='column-span:all;margin-bottom:{margin}px'>{BREAK_BEFORE}</div>\
+                 <div>C</div><div>D</div></div>"
+            )),
+            [(0, 0.0, 10.0), (1, top, 10.0)],
+            "{margin}"
+        );
+    }
 }
