@@ -536,6 +536,14 @@ impl FragmentTree {
         self.by_node.get(&node).map_or(&[][..], Vec::as_slice)
     }
 
+    /// The indices of the records placed under the record at `parent`,
+    /// retired ones included.
+    pub(crate) fn children_of(&self, parent: usize) -> &[usize] {
+        self.children_by_parent
+            .get(&parent)
+            .map_or(&[][..], Vec::as_slice)
+    }
+
     /// Whether the record at `index` was retired by a later layout.
     pub(crate) fn is_retired(&self, index: usize) -> bool {
         self.retired.contains(&index)
