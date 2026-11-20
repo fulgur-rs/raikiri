@@ -152,11 +152,9 @@ pub(crate) fn intrinsic_widths_with(
     boxes: &AtomicIntrinsics,
 ) -> (f32, f32) {
     // The indent needs the width it is resolved against, which intrinsic
-    // sizing does not have; it contributes only when it is a plain length.
+    // sizing does not have; its percentage counts as zero.
     let mut options = root.options;
-    if let ComputedTextIndent::Px(px) = root.indent {
-        options.text_indent.length = px;
-    }
+    options.text_indent.length = resolve_indent(root.indent, 0.0);
     let Some(apart) = &root.block_intrinsics else {
         let sizes = root.paragraph.intrinsic_sizes(cx, &options, boxes);
         return (sizes.min_content, sizes.max_content);

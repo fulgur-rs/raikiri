@@ -111,6 +111,10 @@ pub(crate) struct GeneratedBlock {
     /// content of the paragraph; `None` for one of a descendant, which can
     /// sit anywhere among it.
     pub(crate) of_root: Option<raikiri_style::PseudoElem>,
+    /// The box has content set in the paragraph's lines and on its axes,
+    /// which is measured apart for the paragraph's intrinsic widths (see
+    /// [`super::projection::BlockIntrinsics`]).
+    pub(crate) content_apart: bool,
 }
 
 /// `sides` on the axes of a vertical root: `top` and `bottom` become the
@@ -180,6 +184,7 @@ impl GeneratedBlock {
             break_after: cv.break_after,
             on_root_axes: false,
             of_root: None,
+            content_apart: false,
         }
     }
 
@@ -567,13 +572,11 @@ impl GeneratedBlock {
     }
 
     /// The options the box's own lines are measured with for its intrinsic
-    /// widths: a percentage `text-indent` has no width to resolve against.
+    /// widths: a percentage in `text-indent` counts as zero, as it has no
+    /// width to resolve against.
     pub(crate) fn intrinsic_line_options(&self) -> LineOptions {
         let (mut options, indent) = self.own_lines;
-        options.text_indent.length = match indent {
-            ComputedTextIndent::Px(px) => px,
-            _ => 0.0,
-        };
+        options.text_indent.length = super::flow::resolve_indent(indent, 0.0);
         options
     }
 }

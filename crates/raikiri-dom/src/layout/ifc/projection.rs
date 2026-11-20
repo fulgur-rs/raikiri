@@ -84,14 +84,15 @@ pub(crate) struct BlockIntrinsics<P> {
 }
 
 /// A block-level pseudo-element's content measured apart from the paragraph
-/// (see [`BlockIntrinsics`]).
+/// (see [`BlockIntrinsics`]), broken as the paragraph breaks it.
 #[derive(Debug)]
 pub(crate) struct BlockContent<P> {
     /// The id of the box's start token.
     pub(crate) start: u64,
     /// The content as a paragraph of its own.
     pub(crate) paragraph: P,
-    /// The content holds an image, which breaks are found around.
+    /// The content holds an image, which breaks are found around unless the
+    /// paragraph has an out-of-flow box.
     has_images: bool,
 }
 
@@ -470,6 +471,12 @@ fn push_generated(
         None => None,
     };
     let empty = text.is_empty() && !has_images;
+    // The content of a box set in the paragraph's lines is measured apart
+    // for the paragraph's intrinsic widths; an empty box has none.
+    let block = block.map(|mut block| {
+        block.content_apart = !empty && !orthogonal;
+        block
+    });
     let (edges, edge_percents) = if inline_level
         && pseudo != PseudoElem::Marker
         && (!empty || cv.display != DisplayValue::Contents)
@@ -555,9 +562,11 @@ fn push_generated(
         builder.push_block_in_inline(NodeId(block.start));
         images.blocks.push(block.clone());
     }
-    // A box whose content is measured apart keeps only its tokens here.
+    // A box whose content is measured apart keeps only its tokens here. Its
+    // content is pushed as the paragraph pushes it, so that the first letter
+    // is found the same way.
     if let Some(block) = &block
-        && !orthogonal
+        && block.content_apart
         && let Some((limits, contents)) = images.block_contents.as_mut()
     {
         let paragraph_style = style::paragraph_style(cv, element, inline_style.clone())?;
@@ -566,9 +575,19 @@ fn push_generated(
         for piece in &pieces {
             match piece {
                 GeneratedPiece::Text(text) => {
-                    paragraph.push_text(TextSource::Generated { node: id }, text);
+                    first_letter.push_with_counters(
+                        &mut paragraph,
+                        doc,
+                        cascade,
+                        TextSource::Generated { node: id },
+                        cv,
+                        text,
+                        fonts,
+                        counters,
+                    )?;
                 }
                 GeneratedPiece::Image(image) => {
+                    first_letter.stop();
                     has_images = true;
                     paragraph.push_atomic(
                         NodeId(*image as u64),
@@ -584,10 +603,6 @@ fn push_generated(
             paragraph,
             has_images,
         });
-        // The box's content would have held the first letter.
-        if !empty {
-            first_letter.stop();
-        }
         builder.push_block_in_inline(NodeId(block.end));
         return match builder.error() {
             Some(error) => Err(IfcError::Limit(error)),
@@ -864,7 +879,7 @@ impl ProjectedBuilder {
                 let contents = contents
                     .into_iter()
                     .map(|mut content| {
-                        if content.has_images {
+                        if content.has_images && !has_out_of_flow {
                             content
                                 .paragraph
                                 .with_line_break_override(super::atomic_breaks::around_atomics);
@@ -1147,7 +1162,11 @@ fn project_children_builder(
     };
     let (mut projected, _) = project(false)?;
     if projected.meta.writing_mode == WritingMode::HorizontalTb
-        && !projected.meta.generated_blocks.is_empty()
+        && projected
+            .meta
+            .generated_blocks
+            .iter()
+            .any(|block| block.content_apart)
     {
         let (apart, contents) = project(true)?;
         if !contents.is_empty() {

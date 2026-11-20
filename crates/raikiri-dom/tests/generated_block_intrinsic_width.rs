@@ -279,3 +279,34 @@ fn an_empty_box_or_one_with_an_image_counts_too() {
     assert_eq!(size_of_s(&image(""))[0], 60.0);
     assert_eq!(size_of_s(&image("width: 30px"))[0], 30.0);
 }
+
+#[test]
+fn the_first_letter_and_text_indent_count_as_in_the_lines() {
+    // The first letter of the box's content is 30px wide.
+    let first_letter = |text: &str| {
+        format!(
+            "<style>#s::first-letter {{ font-size: 30px }} \
+             #s::before {{ content: \"xxxx\"; display: block }}</style>\
+             <div id=s style=\"display: inline-block; width: min-content\">{text}</div>"
+        )
+    };
+    assert_eq!(size_of_s(&first_letter("abcdef"))[0], 60.0);
+    check(&[
+        (
+            "the length of a calc() text-indent of the box",
+            pseudo_in(
+                FLOAT,
+                "before",
+                "text-indent: calc(10% + 30px)",
+                "xxxx",
+                "a",
+            ),
+            [70.0, 20.0],
+        ),
+        (
+            "the length of a calc() text-indent of the parent",
+            "<span id=s style=\"float: left; text-indent: calc(10% + 30px)\">ab</span>".to_owned(),
+            [50.0, 10.0],
+        ),
+    ]);
+}
