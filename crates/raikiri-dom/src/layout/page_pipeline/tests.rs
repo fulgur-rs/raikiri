@@ -22231,4 +22231,10 @@ fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_
     assert!(!line_follows_paragraph_block(
         &document, &cascade, paragraph, elsewhere
     ));
+    assert!(!line_follows_paragraph_block(
+        &document,
+        &cascade,
+        paragraph,
+        in_positioned_span
+    ));
 }
