@@ -126,6 +126,18 @@ fn the_first_letter_sizes_a_shrink_to_fit_box() {
 }
 
 #[test]
+fn a_wrapped_first_letter_keeps_its_style_in_a_block_before() {
+    // As in Chromium, the part of the letter's unit that wraps to the
+    // block's second line still takes the letter's line height.
+    assert_rows(&[(
+        &format!(
+            r#"<style>{LETTER} #s::before{{content:"! A";display:block;width:20px}}</style><div id=s style="position:absolute">abc</div>"#
+        ),
+        &[("s", [0.0, 0.0, 30.0, 90.0])],
+    )]);
+}
+
+#[test]
 fn a_block_after_holds_the_first_letter_when_nothing_comes_before_it() {
     assert_rows(&[
         (
