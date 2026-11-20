@@ -5068,6 +5068,21 @@ fn paginate_flow(
         content_width,
         root_flow_offset,
     );
+    // A footer that starts a run of boxes tied by avoided breaks moves to
+    // the next page with them (see `place_table_footer`).
+    for (&group, footer) in table_headers
+        .headers
+        .iter_mut()
+        .filter(|(_, group)| group.footer)
+    {
+        let first_row = document
+            .children_through_contents(group)
+            .into_iter()
+            .find(|&row| document.nodes[row].display() == DisplayValue::TableRow);
+        if let Some(run) = first_row.and_then(|row| avoided_breaks.run_ends.get(&row)) {
+            footer.tied_run = Some((run.end - (footer.source_y + footer.height), run.firm));
+        }
+    }
     let table_row_origins = table_row_origins(document, &candidates);
     let page_names = if super::page::has_named_pages(cascade) {
         PageNames::new(
@@ -5409,8 +5424,8 @@ fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usiz
 }
 
 /// The block end, before pagination, of the first row of each plain block
-/// table among `candidates` whose rows start its grid and whose header does
-/// not repeat: the part of the table that a box tied to the one before it
+/// table among `candidates` whose rows start its grid, below a header that
+/// repeats: the part of the table that a box tied to the one before it
 /// cannot be broken away from. That is the row up to the first break that
 /// splits it, or the whole row when none does. A first row in a row group
 /// that avoids breaks inside it takes the whole group along (`row_groups`).
@@ -5433,6 +5448,10 @@ fn first_row_ends(
     {
         // The rows of an inline table, nested in a cell or not, are not rows
         // of a block table: the plain-table filter below drops that table.
+        // A header that repeats goes with the first row below it.
+        if table_headers.owner(candidate.node_id).is_some() {
+            continue;
+        }
         if let Some(table) = document.table_of_row(candidate.node_id) {
             row_tops.insert(candidate.node_id, candidate.raw_y);
             let end = candidate.raw_y + candidate.height;
@@ -5480,10 +5499,6 @@ fn first_row_ends(
                 && is_plain_table_box(document, table)
                 && rows_start_the_grid(document, cascade, table)
                 && !forced_break_before_first_row(document, cascade, table, row)
-                && !document.nodes[table]
-                    .children
-                    .iter()
-                    .any(|&child| table_headers.repeats_header(child))
         })
         .map(|(table, (row, end))| {
             // A row that a break can split holds only its part before the
@@ -5834,14 +5849,13 @@ fn may_break_inside(
 
 /// The part of the table `table` before which the page breaks when the table
 /// starts a run of boxes tied by avoided breaks, as in Chromium: the part
-/// that the table ends with in visual order, a caption below the rows or its
-/// last row, together with the rows before it that it may not break from.
-/// Walking back from the last row, a break between two rows that is avoided
-/// by the rows or their row groups, or that falls inside a row group (or a
-/// table) that avoids breaks inside it, ties the rows together, unless a
-/// break is forced there. `None` when the table moves whole: the walk
-/// reaches its first row. A table with a footer group starts no run (see
-/// [`table_starts_run`]).
+/// that the table ends with in visual order, a caption below the rows, its
+/// footer group or its last row, together with the parts before it that it
+/// may not break from. Walking back from the last row, a break between two
+/// rows that is avoided by the rows or their row groups, or that falls
+/// inside a row group (or a table) that avoids breaks inside it, ties the
+/// rows together, unless a break is forced there. `None` when the table
+/// moves whole: the walk reaches its first row.
 fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) -> Option<usize> {
     let avoids_inside = |id: usize| avoids_page_break_inside(cascade.computed[id].break_inside);
     let table_avoids_inside = avoids_inside(table);
@@ -5868,21 +5882,86 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
                 });
         !forced && (avoided || table_avoids_inside)
     };
+    let footer_rows = footer_rows(document, table);
     let captions = bottom_captions(document, table, last);
     for (index, &caption) in captions.iter().enumerate().rev() {
         let mut edges = vec![(caption, true)];
         match index.checked_sub(1).map(|above| captions[above]) {
             Some(above) => edges.push((above, false)),
-            None => {
-                edges.push((last, false));
-                edges.extend(last_group.map(|group| (group, false)));
-            }
+            // The footer group lies between the rows and the captions.
+            None => match footer_rows.last() {
+                Some(&footer_row) => {
+                    edges.push((footer_row, false));
+                    edges.extend(document.parent_of(footer_row).map(|group| (group, false)));
+                }
+                None => {
+                    edges.push((last, false));
+                    edges.extend(last_group.map(|group| (group, false)));
+                }
+            },
         }
         if !tied(&edges) {
             return Some(caption);
         }
     }
+    // A footer group is the last part on its own, unless a break it may not
+    // take ties it to the last row: then it goes with the rows tied to that
+    // row.
+    if let Some(&footer_row) = footer_rows.first() {
+        let footer = document.parent_of(footer_row).unwrap_or(table);
+        let mut edges = vec![(footer, true), (footer_row, true), (last, false)];
+        edges.extend(last_group.map(|group| (group, false)));
+        if !tied(&edges) {
+            return Some(footer_row);
+        }
+    }
     tied_rows_start(document, cascade, &rows, table_avoids_inside)
+}
+
+/// When `start` is the first row of a repeated footer group, which starts a
+/// run of boxes tied by avoided breaks, the first of the body rows that the
+/// last one may not break from (see [`tied_rows_start`]), and how far below
+/// that row's top the footer ends. The footer moves on with the run only
+/// when it fits below the rows; when it does not, the page breaks before
+/// those rows instead, as in Chromium, which closes the page with a copy of
+/// the footer.
+fn footer_guard(
+    document: &Document,
+    cascade: &CascadeResult,
+    start: usize,
+) -> Option<(usize, f32)> {
+    let footer = document
+        .parent_of(start)
+        .filter(|&group| document.nodes[group].display() == DisplayValue::TableFooterGroup)?;
+    let table = std::iter::successors(document.parent_of(footer), |&id| document.parent_of(id))
+        .find(|&id| {
+            matches!(
+                document.nodes[id].display(),
+                DisplayValue::Table | DisplayValue::InlineTable
+            )
+        })?;
+    let rows = body_rows(document, table);
+    let avoids_inside = avoids_page_break_inside(cascade.computed[table].break_inside);
+    let row = tied_rows_start(document, cascade, &rows, avoids_inside)
+        .or_else(|| rows.first().map(|&(row, _)| row))?;
+    let footer_end = current_abs_y(document, footer) + document.nodes[footer].layout.size.height;
+    Some((row, footer_end - current_abs_y(document, row)))
+}
+
+/// The rows of the footer group of the table `table`, in order.
+fn footer_rows(document: &Document, table: usize) -> Vec<usize> {
+    document
+        .children_through_contents(table)
+        .into_iter()
+        .find(|&child| document.nodes[child].display() == DisplayValue::TableFooterGroup)
+        .map(|footer| {
+            document
+                .children_through_contents(footer)
+                .into_iter()
+                .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The captions of the table `table` below its rows, whose last row is
@@ -6006,33 +6085,36 @@ fn body_table_break_start(
 
 /// Whether the table `table` starts a run of boxes tied by avoided breaks
 /// with the box after it, from its last part (see [`last_row_break`]) or
-/// whole. A table with a footer group starts none, since the footer is
-/// placed after the rows on its own, and neither does one whose last part
-/// forces a break after it, which ends the table's page.
+/// whole. A table whose last part forces a break after it, which ends the
+/// table's page, starts none.
 fn table_starts_run(document: &Document, cascade: &CascadeResult, table: usize) -> bool {
     if let Some(parts) = document.anonymous_table_parts(table) {
         return parts
             .last()
             .is_none_or(|&last| !forces_page_break(document, cascade, last, false));
     }
-    !has_footer_group(document, table)
-        && body_rows(document, table)
-            .last()
-            .is_none_or(|&(last, group)| {
-                if let Some(caption) = bottom_caption(document, table, last) {
-                    return !forces_page_break(document, cascade, caption, false);
-                }
-                !forces_page_break(document, cascade, last, false)
-                    && !group.is_some_and(|group| {
-                        document
-                            .children_through_contents(group)
-                            .into_iter()
-                            .rev()
-                            .find(|&row| document.nodes[row].display() == DisplayValue::TableRow)
-                            == Some(last)
-                            && forces_page_break(document, cascade, group, false)
-                    })
-            })
+    body_rows(document, table)
+        .last()
+        .is_none_or(|&(last, group)| {
+            if let Some(caption) = bottom_caption(document, table, last) {
+                return !forces_page_break(document, cascade, caption, false);
+            }
+            if let Some(&footer_row) = footer_rows(document, table).last() {
+                let footer = document.parent_of(footer_row).unwrap_or(table);
+                return !forces_page_break(document, cascade, footer_row, false)
+                    && !forces_page_break(document, cascade, footer, false);
+            }
+            !forces_page_break(document, cascade, last, false)
+                && !group.is_some_and(|group| {
+                    document
+                        .children_through_contents(group)
+                        .into_iter()
+                        .rev()
+                        .find(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+                        == Some(last)
+                        && forces_page_break(document, cascade, group, false)
+                })
+        })
 }
 
 /// The next in-flow box after the box `node_id` in the flow of its parent,
@@ -6350,6 +6432,24 @@ fn avoided_run_ends(
                     breaks_inside_start,
                     shorter: None,
                 });
+        }
+    }
+    // A run that starts at a repeated footer keeps the rows above it from
+    // breaking away from the footer (see `footer_guard`).
+    let guards: Vec<(usize, f32)> = ends
+        .keys()
+        .filter(|&&start| table_headers.is_footer_source(start))
+        .filter_map(|&start| footer_guard(document, cascade, start))
+        .collect();
+    for (row, offset) in guards {
+        if let Some(candidate) = candidates.iter().find(|candidate| candidate.node_id == row) {
+            ends.entry(row).or_insert(AvoidedRunEnd {
+                end: candidate.raw_y + offset,
+                firm: false,
+                closing: None,
+                breaks_inside_start: true,
+                shorter: None,
+            });
         }
     }
     ends
@@ -6720,11 +6820,7 @@ fn held_lines_end(
 /// before its first row.
 fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) -> Option<f32> {
     let children = document.children_through_contents(table);
-    if !rows_start_the_grid(document, cascade, table)
-        || children
-            .iter()
-            .any(|&child| document.nodes[child].display() == DisplayValue::TableHeaderGroup)
-    {
+    if !rows_start_the_grid(document, cascade, table) {
         return None;
     }
     let row = first_table_row(document, &children)?;
@@ -17524,12 +17620,44 @@ fn place_table_footer(
             page_origins.origin(page),
             page_end,
         );
-    if (y + footer.height > page_end + 0.001 || edges_move)
+    // A footer that starts a run of boxes tied by avoided breaks moves with
+    // them when the run crosses the page end, as a block does.
+    let run_moves = footer.tied_run.is_some_and(|(tail, firm)| {
+        y + footer.height <= page_end + 0.001
+            && (firm || footer.height + tail <= page_origins.step_at(next) + 0.001)
+            && avoided_box_moves(
+                y,
+                0.0,
+                y + footer.height + tail,
+                page_origins.origin(page),
+                page_end,
+            )
+    });
+    if (y + footer.height > page_end + 0.001 || edges_move || run_moves)
         && footer.height <= page_origins.step_at(next) + 0.001
     {
         page = next;
         y = page_origins.origin(page);
+        // A footer that moves with the boxes after it opens its page below
+        // a copy of the table's header, as a row there would.
+        if run_moves {
+            let table = footer.table;
+            let fits = footer.height;
+            if let Some(header) = table_headers
+                .headers
+                .values_mut()
+                .find(|header| !header.footer && header.table == table)
+                .filter(|header| {
+                    !header.placements.contains_key(&page)
+                        && header.height + header.gap + fits <= page_origins.step_at(page) + 0.001
+                })
+            {
+                header.placements.insert(page, (y, y));
+                y += header.height + header.gap;
+            }
+        }
     }
+    let footer = table_headers.headers.get_mut(&footer_id).expect("footer");
     materialize_y(document, footer_id, y);
     footer.source_y = y;
     footer

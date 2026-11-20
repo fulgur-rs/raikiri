@@ -629,7 +629,8 @@ fn a_heading_stays_before_a_table_that_does_not_start_with_its_first_row() {
         }),
         (85.0, 100.0)
     );
-    // Nor does the first row of a header group repeated on every page.
+    // A header group repeated on every page goes with the first row below
+    // it, as in Chromium: the heading moves with both.
     assert_eq!(
         heading_then(85, |doc, body| {
             let table = collapsed_table(doc, body, "");
@@ -640,7 +641,7 @@ fn a_heading_stays_before_a_table_that_does_not_start_with_its_first_row() {
             row_with_cell(doc, group, "");
             first
         }),
-        (85.0, 110.0)
+        (100.0, 120.0)
     );
 }
 
@@ -1169,7 +1170,8 @@ fn a_heading_in_a_wrapper_stays_before_a_table_that_does_not_start_with_its_firs
         }),
         (85.0, 100.0)
     );
-    // Nor does the first row of a header group repeated on every page.
+    // A header group repeated on every page goes with the first row below
+    // it, as in Chromium: the heading moves with both.
     assert_eq!(
         heading_in_wrapper_then(85, "", |doc, wrapper| {
             let table = collapsed_table(doc, wrapper, "");
@@ -1180,7 +1182,7 @@ fn a_heading_in_a_wrapper_stays_before_a_table_that_does_not_start_with_its_firs
             row_with_cell(doc, group, "");
             first
         }),
-        (85.0, 110.0)
+        (100.0, 120.0)
     );
     // The forced break sends the row to the next page whatever the heading
     // does, so the heading has nothing to move with.
