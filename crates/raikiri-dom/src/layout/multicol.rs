@@ -4513,10 +4513,10 @@ fn collapsed_stream(
     }
     let mut stream = 0.0f32;
     let mut pending = CollapsibleMarginSet::ZERO;
-    for &(child, _, _, margin_top, margin_bottom, needed) in measurements {
-        if tree.nodes[child].layout_position() == Position::Absolute {
-            continue;
-        }
+    let in_flow = measurements
+        .iter()
+        .filter(|entry| tree.nodes[entry.0].layout_position() != Position::Absolute);
+    for &(_, _, _, margin_top, margin_bottom, needed) in in_flow {
         pending = pending.collapse_with_margin(margin_top);
         let content = needed - margin_top - margin_bottom;
         if content > 0.0 {
