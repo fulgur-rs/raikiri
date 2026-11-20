@@ -1,5 +1,6 @@
 mod authored;
 mod break_flow;
+pub(crate) use break_flow::block_in_inline_wrapper;
 mod column_line_boxes;
 mod column_lines;
 mod constrained_chain;
@@ -1501,7 +1502,7 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // its content and whose block edges, if any, its pieces slice, which the custom
 // path breaks between lines in a definite-height container as well. A box with
 // nothing inside it may stand among them, if one of the others holds lines: one
-// with a block size of its own, which the planner places whole in a column, or
+// with a block size of its own, which the planner slices at column ends, or
 // one with no room of its own, whose margins collapse through it. So may a box
 // of lines with a height of its own (see `is_sized_paragraph`), and a box that
 // makes a formatting context of its own (see `is_whole_formatting_context_box`),
@@ -1532,15 +1533,17 @@ fn multicol_has_only_paragraph_children(
         }
         // A wrapper whose paragraphs join the flow of the columns counts as
         // the paragraphs it holds. A chain of wrappers around one paragraph
-        // keeps the strategies of such chains.
+        // that is the container's only box keeps the strategies of such
+        // chains; beside other boxes, nothing else breaks it between columns.
         if let Some(count) =
-            paragraph_group::wrapped_paragraphs(tree, child).filter(|&count| count > 1)
+            paragraph_group::wrapped_paragraphs(tree, child).filter(|&count| count > 1 || several)
         {
             paragraphs += count;
             return true;
         }
-        // A box of lines with a height of its own goes whole to a column, so
-        // it needs the planner as a box of lines does. So does a box that
+        // A box of lines with a height of its own is sliced at column ends,
+        // or goes whole to a column, so it needs the planner as a box of lines
+        // does. So does a box that
         // makes a formatting context of its own.
         if is_sized_paragraph(tree, child)
             || is_whole_formatting_context_box(tree, child)
@@ -1695,8 +1698,9 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
 }
 
 /// Whether `child` is a plain block of lines whose height is authored: a box
-/// the planner places whole in a column, whatever its lines would give it, as
-/// it places a box with no lines. The structure decides this before the box
+/// the planner slices at column ends, whatever its lines would give it, as it
+/// slices a box with no lines, keeping its lines in its first piece, or places
+/// whole in a column. The structure decides this before the box
 /// is laid out; [`paragraph_group`] also checks that the lines fit the height
 /// once they are shaped.
 fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
@@ -2136,12 +2140,18 @@ fn record_wrapped_fragments(
             .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
             .collect();
         let count = wrapped.placement.fragments.len();
+        // A box whose height is authored keeps it when it stands whole in one
+        // column, even where its lines end short of it.
+        let authored =
+            (count == 1 && is_sized_paragraph(tree, wrapped.node)).then_some(layout.size.height);
         // The top of the columns in the space of the wrapper's fragment.
         let columns_top = -wrapped.parent.first_y;
         for (index, range) in wrapped.placement.fragments.iter().enumerate() {
             let y = layout.location.y + range.y;
             let last = range.line_end >= extents.len();
-            let height = if last {
+            let height = if let Some(height) = authored {
+                height
+            } else if last {
                 let first = extents.get(range.line_start).map_or(0.0, |extent| extent.0);
                 extents
                     .get(range.line_end.saturating_sub(1))
@@ -3945,7 +3955,17 @@ fn layout_column_group(
         leave_block_offset_to_painter(tree, child);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
-                root.multicol_fragments = Some(placement.fragments.clone());
+                // A sliced box holds its lines in its first piece; the pieces
+                // after it hold none, and are recorded as the pieces of a box
+                // with no lines (see `push_sliced_box_pieces`).
+                root.multicol_fragments = Some(
+                    placement
+                        .fragments
+                        .iter()
+                        .filter(|range| !placement.sliced || range.line_start < range.line_end)
+                        .copied()
+                        .collect(),
+                );
                 root.multicol_fragment_origins_recorded = true;
             }
             refresh_paragraph_boxes(
@@ -4154,6 +4174,10 @@ fn layout_column_group(
             column = placement.last_column;
             cursor = placement.last_y + margin_bottom;
         } else if let Some(placement) = planned {
+            // A sliced box occupies every column a piece of it reaches.
+            if placement.sliced {
+                occupied.extend(placement.first_column..=placement.last_column);
+            }
             column = placement.last_column;
             cursor = placement.last_y;
             let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
@@ -4245,6 +4269,7 @@ fn layout_column_group(
                 height: maximum.max(cursor),
                 occupied,
                 slice: None,
+                run_start: children.first().copied(),
             });
     }
     let minimum_height = if auto_measurements.is_some()
@@ -4751,6 +4776,7 @@ fn apply_nested_continuation(
                 height,
                 occupied: std::collections::BTreeSet::new(),
                 slice: (!plan.cloned).then_some(slice),
+                run_start: None,
             }
         })
         .collect();
@@ -6172,7 +6198,8 @@ pub(crate) struct AncestorFacts {
 
 /// Whether the block `id` makes a block formatting context of its own: a
 /// scroll container, a box with layout or paint containment or with
-/// `align-content` other than `normal`, or a multicol container. Overflow
+/// `align-content` other than `normal`, an HTML `button` (whose content button
+/// layout centers as such an `align-content` does), or a multicol container. Overflow
 /// propagated to the viewport is not the box's own.
 /// Normal projection queries the source lazily; rebreaking supplies a value
 /// cached before its additional walk.
@@ -6190,6 +6217,7 @@ fn roots_formatting_context(
             .contains(raikiri_style::property::Contain::LAYOUT)
         || cv.contain.contains(raikiri_style::property::Contain::PAINT)
         || cv.align_content != raikiri_style::property::ContentAlignmentValue::Normal
+        || doc.nodes[id].is_html_button()
         || doc.nodes[id].multicol.is_some()
 }
 

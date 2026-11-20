@@ -664,9 +664,9 @@ impl<'a> RenderResources<'a> {
                         ))
                         .is_none_or(|marker| marker.content.is_empty())
             })
-            .filter_map(|(_, cv)| match &cv.list_style_image {
-                BackgroundImage::Url(raw) => resolve_url(raw, base_url).map(|url| url.to_string()),
-                _ => None,
+            .filter_map(|(_, cv)| {
+                let raw = cv.list_style_image.url()?;
+                resolve_url(raw, base_url).map(|url| url.to_string())
             })
             .collect();
         // Generated content in owner and pseudo order, so attempt order stays
@@ -693,7 +693,9 @@ impl<'a> RenderResources<'a> {
                 .content
                 .iter()
                 .filter_map(|component| match component {
-                    raikiri_style::property::ContentComponent::Image { url } => Some(url.as_str()),
+                    raikiri_style::property::ContentComponent::Image { url, .. } => {
+                        Some(url.as_str())
+                    }
                     _ => None,
                 })
                 .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES)
@@ -1625,12 +1627,9 @@ fn pseudo_generates_box(
     }
 }
 
-/// The URL of a `url()` background layer.
+/// The URL of a `url()` background layer, also one an `image-set()` chose.
 fn background_url(image: &BackgroundImage) -> Option<&str> {
-    match image {
-        BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
-        _ => None,
-    }
+    image.url().map(|url| url.as_str())
 }
 
 #[cfg(test)]

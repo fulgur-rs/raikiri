@@ -2584,6 +2584,7 @@ pub(super) fn layout(
                 .map(|piece| piece.column)
                 .collect(),
             slice: None,
+            run_start: None,
         });
     }
     let container = tree.fragment_tree.try_push(LayoutFragment {

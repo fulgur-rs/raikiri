@@ -16526,8 +16526,24 @@ fn a_truncated_margin_breaks_at_its_first_page_edge() {
     let pages = PageOrigins::new(&[], 100.0);
     // A coinciding forced break keeps the margin on the new page.
     assert_eq!(
-        pages.truncated_margin_target(2, true, 15.0, || unreachable!(), false),
+        pages.truncated_margin_target(2, true, 15.0, || 200.0, false),
         215.0
+    );
+    // A margin that a forced break keeps but that runs past the end of the
+    // page the break opens is cut there: the box starts the next page.
+    assert_eq!(
+        pages.truncated_margin_target(2, true, 150.0, || 100.0, false),
+        200.0
+    );
+    // One that ends on the page the break opens stays whole, even when the
+    // box was further down before the break.
+    assert_eq!(
+        pages.truncated_margin_target(1, true, 50.0, || 100.0, false),
+        150.0
+    );
+    assert_eq!(
+        pages.truncated_margin_target(3, true, 50.0, || 100.0, false),
+        150.0
     );
     // Otherwise the box starts at the first page edge inside its margin.
     assert_eq!(
@@ -19504,8 +19520,9 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_grows_as_a_block_in_block_f
 #[test]
 fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
     // The 20px root starts 95px down a 100px page: its first line ends at 105.
-    // A box among its lines keeps them from moving down inside it, so the
-    // block moves as a unit.
+    // A box among its lines that would not follow them, an absolutely
+    // positioned box that both insets place, keeps them from moving down
+    // inside it, so the block moves as a unit.
     let (mut doc, cascade, body, root, text) = unpaginated_paragraph_with_boxes_after_a_spacer(
         "aaaa bbbb",
         "height:20px",
@@ -19515,6 +19532,11 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
                 Some(root),
                 "span",
                 Some("display:inline-block;width:10px;height:10px"),
+            );
+            doc.append_element(
+                Some(root),
+                "span",
+                Some("position:absolute;top:0;bottom:0;width:10px"),
             );
         },
     );
@@ -22150,4 +22172,19 @@ fn margins_kept_after_a_forced_break_join_across_nodes_that_generate_no_box() {
         }),
         150.0
     );
+}
+
+#[test]
+fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
+    // The walk finds neither text nor an atomic inline: no atomic inline
+    // comes before the text, as for any paragraph without atomic inlines.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = document.append_element(Some(body), "div", Some("display:block"));
+    let span = document.append_element(Some(paragraph), "span", None::<&str>);
+    document.append_text(span, "  ");
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).expect("cascade Ok");
+    assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
 }

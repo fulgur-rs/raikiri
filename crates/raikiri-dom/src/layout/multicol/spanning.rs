@@ -19,8 +19,6 @@ pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usiz
         && !AuthoredBox::new(doc, cascade, child).is_floated()
 }
 
-/// `column-span: all` applies to the block-level boxes that are in the flow
-/// (CSS Multi-column Layout 1, 6.1), whatever their inner display is.
 /// Whether `child`, a box in the flow of a multicol container, puts content
 /// in its columns: a box that is not hidden, or text that takes room.
 pub(super) fn holds_column_content(tree: &LayoutSession<'_>, child: usize) -> bool {
@@ -31,6 +29,8 @@ pub(super) fn holds_column_content(tree: &LayoutSession<'_>, child: usize) -> bo
     }
 }
 
+/// `column-span: all` applies to the block-level boxes that are in the flow
+/// (CSS Multi-column Layout 1, 6.1), whatever their inner display is.
 fn spans_all_columns(node: &crate::node::Node) -> bool {
     node.column_span_all
         && node.is_in_document()
@@ -198,6 +198,9 @@ pub(super) fn layout(
                 y: block_offset + adjoining,
             };
             tree.set_unrounded_layout(NodeId::from(child), &child_layout);
+            // The spanner is placed without the block offset of its
+            // `position: relative` insets, which the painter adds.
+            super::leave_block_offset_to_painter(tree, child);
             let Some(fragment) = tree
                 .fragment_tree
                 .try_push(crate::fragment::LayoutFragment {
@@ -236,9 +239,7 @@ pub(super) fn layout(
                         .layout_parent_of(id)
                         .expect("spanner roots remain in their source subtree");
                 }
-                let nested = &mut tree.fragment_tree.fragments[index];
-                nested.rect.x += offset.x;
-                nested.rect.y += offset.y;
+                tree.fragment_tree.fragments[index].translate(offset.x, offset.y);
                 tree.fragment_tree.attach_root(index, fragment);
             }
             block_offset =

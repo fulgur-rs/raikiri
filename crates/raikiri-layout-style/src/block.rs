@@ -131,6 +131,11 @@ impl LayoutStyleView<'_> {
     /// Content alignment read by project block primitives.
     #[inline]
     pub fn bridge_align_content(&self) -> values::AlignContent {
+        if self.flags().contains(StyleFlags::CENTERED_CONTENT) {
+            // Without an overflow-position keyword a block container treats
+            // `center` as `safe`, as button layout does with overflow.
+            return values::AlignContent::CENTER;
+        }
         crate::flex::content(self.prepared.values.align_content)
     }
     /// The content alignment of a container.

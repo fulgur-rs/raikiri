@@ -28,9 +28,9 @@ use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
     ConicGradient, CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient,
-    GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
-    ObjectFit, OutlineColor, OutlineStyle, PositionValue, PropertyKey, PropertyValue, Sides,
-    TextShadowColor, UnboundedColor, VerticalAlign, VisualBox,
+    GradientStopColor, HueInterpolationMethod, ImageDensity, Length, LengthPercentageOrCalc,
+    MixColorSpace, ObjectFit, OutlineColor, OutlineStyle, PositionValue, PropertyKey,
+    PropertyValue, Sides, TextShadowColor, UnboundedColor, VerticalAlign, VisualBox,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -966,15 +966,18 @@ fn paint_page_background_layer(
 ) {
     let image = &layer.image;
     let source = match image {
-        BackgroundImage::Url(raw_url) => {
-            let (Some(pixel_source), Some(url)) = (pixel_source, image_cache.image_url(raw_url))
-            else {
+        BackgroundImage::Gradient(_) if paints_gradient_image(image) => Err(()),
+        _ => {
+            let (Some(pixel_source), Some(url)) = (
+                pixel_source,
+                image
+                    .url()
+                    .and_then(|raw_url| image_cache.image_url(raw_url)),
+            ) else {
                 return;
             };
             Ok((pixel_source, url))
         }
-        BackgroundImage::Gradient(_) if paints_gradient_image(image) => Err(()),
-        _ => return,
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
     // `@page` positioning area with nonzero margins/borders (CSS Page 3 page
@@ -998,7 +1001,7 @@ fn paint_page_background_layer(
         Ok((pixel_source, url)) => paint_background_from_source(
             image_cache,
             scene,
-            &url,
+            (&url, image.density()),
             positioning,
             painting,
             &layer.size,
@@ -1121,10 +1124,11 @@ fn paint_canvas_background_layer(
     let Some(pixel_source) = pixel_source else {
         return;
     };
-    let BackgroundImage::Url(raw_url) = &layer.image else {
-        return;
-    };
-    let Some(url) = image_cache.image_url(raw_url) else {
+    let Some(url) = layer
+        .image
+        .url()
+        .and_then(|raw_url| image_cache.image_url(raw_url))
+    else {
         return;
     };
     // The propagated values are treated as the root element's own (CSS
@@ -1136,7 +1140,7 @@ fn paint_canvas_background_layer(
     paint_background_from_source(
         image_cache,
         scene,
-        &url,
+        (&url, layer.image.density()),
         positioning,
         painting,
         &layer.size,
@@ -1163,7 +1167,7 @@ fn background_color_with_image_source(
     current_color: CssColor,
     pixel_source: Option<&dyn ImagePixelSource>,
 ) -> Option<CssColor> {
-    if pixel_source.is_some() && matches!(background_image, BackgroundImage::Url(_)) {
+    if pixel_source.is_some() && background_image.url().is_some() {
         (background_color.a != 0).then_some(background_color)
     } else {
         effective_background_color(background_color, background_image, current_color)
@@ -1593,7 +1597,7 @@ fn paint_list_marker_with_snapshots(
                 None => document.unprojected_list_marker_image_top(
                     cascade,
                     node_id,
-                    list_marker_image_raster_size(document, node_id, &decoded).height,
+                    list_marker_image_raster_size(document, node_id, computed, &decoded).height,
                     paint_y,
                     page_flow.1,
                 ),
@@ -1698,15 +1702,14 @@ fn list_marker_image(
             raikiri_style::PseudoElem::Marker,
         ))
         .is_some_and(|marker| !marker.content.is_empty());
-    let resolved = if let (BackgroundImage::Url(raw_url), Some(source)) =
-        (&computed.list_style_image, pixel_source)
-    {
-        image_cache
-            .resolve_url(raw_url)
-            .and_then(|url| source.get_decoded(&url))
-    } else {
-        None
-    };
+    let resolved =
+        if let (Some(raw_url), Some(source)) = (computed.list_style_image.url(), pixel_source) {
+            image_cache
+                .resolve_url(raw_url)
+                .and_then(|url| source.get_decoded(&url))
+        } else {
+            None
+        };
     if explicit_content {
         return None;
     }
@@ -1718,18 +1721,21 @@ fn list_marker_image(
 }
 
 /// The size the image `decoded` of the marker of `node_id` is painted at: the
-/// size layout gave it, else its pixel size.
+/// size layout gave it, else its natural size, its pixel size divided by the
+/// density its `image-set()` option was written for.
 fn list_marker_image_raster_size(
     document: &Document,
     node_id: usize,
+    computed: &ComputedValues,
     decoded: &raikiri_traits::DecodedImage,
 ) -> raikiri_traits::ImageRasterSize {
-    document
-        .list_marker_image_size(node_id)
-        .unwrap_or(raikiri_traits::ImageRasterSize {
-            width: decoded.width as f32,
-            height: decoded.height as f32,
-        })
+    document.list_marker_image_size(node_id).unwrap_or_else(|| {
+        let (width, height) = computed
+            .list_style_image
+            .density()
+            .natural_size(decoded.width as f32, decoded.height as f32);
+        raikiri_traits::ImageRasterSize { width, height }
+    })
 }
 
 /// The transform that maps the pixels of `decoded`, the image of the marker
@@ -1744,7 +1750,7 @@ fn list_marker_image_transform(
     padding_left: f32,
     decoded: &raikiri_traits::DecodedImage,
 ) -> Affine {
-    let size = list_marker_image_raster_size(document, node_id, decoded);
+    let size = list_marker_image_raster_size(document, node_id, computed, decoded);
     let (marker_width, marker_height) = (size.width, size.height);
     let marker_rect = document.standalone_marker_image_rect(
         computed,
@@ -2857,7 +2863,7 @@ fn redacted_image_url(url: &url::Url) -> url::Url {
 fn paint_background_from_source(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
-    url: &url::Url,
+    (url, density): (&url::Url, ImageDensity),
     positioning: Rect,
     painting: Rect,
     size: &ComputedBackgroundSize,
@@ -2867,7 +2873,13 @@ fn paint_background_from_source(
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let Some(intrinsic) = pixel_source.intrinsic_size(url) else {
+    // The natural size of an image an `image-set()` option wrote for another
+    // density than `1x` is its size divided by that density (CSS Images 4
+    // §2.4).
+    let Some(intrinsic) = pixel_source
+        .intrinsic_size(url)
+        .map(|intrinsic| intrinsic.at_density(density))
+    else {
         return;
     };
     let Some(image) =
@@ -4013,7 +4025,7 @@ fn effective_background_color(
                 if bg.a != 0 { Some(bg) } else { None }
             })
         }
-        BackgroundImage::Url(url) => {
+        BackgroundImage::Url(url) | BackgroundImage::DensityUrl { url, .. } => {
             // Prefer inferred color from URL filename; if inference fails, use bg if opaque
             infer_url_color(url).or(if bg.a != 0 { Some(bg) } else { None })
         }

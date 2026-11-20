@@ -5,7 +5,9 @@ use raikiri_html::{
     layout, parse_html_with_resources,
 };
 use raikiri_style::ComputedLengthPercentageOrCalc as P;
-use raikiri_style::property::{BorderStyle, BoxSizing, DisplayValue, FontStyle, TextAlign};
+use raikiri_style::property::{
+    BorderStyle, BoxSizing, ContentAlignmentValue, DisplayValue, FontStyle, TextAlign,
+};
 use raikiri_style::resolve::ComputedLineHeight;
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
@@ -97,6 +99,9 @@ fn button_defaults_reset_inherited_font_and_supply_used_box_styles() {
     assert_eq!(cv.display, DisplayValue::InlineBlock);
     assert_eq!(cv.box_sizing, BoxSizing::BorderBox);
     assert_eq!(cv.text_align, TextAlign::Center);
+    // Button layout centers the content itself; the UA sheet leaves
+    // `align-content` at its initial value, as Chromium reports it.
+    assert_eq!(cv.align_content, ContentAlignmentValue::Normal);
     assert_eq!(cv.font_family[0].to_string(), "Arial");
     assert!((cv.font_size.px() - 13.333333).abs() < 0.0001);
     assert_eq!(cv.font_style, FontStyle::Normal);

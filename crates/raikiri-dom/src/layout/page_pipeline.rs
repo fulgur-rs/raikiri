@@ -37,7 +37,8 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
-use super::ifc::boxes::{IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -2119,7 +2120,22 @@ impl PageOrigins {
         follows_forced_break: bool,
     ) -> f32 {
         if forced_before {
-            self.origin(natural_page) + margin_top
+            // The break opens the page at the top of the margin, which may lie
+            // on a page before the box's. A margin that runs past the end of
+            // that page is cut at that end, and the box starts the next page
+            // (Chromium).
+            let break_page = self
+                .page_starting_at_or_after(margin_start())
+                .min(natural_page);
+            let top = self.origin(break_page) + margin_top;
+            let next = self.origin(break_page.saturating_add(1));
+            if break_page >= natural_page {
+                self.origin(natural_page) + margin_top
+            } else if top >= next - 0.001 {
+                next
+            } else {
+                top
+            }
         } else {
             self.origin(self.first_edge_in_margin(
                 margin_start(),
@@ -2154,11 +2170,14 @@ impl PageOrigins {
         };
         // A forced break sits at the top of the margin box. A negative margin
         // puts that top below the border box, past content that runs on
-        // beyond the border box's page.
+        // beyond the border box's page. A positive one that runs over a page
+        // edge leaves the break on the page the margin box starts on: the
+        // margin follows the break, which cuts it at the end of the page the
+        // break opens.
         let margin_box_y = effective_y - margin_top;
         let break_page = self
             .page_index_in_flow(margin_box_y)
-            .map_or(page, |at| at.max(page));
+            .map_or(page, |at| if margin_top > 0.0 { at } else { at.max(page) });
         if !forced_transition {
             page
         } else if break_page > current_page && flow_max >= break_page && margin_box_y.is_finite() {
@@ -4234,7 +4253,17 @@ fn page_edge_child(
             }
             return Ok(Some(child));
         }
-        if document.nodes[child].display() == DisplayValue::Contents
+        // An inline box has no block edges of its own: a block inside it at
+        // its edge is at the paragraph's edge, as it is for an element with
+        // no box. Padding, border or margin on its inline sides take room on
+        // a line around the block, which then is not at the edge, as do a
+        // line break and a replaced element, which are content of a line.
+        let display = document.nodes[child].display();
+        if (display == DisplayValue::Contents
+            || (display == DisplayValue::Inline
+                && !has_inline_side_edges(cascade, child)
+                && !makes_line_content(document, child)))
+            && node.kind() == NodeKind::Element
             && !node.has_before_or_after_content
         {
             if let Some(descendant) = page_edge_child(document, cascade, child, before, depth + 1)?
@@ -4246,6 +4275,32 @@ fn page_edge_child(
         return Ok(Some(child));
     }
     Ok(None)
+}
+
+/// Whether the inline element `id` is content of a line by itself: a line
+/// break opportunity (`br`, `wbr`) or a replaced element.
+fn makes_line_content(document: &Document, id: usize) -> bool {
+    document.nodes[id]
+        .tag_name()
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("br") || tag.eq_ignore_ascii_case("wbr"))
+        || crate::layout::page::is_replaced_for_pagination(document, id)
+}
+
+/// Whether the inline box `id` has padding, border or margin on its left or
+/// right side.
+fn has_inline_side_edges(cascade: &CascadeResult, id: usize) -> bool {
+    use raikiri_style::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc};
+    let style = &cascade.computed[id];
+    let padding =
+        |side: &ComputedLengthPercentageOrCalc| *side != ComputedLengthPercentageOrCalc::Px(0.0);
+    let margin =
+        |side: &ComputedLengthPercentageOrAuto| *side != ComputedLengthPercentageOrAuto::Px(0.0);
+    padding(&style.padding.left)
+        || padding(&style.padding.right)
+        || margin(&style.margin.left)
+        || margin(&style.margin.right)
+        || style.border.left.width().0 != 0.0
+        || style.border.right.width().0 != 0.0
 }
 
 // Preserve source-node context when resolving Always: a column-local forced
@@ -10034,6 +10089,9 @@ struct PendingBreak {
     /// The boxes beside the source on its flex line or grid row, which the
     /// break does not fall before (see [`later_line_peers`]).
     line_peers: Vec<usize>,
+    /// Where the box that forced the break ends in the flow, its end margin
+    /// left out.
+    source_end: f32,
 }
 
 impl PendingBreak {
@@ -15253,9 +15311,12 @@ fn box_leaves_lines_to_pagination(
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it: it
-/// is in one column and holds nothing but text, and out-of-flow boxes that
-/// stay where their insets put them or follow the moved lines (see
-/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// is in one column and holds nothing but text, floats, atomic inlines that
+/// come after its first text (see [`atomics_follow_text`]), and out-of-flow
+/// boxes that stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). The atomic inlines on the moved lines move with
+/// them (see [`shift_paragraph_lines`]); a float is a page candidate of its
+/// own. Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_inside(
     document: &super::context::LayoutSession<'_>,
@@ -15266,13 +15327,70 @@ fn lines_can_shift_inside(
         .ifc_layout_node(block_id)
         .and_then(|node| node.ifc.as_ref())
         .is_some_and(|ifc| {
+            let mut atomics_follow = None;
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
                     b.kind == IfcBoxKind::Float
                         || (b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
+                        || (b.kind == IfcBoxKind::Atomic
+                            && *atomics_follow.get_or_insert_with(|| {
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
+                            }))
                 })
         })
+}
+
+/// Whether every atomic inline among the `boxes` of the paragraph `root` comes
+/// after the first of its text in tree order, the order in which its page
+/// candidates are placed. The text is what moves the lines, and the boxes
+/// before it are placed before it is: a move would leave them behind. The
+/// walk stops at the first text or atomic inline, and does not enter the
+/// paragraph's boxes, whose content is not its text.
+fn atomics_follow_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    boxes: &[IfcBox],
+) -> bool {
+    let boxed: HashMap<usize, bool> = boxes
+        .iter()
+        .map(|b| (b.node, b.kind == IfcBoxKind::Atomic))
+        .collect();
+    // Children in the order layout and the page candidates take them, which
+    // puts the summary of a `details` first.
+    let children = |node: usize| {
+        pagination_child_order_borrowed(document, cascade, node)
+            .into_owned()
+            .into_iter()
+            .rev()
+    };
+    let mut stack: Vec<usize> = children(root).collect();
+    while let Some(node) = stack.pop() {
+        if let Some(&atomic) = boxed.get(&node) {
+            if atomic {
+                return false;
+            }
+            continue;
+        }
+        match &document.nodes[node].data {
+            crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty() => {
+                return true;
+            }
+            // A `display: contents` element lays its children out in its
+            // place, so they are walked as the paragraph's own; a
+            // `display: none` one, or one that HTML never renders whatever
+            // its display, lays out nothing.
+            crate::node::NodeData::Element(_)
+                if !document.nodes[node].is_display_none()
+                    && !document.nodes[node].is_non_rendered_html_element() =>
+            {
+                stack.extend(children(node));
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
@@ -15325,8 +15443,10 @@ fn content_follows_block_children(
 /// although it has block children, because every block child comes after the
 /// last line: the block children follow the moved lines when pagination reaches
 /// them, and the paragraph's own checks judge all the lines as one run. It is
-/// in one column, and apart from those blocks lays out only out-of-flow boxes
-/// that stay where their insets put them or follow the moved lines (see
+/// in one column, and apart from those blocks lays out only floats, atomic
+/// inlines that come after its first text (see [`atomics_follow_text`]) and
+/// move with the lines that hold them, and out-of-flow boxes that stay where
+/// their insets put them or follow the moved lines (see
 /// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_above_blocks(
@@ -15338,11 +15458,16 @@ fn lines_can_shift_above_blocks(
         .ifc_layout_node(block_id)
         .and_then(|node| node.ifc.as_ref())
         .is_some_and(|ifc| {
+            let mut atomics_follow = None;
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
                     matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Float)
-                        || b.kind == IfcBoxKind::OutOfFlow
-                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                        || (b.kind == IfcBoxKind::OutOfFlow
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
+                        || (b.kind == IfcBoxKind::Atomic
+                            && *atomics_follow.get_or_insert_with(|| {
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
+                            }))
                 })
                 && ifc.lines.as_ref().is_some_and(|lines| {
                     lines
@@ -15774,11 +15899,8 @@ fn follows_line_of_paragraph(
         .is_some_and(|(lines, block)| {
             (document.nodes[block].display().is_atomic_inline_level()
                 || is_replaced_for_pagination(document, block))
-                && lines.lines.iter().enumerate().any(|(index, shaped)| {
-                index >= line && shaped.fragments().any(|fragment| {
-                    matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
-                })
-            }) || blocks_after_line(document, root, line, with_block_before).contains(&block)
+                && atomic_nodes(lines.lines.get(line..).unwrap_or_default()).contains(&block)
+                || blocks_after_line(document, root, line, with_block_before).contains(&block)
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
@@ -16243,8 +16365,11 @@ impl SiblingMargins {
         }
         if let Some(page) = float_break_page {
             // A relayout may already place the box at the next edge. Keep
-            // the margin from the float's forced boundary, not that edge.
-            target_y = target_y.min(page_origins.page_end(page));
+            // the margin from the float's forced boundary, not that edge,
+            // and never above the page the float's break opens.
+            target_y = target_y
+                .min(page_origins.page_end(page))
+                .max(page_origins.origin(page));
         }
         Some(MarginTruncation {
             delta: target_y - effective_y,
@@ -17830,15 +17955,10 @@ fn shift_paragraph_lines(
         .ifc_layout_node(moved.block_id)
         .and_then(|node| node.ifc.as_ref())
         .and_then(|ifc| ifc.lines.as_ref())
+        .map(|lines| atomic_nodes(lines.lines.get(moved.line..).unwrap_or_default()))
+        .unwrap_or_default()
         .into_iter()
-        .flat_map(|lines| lines.lines[moved.line..].iter())
-        .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::Atomic(atomic) => usize::try_from(atomic.node.0)
-                .ok()
-                .filter(|&node| node < document.nodes.len()),
-            _ => None,
-        })
+        .filter(|&node| node < document.nodes.len())
         .collect();
     let blocks = blocks_after_line(
         document,
@@ -19849,21 +19969,35 @@ fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) 
 }
 
 /// Whether `parent` is a block container whose later children follow a
-/// moved child. Flex, grid and table containers place their children
-/// themselves, and a paragraph's lines follow a moved block child through
-/// its line shifts.
+/// moved child, or an inline box that lays only blocks out as one does (see
+/// [`lays_blocks_out_inline_box`]). Flex, grid and table containers place
+/// their children themselves, and a paragraph's lines follow a moved block
+/// child through its line shifts.
 fn moves_later_siblings(document: &Document, parent: usize) -> bool {
-    matches!(
-        document.nodes[parent].display(),
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::ListItem
-            | DisplayValue::InlineBlock
-            | DisplayValue::TableCaption
-    ) && document.nodes[parent].multicol.is_none()
-        && document
-            .ifc_layout_node(parent)
-            .is_none_or(|node| node.ifc.is_none())
+    lays_blocks_out_inline_box(document, parent)
+        || matches!(
+            document.nodes[parent].display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::InlineBlock
+                | DisplayValue::TableCaption
+        ) && document.nodes[parent].multicol.is_none()
+            && document
+                .ifc_layout_node(parent)
+                .is_none_or(|node| node.ifc.is_none())
+}
+
+/// Whether `node_id` is an inline box that holds no line of a paragraph,
+/// only blocks (see [`crate::layout::multicol::block_in_inline_wrapper`]),
+/// with no block-axis padding or border of its own: it stacks those blocks
+/// in block flow, as the anonymous block around a block inside an inline box
+/// does.
+fn lays_blocks_out_inline_box(document: &Document, node_id: usize) -> bool {
+    let layout = &document.nodes[node_id].layout;
+    crate::layout::multicol::block_in_inline_wrapper(document, node_id)
+        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+            <= 0.0
 }
 
 /// Moves the boxes that follow `child` in the block container `parent`
@@ -19946,6 +20080,141 @@ fn shift_later_flow_siblings(document: &mut Document, parent: usize, child: usiz
     };
     for &sibling in &boxes[index + 1..] {
         shift_block_sibling(document, sibling, delta);
+    }
+}
+
+/// Grows the last record of `node` by `delta`, as its box grew: the records
+/// of a multicol container and its spanners are painted at their own size.
+fn grow_last_record(document: &mut super::context::LayoutSession<'_>, node: usize, delta: f32) {
+    let tree = &mut document.fragment_tree;
+    if let Some(&record) = tree
+        .records_of(node)
+        .iter()
+        .rev()
+        .find(|&&record| !tree.is_retired(record))
+    {
+        tree.fragments[record].rect.height += delta;
+    }
+}
+
+/// Whether `child` is a spanner of `parent`, a multicol container that lays
+/// its children out as boxes rather than among lines of its own.
+fn spans_box_columns(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    child: usize,
+    parent: usize,
+) -> bool {
+    document.nodes[parent].multicol.is_some()
+        && document
+            .ifc_layout_node(parent)
+            .is_none_or(|node| node.ifc.is_none())
+        && super::is_spanner_in(document, cascade, child)
+}
+
+/// Moves what follows the spanner `spanner` in the multicol container
+/// `container` down by `delta`, the distance the spanner's end moved: the
+/// columns after a spanner start below it (CSS Multi-column Layout 1, 6.1),
+/// and so does every later spanner. The column boxes are painted from the
+/// records the columns placed under the container's record, so those move
+/// along with the boxes. `grows` tells that a break inside the spanner grew
+/// it, rather than the spanner moving whole.
+fn shift_columns_after_spanner(
+    document: &mut super::context::LayoutSession<'_>,
+    container: usize,
+    spanner: usize,
+    delta: f32,
+    grows: bool,
+) {
+    let children = document.children_through_contents(container);
+    let spanner_index = children.iter().position(|&id| id == spanner);
+    let after = spanner_index.map_or(children.len(), |index| index + 1);
+    // The column groups keep the order of the flow, each with the first box
+    // of the run of column content it lays out, and the rules follow the
+    // groups in turn. The groups after the spanner are told apart by that
+    // order, not by where they lie: a negative margin can start them at or
+    // above the spanner's top, and pull the spanner up over the group before
+    // it.
+    let before: HashSet<usize> = children[..spanner_index.unwrap_or(children.len())]
+        .iter()
+        .copied()
+        .collect();
+    let groups = &document.nodes[container].multicol_groups;
+    let first_group = groups
+        .iter()
+        .take_while(|group| group.run_start.is_some_and(|run| before.contains(&run)))
+        .count();
+    // The rules of a group as the column rules counted them.
+    let first_rule: usize = groups[..first_group]
+        .iter()
+        .filter(|group| group.height > 0.0)
+        .map(|group| {
+            group
+                .occupied
+                .iter()
+                .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
+                .count()
+        })
+        .sum();
+    for group in document.nodes[container]
+        .multicol_groups
+        .iter_mut()
+        .skip(first_group)
+    {
+        group.context.origin_y += delta;
+    }
+    for rule in document
+        .column_rules
+        .get_mut(&container)
+        .into_iter()
+        .flatten()
+        .skip(first_rule)
+    {
+        rule.y += delta;
+    }
+    // The spanner's record holds the content that a break inside it moved;
+    // a spanner that moved whole keeps its height.
+    if grows {
+        grow_last_record(document, spanner, delta);
+    }
+    let tree = &document.fragment_tree;
+    let container_records: HashSet<usize> = tree
+        .records_of(container)
+        .iter()
+        .copied()
+        .filter(|&record| !tree.is_retired(record))
+        .collect();
+    let mut moved = Vec::new();
+    for &later in &children[after..] {
+        // The records of the box, or of the boxes inside it that a wrapper
+        // without a record of its own left to the container's. What a box
+        // with a record holds is placed in that record and moves with it.
+        let mut stack = vec![later];
+        while let Some(id) = stack.pop() {
+            let mut recorded = false;
+            let live = tree
+                .records_of(id)
+                .iter()
+                .filter(|&&record| !tree.is_retired(record));
+            for &record in live {
+                recorded = true;
+                if tree.fragments[record]
+                    .parent
+                    .is_some_and(|parent| container_records.contains(&parent))
+                {
+                    moved.push(record);
+                }
+            }
+            if !recorded {
+                stack.extend(document.nodes[id].children.iter().copied());
+            }
+        }
+    }
+    for record in moved {
+        document.fragment_tree.fragments[record].translate(0.0, delta);
+    }
+    for &later in &children[after..] {
+        shift_block_sibling(document, later, delta);
     }
 }
 
@@ -21029,7 +21298,14 @@ fn shift_flow_after(
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
         walk.advance(document);
-        let moved_lines = match flow_step(document, child, parent) {
+        // The columns after a spanner, in a container whose children are
+        // boxes, follow it down.
+        let step = if spans_box_columns(document, cascade, child, parent) {
+            FlowStep::Flow { moved_lines: false }
+        } else {
+            flow_step(document, child, parent)
+        };
+        let moved_lines = match step {
             FlowStep::Skip => continue,
             FlowStep::Inline => {
                 child = parent;
@@ -21206,6 +21482,9 @@ fn shift_flow_after(
         }
         if !moved_lines {
             shift_later_block_siblings(document, parent, child, flow_delta);
+            if spans_box_columns(document, cascade, child, parent) {
+                shift_columns_after_spanner(document, parent, child, flow_delta, child != node_id);
+            }
         }
         // The moved box moved whole; an ancestor of it keeps its stored
         // height while its content end moves down with the shift.
@@ -21226,6 +21505,9 @@ fn shift_flow_after(
             flow_delta,
         );
         shifts.grow_box(parent, passed.min(flow_delta));
+        if spans_box_columns(document, cascade, child, parent) {
+            grow_last_record(document, parent, passed.min(flow_delta));
+        }
         if passed < flow_delta - 0.001 {
             shifts
                 .bounded
@@ -21327,6 +21609,11 @@ fn flow_step(
     let moved_lines = document.nodes[child].in_ifc_subtree();
     if moved_lines && document.nodes[parent].in_ifc_subtree() {
         return FlowStep::Inline;
+    }
+    // An inline element of a paragraph has no box of its own: the paragraph
+    // lays the block inside it out among its lines.
+    if document.nodes[parent].in_ifc_subtree() && !document.nodes[parent].is_ifc_root() {
+        return FlowStep::Skip;
     }
     if let Some(cell) = growing_cell(document, child, parent) {
         return FlowStep::Cell(cell);

@@ -3787,10 +3787,13 @@ fn compute_inline_block_shrink_wrap(
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
     let display = tree.nodes[idx].display();
     // An empty flex or grid container still runs its layout algorithm:
-    // explicit grid tracks contribute even when there are no items.
+    // explicit grid tracks contribute even when there are no items, and a
+    // box without children whose `::before` or `::after` makes lines is a
+    // paragraph.
     let contain_natural = contain_intrinsic_natural(&tree.nodes[idx]).filter(|_| empty);
     let is_leaf = contain_natural.is_some()
         || (tree.nodes[idx].children.is_empty()
+            && !ifc_root
             && !matches!(
                 display,
                 DisplayValue::Flex

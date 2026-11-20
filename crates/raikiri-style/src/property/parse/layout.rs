@@ -1612,9 +1612,19 @@ pub(super) fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> 
     DisplayValue::from_css_ident(input.expect_ident().ok()?)
 }
 
+/// Parse `list-style-image: <image> | none` for the images a marker can
+/// show: a `<url>`, or an `image-set()` whose chosen option is a URL (CSS
+/// Images 4 §2.4), which keeps the density that option was written for.
 pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(BackgroundImage::None);
+    }
+    if let Ok(chosen) = input.try_parse(super::visual::parse_image_set_url) {
+        return Some(match chosen {
+            None => BackgroundImage::None,
+            Some((url, density)) if density == ImageDensity::ONE => BackgroundImage::Url(url),
+            Some((url, density)) => BackgroundImage::DensityUrl { url, density },
+        });
     }
     let url = input.expect_url().ok()?;
     Some(BackgroundImage::Url(url.as_ref().into()))

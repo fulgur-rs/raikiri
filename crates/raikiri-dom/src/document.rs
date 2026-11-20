@@ -277,12 +277,13 @@ pub struct Document {
     /// whether the pseudo-element is `::after`, and the index of the image
     /// among the images of its `content` list.
     content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
-    /// The sizes of the images that page-margin boxes show with `content:
-    /// url()`, by authored URL; see [`Document::prepare_margin_box_images`].
-    /// Margin boxes are laid out per page after the document, so the table
-    /// outlives the preparation of the other generated images.
+    /// The natural dimensions of the images that page-margin boxes show with
+    /// `content: url()`, by authored URL; see
+    /// [`Document::prepare_margin_box_images`]. Margin boxes are laid out per
+    /// page after the document, so the table outlives the preparation of the
+    /// other generated images.
     pub(crate) margin_box_images:
-        std::collections::HashMap<String, raikiri_traits::ImageRasterSize>,
+        std::collections::HashMap<String, raikiri_traits::ImageIntrinsicSize>,
     /// Legacy owned counter snapshots, cached for explicit callers of
     /// [`Document::shared_counter_snapshots`] by the element cascade's
     /// [`CascadeResult::element_generation`]. Tree mutations clear it;
@@ -3353,7 +3354,7 @@ impl Document {
             {
                 continue;
             }
-            let raikiri_style::property::BackgroundImage::Url(raw) = &cv.list_style_image else {
+            let Some(raw) = cv.list_style_image.url() else {
                 continue;
             };
             let Some(url) = crate::image_url::authored_image_url(raw, base_url) else {
@@ -3362,6 +3363,7 @@ impl Document {
             let Some(intrinsic) = source.intrinsic_size(&url) else {
                 continue;
             };
+            let intrinsic = intrinsic.at_density(cv.list_style_image.density());
             let em = cascade
                 .pseudo
                 .get(&(
@@ -3421,11 +3423,13 @@ impl Document {
                 continue;
             }
             let urls = cv.content.iter().filter_map(|component| match component {
-                raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                raikiri_style::property::ContentComponent::Image { url, density } => {
+                    Some((url, *density))
+                }
                 _ => None,
             });
             let replacement = cv.content.len() == 1;
-            for (index, raw) in urls
+            for (index, (raw, density)) in urls
                 .enumerate()
                 .take(crate::generated_content::MAX_GENERATED_IMAGES)
             {
@@ -3435,6 +3439,7 @@ impl Document {
                 let Some(intrinsic) = source.intrinsic_size(&url) else {
                     continue;
                 };
+                let intrinsic = intrinsic.at_density(density);
                 let size = content_image_size(intrinsic, replacement.then_some(cv));
                 if !(size.width > 0.0 && size.height > 0.0) {
                     continue;

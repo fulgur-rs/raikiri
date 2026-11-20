@@ -25,7 +25,8 @@ body   { display: block; margin: 8px; }
 div    { display: block; }
 
 /* HTML Living Standard "Rendering" sections "Form controls" and "Button
- * layout" supply the display, box sizing and content alignment policies.
+ * layout" supply the display and box sizing policies. Layout centers a
+ * button's content itself, so `align-content` keeps its initial value.
  * The font and edge metrics below are this renderer's default button theme,
  * checked against black-box browser geometry; they are not prescribed by
  * HTML. Keep them in the UA origin so author declarations override them.
@@ -38,7 +39,6 @@ button {
   border: 2px outset ButtonBorder;
   font: 13.333333px Arial, sans-serif;
   text-align: center;
-  align-content: center;
 }
 
 /* CSS 2.1 App.D — paragraph (p) is block-level */
