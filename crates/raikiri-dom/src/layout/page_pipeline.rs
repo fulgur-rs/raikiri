@@ -4359,6 +4359,101 @@ fn page_edge_child(
     Ok(None)
 }
 
+/// Whether inline content of the paragraph `root` follows its block `block`:
+/// the end of an inline box around the block, or an inline box or text after
+/// it. Chromium closes such a block with a line of its own, empty as it may
+/// be, which a forced break after the block carries to the next page along
+/// with the paragraph's bottom padding and border.
+fn line_follows_paragraph_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    block: usize,
+) -> bool {
+    // A line closes after the block when an inline box around it ends or
+    // inline content follows it, but only if no box between the block and
+    // the paragraph keeps the break inside itself.
+    let mut follows = false;
+    let mut id = block;
+    while id != root {
+        // A break inside a box out of the flow, a float or an atomic inline
+        // stays inside that box: no line of the paragraph follows it.
+        let node = &document.nodes[id];
+        let display = node.display();
+        let Some(parent) = document.parent_of(id) else {
+            return false;
+        };
+        if matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || is_floating_box_for_pagination(document, cascade, id)
+            || !(display == DisplayValue::Inline
+                || display == DisplayValue::Contents
+                || is_block_level_flow_box(display))
+        {
+            return false;
+        }
+        follows = follows
+            || (id != block && display == DisplayValue::Inline)
+            || inline_content_follows(document, cascade, parent, id);
+        id = parent;
+    }
+    follows
+}
+
+/// Whether a later child of `parent` than `id` puts content on a line.
+fn inline_content_follows(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    id: usize,
+) -> bool {
+    let children = &document.nodes[parent].children;
+    let after = children
+        .iter()
+        .position(|&child| child == id)
+        .map_or(0, |at| at + 1);
+    children[after..]
+        .iter()
+        .any(|&child| makes_inline_content(document, cascade, child, 0))
+}
+
+/// Whether `id` puts content on a line of its paragraph: text that does not
+/// collapse away, or an inline-level box in the flow.
+fn makes_inline_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    depth: usize,
+) -> bool {
+    let node = &document.nodes[id];
+    if depth >= 128
+        || !node.is_in_document()
+        || node.is_non_rendered_html_element()
+        || node.display() == DisplayValue::None
+        || matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        || is_floating_box_for_pagination(document, cascade, id)
+    {
+        return false;
+    }
+    if let crate::node::NodeData::Text(text) = &node.data {
+        return !crate::generated_content::is_collapsed_white_space(
+            &text.text_content,
+            cascade.computed[id].effective_white_space_collapse,
+        );
+    }
+    match node.display() {
+        DisplayValue::Contents => node
+            .children
+            .iter()
+            .any(|&child| makes_inline_content(document, cascade, child, depth + 1)),
+        display => node.kind() == NodeKind::Element && !is_block_level_flow_box(display),
+    }
+}
+
 /// Whether the inline element `id` is content of a line by itself: a line
 /// break opportunity (`br`, `wbr`) or a replaced element.
 fn makes_line_content(document: &Document, id: usize) -> bool {
@@ -10249,6 +10344,25 @@ impl PendingBreak {
                 break;
             }
             same_break = outer.ends_enclosing;
+        }
+    }
+
+    /// Take the pending break forced after a block inside `node_id` with the
+    /// line that closes the paragraph of `node_id` after that block. The
+    /// breaks forced after the boxes that end before that line go with it;
+    /// a break forced after `node_id` or a box around it is pending again,
+    /// since the line separates it from the one taken.
+    fn take_by_closing_line(&mut self, document: &Document, node_id: usize) {
+        self.source = None;
+        self.line_peers.clear();
+        while let Some(outer) = self.enclosing.pop() {
+            if is_descendant_or_self(document, node_id, outer.source) {
+                self.source = Some(outer.source);
+                self.line_peers = outer.line_peers;
+                self.source_end = outer.source_end;
+                self.ends_enclosing = outer.ends_enclosing;
+                break;
+            }
         }
     }
 
