@@ -1229,37 +1229,43 @@ fn column_child_input(
     }
 }
 
-/// `input` for a child of a column container whose margins collapse with
-/// the margins of its own children (CSS 2, 8.3.1): the column container
-/// holds them, not the child.
+/// `input` for a child of a column container whose block-end margin
+/// collapses with the block-end margins of its last children (CSS 2, 8.3.1):
+/// the column holds them below the child, where the end of the column
+/// truncates them, not the child.
 fn collapsing_through(input: LayoutInput) -> LayoutInput {
     LayoutInput {
-        vertical_margins_are_collapsible: Line::TRUE,
+        vertical_margins_are_collapsible: Line {
+            start: false,
+            end: true,
+        },
         ..input
     }
 }
 
-/// The block-start and block-end margins of a child of a column container
-/// laid out with [`collapsing_through`]: its own margins collapsed with the
-/// ones of its children that adjoin them. The margins of a box with no block
-/// size collapse into one: its own block-start margin stays above it, and
-/// the rest of that margin counts below it.
-fn collapsed_margins(output: &LayoutOutput, layout: &BoxLayout) -> (f32, f32) {
-    let (own_top, own_bottom) = (layout.margin.top, layout.margin.bottom);
-    let top = output.top_margin.collapse_with_margin(own_top);
-    let bottom = output.bottom_margin.collapse_with_margin(own_bottom);
+/// Lay `child` of a column container out with `input` as
+/// [`collapsing_through`] lays it out, and give its output with its
+/// block-start and block-end margins. A box with no block size that its
+/// margins collapse through is laid out with its children's margins inside
+/// it instead, as the placement of empty boxes collapses their own margins.
+fn lay_out_column_child(
+    tree: &mut LayoutSession<'_>,
+    child: usize,
+    input: LayoutInput,
+    column_width: f32,
+) -> (LayoutOutput, BoxLayout, f32, f32) {
+    let output = tree.compute_child_layout(NodeId::from(child), collapsing_through(input));
+    let layout = column_child_layout(tree, child, column_width);
     if !output.margins_can_collapse_through {
-        return (top.resolve(), bottom.resolve());
+        let bottom = output
+            .bottom_margin
+            .collapse_with_margin(layout.margin.bottom)
+            .resolve();
+        return (output, layout, layout.margin.top, bottom);
     }
-    let total = top.collapse_with_set(bottom).resolve();
-    let own = CollapsibleMarginSet::from_margin(own_top)
-        .collapse_with_margin(own_bottom)
-        .resolve();
-    if total == own {
-        (own_top, own_bottom)
-    } else {
-        (own_top, total - own_top)
-    }
+    let output = tree.compute_child_layout(NodeId::from(child), input);
+    let layout = column_child_layout(tree, child, column_width);
+    (output, layout, layout.margin.top, layout.margin.bottom)
 }
 
 /// The left and right margins of a box that are not auto, with percentages
@@ -3482,21 +3488,20 @@ fn layout_column_group(
         let mut stacked_children = Vec::new();
         measured_beside = vec![false; children.len()];
         for (local_order, &child) in children.iter().enumerate() {
-            let child_inputs = collapsing_through(column_child_layout_input(
+            let child_inputs = column_child_layout_input(
                 tree,
                 child,
                 context.column_width,
                 context.available_height,
                 AvailableSpace::MaxContent,
-            ));
+            );
             // A direct text child is measured again against the column
             // width instead of reusing a size cached for another width.
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                 tree.nodes[child].cache.clear();
             }
-            let mut output = tree.compute_child_layout(NodeId::from(child), child_inputs);
-            let layout = column_child_layout(tree, child, context.column_width);
-            let (margin_top, margin_bottom) = collapsed_margins(&output, &layout);
+            let (mut output, layout, margin_top, margin_bottom) =
+                lay_out_column_child(tree, child, child_inputs, context.column_width);
             let mut needed = margin_top + output.size.height + margin_bottom;
             if let Some(float) =
                 ColumnFloat::of(tree, child, context.column_width, output.size.width)
@@ -3519,7 +3524,7 @@ fn layout_column_group(
                             tree,
                             kind,
                             child,
-                            child_inputs,
+                            collapsing_through(child_inputs),
                             run,
                             context.column_width,
                             context.rtl,
@@ -3765,26 +3770,25 @@ fn layout_column_group(
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
                     None => AvailableSpace::MaxContent,
                 };
-                let child_inputs = collapsing_through(column_child_layout_input(
+                let child_inputs = column_child_layout_input(
                     tree,
                     child,
                     context.column_width,
                     context.available_height,
                     child_height,
-                ));
+                );
 
                 // A direct text child is measured again against the column
                 // width instead of reusing a size cached for another width.
                 if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                     tree.nodes[child].cache.clear();
                 }
-                let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
+                let (output, layout, margin_top, margin_bottom) =
+                    lay_out_column_child(tree, child, child_inputs, context.column_width);
                 if tree.fragment_tree.limit_exceeded {
                     return fallback_height;
                 }
                 refresh_nested_text_fragments(tree, child, context);
-                let layout = column_child_layout(tree, child, context.column_width);
-                let (margin_top, margin_bottom) = collapsed_margins(&output, &layout);
                 let needed = margin_top + output.size.height + margin_bottom;
                 (output, layout, margin_top, margin_bottom, needed)
             };
@@ -3930,7 +3934,7 @@ fn layout_column_group(
                         tree,
                         kind,
                         child,
-                        child_inputs,
+                        collapsing_through(child_inputs),
                         &run,
                         context.column_width,
                         context.rtl,
@@ -3992,7 +3996,8 @@ fn layout_column_group(
                         AvailableSpace::Definite((height - cursor).max(0.0))
                     }),
             );
-            child_output = tree.compute_child_layout(NodeId::from(child), child_inputs);
+            child_output =
+                tree.compute_child_layout(NodeId::from(child), collapsing_through(child_inputs));
             refresh_nested_text_fragments(tree, child, context);
             needed = margin_top + child_output.size.height + margin_bottom;
         }

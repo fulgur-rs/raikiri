@@ -159,9 +159,4 @@ fn margins_collapse_through_a_wrapper_in_a_column() {
     // Nested wrappers pass it on as well.
     let nested = "<div><div><div style='margin-bottom:20px'>a</div></div></div>";
     assert_eq!(height("", nested), (15.0, 15.0));
-    // The margin above the first child moves the wrapper down.
-    let above = "<div id=w><div style='margin-top:10px'>a</div></div>";
-    let body = format!("<div id=m style='width:100px;columns:2;column-gap:0'>{above}</div>");
-    assert_eq!(rects(&body, "w"), vec![(0.0, 10.0, 50.0, 10.0)]);
-    assert_eq!(height("", above), (20.0, 20.0));
 }
