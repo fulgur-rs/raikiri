@@ -140,6 +140,13 @@ fn a_trailing_margin_is_left_out_and_a_leading_one_kept() {
         "<div id=d style='margin-top:10px'>a</div>",
     );
     assert_eq!(top(&leading, "d"), 30.0);
+    // Balanced columns of an auto height leave no room, whatever margin
+    // they end with.
+    let auto = columns(
+        "align-content:end",
+        "<div id=d style='margin-bottom:10px'>a</div>",
+    );
+    assert_eq!(top(&auto, "d"), 0.0);
 }
 
 #[test]
@@ -180,4 +187,11 @@ fn floats_and_positioned_boxes_follow_the_moved_content() {
     assert_eq!(top(&positioned, "d"), 30.0);
     assert_eq!(top(&positioned, "p"), 0.0);
     assert_eq!(top(&positioned, "q"), 40.0);
+    // A static position before every box in flow is at the aligned start.
+    let leading = columns(
+        "position:relative;height:40px;align-content:end",
+        "<div id=q style='position:absolute'>q</div><div id=a>a</div><div id=b>b</div>",
+    );
+    assert_eq!(top(&leading, "q"), 30.0);
+    assert_eq!(rects(&leading, "b"), vec![(50.0, 30.0, 50.0, 10.0)]);
 }
