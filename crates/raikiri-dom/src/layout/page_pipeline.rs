@@ -5272,6 +5272,13 @@ fn paginate_flow(
                 halted = true;
                 break;
             }
+            if let Err(halt) =
+                state.break_before_line_after_forced_break(document, &env, Some(candidate.node_id))
+            {
+                halt.finish()?;
+                halted = true;
+                break;
+            }
             done += 1;
             state.rebase_fragmented_cell_content(document, &mut candidate);
             let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
@@ -5290,6 +5297,9 @@ fn paginate_flow(
         }
         if !halted {
             break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
+            if let Err(halt) = state.break_before_line_after_forced_break(document, &env, None) {
+                halt.finish()?;
+            }
         }
         state.subtree_shifts.finish_rows(document);
         Ok(())
@@ -10779,18 +10789,8 @@ fn paragraph_unplaced_line(
     let unplaced = single_unplaced_line(document, cascade, node_id)?;
     let ifc_node = document.ifc_layout_node(node_id)?;
     let layout = ifc_node.layout;
-    let after_block = ifc_node
-        .ifc
-        .as_ref()
-        .and_then(|ifc| ifc.lines.as_ref())
-        .and_then(|lines| {
-            lines
-                .block_line_starts
-                .iter()
-                .rev()
-                .find(|&&(_, after)| after <= unplaced.line.line)
-        })
-        .is_some_and(|&(block, _)| {
+    let after_block =
+        block_above_line(document, node_id, unplaced.line.line).is_some_and(|block| {
             let (forced, avoided) = page_edge_constraint(document, cascade, block, false);
             block_outside_inline(document, node_id, block) && (forced || !avoided)
         });
@@ -10800,6 +10800,63 @@ fn paragraph_unplaced_line(
         atomic: unplaced.atomic,
         after_block,
     })
+}
+
+/// The block child of the paragraph `root` laid out last above its line
+/// `line`, if any.
+fn block_above_line(document: &Document, root: usize, line: usize) -> Option<usize> {
+    document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?
+        .block_line_starts
+        .iter()
+        .rev()
+        .find(|&&(_, after)| after <= line)
+        .map(|&(block, _)| block)
+}
+
+/// The paragraph whose single unplaced line follows the block that ends with
+/// `source`, a box that forces a page break after it (see
+/// [`unplaced_line_after_block`]). No text candidate takes the break before
+/// such a line, so the line takes it: Chromium starts the next page with it,
+/// as with a line of text there. A float of the paragraph after `source`
+/// takes the break first, so the line is left to follow it.
+fn line_after_forced_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    source: usize,
+) -> Option<usize> {
+    // The paragraph may hold `source` inside blocks that end with it, each
+    // of them a paragraph of its own.
+    for root in document.ancestors(source) {
+        if !document.nodes[root].is_ifc_root() {
+            continue;
+        }
+        if unplaced_line_after_block(document, cascade, root).is_some()
+            && let Some(unplaced) = single_unplaced_line(document, cascade, root)
+            && let Some(block) = block_above_line(document, root, unplaced.line.line)
+            && document.is_ancestor_or_self(block, source)
+            && (block == source || at_block_edge(document, cascade, source, block, false))
+        {
+            return (!float_after(document, cascade, root, source)).then_some(root);
+        }
+        if !at_block_edge(document, cascade, source, root, false) {
+            return None;
+        }
+    }
+    None
+}
+
+/// Whether a float of the paragraph `root` follows `source` in it.
+fn float_after(document: &Document, cascade: &CascadeResult, root: usize, source: usize) -> bool {
+    document
+        .preorder(root)
+        .skip_while(|&id| id != source)
+        .filter(|&id| !document.is_ancestor_or_self(source, id))
+        .any(|id| is_floating_box_for_pagination(document, cascade, id))
 }
 
 /// Whether the block child `block` of the paragraph `root` sits in no inline

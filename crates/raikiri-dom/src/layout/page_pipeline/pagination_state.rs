@@ -389,6 +389,10 @@ pub(super) struct PaginationState {
     retained_margin_starts: HashMap<usize, (u32, f32)>,
     /// Alignment room removed above the text of a cell that spans pages.
     fragmented_cell_shifts: HashMap<usize, f32>,
+    /// The paragraphs placed with a single unplaced line after a block child
+    /// (see [`super::unplaced_line_after_block`]), for the break forced at the end of
+    /// that child to move the line.
+    lines_after_blocks: HashMap<usize, LineAfterBlock>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -400,6 +404,20 @@ pub(super) struct PaginationState {
     pub(super) table_headers: HeaderRepeats,
     /// The table rows the flow is in, and the pages they start and end on.
     cell_rows: super::cell_rows::CellRows,
+}
+
+/// A paragraph placed with a single unplaced line after a block child (see
+/// [`PaginationState::break_before_line_after_forced_break`]).
+#[derive(Clone)]
+struct LineAfterBlock {
+    /// The page the flow was on before the paragraph.
+    flow_page: u32,
+    page_name: Option<String>,
+    page_name_in_flow: bool,
+    in_flow: bool,
+    /// Whether the paragraph lies in a float or an out-of-flow box, whose
+    /// breaks the flow around them does not take.
+    beside_flow: bool,
 }
 
 impl PaginationState {
@@ -437,6 +455,7 @@ impl PaginationState {
             positioned_paragraphs: HashMap::new(),
             retained_margin_starts: HashMap::new(),
             fragmented_cell_shifts: HashMap::new(),
+            lines_after_blocks: HashMap::new(),
             footnote_areas: FootnoteAreas::default(),
             column_contexts,
             preceding_flex_items: PrecedingFlexItems::default(),
@@ -1104,7 +1123,14 @@ impl PaginationState {
         };
         let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
         if shift > 0.0 {
-            self.move_delegated_line(document, env, entry, owner, shift, target);
+            self.move_delegated_line(
+                document,
+                env,
+                entry.page_before_candidate,
+                owner,
+                shift,
+                target,
+            );
         }
         if pending {
             self.pending_break.take(document, candidate.node_id);
@@ -1312,6 +1338,17 @@ impl PaginationState {
             return Ok(None);
         }
         if let Some(line) = candidate.context.unplaced_line_after_block() {
+            self.lines_after_blocks.insert(
+                node_id,
+                LineAfterBlock {
+                    flow_page: entry.page_before_candidate,
+                    page_name: candidate.page_name.clone(),
+                    page_name_in_flow: candidate.context.page_name_in_flow(),
+                    in_flow: !candidate.context.is_out_of_flow_descendant(),
+                    beside_flow: candidate.context.is_float_descendant()
+                        || candidate.context.is_out_of_flow_descendant(),
+                },
+            );
             return self.break_before_line_after_block(document, env, candidate, entry, line);
         }
         if candidate.context.unplaced_line().is_none() {
@@ -1345,7 +1382,7 @@ impl PaginationState {
         self.move_delegated_line(
             document,
             env,
-            entry,
+            entry.page_before_candidate,
             owner,
             page_origins.origin(next) - flow_top,
             next,
@@ -1417,7 +1454,14 @@ impl PaginationState {
             (page_origins.origin(next) - flow_top, next)
         };
         reach_page(env.control, target)?;
-        self.move_delegated_line(document, env, entry, owner, shift, target);
+        self.move_delegated_line(
+            document,
+            env,
+            entry.page_before_candidate,
+            owner,
+            shift,
+            target,
+        );
         let mut grown = candidate.clone();
         grown.height = document.nodes[node_id].layout.size.height;
         Ok(Some(grown))
@@ -1429,7 +1473,7 @@ impl PaginationState {
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
-        entry: &CandidateEntry,
+        flow_page: u32,
         owner: super::leading_inline::LeadingInlineLine,
         shift: f32,
         page: u32,
@@ -1441,7 +1485,7 @@ impl PaginationState {
             owner,
             shift,
             &mut self.subtree_shifts,
-            (entry.page_before_candidate, page),
+            (flow_page, page),
         );
         self.deferred_shifts.line_splits.push(LineSplit {
             root: owner.root,
@@ -1543,6 +1587,77 @@ impl PaginationState {
                 - accumulated_relative_offset_y(document, cascade, env.body_id, node_id);
         }
 
+        Ok(())
+    }
+
+    /// Moves the single unplaced line of a paragraph that follows the box
+    /// that forced the pending break to the top of the page after the one
+    /// the box ends on, and takes the break there, before the flow at `next`
+    /// (see [`super::line_after_forced_break`]): the line lies between that box and
+    /// `next`, and no text candidate places it. The flow after the paragraph
+    /// follows the line, as after a line of text that a forced break moves.
+    /// A paragraph that keeps its height holds the moved line as overflow:
+    /// the break is left for the flow after it, which Chromium moves to the
+    /// next page too. `next` is `None` at the end of the flow.
+    pub(super) fn break_before_line_after_forced_break(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        next: Option<usize>,
+    ) -> Result<(), Halt> {
+        let Some(source) = self.pending_break.source else {
+            return Ok(());
+        };
+        if self.lines_after_blocks.is_empty()
+            || next.is_some_and(|next| !self.pending_break.applies_to(document, next))
+        {
+            return Ok(());
+        }
+        // A box of the paragraph before `next` is not past the line yet, and
+        // the line takes one break at most.
+        let Some((root, paragraph)) = super::line_after_forced_break(document, env.cascade, source)
+            .filter(|&root| next.is_none_or(|next| !document.is_ancestor_or_self(root, next)))
+            .and_then(|root| Some((root, self.lines_after_blocks.remove(&root)?)))
+            .filter(|(root, paragraph)| {
+                paragraph.page_name_in_flow
+                    && !paragraph.beside_flow
+                    && !super::moves_reach_cell_row(document, *root)
+            })
+        else {
+            return Ok(());
+        };
+        let owner = super::leading_inline::LeadingInlineLine { root, line: 0 };
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
+        let flow_top = top - relative;
+        let page_origins = env.page_origins;
+        // The break opens the page after the one the box ends on.
+        let block_end = self.pending_break.source_end;
+        let end_page = page_origins
+            .page_index_in_flow(block_end)
+            .unwrap_or(self.current_page);
+        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
+            end_page.saturating_add(1)
+        } else {
+            end_page
+        };
+        let target = forced_target_page(self.current_page, past_block);
+        reach_page(env.control, target)?;
+        let shift = (page_origins.origin(target) - flow_top).max(0.0);
+        let follows =
+            shift <= 0.0 || super::lines_shift_growth(document, root, shift) >= shift - 0.01;
+        if shift > 0.0 {
+            self.move_delegated_line(document, env, paragraph.flow_page, owner, shift, target);
+        }
+        let end_page = page_origins.page_index_for_end(top + shift + height);
+        if !follows {
+            self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
+            return Ok(());
+        }
+        self.pending_break.take(document, root);
+        self.current_page = self.current_page.max(target);
+        self.page_names.current = paragraph.page_name;
+        self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
         Ok(())
     }
 
