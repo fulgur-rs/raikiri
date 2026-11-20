@@ -22155,3 +22155,16 @@ fn margins_kept_after_a_forced_break_join_across_nodes_that_generate_no_box() {
         150.0
     );
 }
+
+#[test]
+fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
+    // The walk finds neither text nor an atomic inline: no atomic inline
+    // comes before the text, as for any paragraph without atomic inlines.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = document.append_element(Some(body), "div", Some("display:block"));
+    let span = document.append_element(Some(paragraph), "span", None::<&str>);
+    document.append_text(span, "  ");
+    assert!(atomics_follow_text(&document, paragraph, &[]));
+}
