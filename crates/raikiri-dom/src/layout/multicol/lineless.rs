@@ -1430,8 +1430,18 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     let max_columns = column_count.min(max_pieces.saturating_add(1));
     // One unbounded column takes a piece per box, which the unlimited
     // budget always allows.
-    let high = stacked_height(items, usize::MAX).unwrap_or(0.0);
-    balanced_height_after(items, 0, &|_| 0.0, column_count, max_columns, high, false)
+    let stacked = stacked_height(items, usize::MAX).unwrap_or(0.0);
+    // The end of the last column truncates the margin below the last box,
+    // so the columns need not hold it. As in Chromium, the columns are
+    // still at least as tall as the stream with that margin divided among
+    // them.
+    let mut trimmed = items.to_vec();
+    if let Some(last) = trimmed.last_mut() {
+        last.margin_bottom = 0.0;
+    }
+    let high = stacked_height(&trimmed, usize::MAX).unwrap_or(0.0);
+    balanced_height_after(&trimmed, 0, &|_| 0.0, column_count, max_columns, high, false)
+        .max(stacked / column_count.max(1) as f32)
 }
 
 /// [`balanced_height`] for the `column_count` columns that follow the first

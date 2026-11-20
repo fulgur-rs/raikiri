@@ -3368,6 +3368,10 @@ fn layout_column_group(
     }
     let mut column = 0usize;
     let mut cursor = 0.0f32;
+    // The margin below the last box that `cursor` includes. The end of a
+    // column truncates it (CSS Fragmentation 3, 5.2), so it does not make
+    // the column taller.
+    let mut trailing = 0.0f32;
     let mut maximum = 0.0f32;
     // For balance-filled auto-height multicol containers, measure block
     // children once before placing them. This gives the simple balancing pass
@@ -3494,7 +3498,12 @@ fn layout_column_group(
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
         let total = stack.height();
-        let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
+        // The tallest box sets the least height, without the margin below
+        // it, which the end of its column truncates.
+        let largest = measurements
+            .iter()
+            .map(|entry| entry.5 - entry.4)
+            .fold(0.0, f32::max);
         // Columns that may fill the container's height instead are measured
         // as placed, so that what does not fit goes to overflow columns.
         let breaks_inside = measured_beside.contains(&true)
@@ -3767,7 +3776,7 @@ fn layout_column_group(
                 );
                 exhausted |= std::mem::take(&mut tree.fragment_tree.limit_exceeded);
                 if let Some(plan) = moved {
-                    maximum = maximum.max(cursor);
+                    maximum = maximum.max(cursor - trailing);
                     tree.fragment_tree
                         .record_break(crate::fragment::BreakToken {
                             node_id: index,
@@ -3776,6 +3785,7 @@ fn layout_column_group(
                         });
                     column += 1;
                     cursor = 0.0;
+                    trailing = 0.0;
                     continuation = Some(plan);
                 }
             }
@@ -3823,7 +3833,9 @@ fn layout_column_group(
                 && is_floated(tree, child)
                 && let Some(run) = float_run.take_if(|run| run.column == column)
             {
+                let end = (cursor - trailing).max(run.bottom);
                 cursor = cursor.max(run.bottom);
+                trailing = cursor - end;
                 float_line = Some(run.into_line());
             }
             if let Some(run) = float_run.take() {
@@ -3887,7 +3899,9 @@ fn layout_column_group(
                     }
                 }
                 if kept.is_none() && run.column == column {
+                    let end = (cursor - trailing).max(run.bottom);
                     cursor = cursor.max(run.bottom);
+                    trailing = cursor - end;
                 }
                 float_run = kept;
             }
@@ -3957,7 +3971,7 @@ fn layout_column_group(
             && !avoid_column_break
             && split_lines_at.is_none()
         {
-            maximum = maximum.max(cursor);
+            maximum = maximum.max(cursor - trailing);
             tree.fragment_tree
                 .record_break(crate::fragment::BreakToken {
                     node_id: index,
@@ -3966,6 +3980,7 @@ fn layout_column_group(
                 });
             column += 1;
             cursor = 0.0;
+            trailing = 0.0;
             beside = None;
         }
         let top = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
@@ -4294,6 +4309,7 @@ fn layout_column_group(
             maximum = maximum.max(*height);
             column = placement.last_column;
             cursor = placement.last_y + margin_bottom;
+            trailing = margin_bottom;
         } else if let Some(placement) = planned {
             // A sliced box occupies every column a piece of it reaches.
             if placement.sliced {
@@ -4301,6 +4317,7 @@ fn layout_column_group(
             }
             column = placement.last_column;
             cursor = placement.last_y;
+            trailing = 0.0;
             let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
             maximum = maximum.max(group_height);
             // The margin below the last box of balanced columns stays inside
@@ -4318,14 +4335,22 @@ fn layout_column_group(
             maximum = maximum.max(fragment_height.or(break_height).unwrap_or(0.0));
             column = last_column;
             cursor = end + margin_bottom;
+            trailing = margin_bottom;
         } else {
             let bottom = y - content_origin.y + child_output.size.height + margin_bottom;
             // The floats of a line end where the lowest of them does.
+            let end = bottom - margin_bottom;
+            let end = if beside.is_some() {
+                (cursor - trailing).max(end)
+            } else {
+                end
+            };
             cursor = if beside.is_some() {
                 cursor.max(bottom)
             } else {
                 bottom
             };
+            trailing = cursor - end;
             if let Some(balance) = &paragraph_balance
                 && balance.child == child
             {
@@ -4336,6 +4361,7 @@ fn layout_column_group(
                 let columns = context.column_count.saturating_sub(context.column_index);
                 let divided = (margin_top + balance.stacked + margin_bottom) / columns as f32;
                 cursor = (cursor - margin_bottom).max(divided);
+                trailing = 0.0;
                 // Lines past the last column of a container with a definite
                 // height go on in overflow columns beside it, not below it.
                 cursor = fragment_height.map_or(cursor, |height| cursor.min(height));
@@ -4350,7 +4376,9 @@ fn layout_column_group(
     if let Some(run) = float_run
         && run.column == column
     {
+        let end = (cursor - trailing).max(run.bottom);
         cursor = cursor.max(run.bottom);
+        trailing = cursor - end;
     }
     // The columns are as tall as the positioned boxes in them need, even
     // where the content in flow ends higher.
@@ -4387,7 +4415,7 @@ fn layout_column_group(
                     origin_y: content_origin.y,
                     ..context
                 },
-                height: maximum.max(cursor),
+                height: maximum.max(cursor - trailing),
                 occupied,
                 slice: None,
                 run_start: children.first().copied(),
@@ -4404,7 +4432,7 @@ fn layout_column_group(
             .map(|height| fallback_height.min(height))
             .unwrap_or(fallback_height)
     };
-    (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
+    (maximum.max(cursor - trailing) + content_origin.y + block_end_inset).max(minimum_height)
 }
 
 /// The last column of `child`'s line pieces and the block end of the piece
