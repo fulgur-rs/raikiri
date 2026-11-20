@@ -316,6 +316,7 @@ pub(in crate::layout::multicol) fn paginate(
             height: heights[row],
             occupied,
             slice: None,
+            run_start: None,
         })
         .collect();
     Ok(Some(Paged {

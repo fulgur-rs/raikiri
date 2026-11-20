@@ -126,6 +126,7 @@ pub(crate) fn arrange(
                     height,
                     occupied: columns.iter().map(|column| column.fragmentainer).collect(),
                     slice: None,
+                    run_start: None,
                 });
             }
             first_baseline = first_baseline.or_else(|| line_baseline(lines, &columns, start));

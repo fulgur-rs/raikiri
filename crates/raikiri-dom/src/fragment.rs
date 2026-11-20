@@ -199,6 +199,10 @@ pub(crate) struct MulticolGroup {
     /// The block range of this row's box within the whole box that the rows
     /// of a continued nested container slice; other groups have none.
     pub(crate) slice: Option<(f32, f32)>,
+    /// The first box of the run of column content between spanners that
+    /// this group lays out, where the columns keep one: the groups after a
+    /// spanner are the ones whose run starts after it.
+    pub(crate) run_start: Option<usize>,
 }
 
 /// A resumable point in a fragmented child flow.
@@ -274,6 +278,17 @@ impl LayoutFragment {
             )
         };
         (base.0 + self.rect.x, base.1 + self.rect.y)
+    }
+
+    /// Move this fragment by `(dx, dy)` in its parent's space, with the clip
+    /// of its fragmentainer, which is in the same space.
+    pub(crate) fn translate(&mut self, dx: f32, dy: f32) {
+        self.rect.x += dx;
+        self.rect.y += dy;
+        if let Some(clip) = &mut self.fragmentainer_clip {
+            clip.rect.x += dx;
+            clip.rect.y += dy;
+        }
     }
 }
 

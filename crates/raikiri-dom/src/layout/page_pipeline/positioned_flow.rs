@@ -647,6 +647,7 @@ fn keep_run(
     let start =
         current_abs_y(document, root) - relative + node.layout.padding.top + node.layout.border.top;
     let clip_end = visible_end(document, env, root) - relative;
+    let all_lines = metrics.len();
     metrics.truncate(metrics.partition_point(|&(top, _)| start + top < clip_end - 0.001));
     for (_, bottom) in &mut metrics {
         *bottom = bottom.min(clip_end - start);
@@ -655,7 +656,15 @@ fn keep_run(
         return Ok(());
     }
     let moves = if root == owner {
-        positioned_line_moves(&metrics, start, env.page_origins)
+        // The hidden lines still follow every break, and count as widows.
+        let hidden = i32::try_from(all_lines - metrics.len()).unwrap_or(i32::MAX);
+        positioned_line_moves(
+            &metrics,
+            start,
+            env.page_origins,
+            env.cascade.computed[root].orphans,
+            env.cascade.computed[root].widows.saturating_sub(hidden),
+        )
     } else {
         let mut page = env
             .page_origins
