@@ -2561,11 +2561,7 @@ impl PaginationState {
                 let (positive, negative) =
                     super::adjoining_margin_extremes(document, cascade, node, true, None);
                 let collapsed = after_positive.max(positive) + after_negative.min(negative);
-                if gap.is_finite() {
-                    margin_top.max(gap.min(collapsed))
-                } else {
-                    margin_top
-                }
+                margin_top.max(gap.min(collapsed))
             })
     }
 
