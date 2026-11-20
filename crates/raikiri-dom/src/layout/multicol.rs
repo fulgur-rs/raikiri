@@ -26,9 +26,9 @@ use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{
-    AlignItems, BoxSizing, Clear, Contain, Dimension, Direction, Display, ExpandedDimension,
-    ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto, MaybeResolve,
-    Overflow, Position, ResolveOrZero,
+    AlignContentKeyword, AlignItems, BoxSizing, Clear, Contain, Dimension, Direction, Display,
+    ExpandedDimension, ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto,
+    MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 
 pub(super) use paged_spanning::{
@@ -491,62 +491,127 @@ pub(crate) fn compute_multicol_layout(
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let used_height = if let Some(children) = &lineless_children {
-            lineless::layout(
-                tree,
-                index,
-                children,
-                resolved,
-                output.size,
-                content_origin,
-                block_end_inset,
-                minimum,
-                lineless_definite,
-                lineless_maximum,
-                outer_height,
-                slice_wrappers,
-            )
-            .unwrap_or_else(|| {
-                if nested_fallback {
-                    return relayout_nested_multicol_children(
-                        tree,
-                        node_id,
-                        resolved,
-                        output.size,
-                        fragmentainer_height.is_some(),
-                        content_origin,
-                        block_end_inset,
-                    );
-                }
-                space_min_constrained_children(
+        let block_size = output.size;
+        // The columns are laid out from `content_origin` and end
+        // `block_end_inset` above the border box end. An aligned layout moves
+        // the origin and shrinks that inset by the same amount, which keeps
+        // the column height that percentages resolve against.
+        let lay_out_columns = |tree: &mut LayoutSession<'_>,
+                               content_origin: Point<f32>,
+                               block_end_inset: f32,
+                               output: &mut LayoutOutput| {
+            if let Some(children) = &lineless_children {
+                lineless::layout(
                     tree,
                     index,
-                    available_height,
-                    style.height_definite,
-                    &mut output.size.height,
-                );
-                output.size.height
-            })
-        } else if let Some(chain) = constrained_chain {
-            constrained_chain::layout(tree, index, &chain, resolved, output.size, content_origin)
-                .unwrap_or(output.size.height)
-        } else if break_flow_scope {
-            break_flow::layout(tree, index, resolved, output.size, content_origin)
-        } else {
-            relayout_nested_multicol_children(
-                tree,
-                node_id,
-                resolved,
-                output.size,
-                fragmentainer_height.is_some(),
-                content_origin,
-                block_end_inset,
-            )
+                    children,
+                    resolved,
+                    block_size,
+                    content_origin,
+                    block_end_inset,
+                    minimum,
+                    lineless_definite,
+                    lineless_maximum,
+                    outer_height,
+                    slice_wrappers,
+                )
+                .unwrap_or_else(|| {
+                    if nested_fallback {
+                        return relayout_nested_multicol_children(
+                            tree,
+                            node_id,
+                            resolved,
+                            block_size,
+                            fragmentainer_height.is_some(),
+                            content_origin,
+                            block_end_inset,
+                        );
+                    }
+                    space_min_constrained_children(
+                        tree,
+                        index,
+                        available_height,
+                        style.height_definite,
+                        &mut output.size.height,
+                    );
+                    output.size.height
+                })
+            } else if let Some(chain) = &constrained_chain {
+                constrained_chain::layout(tree, index, chain, resolved, block_size, content_origin)
+                    .unwrap_or(output.size.height)
+            } else if break_flow_scope {
+                break_flow::layout(tree, index, resolved, block_size, content_origin)
+            } else {
+                relayout_nested_multicol_children(
+                    tree,
+                    node_id,
+                    resolved,
+                    block_size,
+                    fragmentainer_height.is_some(),
+                    content_origin,
+                    block_end_inset,
+                )
+            }
         };
+        // `align-content` moves the rows of columns as a whole within the
+        // content box (CSS Box Alignment 3 §5.1), so the columns are laid out
+        // again from the aligned start once their content is known. The
+        // layouts of the boxes inside are kept to lay them out from the same
+        // state. Vertical columns are not supported here.
+        let align_content = style_of(tree, index).align_content();
+        let before_columns = (!tree.nodes[index].used_writing_mode.is_vertical()
+            && align_content.keyword != AlignContentKeyword::Normal)
+            .then(|| {
+                (
+                    subtree_layouts(tree, index),
+                    tree.fragment_tree.records_of(index).len(),
+                    tree.fragment_tree.break_tokens.len(),
+                )
+            });
+        let mut used_height = lay_out_columns(tree, content_origin, block_end_inset, &mut output);
         // Balanced columns size an auto-height container even under a
         // maximum height, which only bounds the balanced columns.
         let balances_height =
             fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite);
+        // Only one row of columns that this layout placed is aligned: a
+        // strategy that gave up placed none, and a container broken across
+        // outer fragmentainers has a record in each.
+        if let Some((layouts, records, breaks)) = before_columns
+            && let Some(end) = column_content_extent(tree, index, records)
+        {
+            // Balanced columns are as tall as their content, so only a
+            // minimum height leaves room, and never less than none: the
+            // container grows to hold them. Columns of a set height end where
+            // the border box of the lowest box in them ends, as in Chromium:
+            // a trailing margin is left out, as the end of a column
+            // truncates it.
+            let free = if balances_height {
+                (minimum - used_height).max(0.0)
+            } else {
+                output.size.height - block_end_inset - end
+            };
+            let offset =
+                crate::layout::dispatch::block_flow::content_alignment_offset(align_content, free);
+            if offset != 0.0 {
+                output.size = block_size;
+                for (node, layout) in layouts {
+                    tree.nodes[node].cache.clear();
+                    tree.context.variant_caches.forget(node);
+                    tree.set_unrounded_layout(NodeId::from(node), &layout);
+                }
+                tree.fragment_tree.break_tokens.truncate(breaks);
+                let block_pass = block_pass_alignment(tree, index, content_origin.y);
+                let records = tree.fragment_tree.records_of(index).len();
+                let aligned = Point {
+                    x: content_origin.x,
+                    y: content_origin.y + offset,
+                };
+                used_height = lay_out_columns(tree, aligned, block_end_inset - offset, &mut output);
+                if column_content_extent(tree, index, records).is_some() {
+                    pass.leading_shift = offset - block_pass;
+                }
+            }
+        }
         if balances_height {
             output.size.height = used_height.max(minimum);
         }
@@ -566,6 +631,57 @@ pub(crate) fn compute_multicol_layout(
     pass.finish(tree, node_id, &inputs, output)
 }
 
+/// How far the pass across the whole width of the multicol container `index`
+/// moved its content by `align-content`: where the highest box in flow starts
+/// below the content box top `content_top`, margin and all.
+fn block_pass_alignment(tree: &LayoutSession<'_>, index: usize, content_top: f32) -> f32 {
+    flow_children(tree, index)
+        .into_iter()
+        .filter(|&child| {
+            is_rendered_element(tree, child)
+                && tree.nodes[child].layout_position() != Position::Absolute
+        })
+        .map(|child| {
+            let layout = tree.nodes[child].layout;
+            layout.location.y - layout.margin.top - content_top
+        })
+        .reduce(f32::min)
+        .unwrap_or(0.0)
+}
+
+/// The layouts of the boxes inside `index`.
+fn subtree_layouts(tree: &LayoutSession<'_>, index: usize) -> Vec<(usize, BoxLayout)> {
+    let mut pending = tree.nodes[index].children.clone();
+    let mut layouts = Vec::new();
+    while let Some(node) = pending.pop() {
+        layouts.push((node, tree.nodes[node].layout));
+        pending.extend(tree.nodes[node].children.iter().copied());
+    }
+    layouts
+}
+
+/// Where the boxes the columns of the multicol container `index` placed end,
+/// from the top of its border box: the lowest border-box edge among the
+/// records under the one record of the container from its `from`th on that
+/// is still live. `None` when there is no such single record, or nothing
+/// under it.
+fn column_content_extent(tree: &LayoutSession<'_>, index: usize, from: usize) -> Option<f32> {
+    let fragments = &tree.fragment_tree;
+    let mut placed = fragments.records_of(index)[from..]
+        .iter()
+        .filter(|&&record| !fragments.is_retired(record));
+    let &container = placed.next().filter(|_| placed.next().is_none())?;
+    fragments
+        .children_of(container)
+        .iter()
+        .filter(|&&record| !fragments.is_retired(record))
+        .map(|&record| {
+            let rect = fragments.fragments[record].rect;
+            rect.y + rect.height
+        })
+        .reduce(f32::max)
+}
+
 /// What the block pass across the whole width of a multicol container gave
 /// the out-of-flow boxes inside it, which it leaves unplaced until the columns
 /// settle the height of the container and the places of the boxes in flow.
@@ -580,6 +696,10 @@ struct FlowPass {
     /// Where the content box starts and ends and the columns, when a column
     /// strategy lays the children out again.
     columns: Option<ColumnBox>,
+    /// How far content alignment moved the columns past where the pass put
+    /// the start of the content, which moves the static position of a box
+    /// before every box in flow.
+    leading_shift: f32,
 }
 
 /// The columns of a multicol container inside its border box.
@@ -634,6 +754,7 @@ impl FlowPass {
             height: output.size.height,
             locations,
             columns: None,
+            leading_shift: 0.0,
         }
     }
 
@@ -825,7 +946,7 @@ impl FlowPass {
                     },
                 }
             }
-            None => (0, static_y - columns.origin.y),
+            None => (0, static_y + self.leading_shift - columns.origin.y),
         };
         Some(static_move_to(columns, column, y, static_y))
     }
