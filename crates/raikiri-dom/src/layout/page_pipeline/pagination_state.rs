@@ -816,15 +816,16 @@ impl PaginationState {
             return Ok(false);
         }
         let page_origins = env.page_origins;
-        let natural_page = page_origins
-            .page_index_in_flow(text.effective_y)
+        // The break opens the page after the one the block ends on; the
+        // margin after the block is truncated at the break.
+        let block_end = self.pending_break.source_end;
+        let end_page = page_origins
+            .page_index_in_flow(block_end)
             .unwrap_or(self.current_page);
-        // A block that runs on to the page the text falls on ends there:
-        // the break after it opens the page after that one.
-        let past_block = if text.effective_y > page_origins.origin(natural_page) + 0.001 {
-            natural_page.saturating_add(1)
+        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
+            end_page.saturating_add(1)
         } else {
-            natural_page
+            end_page
         };
         let target_page = super::forced_target_page(self.current_page, past_block);
         reach_page(env.control, target_page)?;
@@ -1535,6 +1536,9 @@ impl PaginationState {
             candidate.context.deferred_named_break_after(),
             || super::clip_holds_breaks(document, env, node_id, false, effective_y + height),
         );
+        if self.pending_break.source == Some(node_id) {
+            self.pending_break.source_end = effective_y + height;
+        }
 
         Ok(())
     }

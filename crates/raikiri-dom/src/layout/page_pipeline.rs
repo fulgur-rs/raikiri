@@ -9765,6 +9765,9 @@ struct PendingBreak {
     /// The boxes beside the source on its flex line or grid row, which the
     /// break does not fall before (see [`later_line_peers`]).
     line_peers: Vec<usize>,
+    /// Where the box that forced the break ends in the flow, its end margin
+    /// left out.
+    source_end: f32,
 }
 
 impl PendingBreak {

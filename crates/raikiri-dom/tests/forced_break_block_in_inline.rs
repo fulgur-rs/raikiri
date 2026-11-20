@@ -196,3 +196,18 @@ fn a_break_before_a_block_in_a_span_at_a_cell_start_moves_the_row_unless_the_spa
     assert_eq!(got[0], (1, 5.0), "#t");
     assert_eq!(got[1].0, 0, "#x stays on the first page: {:?}", got[1]);
 }
+
+/// The margin after a block that ends in a break is truncated at the break:
+/// a margin that reaches past the page end does not send the lines after the
+/// block one page further.
+#[test]
+fn a_break_after_a_block_in_a_span_drops_the_margin_after_it() {
+    assert_places(
+        "<div style='height: 60px'></div>\
+         <div><span>\
+         <div style='height: 20px; margin-bottom: 40px; break-after: page'>\
+         <span id=t>T</span></div>\
+         <span id=c>C</span></span></div>",
+        &[("t", (0, 65.0)), ("c", (1, 5.0))],
+    );
+}
