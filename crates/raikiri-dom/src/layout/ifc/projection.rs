@@ -514,8 +514,13 @@ fn push_generated(
             images.rtl,
         );
     }
-    // Atomic text is outside this IFC; a block after-pseudo starts a later line.
-    if atomic || (!inline_level && pseudo == PseudoElem::After) {
+    // Atomic text is outside this IFC. A block after-pseudo starts a later
+    // line, unless, as in Chromium, it is the first thing in its paragraph.
+    if atomic
+        || (!inline_level
+            && pseudo == PseudoElem::After
+            && (block.is_none() || !first_letter.opens_with(doc, cascade, element)))
+    {
         first_letter.stop();
     }
     let marker_fallback;
@@ -559,6 +564,18 @@ fn push_generated(
         None
     };
     if let Some(block) = &block {
+        // As in Chromium, a block-level box with no letter in it, empty or
+        // only white space, takes the first formatted line, which then holds
+        // no letter.
+        if text
+            .trim_matches([' ', '\t', '\n', '\r', '\u{000c}'])
+            .is_empty()
+            && !has_images
+        {
+            first_letter.stop();
+        } else {
+            first_letter.start_block();
+        }
         builder.push_block_in_inline(NodeId(block.start));
         images.blocks.push(block.clone());
     }
@@ -599,6 +616,8 @@ fn push_generated(
             paragraph,
             has_images,
         });
+        // The box held the first letter, or took the first formatted line.
+        first_letter.stop();
         builder.push_block_in_inline(NodeId(block.end));
         return builder.error().map(IfcError::Limit).map_or(Ok(()), Err);
     }
@@ -701,6 +720,8 @@ fn push_generated(
         builder.close_inline();
     }
     if let Some(block) = &block {
+        // The box held the first letter, or took the first formatted line.
+        first_letter.stop();
         builder.push_block_in_inline(NodeId(block.end));
     }
     match builder.error() {

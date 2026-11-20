@@ -22236,3 +22236,53 @@ fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
     let cascade = raikiri_style::cascade(&document, &rules).expect("cascade Ok");
     assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
 }
+
+/// A block whose break stays inside a float or a positioned box, even past
+/// an inline box that closes inside it, or a block that does not sit inside
+/// the paragraph at all, has no line of the paragraph after it.
+#[test]
+fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_paragraph() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = document.append_element(Some(body), "div", Some("display:block"));
+    let span = document.append_element(Some(paragraph), "span", Some("display:inline"));
+    let float = document.append_element(Some(span), "div", Some("display:block;float:left"));
+    let in_float = document.append_element(Some(float), "div", Some("display:block"));
+    let in_span = document.append_element(Some(span), "div", Some("display:block"));
+    document.append_element(Some(paragraph), "b", Some("display:inline"));
+    let positioned = document.append_element(
+        Some(paragraph),
+        "div",
+        Some("display:block;position:absolute"),
+    );
+    let positioned_span = document.append_element(Some(positioned), "span", Some("display:inline"));
+    let in_positioned_span =
+        document.append_element(Some(positioned_span), "div", Some("display:block"));
+    document.append_element(Some(positioned), "b", Some("display:inline"));
+    let elsewhere = document.append_element(Some(body), "div", Some("display:block"));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    drop(crate::layout::context::LayoutSession::bridged(
+        &mut document,
+        &cascade,
+    ));
+
+    assert!(line_follows_paragraph_block(
+        &document, &cascade, paragraph, in_span
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document, &cascade, paragraph, in_float
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document, &cascade, paragraph, elsewhere
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document,
+        &cascade,
+        paragraph,
+        in_positioned_span
+    ));
+}
