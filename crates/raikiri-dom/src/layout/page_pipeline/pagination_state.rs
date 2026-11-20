@@ -4952,15 +4952,21 @@ impl PaginationState {
                 .ifc_layout_node(root)
                 .and_then(|node| node.ifc.as_ref())
                 .is_some_and(|ifc| ifc.boxes.iter().any(|b| b.kind == super::IfcBoxKind::Float));
-            if holds_floats || !lines_can_shift_inside(document, cascade, root) {
-                let followers = followers
-                    .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
-                super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
-                followers.flush(document, control, None)?;
-                continue;
-            }
-            let Some(Some(paragraph)) = paragraphs.get(&root) else {
-                continue; // cov:ignore: a text-only owner reaches this legacy branch through its own indexed paragraph; descendant block flows take the other branch.
+            // A box whose lines hold only atomic inlines has no text of its
+            // own to measure its lines from: its flow is walked instead.
+            let paragraph = match paragraphs.get(&root) {
+                Some(Some(paragraph))
+                    if !holds_floats && lines_can_shift_inside(document, cascade, root) =>
+                {
+                    paragraph
+                }
+                _ => {
+                    let followers = followers
+                        .get_or_init(|| super::positioned_flow::HeightFollowers::new(document));
+                    super::positioned_flow::keep(document, env, root, &mut self.reach, followers)?;
+                    followers.flush(document, control, None)?;
+                    continue;
+                }
             };
             let text = paragraph.text;
             let reflowed = followers

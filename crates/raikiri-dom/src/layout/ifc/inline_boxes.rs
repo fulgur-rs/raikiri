@@ -400,6 +400,16 @@ pub(super) fn for_each_atomic(
     }
 }
 
+/// The nodes of the atomic inlines on `lines`, those in their ruby
+/// annotations included, which sit on the line of their ruby.
+pub(crate) fn atomic_nodes(lines: &[Line]) -> Vec<usize> {
+    let mut nodes = Vec::new();
+    for_each_atomic(lines, |atomic, _, _| {
+        nodes.extend(usize::try_from(atomic.node.0).ok());
+    });
+    nodes
+}
+
 /// Call `visit` for the atomic inlines of the ruby `annotation`, whose line
 /// `placement` maps to the paragraph, and of the annotations nested in it.
 fn annotation_atomics(
