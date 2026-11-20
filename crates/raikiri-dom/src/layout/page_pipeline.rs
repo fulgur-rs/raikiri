@@ -3824,7 +3824,7 @@ fn clear_floats_at_forced_breaks<'name>(
 /// multicol container where the container's own edge follows. A spanner
 /// inside another box, such as an enclosing spanner, has no column content
 /// after it within that box.
-fn page_break_after_is_forced(
+pub(super) fn page_break_after_is_forced(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -3877,6 +3877,25 @@ fn page_break_after_is_forced(
     }
 }
 
+/// The spanner right before the spanner `node_id` among the children of
+/// their parent, with nothing that the flow lays out between the two. The
+/// lines of a paragraph keep no box before a spanner among them, so a break
+/// after the first one is found from here.
+fn spanner_before(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    if !super::is_spanner_in(document, cascade, node_id) {
+        return None;
+    }
+    let parent = document.parent_of(node_id)?;
+    let children = &document.nodes[parent].children;
+    let index = children.iter().position(|&child| child == node_id)?;
+    let previous = children[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&child| lays_out_in_flow(document, cascade, child))?;
+    super::is_spanner_in(document, cascade, previous).then_some(previous)
+}
+
 /// Whether the children of `id` are laid out in the columns of a multicol
 /// container: `id` is that container, or a box that layout leaves out on the
 /// way up to it.
@@ -3891,9 +3910,7 @@ fn lays_out_in_columns(document: &Document, id: usize) -> bool {
 }
 
 /// The first child of `parent`, after `after` when it is given, that the
-/// flow lays out: neither hidden nor out of flow, nor text of white space
-/// that its style collapses away, nor a wrapper that generates no box and
-/// holds no such child or generated content.
+/// flow lays out (see [`lays_out_in_flow`]).
 fn first_flow_child(
     document: &Document,
     cascade: &CascadeResult,
@@ -3907,28 +3924,36 @@ fn first_flow_child(
             .position(|&child| child == after)
             .map_or(children.len(), |index| index + 1)
     });
-    children[start..].iter().copied().find(|&child| {
-        let node = &document.nodes[child];
-        node.is_in_document()
-            && node.display() != DisplayValue::None
-            && !matches!(
-                node.position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-            && match &node.data {
-                crate::node::NodeData::Text(text) => {
-                    !crate::generated_content::is_collapsed_white_space(
-                        &text.text_content,
-                        cascade.computed[child].effective_white_space_collapse,
-                    )
-                }
-                _ => true,
+    children[start..]
+        .iter()
+        .copied()
+        .find(|&child| lays_out_in_flow(document, cascade, child))
+}
+
+/// Whether the flow lays out `child`: it is neither hidden nor out of flow,
+/// nor text of white space that its style collapses away, nor a wrapper that
+/// generates no box and holds no such child or generated content.
+fn lays_out_in_flow(document: &Document, cascade: &CascadeResult, child: usize) -> bool {
+    let node = &document.nodes[child];
+    node.is_in_document()
+        && node.display() != DisplayValue::None
+        && !matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && match &node.data {
+            crate::node::NodeData::Text(text) => {
+                !crate::generated_content::is_collapsed_white_space(
+                    &text.text_content,
+                    cascade.computed[child].effective_white_space_collapse,
+                )
             }
-            && (cascade.computed[child].display != DisplayValue::Contents
-                || generated_on_side(cascade, child, true)
-                || generated_on_side(cascade, child, false)
-                || first_flow_child(document, cascade, child, None).is_some())
-    })
+            _ => true,
+        }
+        && (cascade.computed[child].display != DisplayValue::Contents
+            || generated_on_side(cascade, child, true)
+            || generated_on_side(cascade, child, false)
+            || first_flow_child(document, cascade, child, None).is_some())
 }
 
 /// Whether the content that starts at `node`, looking into wrappers that
@@ -3957,7 +3982,7 @@ fn box_forces_break_after(
             || !is_floating_box_for_pagination(document, cascade, node_id))
 }
 
-fn page_break_is_forced(
+pub(super) fn page_break_is_forced(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -4062,7 +4087,9 @@ fn row_takes_cell_break(
                     return false;
                 }
                 let computed = &cascade.computed[id];
-                if before && page_break_is_forced(document, cascade, id, computed.break_before)
+                if before
+                    && (page_break_is_forced(document, cascade, id, computed.break_before)
+                        || starts_with_forced_spanner(document, cascade, id))
                     || !before
                         && box_forces_break_after(document, cascade, id, computed.break_after)
                 {
@@ -4089,11 +4116,39 @@ fn forces_page_break(
     let computed = &cascade.computed[node_id];
     let own = if before {
         page_break_is_forced(document, cascade, node_id, computed.break_before)
+            || starts_with_forced_spanner(document, cascade, node_id)
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
     own && !at_table_cell_edge(document, cascade, node_id, before)
         || row_takes_cell_break(document, cascade, node_id, before)
+}
+
+/// Whether `node_id` is a multicol container whose first box is a spanner
+/// that forces a page break before itself. No column content comes before
+/// that break, so it falls before the container, which moves to the next
+/// page whole (Chromium). `page_edge_child` looks through boxes that
+/// generate no box; one with generated content starts with that content.
+fn starts_with_forced_spanner(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    document.nodes[node_id].multicol.is_some()
+        && !generated_on_side(cascade, node_id, true)
+        && page_edge_child(document, cascade, node_id, true, 0)
+            .ok()
+            .flatten()
+            .is_some_and(|child| {
+                document.nodes[child].kind() == NodeKind::Element
+                    && document.nodes[child].display() != DisplayValue::Contents
+                    && page_break_is_forced(
+                        document,
+                        cascade,
+                        child,
+                        cascade.computed[child].break_before,
+                    )
+            })
 }
 
 /// Whether `id` is a block container whose first and last boxes start and
@@ -4869,7 +4924,14 @@ fn paginate_flow(
         .nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| !node.multicol_groups.is_empty())
+        .filter(|&(id, node)| {
+            !node.multicol_groups.is_empty()
+                || node.multicol.is_some()
+                    && document
+                        .children_through_contents(id)
+                        .iter()
+                        .any(|&child| super::is_spanner_in(document, cascade, child))
+        })
         .map(|(id, _)| (current_abs_y(document, id), id))
         .collect();
     spanning_owners.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -6530,6 +6592,37 @@ fn boxes_are_tied(
                 after,
                 document.context.pagination_on_transposed_axes,
             ))
+}
+
+/// Whether an avoided break ties the block `node_id` to the box before it in
+/// the flow of its parent (see [`boxes_are_tied`]). A float or an
+/// out-of-flow box between the two is not counted.
+fn tied_to_box_before(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let children = document.nodes[node_id]
+        .parent
+        .map(|parent| pagination_child_order(document, cascade, parent))
+        .unwrap_or_default();
+    let position = children.iter().position(|&child| child == node_id);
+    children[..position.unwrap_or(0)]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&child| {
+            let node = &document.nodes[child];
+            node.kind() == NodeKind::Element
+                && !node.is_display_none()
+                && is_block_level_flow_box(node.display())
+                && !is_floating_box_for_pagination(document, cascade, child)
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        })
+        .is_some_and(|before| boxes_are_tied(document, cascade, before, node_id))
 }
 
 /// The boxes of a flow that avoid a page break inside them or between them,
@@ -12631,7 +12724,14 @@ fn avoid_chain_before_last_box(
         else {
             break true;
         };
-        if !is_box(before) {
+        // An empty block between the boxes ties them as a box does.
+        let empty_block = |index: usize| {
+            let id = children[index];
+            flow_flags[index] == (Some(id), false)
+                && is_plain_block_box(document, id)
+                && takes_no_block_space(document, id)
+        };
+        if !is_box(before) && !empty_block(before) {
             return None;
         }
         let (forced_after, avoided_after) =
@@ -12662,8 +12762,17 @@ fn avoid_chain_before_last_box(
     let boxes: Vec<usize> = (first..=last)
         .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
         .collect();
+    // A paragraph with lines too few to break between for its `orphans` and
+    // `widows` moves whole too.
+    // A run that starts the block has no break before it to take: its
+    // paragraph breaks between its lines all the same.
     let moves_whole = |index: usize| {
-        moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
+        let id = children[index];
+        moves_whole_at_best(document, cascade, body_id, id, has_named_pages)
+            || (!starts_block
+                && run_paragraph(document, cascade, id).is_some_and(|paragraph| {
+                    paragraph_lines_keep_together(document, cascade, paragraph)
+                }))
     };
     let Some(split) = boxes.iter().rposition(|&index| !moves_whole(index)) else {
         return Some(if starts_block {
@@ -12685,15 +12794,18 @@ fn avoid_chain_before_last_box(
     // paragraph with lines too few to split would move whole without the
     // boxes tied before it, so then the run keeps its placement.
     let paragraph = children[boxes[split]];
-    paragraph_may_split_lines(document, cascade, paragraph, split == 0).then_some(
-        AvoidChain::Lines {
+    run_paragraph(document, cascade, paragraph)
+        .is_some_and(|paragraph| {
+            paragraph_may_split_lines(document, cascade, paragraph, split == 0)
+        })
+        .then_some(AvoidChain::Lines {
             first: boxes[split],
-        },
-    )
+        })
 }
 
 /// Whether the paragraph `node_id` may break between its lines: it has lines,
-/// does not avoid breaks inside it, and, unless `few_lines` allows it, has
+/// does not avoid breaks inside it, has no set height that leaves room below
+/// its lines (the page breaks in that room instead), and, unless `few_lines` allows it, has
 /// lines enough for `orphans` and `widows` on both sides of a break.
 fn paragraph_may_split_lines(
     document: &super::context::LayoutSession<'_>,
@@ -12703,12 +12815,68 @@ fn paragraph_may_split_lines(
 ) -> bool {
     document.nodes[node_id].is_ifc_root()
         && !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && !room_below_lines(document, node_id)
         && document
             .ifc_layout_node(node_id)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
             .is_some_and(|lines| !lines.lines.is_empty())
         && (few_lines || !paragraph_lines_keep_together(document, cascade, node_id))
+}
+
+/// The paragraph that a run of tied boxes ends with in the box `node_id`: the
+/// box itself, or the paragraph inside plain blocks that hold nothing else in
+/// their flow, which breaks as the box does. `None` when there is no such
+/// paragraph.
+fn run_paragraph(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let mut current = node_id;
+    loop {
+        let node = &document.nodes[current];
+        if node.is_ifc_root() {
+            return Some(current);
+        }
+        if !is_plain_block_box(document, current) {
+            return None;
+        }
+        let mut boxes = pagination_child_order(document, cascade, current)
+            .into_iter()
+            .filter(|&child| {
+                let child_node = &document.nodes[child];
+                child_node.kind() == NodeKind::Element
+                    && !child_node.is_display_none()
+                    && !is_floating_box_for_pagination(document, cascade, child)
+                    && !matches!(
+                        child_node.position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    )
+            });
+        let (Some(only), None) = (boxes.next(), boxes.next()) else {
+            return None;
+        };
+        current = only;
+    }
+}
+
+/// Whether the paragraph `node_id` has two lines or more to break between for
+/// the edges that close the blocks around it, whatever its `orphans`,
+/// `widows` and `break-inside` ask. Such a break beats one before the
+/// paragraph that an avoided break forbids. A paragraph whose set height
+/// leaves room below its lines has the edges after that room instead.
+fn paragraph_has_lines_to_split(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> bool {
+    document.nodes[node_id].is_ifc_root()
+        && !room_below_lines(document, node_id)
+        && document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| lines.lines.len() > 1 && lines.block_line_starts.is_empty())
 }
 
 /// Whether the paragraph `node_id` has a set height that leaves room below its
@@ -20943,8 +21111,12 @@ fn forced_break_growth(
     let old = document.nodes[block].layout.size.height;
     let holds = holds_floats(document, cascade, block);
     // A height between its bounds follows the end of the in-flow content,
-    // which moves down by the whole shift.
-    if !holds && old > min + 0.001 && max.is_infinite() {
+    // which moves down by the whole shift. The columns after a spanner sit
+    // below it, floats and all, so a multicol container's content ends
+    // that much lower too.
+    let spanned =
+        document.nodes[block].multicol.is_some() && super::is_spanner_in(document, cascade, child);
+    if (!holds || spanned) && old > min + 0.001 && max.is_infinite() {
         return moved;
     }
     let growth = moved_content_growth(
