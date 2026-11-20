@@ -211,3 +211,16 @@ fn a_break_after_a_block_in_a_span_drops_the_margin_after_it() {
         &[("t", (0, 65.0)), ("c", (1, 5.0))],
     );
 }
+
+/// A block that ends right at the page end ends on that page: the break after
+/// it opens the next page, not the one after.
+#[test]
+fn a_break_after_a_block_in_a_span_that_ends_at_the_page_end_opens_the_next_page() {
+    assert_places(
+        "<div style='height: 60px'></div>\
+         <div><span>\
+         <div style='height: 40px; break-after: page'><span id=t>T</span></div>\
+         <span id=c>C</span></span></div>",
+        &[("t", (0, 65.0)), ("c", (1, 5.0))],
+    );
+}
