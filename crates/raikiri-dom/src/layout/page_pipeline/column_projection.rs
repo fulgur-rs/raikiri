@@ -703,9 +703,15 @@ impl ParagraphProjectionBuilder {
                     data.7,
                 ));
             }
+            // The piece and the line offset both carry the line's shift along
+            // the block axis, which runs across the page in a vertical
+            // paragraph.
+            let (shift_x, shift_y) = lines.positioned.map_or((0.0, shift), |positioned| {
+                crate::layout::ifc::positioned_runs::block_shift(positioned.writing_mode, shift)
+            });
             let rect = BoxRect {
-                x: piece.border_box.x + offset.0,
-                y: piece.border_box.y + offset.1 - shift,
+                x: piece.border_box.x + offset.0 - shift_x,
+                y: piece.border_box.y + offset.1 - shift_y,
                 ..piece.border_box
             };
             add_bounds(
