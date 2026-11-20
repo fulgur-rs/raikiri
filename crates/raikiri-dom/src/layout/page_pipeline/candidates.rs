@@ -1723,9 +1723,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && in_any_flow
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
-                    && frame.previous_box.is_some_and(|previous| {
-                        page_edge_constraint(document, cascade, previous, false).0
-                    });
+                    && frame
+                        .previous_box
+                        .or_else(|| super::spanner_before(document, cascade, node_id))
+                        .is_some_and(|previous| {
+                            page_edge_constraint(document, cascade, previous, false).0
+                        });
                 // A flex container, grid or table is a box that can end a block
                 // too, and move to the next page for the edges it ends.
                 let in_flow_container =
