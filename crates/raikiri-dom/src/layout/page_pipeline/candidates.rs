@@ -21,7 +21,7 @@ use super::{
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     paragraph_has_lines_to_split, paragraph_lines_keep_together, passes_closing_edges,
     positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, run_paragraph, selected_page_name, starts_break_of_run, unplaced_line,
+    push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
     unplaced_line_after_block,
 };
 use std::collections::HashMap;
@@ -1058,6 +1058,7 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     /// The runs of boxes tied by avoided breaks that start inside their first
     /// box, keyed by the box they start at (see `nested_run_units`).
     run_breaks: HashMap<usize, super::RunUnit>,
+    run_break_starts: super::RunBreakStarts,
     has_named_pages: bool,
     /// Whether runs of boxes tied by avoided breaks may be looked for inside
     /// blocks: some box avoids a break before or after it, and no box names a
@@ -1106,6 +1107,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             run_breaks: HashMap::new(),
+            run_break_starts: super::RunBreakStarts::default(),
             has_named_pages,
             finds_nested_runs: cascade.computed.iter().any(|computed| {
                 [computed.break_before, computed.break_after]
@@ -2079,7 +2081,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let run_break_base = self.finds_nested_runs
                     && in_flow_block
                     && !direct_body_child
-                    && starts_break_of_run(document, cascade, body_id, node_id);
+                    && self
+                        .run_break_starts
+                        .starts_break(document, cascade, body_id, node_id);
                 let needs_ancestor_constraints = margin_shape
                     || run_break_base
                     || line_after_block_base

@@ -5872,26 +5872,75 @@ fn next_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize) -
     boxes.get(index + 1).copied()
 }
 
-/// Whether the box `node_id` is where a block around it, below the body,
-/// starts the run of boxes tied by avoided breaks that it opens with the box
-/// after it (see [`run_break_start`]): the page may break before it then,
-/// so the walk looks at it.
-pub(super) fn starts_break_of_run(
-    document: &super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-    body_id: usize,
-    node_id: usize,
-) -> bool {
-    document
-        .ancestors(node_id)
-        .take_while(|&ancestor| ancestor != body_id)
-        .filter(|&ancestor| stacks_boxes(document, cascade, ancestor))
-        .any(|ancestor| {
-            next_flow_box(document, cascade, ancestor).is_some_and(|next| {
+/// Where the blocks of the document start the runs of boxes tied by avoided
+/// breaks that they open with the box after them (see [`run_break_start`]),
+/// found once for each block, with the next in-flow box of each box found
+/// once for each flow.
+#[derive(Default)]
+pub(super) struct RunBreakStarts {
+    next: HashMap<usize, Option<usize>>,
+    starts: HashMap<usize, Option<usize>>,
+}
+
+impl RunBreakStarts {
+    /// The next in-flow box after `node_id` in the flow of its parent (see
+    /// [`next_flow_box`]).
+    fn next_flow_box(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        if !self.next.contains_key(&node_id)
+            && let Some(parent) = flow_parent(document, node_id)
+        {
+            let boxes = flow_boxes(document, cascade, parent);
+            for (index, &id) in boxes.iter().enumerate() {
+                self.next.insert(id, boxes.get(index + 1).copied());
+            }
+        }
+        *self.next.entry(node_id).or_insert(None)
+    }
+
+    /// The box where the block `block` starts the run it opens with the box
+    /// after it, if avoided breaks tie the two.
+    fn start(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        block: usize,
+    ) -> Option<usize> {
+        if let Some(&start) = self.starts.get(&block) {
+            return start;
+        }
+        let start = self
+            .next_flow_box(document, cascade, block)
+            .filter(|&next| {
                 document.nodes[next].kind() == NodeKind::Element
-                    && boxes_are_tied(document, cascade, ancestor, next)
-            }) && run_break_start(document, cascade, ancestor) == Some(node_id)
-        })
+                    && boxes_are_tied(document, cascade, block, next)
+            })
+            .and_then(|_| run_break_start(document, cascade, block));
+        self.starts.insert(block, start);
+        start
+    }
+
+    /// Whether the box `node_id` is where a block around it, below the body,
+    /// starts the run of boxes tied by avoided breaks that it opens with the
+    /// box after it: the page may break before it then, so the walk looks at
+    /// it.
+    pub(super) fn starts_break(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+    ) -> bool {
+        document
+            .ancestors(node_id)
+            .take_while(|&ancestor| ancestor != body_id)
+            .filter(|&ancestor| stacks_boxes(document, cascade, ancestor))
+            .any(|ancestor| self.start(document, cascade, ancestor) == Some(node_id))
+    }
 }
 
 /// Connected class-A sibling runs have a legal break before their first
