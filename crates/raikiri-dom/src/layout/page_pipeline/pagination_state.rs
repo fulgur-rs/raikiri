@@ -3968,21 +3968,16 @@ impl PaginationState {
                 .inline_block_paragraph_to_move(document, env, candidate, blocks, text, page - 1)
                 .is_some()
         {
-            self.move_inline_block_paragraph(
-                document,
-                env,
-                candidate,
-                entry,
-                blocks,
-                text,
-                page - 1,
-            )?;
+            let previous = page - 1;
+            let moved_paragraph = self.move_inline_block_paragraph(
+                document, env, candidate, entry, blocks, text, previous,
+            );
+            moved_paragraph?;
             paragraph_moved = true;
-            let Some(next) = run_metrics(document, text.effective_y) else {
-                return Ok(());
-            };
-            (metrics, widows) = next;
-            page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+            if let Some(next) = run_metrics(document, text.effective_y) {
+                (metrics, widows) = next;
+                page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+            }
         }
         loop {
             let page_start = page_origins.origin(page);
@@ -4080,17 +4075,18 @@ impl PaginationState {
                         )
                         .is_some()
                 {
-                    self.move_inline_block_paragraph(
+                    let moved_paragraph = self.move_inline_block_paragraph(
                         document, env, candidate, entry, blocks, text, page,
-                    )?;
+                    );
+                    moved_paragraph?;
                     // Judged once more from the page the run is on now, for
                     // the lines that break again there.
                     paragraph_moved = true;
-                    let Some(next) = run_metrics(document, text.effective_y) else {
-                        return Ok(());
-                    };
-                    (metrics, widows) = next;
-                    page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+                    if let Some(next) = run_metrics(document, text.effective_y) {
+                        (metrics, widows) = next;
+                        page =
+                            page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+                    }
                     continue;
                 }
                 LineBreakFix::Keep
@@ -4196,9 +4192,7 @@ impl PaginationState {
             .into_iter()
             .filter(|&(_, after, _)| after == 0)
             .collect();
-        let Some(&(_, _, last_inline)) = opening.last() else {
-            return false;
-        };
+        let last_inline = opening.last().is_some_and(|&(_, _, inline)| inline);
         let height: f32 = opening
             .iter()
             .map(|&(block, _, _)| document.nodes[block].layout.size.height)
