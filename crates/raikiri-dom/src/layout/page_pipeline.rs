@@ -37,7 +37,8 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
-use super::ifc::boxes::{IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -14952,9 +14953,12 @@ fn box_leaves_lines_to_pagination(
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it: it
-/// is in one column and holds nothing but text, and out-of-flow boxes that
-/// stay where their insets put them or follow the moved lines (see
-/// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
+/// is in one column and holds nothing but text, floats, atomic inlines that
+/// come after its first text (see [`atomics_follow_text`]), and out-of-flow
+/// boxes that stay where their insets put them or follow the moved lines (see
+/// [`out_of_flow_follow`]). The atomic inlines on the moved lines move with
+/// them (see [`shift_paragraph_lines`]); a float is a page candidate of its
+/// own. Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_inside(
     document: &super::context::LayoutSession<'_>,
@@ -14965,13 +14969,70 @@ fn lines_can_shift_inside(
         .ifc_layout_node(block_id)
         .and_then(|node| node.ifc.as_ref())
         .is_some_and(|ifc| {
+            let mut atomics_follow = None;
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
                     b.kind == IfcBoxKind::Float
                         || (b.kind == IfcBoxKind::OutOfFlow
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
+                        || (b.kind == IfcBoxKind::Atomic
+                            && *atomics_follow.get_or_insert_with(|| {
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
+                            }))
                 })
         })
+}
+
+/// Whether every atomic inline among the `boxes` of the paragraph `root` comes
+/// after the first of its text in tree order, the order in which its page
+/// candidates are placed. The text is what moves the lines, and the boxes
+/// before it are placed before it is: a move would leave them behind. The
+/// walk stops at the first text or atomic inline, and does not enter the
+/// paragraph's boxes, whose content is not its text.
+fn atomics_follow_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    boxes: &[IfcBox],
+) -> bool {
+    let boxed: HashMap<usize, bool> = boxes
+        .iter()
+        .map(|b| (b.node, b.kind == IfcBoxKind::Atomic))
+        .collect();
+    // Children in the order layout and the page candidates take them, which
+    // puts the summary of a `details` first.
+    let children = |node: usize| {
+        pagination_child_order_borrowed(document, cascade, node)
+            .into_owned()
+            .into_iter()
+            .rev()
+    };
+    let mut stack: Vec<usize> = children(root).collect();
+    while let Some(node) = stack.pop() {
+        if let Some(&atomic) = boxed.get(&node) {
+            if atomic {
+                return false;
+            }
+            continue;
+        }
+        match &document.nodes[node].data {
+            crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty() => {
+                return true;
+            }
+            // A `display: contents` element lays its children out in its
+            // place, so they are walked as the paragraph's own; a
+            // `display: none` one, or one that HTML never renders whatever
+            // its display, lays out nothing.
+            crate::node::NodeData::Element(_)
+                if !document.nodes[node].is_display_none()
+                    && !document.nodes[node].is_non_rendered_html_element() =>
+            {
+                stack.extend(children(node));
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether the lines of the paragraph `block_id` that follow its block
@@ -15024,8 +15085,10 @@ fn content_follows_block_children(
 /// although it has block children, because every block child comes after the
 /// last line: the block children follow the moved lines when pagination reaches
 /// them, and the paragraph's own checks judge all the lines as one run. It is
-/// in one column, and apart from those blocks lays out only out-of-flow boxes
-/// that stay where their insets put them or follow the moved lines (see
+/// in one column, and apart from those blocks lays out only floats, atomic
+/// inlines that come after its first text (see [`atomics_follow_text`]) and
+/// move with the lines that hold them, and out-of-flow boxes that stay where
+/// their insets put them or follow the moved lines (see
 /// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
 fn lines_can_shift_above_blocks(
@@ -15037,11 +15100,16 @@ fn lines_can_shift_above_blocks(
         .ifc_layout_node(block_id)
         .and_then(|node| node.ifc.as_ref())
         .is_some_and(|ifc| {
+            let mut atomics_follow = None;
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
                     matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Float)
-                        || b.kind == IfcBoxKind::OutOfFlow
-                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                        || (b.kind == IfcBoxKind::OutOfFlow
+                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
+                        || (b.kind == IfcBoxKind::Atomic
+                            && *atomics_follow.get_or_insert_with(|| {
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
+                            }))
                 })
                 && ifc.lines.as_ref().is_some_and(|lines| {
                     lines
@@ -15473,11 +15541,8 @@ fn follows_line_of_paragraph(
         .is_some_and(|(lines, block)| {
             (document.nodes[block].display().is_atomic_inline_level()
                 || is_replaced_for_pagination(document, block))
-                && lines.lines.iter().enumerate().any(|(index, shaped)| {
-                index >= line && shaped.fragments().any(|fragment| {
-                    matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
-                })
-            }) || blocks_after_line(document, root, line, with_block_before).contains(&block)
+                && atomic_nodes(lines.lines.get(line..).unwrap_or_default()).contains(&block)
+                || blocks_after_line(document, root, line, with_block_before).contains(&block)
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
@@ -17500,15 +17565,10 @@ fn shift_paragraph_lines(
         .ifc_layout_node(moved.block_id)
         .and_then(|node| node.ifc.as_ref())
         .and_then(|ifc| ifc.lines.as_ref())
+        .map(|lines| atomic_nodes(lines.lines.get(moved.line..).unwrap_or_default()))
+        .unwrap_or_default()
         .into_iter()
-        .flat_map(|lines| lines.lines[moved.line..].iter())
-        .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::Atomic(atomic) => usize::try_from(atomic.node.0)
-                .ok()
-                .filter(|&node| node < document.nodes.len()),
-            _ => None,
-        })
+        .filter(|&node| node < document.nodes.len())
         .collect();
     let blocks = blocks_after_line(
         document,

@@ -5,7 +5,7 @@ use super::boxes::IfcBox;
 use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
 use super::positioned_runs::objects::ObjectTextPrefixes;
-use super::projection::{Projected, ProjectedIfc};
+use super::projection::{BlockIntrinsics, Projected, ProjectedIfc};
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
@@ -60,6 +60,9 @@ pub(crate) struct IfcRoot {
     /// Block-level `::before` and `::after` boxes of the paragraph, which the
     /// line loop places between the lines at their tokens.
     pub(crate) generated_blocks: Arc<[super::generated_blocks::GeneratedBlock]>,
+    /// The paragraphs the intrinsic widths are measured from when the content
+    /// of [`Self::generated_blocks`] is measured apart.
+    pub(crate) block_intrinsics: Option<Arc<BlockIntrinsics<Paragraph>>>,
     /// Atomic `::before` and `::after` boxes without content, sized against
     /// the paragraph's width when it is laid out.
     pub(crate) generated_boxes: Arc<[super::generated_atomics::GeneratedAtomic]>,
@@ -460,7 +463,11 @@ impl IfcRoot {
     }
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
-        let Projected { paragraph, meta } = projected;
+        let Projected {
+            paragraph,
+            meta,
+            block_intrinsics,
+        } = projected;
         let letter_style_index = LetterStyleIndex::shared(&meta.letter_styles);
         let offset_index = (!meta.offsets.is_empty()).then(|| {
             let mut index = HashMap::with_capacity(meta.offsets.len());
@@ -507,6 +514,7 @@ impl IfcRoot {
             first_line_opacity: meta.first_line_opacity,
             first_line_styles: meta.first_line_styles,
             letter_style_index,
+            block_intrinsics: block_intrinsics.map(Arc::from),
         }
     }
 
@@ -618,6 +626,7 @@ impl IfcRoot {
             first_line_opacity: self.first_line_opacity,
             first_line_styles: self.first_line_styles.clone(),
             letter_style_index: self.letter_style_index.clone(),
+            block_intrinsics: self.block_intrinsics.clone(),
         }
     }
 
