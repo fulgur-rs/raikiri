@@ -19732,6 +19732,141 @@ fn shift_later_flow_siblings(document: &mut Document, parent: usize, child: usiz
     }
 }
 
+/// Grows the last record of `node` by `delta`, as its box grew: the records
+/// of a multicol container and its spanners are painted at their own size.
+fn grow_last_record(document: &mut super::context::LayoutSession<'_>, node: usize, delta: f32) {
+    let tree = &mut document.fragment_tree;
+    if let Some(&record) = tree
+        .records_of(node)
+        .iter()
+        .rev()
+        .find(|&&record| !tree.is_retired(record))
+    {
+        tree.fragments[record].rect.height += delta;
+    }
+}
+
+/// Whether `child` is a spanner of `parent`, a multicol container that lays
+/// its children out as boxes rather than among lines of its own.
+fn spans_box_columns(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    child: usize,
+    parent: usize,
+) -> bool {
+    document.nodes[parent].multicol.is_some()
+        && document
+            .ifc_layout_node(parent)
+            .is_none_or(|node| node.ifc.is_none())
+        && super::is_spanner_in(document, cascade, child)
+}
+
+/// Moves what follows the spanner `spanner` in the multicol container
+/// `container` down by `delta`, the distance the spanner's end moved: the
+/// columns after a spanner start below it (CSS Multi-column Layout 1, 6.1),
+/// and so does every later spanner. The column boxes are painted from the
+/// records the columns placed under the container's record, so those move
+/// along with the boxes. `grows` tells that a break inside the spanner grew
+/// it, rather than the spanner moving whole.
+fn shift_columns_after_spanner(
+    document: &mut super::context::LayoutSession<'_>,
+    container: usize,
+    spanner: usize,
+    delta: f32,
+    grows: bool,
+) {
+    let children = document.children_through_contents(container);
+    let spanner_index = children.iter().position(|&id| id == spanner);
+    let after = spanner_index.map_or(children.len(), |index| index + 1);
+    // The column groups keep the order of the flow, each with the first box
+    // of the run of column content it lays out, and the rules follow the
+    // groups in turn. The groups after the spanner are told apart by that
+    // order, not by where they lie: a negative margin can start them at or
+    // above the spanner's top, and pull the spanner up over the group before
+    // it.
+    let before: HashSet<usize> = children[..spanner_index.unwrap_or(children.len())]
+        .iter()
+        .copied()
+        .collect();
+    let groups = &document.nodes[container].multicol_groups;
+    let first_group = groups
+        .iter()
+        .take_while(|group| group.run_start.is_some_and(|run| before.contains(&run)))
+        .count();
+    // The rules of a group as the column rules counted them.
+    let first_rule: usize = groups[..first_group]
+        .iter()
+        .filter(|group| group.height > 0.0)
+        .map(|group| {
+            group
+                .occupied
+                .iter()
+                .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
+                .count()
+        })
+        .sum();
+    for group in document.nodes[container]
+        .multicol_groups
+        .iter_mut()
+        .skip(first_group)
+    {
+        group.context.origin_y += delta;
+    }
+    for rule in document
+        .column_rules
+        .get_mut(&container)
+        .into_iter()
+        .flatten()
+        .skip(first_rule)
+    {
+        rule.y += delta;
+    }
+    // The spanner's record holds the content that a break inside it moved;
+    // a spanner that moved whole keeps its height.
+    if grows {
+        grow_last_record(document, spanner, delta);
+    }
+    let tree = &document.fragment_tree;
+    let container_records: HashSet<usize> = tree
+        .records_of(container)
+        .iter()
+        .copied()
+        .filter(|&record| !tree.is_retired(record))
+        .collect();
+    let mut moved = Vec::new();
+    for &later in &children[after..] {
+        // The records of the box, or of the boxes inside it that a wrapper
+        // without a record of its own left to the container's. What a box
+        // with a record holds is placed in that record and moves with it.
+        let mut stack = vec![later];
+        while let Some(id) = stack.pop() {
+            let mut recorded = false;
+            let live = tree
+                .records_of(id)
+                .iter()
+                .filter(|&&record| !tree.is_retired(record));
+            for &record in live {
+                recorded = true;
+                if tree.fragments[record]
+                    .parent
+                    .is_some_and(|parent| container_records.contains(&parent))
+                {
+                    moved.push(record);
+                }
+            }
+            if !recorded {
+                stack.extend(document.nodes[id].children.iter().copied());
+            }
+        }
+    }
+    for record in moved {
+        document.fragment_tree.fragments[record].translate(0.0, delta);
+    }
+    for &later in &children[after..] {
+        shift_block_sibling(document, later, delta);
+    }
+}
+
 /// Moves the box `sibling`, one of the boxes after a moved child in block
 /// flow, down by `delta`. Text, boxes that are not rendered and positioned
 /// boxes keep their places.
@@ -20812,7 +20947,14 @@ fn shift_flow_after(
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
         walk.advance(document);
-        let moved_lines = match flow_step(document, child, parent) {
+        // The columns after a spanner, in a container whose children are
+        // boxes, follow it down.
+        let step = if spans_box_columns(document, cascade, child, parent) {
+            FlowStep::Flow { moved_lines: false }
+        } else {
+            flow_step(document, child, parent)
+        };
+        let moved_lines = match step {
             FlowStep::Skip => continue,
             FlowStep::Inline => {
                 child = parent;
@@ -20989,6 +21131,9 @@ fn shift_flow_after(
         }
         if !moved_lines {
             shift_later_block_siblings(document, parent, child, flow_delta);
+            if spans_box_columns(document, cascade, child, parent) {
+                shift_columns_after_spanner(document, parent, child, flow_delta, child != node_id);
+            }
         }
         // The moved box moved whole; an ancestor of it keeps its stored
         // height while its content end moves down with the shift.
@@ -21009,6 +21154,9 @@ fn shift_flow_after(
             flow_delta,
         );
         shifts.grow_box(parent, passed.min(flow_delta));
+        if spans_box_columns(document, cascade, child, parent) {
+            grow_last_record(document, parent, passed.min(flow_delta));
+        }
         if passed < flow_delta - 0.001 {
             shifts
                 .bounded

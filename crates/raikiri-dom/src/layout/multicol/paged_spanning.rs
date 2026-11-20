@@ -174,7 +174,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 .transpose()?
                 .flatten()
             {
-                groups.extend(planned.groups);
+                groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
+                    run_start: old.run_start,
+                    ..group
+                }));
                 let placed = (planned.pieces, planned.nested);
                 refilled_lineless |= install_lineless_pieces(
                     tree,
@@ -191,7 +194,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
                 let new_end = planned.end;
-                groups.extend(planned.groups);
+                groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
+                    run_start: old.run_start,
+                    ..group
+                }));
                 // A wrapper whose boxes joined the flow gets one record from
                 // its first piece to its lowest, and the records of what it
                 // holds are placed in it. A wrapper that has no record of its
@@ -720,18 +726,14 @@ impl FragmentEdits {
         for (&node, &delta) in shifts {
             for id in self.records(node) {
                 if self.parent(id) == Some(container) {
-                    let fragment = &mut self.arena[id];
-                    fragment.rect.y += delta;
-                    if let Some(clip) = &mut fragment.fragmentainer_clip {
-                        clip.rect.y += delta;
-                    }
+                    self.arena[id].translate(0.0, delta);
                 }
             }
         }
     }
 
     /// Move the records of each node in `moved` that are placed in a record
-    /// of `parent` by the node's distance.
+    /// of `parent` by the node's distance, with their column clips.
     pub(in crate::layout) fn shift_following(
         &mut self,
         parent: usize,
@@ -747,7 +749,7 @@ impl FragmentEdits {
                     .parent(id)
                     .is_some_and(|parent| parent_records.contains(&parent))
                 {
-                    self.arena[id].rect.y += delta;
+                    self.arena[id].translate(0.0, delta);
                 }
             }
         }
