@@ -2363,6 +2363,8 @@ fn align_ifc_content(
             root.writing_mode
         });
     let (dx, dy) = crate::layout::ifc::positioned_runs::block_shift(writing_mode, offset);
+    // The rendered legend of a fieldset stays over the border.
+    let legend = tree.nodes[idx].ifc.as_ref().and_then(|root| root.legend);
     let boxes: Vec<usize> = tree.nodes[idx]
         .ifc
         .as_mut()
@@ -2372,7 +2374,10 @@ fn align_ifc_content(
             }
             root.boxes
                 .iter()
-                .filter(|b| b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+                .filter(|b| {
+                    b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow
+                        && Some(b.node) != legend
+                })
                 .map(|b| b.node)
                 .collect()
         })
@@ -2389,7 +2394,28 @@ fn align_ifc_content(
         output.scrollable_overflow_rect.top += dy;
         output.scrollable_overflow_rect.bottom += dy;
     }
-    output.oof_candidates.translate(Point { x: dx, y: dy });
+    match legend {
+        // The out-of-flow boxes in the legend stay with it.
+        Some(legend) => {
+            let mut kept = OofCandidates::new();
+            let mut moved = OofCandidates::new();
+            for candidate in output.oof_candidates.iter() {
+                if tree
+                    .document
+                    .ancestors(usize::from(candidate.node))
+                    .any(|ancestor| ancestor == legend)
+                {
+                    kept.push(candidate);
+                } else {
+                    moved.push(candidate);
+                }
+            }
+            moved.translate(Point { x: dx, y: dy });
+            kept.append(&mut moved);
+            output.oof_candidates = kept;
+        }
+        None => output.oof_candidates.translate(Point { x: dx, y: dy }),
+    }
 }
 
 /// The min-content width of the border box of the paragraph box `node_id`,

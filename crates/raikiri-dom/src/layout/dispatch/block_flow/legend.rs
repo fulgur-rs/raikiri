@@ -14,12 +14,13 @@ use super::{Metrics, child_inputs, child_style, commit};
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits;
 use crate::layout::dispatch::used_writing_mode;
-use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, OofCandidates, RunMode};
+use crate::layout::protocol::{AvailableSpace, NodeId, OofCandidates, RunMode};
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    BoxGenerationMode, ExpandedDimension, Float, Overflow, Position,
+    BoxGenerationMode, Direction, ExpandedDimension, Float, Overflow, Position,
 };
+use raikiri_style::property::TextAlign;
 use raikiri_traits::PaintRect;
 
 /// The rendered legend among the layout children of `node`, the container
@@ -54,8 +55,47 @@ pub(super) fn rendered_legend(
     })
 }
 
+/// Where the `text-align` of the rendered `legend`, `width` wide, puts its
+/// border box along the block-start border of a fieldset of `direction`:
+/// `center` centres it in the content box of the fieldset, and the side
+/// opposite the start (`right` in a left-to-right fieldset, `left` in a
+/// right-to-left one) puts it at the end, inside its margins. The start and
+/// the other values leave it at the start. An `auto` margin places the
+/// legend instead. This follows Chromium, which reads `text-align` here, and
+/// so maps the `align` attribute of the legend to it; the HTML Standard
+/// names `justify-self` for that attribute, which Chromium ignores on a
+/// legend. `inset` is the border plus padding of the fieldset on its left
+/// and right, and `content_width` the width of its content box.
+fn aligned_left(
+    tree: &LayoutSession<'_>,
+    legend: NodeId,
+    style: &Style,
+    direction: Direction,
+    (inset, content_width): ([f32; 2], f32),
+    width: f32,
+    margin: Edges<f32>,
+) -> Option<f32> {
+    if style.margin.left.is_auto() || style.margin.right.is_auto() {
+        return None;
+    }
+    let free = content_width - width;
+    let rtl = direction == Direction::Rtl;
+    match tree.style_views.cascade().computed[usize::from(legend)].text_align {
+        TextAlign::Center if rtl => {
+            Some(inset[0] + content_width - margin.right - width - free / 2.0)
+        }
+        TextAlign::Center => Some(inset[0] + margin.left + free / 2.0),
+        TextAlign::Right if !rtl => Some(inset[0] + content_width - margin.right - width),
+        TextAlign::Left if rtl => Some(inset[0] + margin.left),
+        _ => None,
+    }
+}
+
 /// A rendered legend laid out over the block-start border of its fieldset.
-pub(super) struct PlacedLegend {
+pub(crate) struct PlacedLegend {
+    /// The top of the border box of the legend, from the top of the border
+    /// box of the fieldset, before any relative offset.
+    pub top: f32,
     /// How far the content of the fieldset moves down past its own
     /// block-start border and padding to clear the legend.
     pub content_offset: f32,
@@ -68,16 +108,17 @@ pub(super) struct PlacedLegend {
 
 /// Lay out the rendered `legend` of `fieldset`, whose border box is `width`
 /// wide and whose content box is `parent.width` wide, and place it over the
-/// fieldset's block-start border.
+/// fieldset's block-start border. `inset` is the border plus padding of the
+/// fieldset on its left and right, and `border` its block-start border.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place(
     tree: &mut LayoutSession<'_>,
     fieldset: NodeId,
     legend: NodeId,
     order: usize,
-    inputs: LayoutInput,
+    run_mode: RunMode,
     container: &Style,
-    metrics: Metrics,
+    (inset, border): ([f32; 2], f32),
     width: f32,
     parent: Size<Option<f32>>,
 ) -> PlacedLegend {
@@ -85,7 +126,7 @@ pub(super) fn place(
     let mut style = child_style(tree, legend);
     let mut margin = margins(&style, content_width);
     let room = (content_width - margin.horizontal_axis_sum()).max(0.0);
-    let mut child_input = child_inputs(parent, None, inputs.run_mode);
+    let mut child_input = child_inputs(parent, None, run_mode);
     let mut metrics_input = child_input;
     metrics_input.available_space.width = AvailableSpace::Definite(room);
     // A keyword `min-width` or `max-width` limits the width, as it does for
@@ -135,13 +176,22 @@ pub(super) fn place(
         &style,
         container.direction,
         width,
-        [metrics.inset.left, metrics.inset.right],
-        (metrics.inset.left + margin.left, room),
+        inset,
+        (inset[0] + margin.left, room),
         output.size.width,
         None,
         &mut margin,
     );
-    let border = metrics.border.top;
+    let left = aligned_left(
+        tree,
+        legend,
+        &style,
+        container.direction,
+        (inset, content_width),
+        output.size.width,
+        margin,
+    )
+    .unwrap_or(left);
     let size = output.size.height;
     let top = ((border - size) / 2.0).max(0.0);
     let content_offset = (top + size + margin.bottom - border).max(0.0);
@@ -151,7 +201,7 @@ pub(super) fn place(
         y: top + offset.y,
     };
     let mut oof_candidates = OofCandidates::new();
-    if inputs.run_mode == RunMode::PerformLayout {
+    if run_mode == RunMode::PerformLayout {
         if !output.oof_candidates.is_empty() {
             oof_candidates = output.oof_candidates.clone();
             oof_candidates.translate(location);
@@ -175,8 +225,45 @@ pub(super) fn place(
         ));
     }
     PlacedLegend {
+        top,
         content_offset,
         overflow: overflow(&style, legend_metrics, &output, location),
         oof_candidates,
     }
+}
+
+/// Lay out the rendered `legend` of a fieldset whose content is a paragraph,
+/// as the line loop of the paragraph meets it, its first box. The content box
+/// of the fieldset is `parent`, its border plus padding on the left and right
+/// `inset`, and its block-start border `border`.
+pub(crate) fn place_in_paragraph(
+    tree: &mut LayoutSession<'_>,
+    legend: NodeId,
+    run_mode: RunMode,
+    parent: Size<Option<f32>>,
+    inset: [f32; 2],
+    border: f32,
+) -> PlacedLegend {
+    let fieldset = NodeId::from(
+        tree.document
+            .parent_of(usize::from(legend))
+            .unwrap_or(usize::from(legend)),
+    );
+    let container = child_style(tree, fieldset);
+    let order = tree
+        .child_ids(fieldset)
+        .position(|child| child == legend)
+        .unwrap_or(0);
+    let width = parent.width.unwrap_or(0.0) + inset[0] + inset[1];
+    place(
+        tree,
+        fieldset,
+        legend,
+        order,
+        run_mode,
+        &container,
+        (inset, border),
+        width,
+        parent,
+    )
 }

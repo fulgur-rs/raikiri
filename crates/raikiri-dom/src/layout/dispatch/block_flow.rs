@@ -3,7 +3,7 @@
 mod children;
 pub(crate) use children::content_alignment_offset;
 pub(crate) mod context;
-mod legend;
+pub(crate) mod legend;
 mod positioned;
 mod sizing;
 pub(crate) mod style_input;

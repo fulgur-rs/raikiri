@@ -827,6 +827,19 @@ fn run_boxes_segment(
     mut open_block: Option<generated_blocks::OpenBlock>,
     start: LineStart,
 ) -> RunBoxesOutcome {
+    // The rendered legend of a fieldset is laid out in the content box of the
+    // fieldset; the part of it below the border takes room off the height
+    // the percentages of the other boxes resolve against.
+    let legend_geometry = geometry;
+    let mut geometry = geometry;
+    if let Some(legend) = root.legend
+        && geometry.definite_height.is_some()
+    {
+        let offset = legend_block_child(tree, legend, geometry, false).next_y;
+        geometry.definite_height = geometry
+            .definite_height
+            .map(|height| (height - offset).max(0.0));
+    }
     let FlowGeometry {
         width, top_edge, ..
     } = geometry;
@@ -1557,6 +1570,8 @@ fn run_boxes_segment(
                 first_block_start.get_or_insert(start);
                 let mut block = if geometry.blocks_apart {
                     BlockChild::apart(y, pending)
+                } else if root.legend == Some(node.0 as usize) {
+                    legend_block_child(tree, node.0 as usize, legend_geometry, perform)
                 } else {
                     layout_block_child(
                         tree,
@@ -2915,6 +2930,46 @@ impl BlockChild {
             first_baseline: None,
             marker_leading: 0.0,
         }
+    }
+}
+
+/// The rendered legend of a fieldset root, laid out over the block-start
+/// border of the root as block flow lays it out for a fieldset with block
+/// content: the lines start below it, past the padding of the root.
+fn legend_block_child(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> BlockChild {
+    let parent = tree.document.parent_of(node).unwrap_or(node);
+    let border = crate::layout::used_style_length_percentage(
+        tree.physical_style(parent).border().top,
+        geometry.width,
+    )
+    .unwrap_or(0.0);
+    let placed = block_flow::legend::place_in_paragraph(
+        tree,
+        NodeId::from(node),
+        if perform {
+            RunMode::PerformLayout
+        } else {
+            RunMode::ComputeSize
+        },
+        parent_size_of(&geometry),
+        [geometry.edges.0, geometry.edges.1],
+        border,
+    );
+    BlockChild {
+        oof_candidates: placed.oof_candidates,
+        top: placed.top - geometry.top_edge,
+        next_y: placed.content_offset,
+        pending: CollapsibleMarginSet::ZERO,
+        floats_bottom: f32::NEG_INFINITY,
+        top_margin: None,
+        collapses_through: false,
+        first_baseline: None,
+        marker_leading: 0.0,
     }
 }
 
