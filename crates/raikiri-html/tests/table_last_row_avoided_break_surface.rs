@@ -389,3 +389,30 @@ fn a_table_that_avoids_breaks_inside_it_moves_only_after_a_forced_break() {
         expected
     );
 }
+
+#[test]
+fn a_break_forced_between_row_groups_of_a_table_that_avoids_breaks_inside_it_counts() {
+    let expected = [(0, 'L', 50), (0, 'S', 0), (1, 'X', 0), (1, 'Z', 20)];
+    for groups in [
+        r#"<tbody style="break-after:page"><tr><td>L</td></tr></tbody><tbody><tr><td>X</td></tr></tbody>"#,
+        r#"<tbody><tr><td>L</td></tr></tbody><tbody style="break-before:page"><tr><td>X</td></tr></tbody>"#,
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:50px">S</div><table style="break-inside:avoid">{groups}</table><div style="break-before:avoid">Z</div>"#
+            )),
+            expected,
+            "{groups}"
+        );
+    }
+}
+
+#[test]
+fn a_table_that_moves_whole_starts_the_run_inside_a_block() {
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:30px">S</div><div><div>K</div><table style="break-inside:avoid">{ROWS}</table></div><div style="break-before:avoid">Z</div>"#
+        )),
+        [(0, 'K', 30), (0, 'S', 0), (1, 'L', 0), (1, 'X', 20), (1, 'Z', 40)]
+    );
+}
