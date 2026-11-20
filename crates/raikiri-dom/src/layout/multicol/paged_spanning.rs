@@ -356,7 +356,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 // the margin runs past the end of the page the break opens:
                 // it is cut there, and the spanner starts the page after it,
                 // as a block does (Chromium).
-                let (_, next_origin, next_height) = page_for(top_end);
+                let (_, next_origin, next_height) = page_for(top_end + EPSILON);
                 let next_end = next_origin + next_height;
                 let shift = if y + top_end - margin_top >= next_end - EPSILON {
                     next_end - y

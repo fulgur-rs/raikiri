@@ -135,6 +135,25 @@ fn a_margin_kept_through_other_boxes_is_cut_too() {
         ),
         "A@0:0,0 S@2:0,0 X@2:0,10"
     );
+    // An empty box, whose margins collapse through it with the next box's.
+    assert_eq!(
+        words(
+            "<div>A</div><div style='break-before:page;margin-top:150px'></div><div style='margin-top:20px'>X</div>"
+        ),
+        "A@0:0,0 X@2:0,0"
+    );
+    // A page-type change breaks the page as a forced break does.
+    for (margin, page) in [(50, "S@1:0,50"), (150, "S@2:0,0"), (250, "S@2:0,0")] {
+        let x_page = if margin == 50 { 2 } else { 3 };
+        assert_eq!(
+            words(&format!(
+                "<style>@page x{{size:100px 100px;margin:0}}</style><div>A</div>\
+                 <div style='page:x;margin-top:{margin}px'>S</div><div>X</div>"
+            )),
+            format!("A@0:0,0 {page} X@{x_page}:0,0"),
+            "{margin}"
+        );
+    }
     // A table.
     assert_eq!(
         words(

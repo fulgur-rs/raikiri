@@ -2128,10 +2128,12 @@ impl PageOrigins {
                 .min(natural_page);
             let top = self.origin(break_page) + margin_top;
             let next = self.origin(break_page.saturating_add(1));
-            if break_page < natural_page && top >= next - 0.001 {
+            if break_page >= natural_page {
+                self.origin(natural_page) + margin_top
+            } else if top >= next - 0.001 {
                 next
             } else {
-                self.origin(natural_page) + margin_top
+                top
             }
         } else {
             self.origin(self.first_edge_in_margin(
@@ -15940,8 +15942,11 @@ impl SiblingMargins {
         }
         if let Some(page) = float_break_page {
             // A relayout may already place the box at the next edge. Keep
-            // the margin from the float's forced boundary, not that edge.
-            target_y = target_y.min(page_origins.page_end(page));
+            // the margin from the float's forced boundary, not that edge,
+            // and never above the page the float's break opens.
+            target_y = target_y
+                .min(page_origins.page_end(page))
+                .max(page_origins.origin(page));
         }
         Some(MarginTruncation {
             delta: target_y - effective_y,

@@ -16535,9 +16535,14 @@ fn a_truncated_margin_breaks_at_its_first_page_edge() {
         pages.truncated_margin_target(2, true, 150.0, || 100.0, false),
         200.0
     );
-    // One that ends on the page the break opens stays whole.
+    // One that ends on the page the break opens stays whole, even when the
+    // box was further down before the break.
     assert_eq!(
         pages.truncated_margin_target(1, true, 50.0, || 100.0, false),
+        150.0
+    );
+    assert_eq!(
+        pages.truncated_margin_target(3, true, 50.0, || 100.0, false),
         150.0
     );
     // Otherwise the box starts at the first page edge inside its margin.
