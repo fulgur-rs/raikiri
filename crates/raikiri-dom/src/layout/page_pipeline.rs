@@ -513,7 +513,7 @@ fn clip_holds_breaks(
     };
     let mut edge = node_id;
     while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
-        && !document.nodes[parent].has_before_or_after_content
+        && !renders_edge_pseudo(cascade, parent, before)
         && ordered_edge_child(document, cascade, parent, before)
             .is_some_and(|child| is_descendant_or_self(document, child, edge))
     {
@@ -4396,7 +4396,6 @@ fn page_edge_constraint(
     let mut forced = false;
     let mut avoided = false;
     for _ in 0..128 {
-        let node = &document.nodes[id];
         let computed = &cascade.computed[id];
         if document.nodes[id].display() != DisplayValue::Contents {
             let edge = if before {
@@ -4411,7 +4410,7 @@ fn page_edge_constraint(
             };
             avoided |= matches!(edge, BreakBetween::Avoid | BreakBetween::AvoidPage);
         }
-        if node.has_before_or_after_content
+        if renders_edge_pseudo(cascade, id, before)
             || !matches!(
                 document.nodes[id].display(),
                 DisplayValue::Block
@@ -7172,7 +7171,7 @@ fn forced_break_inside(
         // after that box.
         let mut edge = id;
         while let Some(parent) = document.parent_of(edge).filter(|&parent| parent != node_id)
-            && !document.nodes[parent].has_before_or_after_content
+            && !renders_edge_pseudo(cascade, parent, before)
             && ordered_edge_child(document, cascade, parent, before)
                 .is_some_and(|child| is_descendant_or_self(document, child, edge))
         {
@@ -7262,8 +7261,9 @@ fn looks_through_for_breaks(
 
 /// Whether the box `id` inside the block `block` is the first box at its
 /// start (`before`) or the last at its end, through every box between them.
-/// Generated content of a box between them comes before its first box and
-/// after its last.
+/// The `::before` box of the flow of a box between them comes before its
+/// first box, and its `::after` box after its last (see
+/// [`renders_edge_pseudo`]).
 fn at_block_edge(
     document: &Document,
     cascade: &CascadeResult,
@@ -7276,7 +7276,7 @@ fn at_block_edge(
         .all(|id| {
             document
                 .parent_of(id)
-                .filter(|&parent| !document.nodes[parent].has_before_or_after_content)
+                .filter(|&parent| !renders_edge_pseudo(cascade, parent, before))
                 .and_then(|parent| page_edge_child(document, cascade, parent, before, 0).ok())
                 .flatten()
                 .is_some_and(|edge| edge == id || document.ancestors(edge).any(|up| up == id))
@@ -10084,6 +10084,22 @@ struct PendingBreak {
     /// Where the box that forced the break ends in the flow, its end margin
     /// left out.
     source_end: f32,
+    /// Whether the source is the last box at the end of the innermost box in
+    /// `enclosing`, so that its break is that box's break too.
+    ends_enclosing: bool,
+    /// The breaks forced after boxes that hold the source, outermost first.
+    /// Each still falls after its own box once the break inside it has been
+    /// taken.
+    enclosing: Vec<EnclosingBreak>,
+}
+
+/// A pending break forced after a box that holds the source of a later one
+/// (see [`PendingBreak::note_after`]).
+struct EnclosingBreak {
+    source: usize,
+    line_peers: Vec<usize>,
+    source_end: f32,
+    ends_enclosing: bool,
 }
 
 impl PendingBreak {
@@ -10104,15 +10120,35 @@ impl PendingBreak {
         })
     }
 
-    /// Drop the pending break once a later box has consumed it.
-    fn clear(&mut self) {
+    /// Take the pending break before `node_id`, which it applies to. The
+    /// break forced after a box that holds the source is the same break when
+    /// the source ends that box, or when that box ends before `node_id`; a
+    /// float after the source takes both. Otherwise it is pending again, as
+    /// it falls after its own box.
+    fn take(&mut self, document: &Document, node_id: usize) {
+        if !self.applies_to(document, node_id) {
+            return;
+        }
         self.source = None;
         self.line_peers.clear();
+        let mut same_break = self.ends_enclosing;
+        while let Some(outer) = self.enclosing.pop() {
+            if !same_break && is_descendant_or_self(document, node_id, outer.source) {
+                self.source = Some(outer.source);
+                self.line_peers = outer.line_peers;
+                self.source_end = outer.source_end;
+                self.ends_enclosing = outer.ends_enclosing;
+                break;
+            }
+            same_break = outer.ends_enclosing;
+        }
     }
 
     /// Make `node_id` the source of the pending break when it forces a break
-    /// after itself, unless that source is already the node itself or one of
-    /// its ancestors.
+    /// after itself, unless that source is already the node itself. A break
+    /// forced after a box inside the source falls before the next box in the
+    /// source, and the source's own break waits for the box after the
+    /// source; Chromium breaks twice.
     fn note_after(
         &mut self,
         document: &Document,
@@ -10126,13 +10162,34 @@ impl PendingBreak {
         // a change of page name after it still applies.
         let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
             || deferred_named_break_after;
-        let source_is_ancestor = self
-            .source
-            .is_some_and(|source| is_descendant_or_self(document, node_id, source));
-        if breaks_after && !source_is_ancestor {
-            self.source = Some(node_id);
-            self.line_peers = later_line_peers(document, cascade, body_id, node_id);
+        if !breaks_after || self.source == Some(node_id) {
+            return;
         }
+        if let Some(source) = self
+            .source
+            .filter(|&source| is_descendant_or_self(document, node_id, source))
+        {
+            self.enclosing.push(EnclosingBreak {
+                source,
+                line_peers: std::mem::take(&mut self.line_peers),
+                source_end: self.source_end,
+                ends_enclosing: self.ends_enclosing,
+            });
+        } else {
+            // A source that does not hold the node is replaced, as are the
+            // boxes around it that end before the node.
+            self.enclosing
+                .retain(|outer| is_descendant_or_self(document, node_id, outer.source));
+        }
+        // Only floats and out-of-flow boxes, which take no break of the flow,
+        // may follow a box at the end of the one around it (CSS
+        // Fragmentation 3 §4.1).
+        self.ends_enclosing = self
+            .enclosing
+            .last()
+            .is_some_and(|outer| at_block_edge(document, cascade, node_id, outer.source, false));
+        self.source = Some(node_id);
+        self.line_peers = later_line_peers(document, cascade, body_id, node_id);
     }
 }
 
@@ -15098,6 +15155,18 @@ fn renders_pseudo(
 /// [`renders_pseudo`]).
 fn renders_before_pseudo(cascade: &CascadeResult, parent: usize) -> bool {
     renders_pseudo(cascade, parent, raikiri_style::PseudoElem::Before)
+}
+
+/// Whether the element `id` has a `::before` box of the flow (`before`) or
+/// an `::after` one, which stands between the edge of the element on that
+/// side and its first or last box (see [`renders_pseudo`]).
+fn renders_edge_pseudo(cascade: &CascadeResult, id: usize, before: bool) -> bool {
+    let pseudo = if before {
+        raikiri_style::PseudoElem::Before
+    } else {
+        raikiri_style::PseudoElem::After
+    };
+    renders_pseudo(cascade, id, pseudo)
 }
 
 /// Whether a pseudo-element of `style` generates a box of the flow:
