@@ -10,9 +10,10 @@ use crate::computed::{
 use crate::logical::FlowMapping;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, ContentComponent, ContentList, CornerRadius,
-    CssWideKeyword, DisplayValue, FontWeightValue, Length, LengthOrAuto, LengthPercentageOrCalc,
-    PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode, WhiteSpaceCollapse,
-    WritingMode, resolve_text_align_internal_center, resolve_text_align_match_parent,
+    CssWideKeyword, DisplayValue, FloatValue, FontWeightValue, Length, LengthOrAuto,
+    LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode,
+    WhiteSpaceCollapse, WritingMode, resolve_display_for_float, resolve_text_align_internal_center,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
@@ -477,6 +478,16 @@ fn is_html_element<E: StyleElement>(element: &E, tag: &str) -> bool {
     ) && element.tag_name().eq_ignore_ascii_case(tag)
 }
 
+/// Whether `element` is the HTML `legend`. The name matches case-sensitively,
+/// as in `Node::is_html_fieldset` in raikiri-dom: the HTML parser lowercases
+/// it, and an XHTML `LEGEND` is not the legend element.
+fn is_html_legend<E: StyleElement>(element: &E) -> bool {
+    matches!(
+        element.namespace_uri(),
+        None | Some("http://www.w3.org/1999/xhtml")
+    ) && element.tag_name() == "legend"
+}
+
 /// Whether `id`, a child of `parent`, is content a closed HTML `<details>`
 /// does not show.
 ///
@@ -673,6 +684,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             &mut first_summaries,
         );
         let default_summary = default_summary_text(dom, id, &mut first_summaries);
+        let legend = node
+            .as_element()
+            .is_some_and(|element| is_html_legend(&element));
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
         // The painting properties a presentation attribute of the element sets,
@@ -755,6 +769,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                         // The legend of a `details` without a summary is a
                         // `::before` its candidates do not give.
                         && default_summary_text(dom, source.id, &mut first_summaries) == default_summary
+                        // A `legend` blockifies the display its candidates give.
+                        && dom.node(source.id).is_some_and(|node| {
+                            node.as_element().is_some_and(|element| is_html_legend(&element))
+                        }) == legend
                 })
                 .map(|source| source.id),
             _ => None,
@@ -851,6 +869,15 @@ pub(crate) fn walk_from<D: StyleDom>(
                     is_svg.then_some(&mut node_svg_relative_presentation_attributes),
                 );
                 out.page_values[idx] = page_slot;
+            }
+            // Chromium blockifies every HTML `legend`, wherever it stands, as
+            // a float is blockified (CSS 2.1 §9.7): an `inline-block` becomes
+            // a `block`. The HTML Standard ("The fieldset and legend
+            // elements" in its Rendering section) blockifies only the rendered
+            // legend of a fieldset. Doing it before absolutization
+            // lets the values that depend on `display` see the block box.
+            if legend {
+                specified.display = resolve_display_for_float(specified.display, FloatValue::Left);
             }
 
             // Phases 2 + 3: absolutize. A root element (no element ancestor) uses
