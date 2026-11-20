@@ -6148,9 +6148,17 @@ fn table_starts_run(document: &Document, cascade: &CascadeResult, table: usize) 
             if let Some(caption) = bottom_caption(document, table, last) {
                 return !forces_page_break(document, cascade, caption, false);
             }
-            if let Some(&footer_row) = footer_rows(document, table).last() {
+            let footer_rows = footer_rows(document, table);
+            if let Some(&footer_row) = footer_rows.last() {
                 let footer = document.parent_of(footer_row).unwrap_or(table);
-                return !forces_page_break(document, cascade, footer_row, false)
+                // A break forced between the footer's rows ends its first
+                // part on the page; the rest starts the next page on its own.
+                let forced_inside = footer_rows.windows(2).any(|pair| {
+                    forces_page_break(document, cascade, pair[0], false)
+                        || forces_page_break(document, cascade, pair[1], true)
+                });
+                return !forced_inside
+                    && !forces_page_break(document, cascade, footer_row, false)
                     && !forces_page_break(document, cascade, footer, false);
             }
             !forces_page_break(document, cascade, last, false)

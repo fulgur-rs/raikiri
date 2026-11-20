@@ -458,3 +458,44 @@ fn a_footer_that_does_not_fit_below_the_last_row_takes_the_row_along() {
         ]
     );
 }
+
+#[test]
+fn a_break_forced_between_the_footer_rows_leaves_the_rows_before_it() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><table><tfoot><tr><td>F</td></tr><tr style="break-before:page"><td>G</td></tr></tfoot><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'F', 50),
+            (0, 'L', 30),
+            (0, 'S', 0),
+            (1, 'G', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><table><tfoot><tr style="break-after:page"><td>F</td></tr><tr><td>G</td></tr></tfoot><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'F', 50),
+            (0, 'L', 30),
+            (0, 'S', 0),
+            (1, 'G', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px">S</div><table><tfoot><tr><td>F</td></tr><tr><td>G</td></tr><tr style="break-before:page"><td>H</td></tr></tfoot><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'F', 30),
+            (0, 'G', 50),
+            (0, 'L', 10),
+            (0, 'S', 0),
+            (1, 'H', 0),
+            (1, 'Z', 20)
+        ]
+    );
+}
