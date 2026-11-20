@@ -22189,10 +22189,11 @@ fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
     assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
 }
 
-/// A block whose break stays inside a float, or a block that does not sit
-/// inside the paragraph at all, has no line of the paragraph after it.
+/// A block whose break stays inside a float or a positioned box, even past
+/// an inline box that closes inside it, or a block that does not sit inside
+/// the paragraph at all, has no line of the paragraph after it.
 #[test]
-fn no_paragraph_line_follows_a_block_in_a_float_or_outside_the_paragraph() {
+fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_paragraph() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
@@ -22204,6 +22205,15 @@ fn no_paragraph_line_follows_a_block_in_a_float_or_outside_the_paragraph() {
     let in_float = document.append_element(Some(float), "div", Some("display:block"));
     let in_span = document.append_element(Some(span), "div", Some("display:block"));
     document.append_element(Some(paragraph), "b", Some("display:inline"));
+    let positioned = document.append_element(
+        Some(paragraph),
+        "div",
+        Some("display:block;position:absolute"),
+    );
+    let positioned_span = document.append_element(Some(positioned), "span", Some("display:inline"));
+    let in_positioned_span =
+        document.append_element(Some(positioned_span), "div", Some("display:block"));
+    document.append_element(Some(positioned), "b", Some("display:inline"));
     let elsewhere = document.append_element(Some(body), "div", Some("display:block"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");

@@ -4288,6 +4288,10 @@ fn line_follows_paragraph_block(
     root: usize,
     block: usize,
 ) -> bool {
+    // A line closes after the block when an inline box around it ends or
+    // inline content follows it, but only if no box between the block and
+    // the paragraph keeps the break inside itself.
+    let mut follows = false;
     let mut id = block;
     while id != root {
         // A break inside a box out of the flow, a float or an atomic inline
@@ -4307,23 +4311,29 @@ fn line_follows_paragraph_block(
         {
             return false;
         }
-        if id != block && display == DisplayValue::Inline {
-            return true;
-        }
-        let children = &document.nodes[parent].children;
-        let after = children
-            .iter()
-            .position(|&child| child == id)
-            .map_or(0, |at| at + 1);
-        if children[after..]
-            .iter()
-            .any(|&child| makes_inline_content(document, cascade, child, 0))
-        {
-            return true;
-        }
+        follows = follows
+            || (id != block && display == DisplayValue::Inline)
+            || inline_content_follows(document, cascade, parent, id);
         id = parent;
     }
-    false
+    follows
+}
+
+/// Whether a later child of `parent` than `id` puts content on a line.
+fn inline_content_follows(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    id: usize,
+) -> bool {
+    let children = &document.nodes[parent].children;
+    let after = children
+        .iter()
+        .position(|&child| child == id)
+        .map_or(0, |at| at + 1);
+    children[after..]
+        .iter()
+        .any(|&child| makes_inline_content(document, cascade, child, 0))
 }
 
 /// Whether `id` puts content on a line of its paragraph: text that does not
