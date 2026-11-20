@@ -9893,13 +9893,8 @@ impl PendingBreak {
         } else {
             // A source that does not hold the node is replaced, as are the
             // boxes around it that end before the node.
-            while self
-                .enclosing
-                .last()
-                .is_some_and(|outer| !is_descendant_or_self(document, node_id, outer.source))
-            {
-                self.enclosing.pop();
-            }
+            self.enclosing
+                .retain(|outer| is_descendant_or_self(document, node_id, outer.source));
         }
         // Only floats and out-of-flow boxes, which take no break of the flow,
         // may follow a box at the end of the one around it (CSS
