@@ -164,3 +164,62 @@ fn balanced_columns_break_a_wrapped_paragraph_after_a_box() {
         ]
     );
 }
+
+#[test]
+fn a_button_in_a_wrapper_moves_whole_beside_other_boxes() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div style='height:20px'>ab</div><div><button style='all:unset;display:block;width:20px'>cd ef gh ij</button></div></div>"
+        ),
+        [
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 108, 8),
+            (0, 'd', 118, 8),
+            (0, 'e', 108, 18),
+            (0, 'f', 118, 18),
+            (0, 'g', 108, 28),
+            (0, 'h', 118, 28),
+            (0, 'i', 108, 38),
+            (0, 'j', 118, 38)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div style='height:20px'>ab</div><div><button style='all:unset;display:block;width:20px'>cd ef</button><div style='width:20px'>gh ij kl</div></div></div>"
+        ),
+        [
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 28),
+            (0, 'd', 18, 28),
+            (0, 'e', 8, 38),
+            (0, 'f', 18, 38),
+            (0, 'g', 108, 8),
+            (0, 'h', 118, 8),
+            (0, 'i', 108, 18),
+            (0, 'j', 118, 18),
+            (0, 'k', 108, 28),
+            (0, 'l', 118, 28)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div><div style='width:20px'>ab cd</div><button style='all:unset;display:block;width:20px'>ef gh ij kl</button></div></div>"
+        ),
+        [
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 18),
+            (0, 'd', 18, 18),
+            (0, 'e', 108, 8),
+            (0, 'f', 118, 8),
+            (0, 'g', 108, 18),
+            (0, 'h', 118, 18),
+            (0, 'i', 108, 28),
+            (0, 'j', 118, 28),
+            (0, 'k', 108, 38),
+            (0, 'l', 118, 38)
+        ]
+    );
+}
