@@ -13224,8 +13224,13 @@ fn nested_run_units(
             // the run at the last of them (see `run_break_start`).
             let key = run_break_start(document, cascade, start_box);
             let first = key.unwrap_or(start_box);
+            // A start inside the first box, such as a row of a table, is
+            // measured from that box, in the coordinates of its parent.
+            let start_y = normal_flow_y(document, cascade, body_id, start_box);
+            let first_y =
+                start_y + current_abs_y(document, first) - current_abs_y(document, start_box);
             let unit = RunUnit {
-                end: run_end - normal_flow_y(document, cascade, body_id, first),
+                end: run_end - first_y,
                 firm: held.firm
                     && holds_no_break_from(document, cascade, body_id, start_box, first)
                     && holds_no_break(last),

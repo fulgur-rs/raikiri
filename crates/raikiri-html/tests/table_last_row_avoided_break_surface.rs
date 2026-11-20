@@ -625,3 +625,15 @@ fn a_break_forced_at_a_caption_below_the_rows_of_a_table_that_avoids_breaks_insi
         ]
     );
 }
+
+#[test]
+fn a_table_inside_a_block_that_fits_with_the_box_after_it_stays() {
+    // The table starts below another box of the block, and the run from its
+    // last row to the box after it ends on the page.
+    assert_eq!(
+        glyphs(
+            r#"<div><div style="height:30px">S</div><table><tr><td>K</td></tr><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div></div>"#
+        ),
+        [(0, 'K', 30), (0, 'L', 50), (0, 'S', 0), (0, 'Z', 70)]
+    );
+}
