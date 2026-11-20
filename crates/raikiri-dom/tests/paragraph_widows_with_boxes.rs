@@ -217,31 +217,6 @@ fn a_paragraph_with_inline_boxes_moves_its_last_lines_for_widows() {
             ],
         ),
         (
-            "<div style='height:40px'><span id=S>S</span></div><div><span style='display:inline-block'><span id=X>X</span></span><br><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><div><span id=W>W</span></div></div><div><span id=Z>Z</span></div>",
-            &[
-                ("S", 0, 5.0),
-                ("X", 0, 45.0),
-                ("a", 0, 65.0),
-                ("b", 1, 5.0),
-                ("c", 1, 25.0),
-                ("W", 1, 45.0),
-                ("Z", 1, 65.0),
-            ],
-        ),
-        (
-            "<div style='height:40px'><span id=S>S</span></div><div><span style='display:inline-block'><span id=X>X</span></span><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span><div><span id=W>W</span></div></div><div><span id=Z>Z</span></div>",
-            &[
-                ("S", 0, 5.0),
-                ("X", 0, 45.0),
-                ("a", 0, 45.0),
-                ("b", 0, 65.0),
-                ("c", 1, 5.0),
-                ("d", 1, 25.0),
-                ("W", 1, 45.0),
-                ("Z", 1, 65.0),
-            ],
-        ),
-        (
             "<div style='height:40px'><span id=S>S</span></div><div><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><span style='display:inline-block'><span id=X>X</span></span><br><span id=d>d</span><div><span id=W>W</span></div></div><div><span id=Z>Z</span></div>",
             &[
                 ("S", 0, 5.0),
@@ -358,4 +333,25 @@ fn a_paragraph_with_a_set_height_or_boxes_of_its_own_moves_its_last_lines_for_wi
     for &(body, expected) in cases {
         assert_places(body, expected);
     }
+}
+
+#[test]
+fn inline_boxes_before_the_first_text_of_a_paragraph_keep_their_own_lines() {
+    // Lines that hold only inline boxes before the paragraph's first text are
+    // placed before the text moves its lines, so the lines must not move
+    // without them: each letter keeps a line of its own.
+    let body = "<div style='height:40px'>S</div><div>\
+                <span style='display:inline-block'><span id=a>a</span></span><br>\
+                <span style='display:inline-block'><span id=b>b</span></span><br>\
+                <span style='display:inline-block'><span id=c>c</span></span><br>\
+                <span id=d>d</span></div><div>Z</div>";
+    let mut tops: Vec<(usize, i32)> = ["a", "b", "c", "d"]
+        .iter()
+        .flat_map(|id| fragments_of(body, id))
+        .map(|(page, top, _)| (page, top.round() as i32))
+        .collect();
+    assert_eq!(tops.len(), 4, "{tops:?}");
+    tops.sort_unstable();
+    tops.dedup();
+    assert_eq!(tops.len(), 4, "letters overlap: {tops:?}");
 }
