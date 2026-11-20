@@ -2138,12 +2138,18 @@ fn record_wrapped_fragments(
             .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
             .collect();
         let count = wrapped.placement.fragments.len();
+        // A box whose height is authored keeps it when it stands whole in one
+        // column, however far its lines reach.
+        let authored =
+            (count == 1 && is_sized_paragraph(tree, wrapped.node)).then_some(layout.size.height);
         // The top of the columns in the space of the wrapper's fragment.
         let columns_top = -wrapped.parent.first_y;
         for (index, range) in wrapped.placement.fragments.iter().enumerate() {
             let y = layout.location.y + range.y;
             let last = range.line_end >= extents.len();
-            let height = if last {
+            let height = if let Some(height) = authored {
+                height
+            } else if last {
                 let first = extents.get(range.line_start).map_or(0.0, |extent| extent.0);
                 extents
                     .get(range.line_end.saturating_sub(1))
