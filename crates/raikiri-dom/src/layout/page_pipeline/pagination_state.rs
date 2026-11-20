@@ -4903,8 +4903,8 @@ impl PaginationState {
 
     /// Keeps each line of the absolutely positioned boxes whole on one page:
     /// the line that crosses a page end starts the next page, and the lines
-    /// after it move down with it. Such a box breaks only between its lines,
-    /// without regard to `orphans` and `widows`, and the padding above its
+    /// after it move down with it, or earlier lines move to keep `widows`.
+    /// Such a box breaks only between its lines, and the padding above its
     /// first line stays where the box is. A box with nothing above its first
     /// line moves whole when that line moves. This waits for the whole flow to
     /// be placed, as the containing block of a box moves the box when its own
@@ -4988,6 +4988,7 @@ impl PaginationState {
             else {
                 continue;
             };
+            let all_lines = line_metrics.len();
             // A clip hides the lines past its edge, and they do not count.
             let fresh_edge = reflowed
                 .then(|| super::positioned_flow::clip_bounds(document, env, root).lines_end);
@@ -5005,7 +5006,17 @@ impl PaginationState {
             let nothing_above_first_line = document
                 .ifc_layout_node(root)
                 .is_some_and(|node| node.layout.border.top + node.layout.padding.top <= 0.001);
-            for (line, shift, page) in positioned_line_moves(&line_metrics, start, page_origins) {
+            // The hidden lines still follow every break, and count as widows.
+            let hidden = i32::try_from(all_lines - line_metrics.len()).unwrap_or(i32::MAX);
+            let style = &cascade.computed[root];
+            let moves = positioned_line_moves(
+                &line_metrics,
+                start,
+                page_origins,
+                style.orphans,
+                style.widows.saturating_sub(hidden),
+            );
+            for (line, shift, page) in moves {
                 reach_page(control, page)?;
                 self.reach.include_checked(control, page, false)?;
                 if line == 0 && nothing_above_first_line {
