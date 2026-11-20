@@ -51,6 +51,10 @@ pub(crate) struct FirstLetter {
     text_limit: Option<u64>,
     item_limit: Option<u64>,
     checked_through: Option<usize>,
+    /// Whether a generated block-level box has started in the paragraph.
+    /// The engine counts only the lines before such a box's start token as
+    /// the paragraph's first line.
+    after_block_start: bool,
     pub(crate) styles: Vec<LetterStyle>,
     /// The `::first-line` styles that reach the paragraph's first line, if
     /// any.
@@ -101,9 +105,41 @@ impl FirstLetter {
             text_limit: limits.max_text_bytes,
             item_limit: limits.max_items,
             checked_through: None,
+            after_block_start: false,
             styles: Vec::new(),
             first_line,
         }
+    }
+
+    /// Notes that a generated block-level box starts here: the first
+    /// formatted line, if it comes later, is one of that box's lines or
+    /// follows it.
+    pub(crate) fn start_block(&mut self) {
+        self.after_block_start = true;
+    }
+
+    /// Whether `element` is the paragraph's root and nothing comes before
+    /// its `::after`: no generated box before its children, and children
+    /// that are only white space that collapses away.
+    pub(crate) fn opens_with(
+        &self,
+        doc: &Document,
+        cascade: &CascadeResult,
+        element: usize,
+    ) -> bool {
+        let collapse = cascade.computed[element].effective_white_space_collapse;
+        element == self.origin
+            && !crate::generated_content::has_page_flow_generated_prefix(cascade, element)
+            && doc.nodes[element].children.iter().all(|&child| {
+                let node = &doc.nodes[child];
+                match node.kind() {
+                    NodeKind::Text => node.text_content().is_some_and(|text| {
+                        crate::generated_content::is_collapsed_white_space(text, collapse)
+                    }),
+                    NodeKind::Comment | NodeKind::ProcessingInstruction => true,
+                    _ => false,
+                }
+            })
     }
 
     pub(crate) fn stop(&mut self) {
@@ -512,6 +548,13 @@ impl FirstLetter {
                     normal.word_space_transform = ordinary.word_space_transform;
                     normal.text_emphasis = ordinary.text_emphasis;
                     normal.paint = ordinary.paint;
+                    // After a generated block's start token, the letter is on
+                    // the first formatted line (CSS Pseudo 4 §2.4) but not on
+                    // what the engine takes for the paragraph's first line, so
+                    // it keeps its own style on every line.
+                    if self.after_block_start {
+                        normal = inline.clone();
+                    }
 
                     builder.open_inline_with_first_line(
                         NodeId(box_id as u64),
