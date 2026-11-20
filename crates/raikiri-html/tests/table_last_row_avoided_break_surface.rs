@@ -413,6 +413,12 @@ fn a_table_that_moves_whole_starts_the_run_inside_a_block() {
         glyphs(&format!(
             r#"<div style="height:30px">S</div><div><div>K</div><table style="break-inside:avoid">{ROWS}</table></div><div style="break-before:avoid">Z</div>"#
         )),
-        [(0, 'K', 30), (0, 'S', 0), (1, 'L', 0), (1, 'X', 20), (1, 'Z', 40)]
+        [
+            (0, 'K', 30),
+            (0, 'S', 0),
+            (1, 'L', 0),
+            (1, 'X', 20),
+            (1, 'Z', 40)
+        ]
     );
 }
