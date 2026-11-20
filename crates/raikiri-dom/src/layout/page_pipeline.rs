@@ -5374,14 +5374,7 @@ fn paginate_flow(
                 break;
             }
             if let Err(halt) =
-                state.break_before_line_after_forced_break(document, &env, Some(candidate.node_id))
-            {
-                halt.finish()?;
-                halted = true;
-                break;
-            }
-            if let Err(halt) =
-                state.break_before_static_positioned_box(document, &env, Some(&candidate))
+                state.break_before_content_after_forced_break(document, &env, Some(&candidate))
             {
                 halt.finish()?;
                 halted = true;
@@ -5405,10 +5398,7 @@ fn paginate_flow(
         }
         if !halted {
             break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
-            if let Err(halt) = state.break_before_line_after_forced_break(document, &env, None) {
-                halt.finish()?;
-            }
-            if let Err(halt) = state.break_before_static_positioned_box(document, &env, None) {
+            if let Err(halt) = state.break_before_content_after_forced_break(document, &env, None) {
                 halt.finish()?;
             }
         }

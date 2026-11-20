@@ -1594,7 +1594,7 @@ impl PaginationState {
     /// A paragraph that keeps its height holds the moved line as overflow:
     /// the break is left for the flow after it, which Chromium moves to the
     /// next page too. `next` is `None` at the end of the flow.
-    pub(super) fn break_before_line_after_forced_break(
+    fn break_before_line_after_forced_break(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
@@ -1646,6 +1646,20 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Takes the pending break before what follows a forced break ahead of
+    /// `next` (the end of the flow when `None`): a line laid out after the
+    /// block that forced it, and absolutely positioned boxes left at their
+    /// static position after it.
+    pub(super) fn break_before_content_after_forced_break(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        next: Option<&PageCandidate>,
+    ) -> Result<(), Halt> {
+        self.break_before_line_after_forced_break(document, env, next.map(|next| next.node_id))?;
+        self.break_before_static_positioned_box(document, env, next)
+    }
+
     /// The page that the pending break opens: the one after the page the
     /// box that forced it ends on.
     fn forced_break_page(&self, page_origins: &PageOrigins) -> u32 {
@@ -1670,7 +1684,7 @@ impl PaginationState {
     /// moves there too. The break itself is left to the content in the flow
     /// that follows. A box among the lines of a paragraph already goes with
     /// them.
-    pub(super) fn break_before_static_positioned_box(
+    fn break_before_static_positioned_box(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
