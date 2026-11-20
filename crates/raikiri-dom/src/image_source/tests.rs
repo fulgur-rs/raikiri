@@ -195,6 +195,9 @@ fn the_first_source_of_a_picture_that_applies_gives_the_candidates() {
         ("type", "image/png", true),
         ("type", "IMAGE/PNG; q=1", true),
         ("type", "image/webp", true),
+        ("type", "image/avif", false),
+        ("type", "image/bmp", false),
+        ("type", "image/x-icon", false),
         ("type", "", true),
     ] {
         let expected = if applies {

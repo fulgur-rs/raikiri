@@ -118,7 +118,9 @@ pub(crate) fn resolve_images_in(
                     .or_else(|| Url::parse(&src).ok())
                     .or_else(|| base_url.and_then(|base| base.join(&src).ok()));
                 if let Some(url) = url {
-                    document.resolved_image_urls.insert(id, (key, url.clone()));
+                    document
+                        .resolved_image_urls
+                        .insert(id, (key, url.clone(), density));
                     match resolver.resolve(ResolverRequest::new(&url)) {
                         Ok(resolved) => Some(divide_by_density(resolved.intrinsic, density)),
                         Err(error) => {

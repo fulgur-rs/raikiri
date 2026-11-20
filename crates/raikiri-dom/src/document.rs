@@ -261,7 +261,7 @@ pub struct Document {
     pub(crate) normal_block_shifts: Option<Box<crate::layout::NormalBlockShifts>>,
     pub(crate) box_style_data: crate::layout::box_style_data::BoxStyleStore,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
-    pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
+    pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url, f32)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
     pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
@@ -3873,8 +3873,37 @@ impl Document {
         let key = crate::image_resolve::image_source_key(node);
         self.resolved_image_urls
             .get(&element)
-            .filter(|(source, _)| *source == key)
-            .map(|(_, url)| url.clone())
+            .filter(|(source, ..)| *source == key)
+            .map(|(_, url, _)| url.clone())
             .or_else(|| url::Url::parse(node.attribute("src")?).ok())
+    }
+
+    /// The natural size of the image of `element` for painting with
+    /// `object_fit`: `natural`, the size of the image itself, divided by the
+    /// density of the `srcset` candidate chosen for it.
+    ///
+    /// `scale-down` compares the image's own size with the box, as Chromium
+    /// does, so it keeps `natural` as it is.
+    #[doc(hidden)]
+    pub fn resolved_image_natural_size(
+        &self,
+        element: usize,
+        natural: raikiri_traits::ImageIntrinsicSize,
+        object_fit: raikiri_style::property::ObjectFit,
+    ) -> raikiri_traits::ImageIntrinsicSize {
+        let density = self
+            .get_node(element)
+            .filter(|_| object_fit != raikiri_style::property::ObjectFit::ScaleDown)
+            .and_then(|node| {
+                let key = crate::image_resolve::image_source_key(node);
+                let (source, _, density) = self.resolved_image_urls.get(&element)?;
+                (*source == key).then_some(*density)
+            })
+            .unwrap_or(1.0);
+        raikiri_traits::ImageIntrinsicSize::new(
+            natural.width.map(|width| width / density),
+            natural.height.map(|height| height / density),
+            natural.aspect_ratio,
+        )
     }
 }

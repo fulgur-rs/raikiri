@@ -204,3 +204,34 @@ fn a_source_of_the_picture_gives_the_candidates() {
         image("a.png", 40.0, 20.0)
     );
 }
+
+#[test]
+fn object_fit_paints_the_image_at_the_density_of_its_candidate() {
+    let placed = |body: &str| {
+        let document = lay_out_in(body, MediaContext::default());
+        let page = document.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("img"))
+            .unwrap();
+        let PaintRect {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } = page.placed_image(&fragment, &Images).unwrap().rect;
+        (x, y, width, height)
+    };
+    // `none` draws b.png at its 2x size of 40x20, centered in the box.
+    assert_eq!(
+        placed("<img srcset='b.png 2x' style='width:100px;height:50px;object-fit:none'>"),
+        (30.0, 15.0, 40.0, 20.0)
+    );
+    // `scale-down` compares the image's own 80x40 with the box, as Chromium
+    // does.
+    assert_eq!(
+        placed("<img srcset='b.png 2x' style='width:100px;height:50px;object-fit:scale-down'>"),
+        (10.0, 5.0, 80.0, 40.0)
+    );
+}

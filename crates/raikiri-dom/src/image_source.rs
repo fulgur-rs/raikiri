@@ -109,23 +109,21 @@ fn picture_source_candidates<'a>(
 }
 
 /// Whether the MIME type `value` names an image format this renderer can
-/// show. An empty type does not exclude the source, as in Chromium.
+/// decode. An empty type does not exclude the source, as in Chromium. AVIF,
+/// BMP and ICO are left out: the built-in decoder cannot read them, so a
+/// source of those types gives way to the next one or to the image's own.
 fn is_supported_image_type(value: &str) -> bool {
     let essence = value.split(';').next().unwrap_or_default().trim_ascii();
     essence.is_empty()
         || [
             "image/apng",
-            "image/avif",
-            "image/bmp",
             "image/gif",
             "image/jpeg",
             "image/jpg",
             "image/pjpeg",
             "image/png",
             "image/svg+xml",
-            "image/vnd.microsoft.icon",
             "image/webp",
-            "image/x-icon",
             "image/x-png",
         ]
         .iter()
