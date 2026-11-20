@@ -162,3 +162,78 @@ fn a_paragraph_after_other_content_keeps_its_orphans() {
         ),
     ]);
 }
+
+/// The lines of the box in `glyph_tops` whose glyphs `visible` lists: a box
+/// that clips its overflow keeps runs for the lines it hides.
+fn visible_tops(body: &str, visible: &str) -> Vec<(u32, char, i32)> {
+    glyph_tops(body)
+        .into_iter()
+        .filter(|&(_, glyph, _)| visible.contains(glyph))
+        .collect()
+}
+
+#[test]
+fn the_lines_of_a_clipping_box_inside_break_across_pages() {
+    let lines = "A<br>B<br>C<br>D<br>E<br>F<br>G<br>H";
+    let clipped = |top: u32, style: &str| {
+        format!(
+            "<div style='height:500px'></div><div style='position:absolute;top:{top}px;\
+             width:100px'><div style='{style}'>{lines}</div></div>"
+        )
+    };
+    let first_page = [(0, 'A', 5), (0, 'B', 35), (0, 'C', 65)];
+    // The line across the page end moves to the next page; the hidden lines
+    // after it count as its widows.
+    for style in [
+        "height:120px;overflow:hidden",
+        "height:120px;overflow:hidden;widows:3",
+    ] {
+        let mut expected = first_page.to_vec();
+        expected.push((1, 'D', 5));
+        assert_eq!(
+            visible_tops(&clipped(0, style), "ABCD"),
+            expected,
+            "{style}"
+        );
+    }
+    // The box clips more lines further down; a deeper paragraph moves too.
+    assert_eq!(
+        visible_tops(&clipped(40, "height:180px;overflow:hidden"), "ABCDEF"),
+        [
+            (0, 'A', 45),
+            (0, 'B', 75),
+            (1, 'C', 5),
+            (1, 'D', 35),
+            (1, 'E', 65),
+            (2, 'F', 5)
+        ]
+    );
+    assert_eq!(
+        visible_tops(
+            &format!(
+                "<div style='height:500px'></div><div style='position:absolute;top:0;\
+                 width:100px'><div style='height:120px;overflow:hidden'><div>{lines}</div>\
+                 </div></div>"
+            ),
+            "ABCD"
+        ),
+        [(0, 'A', 5), (0, 'B', 35), (0, 'C', 65), (1, 'D', 5)]
+    );
+    // A scroll container moves its lines the same way.
+    assert_eq!(
+        visible_tops(&clipped(0, "height:120px;overflow:auto"), "ABCD"),
+        [(0, 'A', 5), (0, 'B', 35), (0, 'C', 65), (1, 'D', 5)]
+    );
+    // A box whose size containment ignores its content keeps its lines where
+    // they are: the line after the one across the page end stays put.
+    assert_eq!(
+        visible_tops(&clipped(0, "height:120px;contain:size"), "ABCEF"),
+        [
+            (0, 'A', 5),
+            (0, 'B', 35),
+            (0, 'C', 65),
+            (1, 'E', 25),
+            (1, 'F', 55)
+        ]
+    );
+}
