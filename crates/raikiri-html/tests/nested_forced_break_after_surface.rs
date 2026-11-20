@@ -4,10 +4,10 @@
 //! it starts one more page. Positions follow Chromium.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
+    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderError, RenderResources, layout,
     parse_html_with_resources,
 };
-use raikiri_traits::{LayoutConfig, PageDefaults};
+use raikiri_traits::{LayoutConfig, LimitKind, PageDefaults, RenderLimits};
 
 /// Ahem's ascent is 0.8em, which puts the top of a 20px glyph 16px above the
 /// baseline.
@@ -293,4 +293,218 @@ fn generated_content_after_the_boxes_leaves_the_first_box_at_the_start() {
             at(&[(0, "A", 5.0), (1, "T", 5.0), (1, "Q", 35.0), (1, "Z", 65.0)])
         )
     );
+}
+
+#[test]
+fn a_generated_line_after_a_broken_box_starts_the_next_page() {
+    let after =
+        |display: &str| format!("<style>.g::after{{content:'x';display:{display}}}</style>");
+    let inline = after("inline");
+    let expected = |z: f32| (2, at(&[(0, "T", 45.0), (1, "x", 5.0), (1, "Z", z)]));
+    // The line of `::after` text below the box takes the break before it,
+    // and the flow after the paragraph follows the line, past the padding
+    // that closes the paragraph too.
+    for (body, z) in [
+        (format!("{inline}<div class=g>{BROKEN}</div>Z"), 35.0),
+        (
+            format!("{inline}<div class=g style='padding-bottom:10px'>{BROKEN}</div>Z"),
+            45.0,
+        ),
+        (
+            format!("{inline}<div class=g style='padding-bottom:10px'>{BROKEN}</div><div>Z</div>"),
+            45.0,
+        ),
+        (
+            format!("{}<div class=g>{BROKEN}</div>Z", after("block")),
+            35.0,
+        ),
+        // The break of a box at the end of the block above the line.
+        (
+            format!("{inline}<div class=g><div>{BROKEN}</div></div>Z"),
+            35.0,
+        ),
+        // The block-end margin of the box ends with the page.
+        (
+            format!(
+                "{inline}<div class=g><div style='height:20px;break-after:page;\
+                 margin-bottom:10px'>T</div></div>Z"
+            ),
+            35.0,
+        ),
+    ] {
+        assert_eq!(
+            layout_lines(&format!("{}{body}", spacer(40))),
+            expected(z),
+            "{body}"
+        );
+    }
+    // The break of a box that runs on to the next page opens the page after
+    // that one.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g><div style='height:150px;break-after:page'>T</div></div>Z",
+            spacer(40)
+        )),
+        (3, at(&[(0, "T", 45.0), (2, "x", 5.0), (2, "Z", 35.0)]))
+    );
+    // The breaks of nested boxes that end together are one break.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g><div style='break-after:page'>{BROKEN}</div></div>Z",
+            spacer(40)
+        )),
+        expected(35.0)
+    );
+    // The lines of the box are placed before the line below it takes the
+    // break: they move on together, and the line opens the page after them.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g><div style='break-after:page'>A B</div></div>Z",
+            spacer(50)
+        )),
+        (
+            3,
+            at(&[(1, "A", 5.0), (1, "B", 35.0), (2, "x", 5.0), (2, "Z", 35.0)])
+        )
+    );
+    // A box with text of its own around the broken box.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g><div>text{BROKEN}</div></div>Z",
+            spacer(40)
+        )),
+        (
+            2,
+            at(&[
+                (0, "text", 45.0),
+                (0, "T", 75.0),
+                (1, "x", 5.0),
+                (1, "Z", 35.0)
+            ])
+        )
+    );
+    // At the end of the flow, also in a paragraph that keeps its height.
+    for style in ["", "height:30px"] {
+        assert_eq!(
+            layout_lines(&format!(
+                "{}{inline}<div class=g style='{style}'>{BROKEN}</div>",
+                spacer(40)
+            )),
+            (2, at(&[(0, "T", 45.0), (1, "x", 5.0)])),
+            "{style}"
+        );
+    }
+    // The box ends at the page end, and inline boxes with no content follow
+    // it in the paragraph.
+    for body in [
+        format!(
+            "{}{inline}<div class=g><div style='height:40px;break-after:page'>T</div></div>Z",
+            spacer(60)
+        ),
+        format!(
+            "{}{inline}<div class=g>{BROKEN}<b><i></i></b></div>Z",
+            spacer(40)
+        ),
+    ] {
+        let lines = lines(&body);
+        assert_eq!(&lines[1..], at(&[(1, "x", 5.0), (1, "Z", 35.0)]), "{body}");
+    }
+    // A line of atomic inlines is placed as a box, which takes the break
+    // itself.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}<div>{BROKEN}<span style='display:inline-block;width:20px;height:20px'>i</span>\
+             </div>Z",
+            spacer(40)
+        )),
+        (2, at(&[(0, "T", 45.0), (1, "i", 5.0), (1, "Z", 35.0)]))
+    );
+    // A break with no such line after it leaves the line of an earlier
+    // paragraph alone.
+    assert_eq!(
+        lines(&format!(
+            "{inline}<div class=g><div>U</div></div><div style='height:20px;break-after:page'>A</div>Z"
+        )),
+        at(&[(0, "U", 5.0), (0, "x", 35.0), (0, "A", 65.0), (1, "Z", 5.0)])
+    );
+    // ... also at the end of the flow, where the break falls before nothing.
+    assert_eq!(
+        layout_lines(&format!(
+            "{inline}<div class=g><div>U</div></div><div style='height:20px;break-after:page'>A</div>"
+        )),
+        (1, at(&[(0, "U", 5.0), (0, "x", 35.0), (0, "A", 65.0)]))
+    );
+    // At the top of the first page.
+    assert_eq!(
+        lines(&format!("{inline}<div class=g>{BROKEN}</div>Z")),
+        at(&[(0, "T", 5.0), (1, "x", 5.0), (1, "Z", 35.0)])
+    );
+    // The break after the paragraph still falls after the line.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g style='break-after:page'>{BROKEN}</div>Z",
+            spacer(40)
+        )),
+        (3, at(&[(0, "T", 45.0), (1, "x", 5.0), (2, "Z", 5.0)]))
+    );
+    // A paragraph that keeps its height holds the moved line as overflow,
+    // and the flow after it starts the next page too.
+    assert_eq!(
+        layout_lines(&format!(
+            "{}{inline}<div class=g style='height:30px'>{BROKEN}</div>Z",
+            spacer(40)
+        )),
+        (2, at(&[(0, "T", 45.0), (1, "Z", 5.0), (1, "x", 5.0)]))
+    );
+}
+
+#[test]
+fn a_generated_line_moved_past_the_page_limit_fails_the_layout() {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    // The line needs a second page, before the flow after it and at the end
+    // of the flow.
+    for after in ["Z", ""] {
+        let html = format!(
+            "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
+             body{{margin:0;font:20px/30px Ahem}}.g::after{{content:'x'}}</style>\
+             <body><div style='width:20px'><div class=g>{BROKEN}</div>{after}</div></body>"
+        );
+        let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+        let layout_with = |pages: u32| {
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::builder()
+                    .limits(
+                        RenderLimits::builder()
+                            .max_document_pages(Some(pages))
+                            .build(),
+                    )
+                    .build(),
+                LayoutOptions::new().resources(&resources),
+            )
+        };
+        assert!(
+            matches!(
+                layout_with(1),
+                Err(RenderError::LimitExceeded {
+                    kind: LimitKind::Pages,
+                    limit: 1,
+                    ..
+                })
+            ),
+            "{after}"
+        );
+        assert!(
+            matches!(layout_with(2), Ok(LayoutStatus::Completed(_))),
+            "{after}"
+        );
+    }
 }
