@@ -134,6 +134,17 @@ fn a_box_after_the_absolute_box_stays_on_the_page() {
         1,
         &["T@0:0", "Z@0:40"],
     );
+    // Breaks after a box inside the absolute box and after the box around
+    // it.
+    expect(
+        &after_spacer(
+            "<div style='position:relative'><div style='position:absolute;width:20px'>\
+             <div style='break-after:page'><div style='height:20px;break-after:page'>T</div></div>\
+             </div></div>",
+        ),
+        1,
+        &["T@0:40", "Z@0:40"],
+    );
     // An absolute box inside another, with a break of its own.
     expect(
         &after_spacer(&format!(

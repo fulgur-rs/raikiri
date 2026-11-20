@@ -10282,14 +10282,14 @@ impl PendingBreak {
                 }
             }
         }
-        while let Some((scope, _)) = self.suspended.last() {
-            if in_break_scope(document, Some(*scope), node_id) {
-                break;
-            }
-            let Some((_, outer)) = self.suspended.pop() else {
-                break;
-            };
-            if self.source.is_none() {
+        while self
+            .suspended
+            .last()
+            .is_some_and(|&(scope, _)| !in_break_scope(document, Some(scope), node_id))
+        {
+            if let Some((_, outer)) = self.suspended.pop()
+                && self.source.is_none()
+            {
                 let suspended = std::mem::take(&mut self.suspended);
                 *self = outer;
                 self.suspended = suspended;
