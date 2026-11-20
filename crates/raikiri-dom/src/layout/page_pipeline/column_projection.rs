@@ -60,7 +60,8 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
 
 pub(crate) type ParagraphCache = HashMap<usize, ParagraphProjection>;
 /// A line piece of a generated box, or of an inline element when the kind is
-/// `None`, with its owner, line offset, shift, and line top and height. A
+/// `None`, with its owner, line offset, the line's shift along the block axis
+/// as a physical vector, and line top and height. A
 /// piece of a block-level generated box gives its own top and height
 /// instead, and whether it holds the block-start and block-end edges of
 /// its box.
@@ -69,7 +70,7 @@ pub(crate) type PreparedGeneratedPiece = (
     Option<crate::GeneratedKind>,
     crate::layout::InlineBoxPiece,
     (f32, f32),
-    f32,
+    (f32, f32),
     f32,
     f32,
     Option<(bool, bool)>,
@@ -611,7 +612,7 @@ fn generated_blocks(
                 source_owner: None,
             },
             (0.0, block.shift),
-            block.shift,
+            (0.0, block.shift),
             block.border_box.y - block.shift,
             block.border_box.height,
             Some((block.has_block_start_edge, block.has_block_end_edge)),
@@ -680,13 +681,19 @@ impl ParagraphProjectionBuilder {
             };
             let column = lines.columns.column[piece.line];
             let origin = lines.columns.origin[piece.line];
+            // The piece and the line offset both carry the line's shift along
+            // the block axis, which runs across the page in a vertical
+            // paragraph.
+            let (shift_x, shift_y) = lines.positioned.map_or((0.0, shift), |positioned| {
+                crate::layout::ifc::positioned_runs::block_shift(positioned.writing_mode, shift)
+            });
             if let Some((owner, kind)) = painted_apart(lines, &piece, split, block_nodes) {
                 let data = (
                     owner,
                     kind,
                     piece,
                     offset,
-                    shift,
+                    (shift_x, shift_y),
                     line.block_offset() - fit_leading(piece.line),
                     crate::layout::ifc::outside_marker::fit_height(line),
                     None,
@@ -697,18 +704,12 @@ impl ParagraphProjectionBuilder {
                     data.1,
                     piece,
                     (0.0, offset.1 - origin),
-                    shift,
+                    data.4,
                     data.5,
                     data.6,
                     data.7,
                 ));
             }
-            // The piece and the line offset both carry the line's shift along
-            // the block axis, which runs across the page in a vertical
-            // paragraph.
-            let (shift_x, shift_y) = lines.positioned.map_or((0.0, shift), |positioned| {
-                crate::layout::ifc::positioned_runs::block_shift(positioned.writing_mode, shift)
-            });
             let rect = BoxRect {
                 x: piece.border_box.x + offset.0 - shift_x,
                 y: piece.border_box.y + offset.1 - shift_y,

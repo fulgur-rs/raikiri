@@ -2336,8 +2336,9 @@ fn compute_ifc_root(
     output
 }
 
-/// Move the content of the horizontal paragraph box `idx` down by `offset`,
-/// the `align-content` it states, as block flow moves block children (CSS
+/// Move the content of the paragraph box `idx` along its block axis by
+/// `offset`, the `align-content` it states: down in a horizontal paragraph,
+/// across the page in a vertical one, as block flow moves block children (CSS
 /// Box Alignment 3 §5.1): its lines, the floats, atomic inlines and blocks
 /// among them, and the out-of-flow candidates, baseline and overflow they
 /// carry. The box's own out-of-flow children are placed afterwards from the
