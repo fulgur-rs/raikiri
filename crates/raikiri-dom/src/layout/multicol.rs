@@ -2696,11 +2696,7 @@ impl ColumnFloat {
                 margin_box_width: left + width + right,
                 // A column end truncates the margin below a float it may
                 // break, but a monolithic float keeps its whole margin box.
-                margin_bottom: if column_line_boxes::is_monolithic(
-                    tree,
-                    tree.style_views.cascade(),
-                    child,
-                ) {
+                margin_bottom: if is_monolithic_float(tree, child) {
                     0.0
                 } else {
                     column_child_layout(tree, child, column_width).margin.bottom
@@ -3527,14 +3523,24 @@ fn layout_column_group(
         }
         let total = stack.height();
         if fragment_height.is_none() {
-            divided_stream =
-                collapsed_stream(tree, &measurements, total) / context.column_count.max(1) as f32;
+            divided_stream = collapsed_stream(tree, &measurements, total)
+                / context
+                    .column_count
+                    .saturating_sub(context.column_index)
+                    .max(1) as f32;
         }
         // The tallest box sets the least height, without the margin below
-        // it, which the end of its column truncates.
+        // it, which the end of its column truncates, unless it is a
+        // monolithic float, whose margin box is whole.
         let largest = measurements
             .iter()
-            .map(|entry| entry.5 - entry.4)
+            .map(|entry| {
+                if is_monolithic_float(tree, entry.0) {
+                    entry.5
+                } else {
+                    entry.5 - entry.4
+                }
+            })
             .fold(0.0, f32::max);
         // Columns that may fill the container's height instead are measured
         // as placed, so that what does not fit goes to overflow columns.
@@ -3635,6 +3641,7 @@ fn layout_column_group(
         (Some(height), Some((_, target))) if target > height + LINE_EPSILON => {
             fragment_height = Some(height);
             measured_beside.fill(false);
+            divided_stream = 0.0;
             None
         }
         (_, measurements) => measurements,
@@ -4374,9 +4381,7 @@ fn layout_column_group(
             // The floats of a line end where the lowest of them does.
             // A column end truncates the margin below the box, but not
             // the one below a monolithic float, whose margin box is whole.
-            let truncated = if is_floated(tree, child)
-                && column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
-            {
+            let truncated = if is_monolithic_float(tree, child) {
                 0.0
             } else {
                 margin_bottom
@@ -4481,6 +4486,13 @@ fn layout_column_group(
             .unwrap_or(fallback_height)
     };
     (maximum.max(cursor - trailing) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// Whether `child` is a float that a column end never breaks: its margin
+/// box stays whole, the margin below it included.
+fn is_monolithic_float(tree: &LayoutSession<'_>, child: usize) -> bool {
+    is_floated(tree, child)
+        && column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
 }
 
 /// The block size of the measured children of a column container in one
