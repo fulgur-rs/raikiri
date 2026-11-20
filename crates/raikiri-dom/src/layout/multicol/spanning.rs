@@ -198,6 +198,9 @@ pub(super) fn layout(
                 y: block_offset + adjoining,
             };
             tree.set_unrounded_layout(NodeId::from(child), &child_layout);
+            // The spanner is placed without the block offset of its
+            // `position: relative` insets, which the painter adds.
+            super::leave_block_offset_to_painter(tree, child);
             let Some(fragment) = tree
                 .fragment_tree
                 .try_push(crate::fragment::LayoutFragment {
