@@ -4234,7 +4234,14 @@ fn page_edge_child(
             }
             return Ok(Some(child));
         }
-        if document.nodes[child].display() == DisplayValue::Contents
+        // An inline box has no block edges of its own: a block inside it at
+        // its edge is at the paragraph's edge, as it is for an element with
+        // no box. Padding, border or margin on its inline sides take room on
+        // a line around the block, which then is not at the edge.
+        let display = document.nodes[child].display();
+        if (display == DisplayValue::Contents
+            || (display == DisplayValue::Inline && !has_inline_side_edges(cascade, child)))
+            && node.kind() == NodeKind::Element
             && !node.has_before_or_after_content
         {
             if let Some(descendant) = page_edge_child(document, cascade, child, before, depth + 1)?
@@ -4246,6 +4253,23 @@ fn page_edge_child(
         return Ok(Some(child));
     }
     Ok(None)
+}
+
+/// Whether the inline box `id` has padding, border or margin on its left or
+/// right side.
+fn has_inline_side_edges(cascade: &CascadeResult, id: usize) -> bool {
+    use raikiri_style::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc};
+    let style = &cascade.computed[id];
+    let padding =
+        |side: &ComputedLengthPercentageOrCalc| *side != ComputedLengthPercentageOrCalc::Px(0.0);
+    let margin =
+        |side: &ComputedLengthPercentageOrAuto| *side != ComputedLengthPercentageOrAuto::Px(0.0);
+    padding(&style.padding.left)
+        || padding(&style.padding.right)
+        || margin(&style.margin.left)
+        || margin(&style.margin.right)
+        || style.border.left.width().0 != 0.0
+        || style.border.right.width().0 != 0.0
 }
 
 // Preserve source-node context when resolving Always: a column-local forced
@@ -20976,6 +21000,11 @@ fn flow_step(
     let moved_lines = document.nodes[child].in_ifc_subtree();
     if moved_lines && document.nodes[parent].in_ifc_subtree() {
         return FlowStep::Inline;
+    }
+    // An inline element of a paragraph has no box of its own: the paragraph
+    // lays the block inside it out among its lines.
+    if document.nodes[parent].in_ifc_subtree() && !document.nodes[parent].is_ifc_root() {
+        return FlowStep::Skip;
     }
     if let Some(cell) = growing_cell(document, child, parent) {
         return FlowStep::Cell(cell);
