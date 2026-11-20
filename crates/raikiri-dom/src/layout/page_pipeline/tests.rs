@@ -22166,5 +22166,7 @@ fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
     let paragraph = document.append_element(Some(body), "div", Some("display:block"));
     let span = document.append_element(Some(paragraph), "span", None::<&str>);
     document.append_text(span, "  ");
-    assert!(atomics_follow_text(&document, paragraph, &[]));
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).expect("cascade Ok");
+    assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
 }

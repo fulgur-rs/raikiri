@@ -305,3 +305,29 @@ fn an_atomic_inline_in_a_ruby_annotation_moves_with_its_line() {
         [(1, 'C', 0, 30), (1, 'R', 0, 55), (1, 'T', 0, 5)]
     );
 }
+
+#[test]
+fn the_summary_of_a_details_is_text_before_the_atomic_inlines_after_it() {
+    // The first summary is laid out first wherever it is among the children
+    // of its details, so its text comes before the inline-blocks and the
+    // lines of inline-blocks move as in a paragraph that starts with the text.
+    let expected = [
+        (0, 'T', 0, 45),
+        (0, 'T', 0, 75),
+        (1, 'B', 0, 5),
+        (1, 'B', 0, 35),
+        (1, 'Z', 0, 65),
+    ];
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><details open style="width:20px"><i>B</i><i>B</i><summary style="display:inline">T T</summary></details><div>Z</div>"#
+        ),
+        expected
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><div style="width:20px">T T<i>B</i><i>B</i></div><div>Z</div>"#
+        ),
+        expected
+    );
+}

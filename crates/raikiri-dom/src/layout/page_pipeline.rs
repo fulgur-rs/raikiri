@@ -14639,7 +14639,7 @@ fn lines_can_shift_inside(
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                         || (b.kind == IfcBoxKind::Atomic
                             && *atomics_follow.get_or_insert_with(|| {
-                                atomics_follow_text(document, block_id, &ifc.boxes)
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
                             }))
                 })
         })
@@ -14651,17 +14651,25 @@ fn lines_can_shift_inside(
 /// before it are placed before it is: a move would leave them behind. The
 /// walk stops at the first text or atomic inline, and does not enter the
 /// paragraph's boxes, whose content is not its text.
-fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bool {
+fn atomics_follow_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    boxes: &[IfcBox],
+) -> bool {
     let boxed: HashMap<usize, bool> = boxes
         .iter()
         .map(|b| (b.node, b.kind == IfcBoxKind::Atomic))
         .collect();
-    let mut stack: Vec<usize> = document.nodes[root]
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+    // Children in the order layout and the page candidates take them, which
+    // puts the summary of a `details` first.
+    let children = |node: usize| {
+        pagination_child_order_borrowed(document, cascade, node)
+            .into_owned()
+            .into_iter()
+            .rev()
+    };
+    let mut stack: Vec<usize> = children(root).collect();
     while let Some(node) = stack.pop() {
         if let Some(&atomic) = boxed.get(&node) {
             if atomic {
@@ -14681,7 +14689,7 @@ fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bo
                 if !document.nodes[node].is_display_none()
                     && !document.nodes[node].is_non_rendered_html_element() =>
             {
-                stack.extend(document.nodes[node].children.iter().rev().copied());
+                stack.extend(children(node));
             }
             _ => {}
         }
