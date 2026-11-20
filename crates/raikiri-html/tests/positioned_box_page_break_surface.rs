@@ -980,7 +980,10 @@ fn a_box_in_a_fixed_box_stays_with_the_page_the_fixed_box_repeats_on() {
 #[test]
 fn a_last_line_of_an_atomic_inline_breaks_like_a_line_of_text() {
     // Three lines of text and, on the fourth, an inline-block that no text
-    // owns: it crosses the page end from 90px, so it starts the next page.
+    // owns: it crosses the page end from 90px, so the break falls before it,
+    // and the widows move the third line of text along. Chromium prints that
+    // line at the top of the next page and the inline-block on the line
+    // below it.
     let content =
         "Y<br>Y<br>Y<br><span style='display:inline-block;width:20px;height:20px'></span>";
     // The inline-block is the box 20px tall; those of the box around it are
@@ -992,7 +995,14 @@ fn a_last_line_of_an_atomic_inline_breaks_like_a_line_of_text() {
     assert_eq!(inline_blocks.len(), 1, "{inline_blocks:?}");
     let (page, top, _) = inline_blocks[0];
     assert_eq!(page, 1, "{inline_blocks:?}");
-    assert!((0.0..30.0).contains(&top), "{inline_blocks:?}");
+    assert!((30.0..60.0).contains(&top), "{inline_blocks:?}");
+    assert_eq!(
+        lines_of(&positioned("top:0", content), |text| text == "Y")
+            .iter()
+            .map(|&(page, _)| page)
+            .collect::<Vec<_>>(),
+        [0, 0, 1]
+    );
 }
 
 #[test]

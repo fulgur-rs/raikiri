@@ -2713,20 +2713,102 @@ fn paragraph_line_moves(
 
 /// The moves that keep every line of a paragraph inside an absolutely
 /// positioned box whole on one page: a line that crosses a page end starts the
-/// next page, and the lines after it move down with it. `orphans` and
-/// `widows` do not apply to such a box, and its first line moves like any
-/// other: the page breaks between the box's top edge and its first line. A line
-/// taller than the page it would start stays where it is, as it fits no page.
+/// next page, and the lines after it move down with it. The box's first line
+/// moves like any other: the page breaks between the box's top edge and its
+/// first line. A line taller than the page it would start stays where it is,
+/// as it fits no page.
+///
+/// The breaks between the lines keep `widows` as in the flow (see
+/// [`paragraph_line_moves`]), while `orphans` never moves the first line: the
+/// box cannot start its lines on a later page. A paragraph with a line taller
+/// than a page breaks only where its lines cross the page ends.
 ///
 /// `line_metrics` and `effective_y` are as for [`widows_break_on_next_page`].
 fn positioned_line_moves(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     page_origins: &PageOrigins,
+    orphans: i32,
+    widows: i32,
+) -> Vec<LineBreakMove> {
+    let Some(&(first_top, first_bottom)) = line_metrics.first() else {
+        return Vec::new();
+    };
+    let top = effective_y + first_top;
+    let mut page = page_origins.page_index_for_y(top + 0.001);
+    let next = page.saturating_add(1);
+    let crosses = top > page_origins.origin(page) + 0.001
+        && effective_y + first_bottom > page_origins.origin(next) + 0.001;
+    let delta = page_origins.origin(next) - top;
+    let mut moves = Vec::new();
+    let mut start = effective_y;
+    if crosses
+        && first_bottom - first_top <= page_origins.step_at(next) + 0.001
+        && delta.is_finite()
+        && delta > 0.0
+    {
+        moves.push((0, delta, next));
+        start += delta;
+        page = next;
+    }
+    let fit = ParagraphLineFit::measure(
+        line_metrics,
+        start,
+        page_origins.origin(page),
+        page_origins.page_end(page),
+        orphans,
+        widows,
+        0.0,
+    );
+    let kept = paragraph_line_moves(line_metrics, start, page, &fit, page_origins);
+    // A line that runs over the end of the page it lands on, as it is taller
+    // than that page, fits no page: the lines then break only where they
+    // cross.
+    if leaves_a_line_across(line_metrics, start, &kept, page_origins) {
+        moves.extend(crossing_line_moves(line_metrics, start, page_origins));
+    } else {
+        moves.extend(kept);
+    }
+    moves
+}
+
+/// Whether a line crosses the end of the page it starts on once `moves`
+/// have moved the lines down, or is taller than that page.
+fn leaves_a_line_across(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    moves: &[LineBreakMove],
+    page_origins: &PageOrigins,
+) -> bool {
+    let mut shift = 0.0_f32;
+    line_metrics
+        .iter()
+        .enumerate()
+        .any(|(line, &(line_top, line_bottom))| {
+            shift += moves
+                .iter()
+                .filter(|&&(moved, _, _)| moved == line)
+                .map(|&(_, delta, _)| delta)
+                .sum::<f32>();
+            let top = effective_y + line_top + shift;
+            let page = page_origins.page_index_for_y(top + 0.001);
+            line_bottom - line_top > page_origins.step_at(page) + 0.001
+                || top > page_origins.origin(page) + 0.001
+                    && effective_y + line_bottom + shift
+                        > page_origins.origin(page.saturating_add(1)) + 0.001
+        })
+}
+
+/// The moves that start a page with each line after the first that crosses a
+/// page end, and with the lines after it, except a line that fits no page.
+fn crossing_line_moves(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_origins: &PageOrigins,
 ) -> Vec<LineBreakMove> {
     let mut shift = 0.0_f32;
     let mut moves = Vec::new();
-    for (line, &(line_top, line_bottom)) in line_metrics.iter().enumerate() {
+    for (line, &(line_top, line_bottom)) in line_metrics.iter().enumerate().skip(1) {
         let top = effective_y + line_top + shift;
         let bottom = effective_y + line_bottom + shift;
         let page = page_origins.page_index_for_y(top + 0.001);
