@@ -1179,6 +1179,29 @@ fn laid_out(html: &str) -> DocumentLayout {
     )
 }
 
+/// Pagination grows the body around a table split across pages. The root,
+/// a formatting context of its own, still holds the 16px margin of the
+/// body's last box, which collapses through the end of the body and is
+/// larger than the body's own 8px.
+#[test]
+fn the_root_keeps_the_last_margin_of_the_body_below_a_split_table() {
+    let rows: String = (0..60).map(|row| format!("<tr><td>{row}</tr>")).collect();
+    let layout = laid_out(&format!(
+        "<style>body {{ margin: 8px }} p {{ margin: 16px 0 }}</style>\
+         <table>{rows}</table><p>end</p>"
+    ));
+    assert!(layout.page_count() > 1, "the table spans pages");
+    let page = layout.page(layout.page_count() - 1).expect("last page");
+    let p = find(&page.dom(), page.dom().root(), "p").expect("p");
+    let p = page
+        .fragments()
+        .find(|fragment| fragment.node() == p)
+        .expect("the paragraph is on the last page")
+        .rect();
+    let root = page.root_box().expect("root box").border_box;
+    assert_eq!(root.y + root.height - (p.y + p.height), 16.0);
+}
+
 #[test]
 fn anchors_index_ids_and_a_names_first_in_document_order() {
     let layout = laid_out(NAV);

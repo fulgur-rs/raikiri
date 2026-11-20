@@ -889,9 +889,9 @@ fn block_border_box_end(
     // The border-box end of the last child with a border box of its own,
     // and that child.
     let mut last_flow_end = None;
-    // Where the margin box of the last child ends in the committed flow.
-    // Pagination may have cut a margin that crossed a page edge, which the
-    // margins themselves do not show.
+    // The furthest the margins that end the content reach in the committed
+    // flow. Pagination may have cut a margin that crossed a page edge, which
+    // the margins themselves do not show.
     let mut last_margin_end = f32::INFINITY;
     // The margins of the empty children after the last child with a border
     // box of its own, which collapse through them (CSS 2 §8.3.1). The block-end
@@ -994,16 +994,23 @@ fn block_border_box_end(
             if root.formatting_context == FormattingContext::Flex {
                 content_end = content_end.max(end);
             }
-            last_margin_end = end;
             if block_children
                 && child_computed.clear == ClearValue::None
                 && collapses_through(document, cascade, child, layout.size.height)
             {
+                // An empty box sits where the flow put it, below the margins
+                // before it that pagination kept.
+                last_margin_end = end;
                 let (positive, negative) = empty_box_margin_extremes(document, cascade, child);
                 trailing = trailing
                     .collapse_with_margin(positive)
                     .collapse_with_margin(negative);
             } else {
+                // The block-end margins of the box's own last boxes collapse
+                // with its own one (CSS 2 §8.3.1), so its own margin alone
+                // does not bound them; only a page edge that cut them does.
+                last_margin_end =
+                    flow_end_cap.map_or(f32::INFINITY, |cap| (top + cap).max(border_end));
                 last_flow_end = Some((border_end, child));
                 trailing = CollapsibleMarginSet::ZERO;
             }
