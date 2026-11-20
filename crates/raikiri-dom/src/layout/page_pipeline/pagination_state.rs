@@ -1536,8 +1536,11 @@ impl PaginationState {
             candidate.context.deferred_named_break_after(),
             || super::clip_holds_breaks(document, env, node_id, false, effective_y + height),
         );
+        // A relative offset only paints the box elsewhere: the break follows
+        // where the box ends in the flow.
         if self.pending_break.source == Some(node_id) {
-            self.pending_break.source_end = effective_y + height;
+            self.pending_break.source_end = effective_y + height
+                - accumulated_relative_offset_y(document, cascade, env.body_id, node_id);
         }
 
         Ok(())

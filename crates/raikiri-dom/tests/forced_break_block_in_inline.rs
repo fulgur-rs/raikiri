@@ -239,3 +239,18 @@ fn a_break_before_a_block_after_a_line_break_in_a_span_at_a_cell_start_keeps_the
         &[("t", (1, 5.0)), ("x", (0, 55.0))],
     );
 }
+
+/// A relative offset only paints the block lower: the break after it follows
+/// where the block ends in the flow, so the lines after it start the next
+/// page, not the one after.
+#[test]
+fn a_break_after_a_relatively_offset_block_in_a_span_follows_its_flow_place() {
+    assert_places(
+        "<div style='height: 60px'></div>\
+         <div><span>\
+         <div style='height: 20px; position: relative; top: 40px; break-after: page'>\
+         <span id=t>T</span></div>\
+         <span id=c>C</span></span></div>",
+        &[("c", (1, 5.0))],
+    );
+}
