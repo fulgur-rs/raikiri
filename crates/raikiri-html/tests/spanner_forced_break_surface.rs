@@ -207,17 +207,25 @@ fn rules(body: &str) -> Vec<(u32, f32, f32)> {
 
 #[test]
 fn the_column_rules_after_the_spanner_move_with_its_columns() {
-    // A margin as negative as the spanner is tall starts the columns after it
-    // at its top, and Chromium leaves them on the first page, 80px down.
-    for (margin, page, top) in [(0, 1, 10.0), (-5, 1, 5.0), (-20, 0, 90.0)] {
+    // A margin as negative as the spanner is tall, or more, starts the
+    // columns after it at its top or above, and Chromium leaves them on the
+    // first page. A negative block-start margin pulls the spanner up over the
+    // columns before it, which stay.
+    for (margins, page, top) in [
+        ("margin-bottom:0", 1, 10.0),
+        ("margin-bottom:-5px", 1, 5.0),
+        ("margin-bottom:-20px", 0, 90.0),
+        ("margin-bottom:-30px", 0, 80.0),
+        ("margin-top:-5px", 1, 10.0),
+    ] {
         assert_eq!(
             rules(&format!(
                 "<div style='{COLUMNS};column-rule:2px solid'><div>A</div><div>B</div>\
-                 <div style='column-span:all;margin-bottom:{margin}px'>{BREAK_BEFORE}</div>\
+                 <div style='column-span:all;{margins}'>{BREAK_BEFORE}</div>\
                  <div>C</div><div>D</div></div>"
             )),
             [(0, 0.0, 10.0), (page, top, 10.0)],
-            "{margin}"
+            "{margins}"
         );
     }
 }

@@ -19681,33 +19681,43 @@ fn shift_columns_after_spanner(
         .iter()
         .position(|&id| id == spanner)
         .map_or(children.len(), |index| index + 1);
-    // The column groups and rules keep the order of the flow: those before
-    // the spanner come first and end above its top. Those after it may start
-    // at or above its top when its block-end margin is negative enough, so
-    // they are told apart by order rather than by where they start.
-    let tree = &document.fragment_tree;
-    let spanner_top = tree
-        .records_of(spanner)
+    // The container keeps one column group for each run of column content
+    // between its spanners, and the rules of each group in turn, in the
+    // order of the flow. The groups after the spanner are told apart by that
+    // order: a negative margin can start them at or above the spanner's top,
+    // and pull the spanner up over the group before it.
+    let mut runs_before = 0;
+    let mut content = false;
+    for &id in super::multicol::flow_children(document, container)
         .iter()
-        .rev()
-        .find(|&&record| !tree.is_retired(record))
-        .map_or(document.nodes[spanner].layout.location.y, |&record| {
-            tree.fragments[record].rect.y
-        });
-    let before = |top: f32, height: f32| top + height <= spanner_top + 0.001;
+        .take_while(|&&id| id != spanner)
+    {
+        if super::is_spanner(document, id) {
+            runs_before += usize::from(content);
+            content = false;
+        } else {
+            content |= super::multicol::spanning::holds_column_content(document, id);
+        }
+    }
+    runs_before += usize::from(content);
     let groups = &mut document.nodes[container].multicol_groups;
-    let first_after = groups
+    let first_after = runs_before.min(groups.len());
+    let rules_before: usize = groups[..first_after]
         .iter()
-        .take_while(|group| before(group.context.origin_y, group.height))
-        .count();
+        .filter(|group| group.height > 0.0)
+        .map(|group| {
+            group
+                .occupied
+                .iter()
+                .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
+                .count()
+        })
+        .sum();
     for group in &mut groups[first_after..] {
         group.context.origin_y += delta;
     }
     if let Some(rules) = document.column_rules.get_mut(&container) {
-        let first_after = rules
-            .iter()
-            .take_while(|rule| before(rule.y, rule.height))
-            .count();
+        let first_after = rules_before.min(rules.len());
         for rule in &mut rules[first_after..] {
             rule.y += delta;
         }
