@@ -72,7 +72,8 @@ fn the_rendered_legend_sits_over_the_border_of_a_fieldset_of_inline_content() {
     // blocks between the lines, a stated height, a relatively positioned
     // legend and an absolutely positioned box in it, `::before`, nested
     // fieldsets, and how `text-align` and the `align` attribute place the
-    // legend, with block content too.
+    // legend, `align-content` and percentage heights below the legend, with
+    // block content too.
     check_cases(include_str!("data/fieldset-legend-paragraph.json"));
 }
 

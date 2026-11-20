@@ -1588,5 +1588,251 @@
     10
    ]
   }
+ },
+ {
+  "name": "inline content, align-content center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:center\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    54.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content end",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:end\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    95.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align-content center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:center\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    54.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, percentage height inline-block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><span id=t style=\"display:inline-block;width:10px;height:100%\"></span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    62
+   ]
+  }
+ },
+ {
+  "name": "percentage height block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><div id=t style=\"width:10px;height:100%\"></div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    62
+   ]
+  }
+ },
+ {
+  "name": "inline content, percentage height float",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><div id=t style=\"float:left;width:10px;height:50%\"></div>x</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    31
+   ]
+  }
+ },
+ {
+  "name": "text-align center rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl style=\"text-align:center\"><legend id=l style=\"margin-right:6px\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    82,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content with absolute boxes",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"position:relative;height:100px;align-content:center\"><legend id=l>ll<span id=a style=\"position:absolute;width:10px;height:10px\"></span></legend>aaaa<span id=b style=\"position:absolute;width:10px;height:10px\"></span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    33.5,
+    0,
+    10,
+    10
+   ],
+   "b": [
+    51.5,
+    54.5,
+    10,
+    10
+   ]
+  }
  }
 ]

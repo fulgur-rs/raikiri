@@ -827,6 +827,19 @@ fn run_boxes_segment(
     mut open_block: Option<generated_blocks::OpenBlock>,
     start: LineStart,
 ) -> RunBoxesOutcome {
+    // The rendered legend of a fieldset is laid out in the content box of the
+    // fieldset; the part of it below the border takes room off the height
+    // the percentages of the other boxes resolve against.
+    let legend_geometry = geometry;
+    let mut geometry = geometry;
+    if let Some(legend) = root.legend
+        && geometry.definite_height.is_some()
+    {
+        let offset = legend_block_child(tree, legend, geometry, false).next_y;
+        geometry.definite_height = geometry
+            .definite_height
+            .map(|height| (height - offset).max(0.0));
+    }
     let FlowGeometry {
         width, top_edge, ..
     } = geometry;
@@ -1558,7 +1571,7 @@ fn run_boxes_segment(
                 let mut block = if geometry.blocks_apart {
                     BlockChild::apart(y, pending)
                 } else if root.legend == Some(node.0 as usize) {
-                    legend_block_child(tree, node.0 as usize, geometry, perform)
+                    legend_block_child(tree, node.0 as usize, legend_geometry, perform)
                 } else {
                     layout_block_child(
                         tree,

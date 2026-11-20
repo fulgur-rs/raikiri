@@ -26,9 +26,12 @@ use crate::node::BoxPropertiesRef;
 use crate::target::{CompactCounterSnapshots, CounterSnapshotLimitExceeded};
 use raikiri_layout_style::values::Clear;
 use raikiri_style::property::{
-    ClearValue, Direction, DisplayValue, FloatValue, OverflowValue, PositionValue, TextWrapMode,
+    ClearValue, ColumnCountValue, Direction, DisplayValue, FloatValue, OverflowValue,
+    PositionValue, TextWrapMode,
 };
-use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
+use raikiri_style::{
+    CascadeResult, ComputedColumnWidth, ComputedTextIndent, ComputedValues, PseudoElem,
+};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
@@ -802,7 +805,9 @@ pub(crate) fn box_kind_in(
 /// §15.3.13 "The fieldset and legend elements").
 ///
 /// As for a fieldset with block content, one in a vertical writing mode or
-/// one that clips its overflow keeps the legend as a block between its lines.
+/// one that clips its overflow keeps the legend as a block between its lines,
+/// and so do a multicol fieldset, whose lines are as wide as a column, and a
+/// ruby fieldset, which lays out its content as ruby.
 // spec: https://html.spec.whatwg.org/multipage/rendering.html#the-fieldset-and-legend-elements
 pub(crate) fn paragraph_legend(
     cascade: &CascadeResult,
@@ -815,6 +820,9 @@ pub(crate) fn paragraph_legend(
         || cv.cssom_writing_mode.is_vertical()
         || cv.overflow.x != OverflowValue::Visible
         || cv.overflow.y != OverflowValue::Visible
+        || !matches!(cv.column_count, ColumnCountValue::Auto)
+        || !matches!(cv.column_width, ComputedColumnWidth::Auto)
+        || fieldset.display().is_ruby_container()
     {
         return None;
     }
