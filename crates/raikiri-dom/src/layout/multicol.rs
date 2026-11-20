@@ -2139,7 +2139,7 @@ fn record_wrapped_fragments(
             .collect();
         let count = wrapped.placement.fragments.len();
         // A box whose height is authored keeps it when it stands whole in one
-        // column, however far its lines reach.
+        // column, even where its lines end short of it.
         let authored =
             (count == 1 && is_sized_paragraph(tree, wrapped.node)).then_some(layout.size.height);
         // The top of the columns in the space of the wrapper's fragment.

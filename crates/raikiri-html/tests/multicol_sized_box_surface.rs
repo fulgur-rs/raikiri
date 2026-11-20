@@ -287,19 +287,29 @@ fn a_column_holding_only_a_piece_of_a_sliced_box_has_a_rule_before_it() {
 
 #[test]
 fn a_sized_box_of_lines_in_a_wrapper_keeps_its_height() {
-    let result = lay_out(&format!(
-        "<div style='columns:2;width:200px;column-gap:0'><div>\
-         <div style='height:20px;background:green'>ab</div>{NARROW}</div></div>"
-    ));
-    let page = result.page(0).expect("one page");
-    let sized = page
-        .fragments()
-        .filter(|fragment| fragment.kind() == FragmentKind::Box)
-        .map(|fragment| {
-            let rect = fragment.rect();
-            (rect.x, rect.y, rect.width, rect.height)
-        })
-        .filter(|&(x, y, width, _)| x == 0.0 && y == 0.0 && width == 100.0)
-        .collect::<Vec<_>>();
-    assert!(sized.contains(&(0.0, 0.0, 100.0, 20.0)), "{sized:?}");
+    // The wrapper's piece in the first column, then the sized box.
+    for container in [
+        "columns:2;width:200px;column-gap:0",
+        "columns:2;width:200px;column-gap:0;height:45px;column-fill:auto",
+    ] {
+        let result = lay_out(&format!(
+            "<div style='{container}'><div>\
+             <div style='height:20px;background:green'>ab</div>{NARROW}</div></div>"
+        ));
+        let page = result.page(0).expect("one page");
+        let first_column: Vec<_> = page
+            .fragments()
+            .filter(|fragment| fragment.kind() == FragmentKind::Box)
+            .map(|fragment| {
+                let rect = fragment.rect();
+                (rect.x, rect.y, rect.width, rect.height)
+            })
+            .filter(|&(x, y, width, _)| x == 0.0 && y == 0.0 && width == 100.0)
+            .collect();
+        assert_eq!(
+            first_column[1],
+            (0.0, 0.0, 100.0, 20.0),
+            "{container}: {first_column:?}"
+        );
+    }
 }
