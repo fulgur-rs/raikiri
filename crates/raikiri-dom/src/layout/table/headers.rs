@@ -30,6 +30,10 @@ pub(crate) struct HeaderRepeat {
     /// Closing edges after the source footer, excluding the footer's rows.
     /// Copies on earlier pages do not reserve this space.
     pub(crate) closing_edges: f32,
+    /// For a footer, the block size below its end of the boxes that the page
+    /// may not break from it, and whether that run moves to the next page
+    /// even when it does not fit there.
+    pub(crate) tied_run: Option<(f32, bool)>,
     /// The table's block start before pagination.
     pub(crate) table_source_y: f32,
     /// Page origin and header y per page index. Call
@@ -53,6 +57,7 @@ impl HeaderRepeat {
             last_row: None,
             visit_shift: None,
             closing_edges: 0.0,
+            tied_run: None,
             placements: BTreeMap::new(),
             by_origin: Vec::new(),
         }
@@ -401,13 +406,6 @@ impl HeaderRepeats {
             .get(&row)
             .and_then(|footer_id| self.headers.get(footer_id))
             .map_or(0.0, |footer| footer.height + footer.gap)
-    }
-
-    /// Whether `group` is a repeated header group.
-    pub(crate) fn repeats_header(&self, group: usize) -> bool {
-        self.headers
-            .get(&group)
-            .is_some_and(|header| !header.footer)
     }
 
     /// Whether `source` belongs to a repeated footer group.
