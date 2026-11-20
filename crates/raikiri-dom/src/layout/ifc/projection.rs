@@ -26,7 +26,7 @@ use crate::node::BoxPropertiesRef;
 use crate::target::{CompactCounterSnapshots, CounterSnapshotLimitExceeded};
 use raikiri_layout_style::values::Clear;
 use raikiri_style::property::{
-    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
+    ClearValue, Direction, DisplayValue, FloatValue, OverflowValue, PositionValue, TextWrapMode,
 };
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
@@ -793,6 +793,45 @@ pub(crate) fn box_kind_in(
     None
 }
 
+/// The rendered legend of `root` when `root` is an HTML `fieldset` whose
+/// content is a paragraph: the first `legend` child that is neither floated
+/// nor absolutely positioned, when it is a block. The legend sits over the
+/// block-start border of the fieldset, above all its lines, so it is the
+/// first box of the paragraph wherever it stands among the children, and the
+/// line loop places it over the border (HTML Living Standard, "Rendering"
+/// §15.3.13 "The fieldset and legend elements").
+///
+/// As for a fieldset with block content, one in a vertical writing mode or
+/// one that clips its overflow keeps the legend as a block between its lines.
+// spec: https://html.spec.whatwg.org/multipage/rendering.html#the-fieldset-and-legend-elements
+pub(crate) fn paragraph_legend(
+    cascade: &CascadeResult,
+    doc: &Document,
+    root: usize,
+) -> Option<usize> {
+    let fieldset = doc.get_node(root)?;
+    let cv = cascade.computed.get(root)?;
+    if !fieldset.is_html_fieldset()
+        || cv.cssom_writing_mode.is_vertical()
+        || cv.overflow.x != OverflowValue::Visible
+        || cv.overflow.y != OverflowValue::Visible
+    {
+        return None;
+    }
+    let legend = fieldset.children.iter().copied().find(|&child| {
+        let node = &doc.nodes[child];
+        node.is_in_document()
+            && node.tag_name() == Some("legend")
+            && node.namespace_uri().is_none()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                box_kind(cascade, doc, child),
+                Some(IfcBoxKind::Float | IfcBoxKind::OutOfFlow)
+            )
+    })?;
+    (box_kind(cascade, doc, legend) == Some(IfcBoxKind::Block)).then_some(legend)
+}
+
 /// How many inline boxes between a block-level box and a ruby box are looked
 /// through for [`is_inlinized_in_ruby`].
 const MAX_INLINIZE_DEPTH: usize = 64;
@@ -1300,7 +1339,13 @@ fn project_children_builder_as(
         )?;
         None
     };
-    if anonymous_children.is_none() {
+    // The rendered legend of a fieldset comes before the `::before` of the
+    // fieldset, which is part of the content below the legend.
+    let legend = anonymous_children
+        .is_none()
+        .then(|| paragraph_legend(cascade, doc, root))
+        .flatten();
+    if anonymous_children.is_none() && legend.is_none() {
         push_generated(
             &mut builder,
             doc,
@@ -1360,16 +1405,23 @@ fn project_children_builder_as(
             // The first summary of a `details` comes first in its paragraph
             // too, so the text around it joins up after it.
             let summary = crate::layout::page::summary_out_of_place(doc, cascade, root);
+            // The rendered legend of a fieldset comes first too: it sits over
+            // the border, above all the lines.
             let rest = root_node
                 .children
                 .iter()
                 .copied()
-                .filter(|&id| Some(id) != summary);
+                .filter(|&id| Some(id) != summary && Some(id) != legend)
+                .map(Step::Enter);
+            let legend = legend
+                .into_iter()
+                .flat_map(|legend| [Step::Enter(legend), Step::Before(root)]);
             summary
                 .into_iter()
+                .map(Step::Enter)
+                .chain(legend)
                 .chain(rest)
                 .rev()
-                .map(Step::Enter)
                 .collect()
         }
     };

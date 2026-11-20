@@ -58,8 +58,28 @@ fn the_rendered_legend_sits_over_the_block_start_border_of_its_fieldset() {
     // the box after the fieldset, a percentage height below a legend that
     // reaches past the border, `min-content` and `max-content` legend widths
     // and an absolutely positioned box in the legend.
-    let cases: serde_json::Value =
-        serde_json::from_str(include_str!("data/fieldset-legend.json")).unwrap();
+    check_cases(include_str!("data/fieldset-legend.json"));
+}
+
+#[test]
+fn the_rendered_legend_sits_over_the_border_of_a_fieldset_of_inline_content() {
+    // Chromium `getBoundingClientRect`, set up as above, where `t` is now
+    // mostly a span or text on the lines of the fieldset. The cases cover
+    // text and inline boxes before and after the legend, a taller legend,
+    // wrapped lines, an inline-block, a shrink-to-fit fieldset, `rtl`,
+    // legends wider than the fieldset, the legend's margins and padding, a
+    // thicker border, legends that are not rendered, a float, a `<br>`,
+    // blocks between the lines, a stated height, a relatively positioned
+    // legend and an absolutely positioned box in it, `::before`, nested
+    // fieldsets, and how `text-align` and the `align` attribute place the
+    // legend, with block content too.
+    check_cases(include_str!("data/fieldset-legend-paragraph.json"));
+}
+
+/// Compare the first fragment of every element named in each case of the
+/// JSON `cases` with the Chromium rectangle the case gives for it.
+fn check_cases(cases: &str) {
+    let cases: serde_json::Value = serde_json::from_str(cases).unwrap();
     for case in cases.as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let expected: std::collections::BTreeMap<String, [f32; 4]> =
