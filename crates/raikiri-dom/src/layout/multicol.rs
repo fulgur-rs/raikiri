@@ -2673,7 +2673,8 @@ impl FloatLine {
 }
 
 /// A float child of a column container: the side it floats to, the floats it
-/// clears, the width of its margin box in a column, and its block-end margin.
+/// clears, the width of its margin box in a column, and the block-end margin
+/// that a column end truncates.
 #[derive(Clone, Copy)]
 struct ColumnFloat {
     right: bool,
@@ -2693,7 +2694,17 @@ impl ColumnFloat {
                 right: matches!(style.float(), Float::Right),
                 clear: style.clear(),
                 margin_box_width: left + width + right,
-                margin_bottom: column_child_layout(tree, child, column_width).margin.bottom,
+                // A column end truncates the margin below a float it may
+                // break, but a monolithic float keeps its whole margin box.
+                margin_bottom: if column_line_boxes::is_monolithic(
+                    tree,
+                    tree.style_views.cascade(),
+                    child,
+                ) {
+                    0.0
+                } else {
+                    column_child_layout(tree, child, column_width).margin.bottom
+                },
             }
         })
     }
@@ -3416,6 +3427,10 @@ fn layout_column_group(
     // The height of balanced columns that the positioned boxes in them need,
     // when it is more than the content in flow needs.
     let mut out_of_flow_height = None;
+    // The content in flow divided among the columns, margins and all: the
+    // least height of balanced columns, even where a column end would
+    // truncate a margin of it.
+    let mut divided_stream = 0.0f32;
     // Rows of columns between spanners keep the heights their content in
     // flow gives them.
     let spanned = flow_children(tree, index)
@@ -3511,6 +3526,10 @@ fn layout_column_group(
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
         let total = stack.height();
+        if fragment_height.is_none() {
+            divided_stream =
+                collapsed_stream(tree, &measurements, total) / context.column_count.max(1) as f32;
+        }
         // The tallest box sets the least height, without the margin below
         // it, which the end of its column truncates.
         let largest = measurements
@@ -4353,7 +4372,16 @@ fn layout_column_group(
         } else {
             let bottom = y - content_origin.y + child_output.size.height + margin_bottom;
             // The floats of a line end where the lowest of them does.
-            let end = bottom - margin_bottom;
+            // A column end truncates the margin below the box, but not
+            // the one below a monolithic float, whose margin box is whole.
+            let truncated = if is_floated(tree, child)
+                && column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
+            {
+                0.0
+            } else {
+                margin_bottom
+            };
+            let end = bottom - truncated;
             let end = if beside.is_some() {
                 (cursor - trailing).max(end)
             } else {
@@ -4419,6 +4447,7 @@ fn layout_column_group(
         cursor = cursor.max(floor);
         trailing = cursor - end;
     }
+    maximum = maximum.max(divided_stream);
     // Balanced columns of a container with a definite height are as tall as
     // their content, which the rules between them follow.
     if retain_group
@@ -4452,6 +4481,40 @@ fn layout_column_group(
             .unwrap_or(fallback_height)
     };
     (maximum.max(cursor - trailing) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// The block size of the measured children of a column container in one
+/// unbroken column, their adjoining margins collapsed (CSS 2, 8.3.1): the
+/// margins between siblings, and the two of a box with no block size. With a
+/// float among them, the stacked size `total` is taken as it is.
+fn collapsed_stream(
+    tree: &LayoutSession<'_>,
+    measurements: &[(usize, LayoutOutput, BoxLayout, f32, f32, f32)],
+    total: f32,
+) -> f32 {
+    use crate::layout::protocol::CollapsibleMarginSet;
+    if measurements
+        .iter()
+        .any(|&(child, ..)| is_floated(tree, child))
+    {
+        return total;
+    }
+    let mut stream = 0.0f32;
+    let mut pending = CollapsibleMarginSet::ZERO;
+    for &(child, _, _, margin_top, margin_bottom, needed) in measurements {
+        if tree.nodes[child].layout_position() == Position::Absolute {
+            continue;
+        }
+        pending = pending.collapse_with_margin(margin_top);
+        let content = needed - margin_top - margin_bottom;
+        if content > 0.0 {
+            stream += pending.resolve() + content;
+            pending = CollapsibleMarginSet::from_margin(margin_bottom);
+        } else {
+            pending = pending.collapse_with_margin(margin_bottom);
+        }
+    }
+    stream + pending.resolve()
 }
 
 /// The last column of `child`'s line pieces and the block end of the piece

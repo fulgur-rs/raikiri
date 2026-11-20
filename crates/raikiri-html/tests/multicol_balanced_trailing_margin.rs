@@ -112,3 +112,31 @@ fn a_float_and_a_spanner_end_the_columns_as_well() {
     let spanner = "<div style='margin-bottom:10px'>a</div><div style='column-span:all'>s</div>";
     assert_eq!(height("", spanner), (20.0, 20.0));
 }
+
+#[test]
+fn a_monolithic_float_keeps_its_margin_box_whole() {
+    let sized =
+        "<div style='float:left;width:10px;contain:size;height:10px;margin-bottom:10px'></div>";
+    assert_eq!(height("", sized), (20.0, 20.0));
+    let image = "<img style='float:left;width:10px;height:20px;margin-bottom:40px'>";
+    assert_eq!(height("", image), (60.0, 60.0));
+    let beside = "<div style='float:left;width:10px;contain:size;height:10px;margin-bottom:10px'></div>\
+                  <div>a</div>";
+    assert_eq!(height("", beside), (20.0, 20.0));
+    // A float that may break still has its margin truncated.
+    let avoid = "<div style='float:left;width:10px;height:20px;break-inside:avoid;margin-bottom:40px'></div>";
+    assert_eq!(height("", avoid), (30.0, 30.0));
+}
+
+#[test]
+fn the_columns_hold_at_least_the_stream_divided_among_them() {
+    // 20px of box and 40px of margin below it, divided in two.
+    let sized = "<div style='contain:size;height:20px;margin-bottom:40px'></div>";
+    assert_eq!(height("", sized), (30.0, 30.0));
+    let float = "<div style='float:left;width:10px;height:20px;margin-bottom:40px'></div>";
+    assert_eq!(height("", float), (30.0, 30.0));
+    // The margins between two boxes collapse to one in the stream: 80px.
+    let collapsed = "<div style='contain:size;height:10px;margin-bottom:30px'></div>\
+                     <div style='contain:size;height:10px;margin-top:30px;margin-bottom:30px'></div>";
+    assert_eq!(height("", collapsed), (40.0, 40.0));
+}
