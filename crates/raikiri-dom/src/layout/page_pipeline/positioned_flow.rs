@@ -620,7 +620,11 @@ fn keep_run(
         .expect("a line event retains its inline layout");
     if ifc.multicol_fragments.is_some()
         || ifc.writing_mode != shodo::geometry::WritingMode::HorizontalTb
-        || !box_leaves_lines_to_pagination(document, env.cascade, root)
+        // The lines move down inside a box that clips them at a set height
+        // too, which hides what the move pushes past its end (see
+        // `visible_end`), as in the normal flow. A box whose size
+        // containment ignores its content keeps them in place.
+        || !holds_moved_lines(document, env.cascade, root, true)
         || ifc.boxes.iter().any(|item| {
             item.kind == IfcBoxKind::OutOfFlow
                 && out_of_flow_follow(document, env.cascade, root, item.node).is_none()
@@ -655,15 +659,16 @@ fn keep_run(
     if metrics.is_empty() {
         return Ok(());
     }
+    // The hidden lines still follow every break, and count as widows.
+    let hidden = i32::try_from(all_lines - metrics.len()).unwrap_or(i32::MAX);
+    let widows = env.cascade.computed[root].widows.saturating_sub(hidden);
     let moves = if root == owner {
-        // The hidden lines still follow every break, and count as widows.
-        let hidden = i32::try_from(all_lines - metrics.len()).unwrap_or(i32::MAX);
         positioned_line_moves(
             &metrics,
             start,
             env.page_origins,
             env.cascade.computed[root].orphans,
-            env.cascade.computed[root].widows.saturating_sub(hidden),
+            widows,
         )
     } else {
         let mut page = env
@@ -675,7 +680,7 @@ fn keep_run(
             env.page_origins.origin(page),
             env.page_origins.page_end(page),
             env.cascade.computed[root].orphans,
-            env.cascade.computed[root].widows,
+            widows,
             0.0,
         );
         let mut moves = Vec::new();
@@ -710,7 +715,7 @@ fn keep_run(
             env.page_origins.origin(page),
             env.page_origins.page_end(page),
             env.cascade.computed[root].orphans,
-            env.cascade.computed[root].widows,
+            widows,
             0.0,
         );
         moves.extend(paragraph_line_moves(
