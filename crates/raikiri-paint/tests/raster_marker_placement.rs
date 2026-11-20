@@ -12,8 +12,25 @@ use raikiri_traits::{
 };
 use std::sync::Arc;
 
-struct Pixels;
+/// An 8x4 red image. Without `sized`, the source reports no natural size, so
+/// layout gives the marker images no size and paint takes their natural size
+/// from the decoded pixels.
+struct Pixels {
+    sized: bool,
+}
 impl ImagePixelSource for Pixels {
+    fn intrinsic_size(&self, url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        if !self.sized {
+            return None;
+        }
+        let image = self.get_decoded(url)?;
+        Some(raikiri_traits::ImageIntrinsicSize::new(
+            Some(image.width as f32),
+            Some(image.height as f32),
+            None,
+        ))
+    }
+
     fn get_decoded(&self, _url: &url::Url) -> Option<Arc<DecodedImage>> {
         Some(Arc::new(DecodedImage::new(
             8,
@@ -35,11 +52,9 @@ fn raster(body: &str) -> Vec<u8> {
     raster_with(body, "url(marker.png)", true)
 }
 
-/// Rasters `body` with `marker` as the list items' `list-style-image`. Without
-/// `resolve_sizes`, layout gives the marker images no size, so paint takes
-/// their natural size from the decoded pixels.
-fn raster_with(body: &str, marker: &str, resolve_sizes: bool) -> Vec<u8> {
-    let pixels = Pixels;
+/// Rasters `body` with `marker` as the list items' `list-style-image`.
+fn raster_with(body: &str, marker: &str, sized: bool) -> Vec<u8> {
+    let pixels = Pixels { sized };
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -50,12 +65,8 @@ fn raster_with(body: &str, marker: &str, resolve_sizes: bool) -> Vec<u8> {
     let resources = RenderResources::new()
         .fonts(fonts)
         .base_url(url::Url::parse("https://images.test/document.html").unwrap())
+        .replaced_resolver(&pixels)
         .image_pixel_source(&pixels);
-    let resources = if resolve_sizes {
-        resources.replaced_resolver(&pixels)
-    } else {
-        resources
-    };
     let html = format!(
         "<!doctype html><style>@page{{size:200px 200px;margin:0}}body{{margin:0;background:white}}body{{font:20px/20px Ahem}}ul{{padding:0;margin:0}}li{{margin-left:20px;list-style-image:{marker};color:transparent}}</style>{body}"
     );
@@ -142,7 +153,7 @@ fn red_pixels(raster: &[u8]) -> usize {
 #[test]
 fn an_unsized_image_set_marker_paints_at_its_natural_size() {
     // The 8x4 image written for 2x has a 4x2 natural size.
-    let body = "<ul><li style='list-style-position:inside'>A</li></ul>";
+    let body = "<ul><li>A</li></ul>";
     assert_eq!(red_pixels(&raster_with(body, "url(marker.png)", false)), 32);
     assert_eq!(
         red_pixels(&raster_with(body, "image-set(url(marker.png) 2x)", false)),
