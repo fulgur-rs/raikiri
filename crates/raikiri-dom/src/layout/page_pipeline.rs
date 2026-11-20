@@ -14155,7 +14155,8 @@ fn content_follows_block_children(
 /// although it has block children, because every block child comes after the
 /// last line: the block children follow the moved lines when pagination reaches
 /// them, and the paragraph's own checks judge all the lines as one run. It is
-/// in one column, and apart from those blocks lays out only out-of-flow boxes
+/// in one column, and apart from those blocks lays out only atomic inlines and
+/// floats, which move with the lines that hold them, and out-of-flow boxes
 /// that stay where their insets put them or follow the moved lines (see
 /// [`out_of_flow_follow`]). Its box grows with the moved lines as far as its
 /// height allows (see [`lines_shift_growth`]).
@@ -14170,9 +14171,11 @@ fn lines_can_shift_above_blocks(
         .is_some_and(|ifc| {
             ifc.multicol_fragments.is_none()
                 && ifc.boxes.iter().all(|b| {
-                    matches!(b.kind, IfcBoxKind::Block | IfcBoxKind::Float)
-                        || b.kind == IfcBoxKind::OutOfFlow
-                            && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
+                    matches!(
+                        b.kind,
+                        IfcBoxKind::Block | IfcBoxKind::Float | IfcBoxKind::Atomic
+                    ) || b.kind == IfcBoxKind::OutOfFlow
+                        && out_of_flow_follow(document, cascade, block_id, b.node).is_some()
                 })
                 && ifc.lines.as_ref().is_some_and(|lines| {
                     lines
