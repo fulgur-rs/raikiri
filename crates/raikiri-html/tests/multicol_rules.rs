@@ -198,7 +198,18 @@ fn foundational_relative_offsets_preserve_the_flow_column_slots() {
             "<div class=mc><div style='height:40px;min-width:40px;position:relative;{inset};background:blue'><br></div><div style='height:40px;min-width:40px;background:lime'><br></div></div>"
         );
         let document = lay_out(&body, ".mc{height:20px;column-rule:2px solid red}");
-        assert_eq!(rules(&document), [(49.0, 0.0, 2.0, 20.0)], "{inset}");
+        // Each 40px box is sliced at the end of a 20px column, as Chromium
+        // slices it, so the two fill four columns, two of them overflow
+        // columns, with a rule between each pair.
+        assert_eq!(
+            rules(&document),
+            [
+                (49.0, 0.0, 2.0, 20.0),
+                (109.0, 0.0, 2.0, 20.0),
+                (169.0, 0.0, 2.0, 20.0)
+            ],
+            "{inset}"
+        );
     }
 }
 
