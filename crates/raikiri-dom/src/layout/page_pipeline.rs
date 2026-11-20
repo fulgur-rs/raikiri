@@ -6200,8 +6200,14 @@ fn avoided_run_ends(
             run_start = None;
             continue;
         }
+        // An anonymous table, keyed by its first part, ends with its last.
         let connected = previous.is_some_and(|prior| {
-            boxes_are_tied(document, cascade, prior.node_id, candidate.node_id)
+            let before = document
+                .anonymous_table_of(prior.node_id)
+                .and_then(|table| document.anonymous_table_parts(table))
+                .and_then(|parts| parts.last().copied())
+                .unwrap_or(prior.node_id);
+            boxes_are_tied(document, cascade, before, candidate.node_id)
         });
         // A paragraph in the run that breaks between its lines is a better
         // place to break than before the run: the run starts after it, and

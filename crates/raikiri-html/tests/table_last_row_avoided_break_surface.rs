@@ -761,3 +761,28 @@ fn rows_of_a_row_group_in_an_anonymous_table_count_as_its_rows() {
         ]
     );
 }
+
+#[test]
+fn an_anonymous_table_breaks_from_the_box_after_it_by_its_last_row() {
+    // An avoided break between the rows is inside the table: the box after it is free to start the next page.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row;break-after:avoid"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div><div>Z</div>"#
+        ),
+        [(0, 'K', 50), (0, 'L', 70), (0, 'S', 0), (1, 'Z', 0)]
+    );
+    // An avoided break after the last row ties the table to the box after it.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row;break-after:avoid"><div style="display:table-cell">L</div></div><div>Z</div>"#
+        ),
+        [(0, 'K', 50), (0, 'S', 0), (1, 'L', 0), (1, 'Z', 20)]
+    );
+    // A break forced after the last row ends the table's page.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row;break-after:page"><div style="display:table-cell">L</div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'K', 50), (0, 'L', 70), (0, 'S', 0), (1, 'Z', 0)]
+    );
+}
