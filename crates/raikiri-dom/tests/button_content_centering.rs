@@ -198,24 +198,28 @@ fn a_button_centers_its_content_in_its_content_box() {
 /// Content taller than the button stays at its top edge, as `safe center`.
 #[test]
 fn overflowing_button_content_stays_at_the_top() {
-    for style in ["", "overflow: hidden;"] {
-        check_boxes(&[(
-            style,
-            &format!(
-                "<button id=b style='{BUTTON} height: 20px; width: 20px; {style}'><span id=s>ab cd ef</span></button>"
-            ),
-            &[("b", 0.0, 0.0, 20.0, 20.0)],
-        )]);
-        let lines: Vec<_> = boxes(&format!(
+    for (label, style) in [("visible", ""), ("overflow: hidden", "overflow: hidden;")] {
+        let actual = boxes(&format!(
             "<button id=b style='{BUTTON} height: 20px; width: 20px; {style}'><span id=s>ab cd ef</span></button>"
-        ))
-        .into_iter()
-        .filter(|(id, _)| id == "s")
-        .map(|(_, rect)| rect[1])
-        .collect();
+        ));
+        let button = actual
+            .iter()
+            .find(|(id, _)| id == "b")
+            .map(|(_, rect)| *rect);
         assert!(
-            lines.first().is_some_and(|top| top.abs() <= TOLERANCE),
-            "{style}: first line tops {lines:?}, expected 0"
+            button.is_some_and(|rect| rect
+                .iter()
+                .zip([0.0, 0.0, 20.0, 20.0])
+                .all(|(got, want)| (got - want).abs() <= TOLERANCE)),
+            "{label}: #b is {button:?}, expected [0, 0, 20, 20]"
+        );
+        let first_line = actual
+            .iter()
+            .find(|(id, _)| id == "s")
+            .map(|(_, rect)| rect[1]);
+        assert!(
+            first_line.is_some_and(|top| top.abs() <= TOLERANCE),
+            "{label}: the first line of #s is at {first_line:?}, expected 0"
         );
     }
 }
