@@ -637,3 +637,76 @@ fn a_table_inside_a_block_that_fits_with_the_box_after_it_stays() {
         [(0, 'K', 30), (0, 'L', 50), (0, 'S', 0), (0, 'Z', 70)]
     );
 }
+
+#[test]
+fn captions_below_the_rows_tied_to_the_last_caption_move_with_it() {
+    let table = |space: u32, captions: &str, rows: &str| {
+        glyphs(&format!(
+            r#"<div style="height:{space}px">S</div><table>{captions}{rows}</table><div style="break-before:avoid">Z</div>"#
+        ))
+    };
+    let row = "<tr><td>L</td></tr>";
+    // The last caption starts the last part by itself.
+    assert_eq!(
+        table(
+            50,
+            r#"<caption style="caption-side:bottom">C</caption><caption style="caption-side:bottom">D</caption>"#,
+            row
+        ),
+        [
+            (0, 'C', 70),
+            (0, 'L', 50),
+            (0, 'S', 0),
+            (1, 'D', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    // The last caption avoids the break before it, or the caption above it
+    // the break after it: both captions move, and the row stays.
+    for captions in [
+        r#"<caption style="caption-side:bottom">C</caption><caption style="caption-side:bottom;break-before:avoid">D</caption>"#,
+        r#"<caption style="caption-side:bottom;break-after:avoid">C</caption><caption style="caption-side:bottom">D</caption>"#,
+    ] {
+        assert_eq!(
+            table(30, captions, row),
+            [
+                (0, 'L', 30),
+                (0, 'S', 0),
+                (1, 'C', 0),
+                (1, 'D', 20),
+                (1, 'Z', 40)
+            ]
+        );
+    }
+    // A break forced before the last caption.
+    assert_eq!(
+        table(
+            30,
+            r#"<caption style="caption-side:bottom">C</caption><caption style="caption-side:bottom;break-before:page">D</caption>"#,
+            row
+        ),
+        [
+            (0, 'C', 50),
+            (0, 'L', 30),
+            (0, 'S', 0),
+            (1, 'D', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    // Every caption is tied: they go with the last row.
+    assert_eq!(
+        table(
+            10,
+            r#"<caption style="caption-side:bottom;break-before:avoid">C</caption><caption style="caption-side:bottom;break-before:avoid">D</caption>"#,
+            "<tr><td>K</td></tr><tr><td>L</td></tr>"
+        ),
+        [
+            (0, 'K', 10),
+            (0, 'S', 0),
+            (1, 'C', 20),
+            (1, 'D', 40),
+            (1, 'L', 0),
+            (1, 'Z', 60)
+        ]
+    );
+}

@@ -5849,39 +5849,63 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
     let rows = body_rows(document, table);
     let &(last, last_group) = rows.last()?;
     // A caption below the rows is the last part, unless a break it may not
-    // take ties it to the last row: then it goes with the rows tied to that
+    // take ties it to the caption or row above it: walking back over the
+    // captions, the first one that the page may break before starts the last
+    // part; when every one is tied, they go with the rows tied to the last
     // row. A table that avoids breaks inside it ties them too, unless a break
     // is forced there.
-    if let Some(caption) = bottom_caption(document, table, last) {
-        let edges = [(caption, true), (last, false)]
-            .into_iter()
-            .chain(last_group.map(|group| (group, false)));
-        let (forced, avoided) = edges.fold((false, false), |(forced, avoided), (id, before)| {
-            let (own_forced, own_avoided) = page_edge_constraint(document, cascade, id, before);
-            (
-                forced || own_forced || forces_page_break(document, cascade, id, before),
-                avoided || own_avoided,
-            )
-        });
-        if forced || !(avoided || table_avoids_inside) {
+    let tied = |edges: &[(usize, bool)]| {
+        let (forced, avoided) =
+            edges
+                .iter()
+                .fold((false, false), |(forced, avoided), &(id, before)| {
+                    let (own_forced, own_avoided) =
+                        page_edge_constraint(document, cascade, id, before);
+                    (
+                        forced || own_forced || forces_page_break(document, cascade, id, before),
+                        avoided || own_avoided,
+                    )
+                });
+        !forced && (avoided || table_avoids_inside)
+    };
+    let captions = bottom_captions(document, table, last);
+    for (index, &caption) in captions.iter().enumerate().rev() {
+        let mut edges = vec![(caption, true)];
+        match index.checked_sub(1).map(|above| captions[above]) {
+            Some(above) => edges.push((above, false)),
+            None => {
+                edges.push((last, false));
+                edges.extend(last_group.map(|group| (group, false)));
+            }
+        }
+        if !tied(&edges) {
             return Some(caption);
         }
     }
     tied_rows_start(document, cascade, &rows, table_avoids_inside)
 }
 
-/// The caption of the table `table` below its rows, whose last row is
-/// `last`: the lowest caption that starts at or below the row's end.
-fn bottom_caption(document: &Document, table: usize, last: usize) -> Option<usize> {
+/// The captions of the table `table` below its rows, whose last row is
+/// `last`, from top to bottom: the captions that start at or below the row's
+/// end.
+fn bottom_captions(document: &Document, table: usize, last: usize) -> Vec<usize> {
     let top = |id: usize| current_abs_y(document, id);
-    document
+    let mut captions: Vec<usize> = document
         .children_through_contents(table)
         .into_iter()
         .filter(|&child| document.nodes[child].display() == DisplayValue::TableCaption)
         .filter(|&caption| {
             top(caption) >= top(last) + document.nodes[last].layout.size.height - 0.001
         })
-        .max_by(|&a, &b| top(a).total_cmp(&top(b)))
+        .collect();
+    captions.sort_by(|&a, &b| top(a).total_cmp(&top(b)));
+    captions
+}
+
+/// The lowest caption of the table `table` below its rows (see
+/// [`bottom_captions`]).
+fn bottom_caption(document: &Document, table: usize, last: usize) -> Option<usize> {
+    bottom_captions(document, table, last).last().copied()
 }
 
 /// The first of the `rows` (each with the row group that holds it, if any,
