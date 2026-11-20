@@ -572,31 +572,27 @@ fn push_generated(
         let paragraph_style = style::paragraph_style(cv, element, inline_style.clone())?;
         let mut paragraph = ParagraphBuilder::new(&paragraph_style, limits);
         let mut has_images = false;
-        for piece in &pieces {
-            match piece {
-                GeneratedPiece::Text(text) => {
-                    first_letter.push_with_counters(
-                        &mut paragraph,
-                        doc,
-                        cascade,
-                        TextSource::Generated { node: id },
-                        cv,
-                        text,
-                        fonts,
-                        counters,
-                    )?;
-                }
-                GeneratedPiece::Image(image) => {
-                    first_letter.stop();
-                    has_images = true;
-                    paragraph.push_atomic(
-                        NodeId(*image as u64),
-                        &inline_style,
-                        InlineEdges::default(),
-                    );
-                }
+        // The paragraph has already taken the same content, so it fails here
+        // only as it would have failed there.
+        let pushed = pieces.iter().try_for_each(|piece| match piece {
+            GeneratedPiece::Text(text) => first_letter.push_with_counters(
+                &mut paragraph,
+                doc,
+                cascade,
+                TextSource::Generated { node: id },
+                cv,
+                text,
+                fonts,
+                counters,
+            ),
+            GeneratedPiece::Image(image) => {
+                first_letter.stop();
+                has_images = true;
+                paragraph.push_atomic(NodeId(*image as u64), &inline_style, InlineEdges::default());
+                Ok(())
             }
-        }
+        });
+        pushed?;
         // A limit the content exceeds is reported when it is built.
         contents.push(BlockContent {
             start: block.start,
@@ -604,10 +600,7 @@ fn push_generated(
             has_images,
         });
         builder.push_block_in_inline(NodeId(block.end));
-        return match builder.error() {
-            Some(error) => Err(IfcError::Limit(error)),
-            None => Ok(()),
-        };
+        return builder.error().map(IfcError::Limit).map_or(Ok(()), Err);
     }
     if empty && atomic {
         // An atomic box without content is still a box: an empty atomic
