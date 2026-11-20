@@ -710,3 +710,54 @@ fn captions_below_the_rows_tied_to_the_last_caption_move_with_it() {
         ]
     );
 }
+
+#[test]
+fn rows_of_a_row_group_in_an_anonymous_table_count_as_its_rows() {
+    // A break forced between the rows of the group.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row-group"><div style="display:table-row;break-after:page"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'K', 50), (0, 'S', 0), (1, 'L', 0), (1, 'Z', 20)]
+    );
+    // A plain group: its last row moves.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row-group"><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'K', 50), (0, 'S', 0), (1, 'L', 0), (1, 'Z', 20)]
+    );
+    // A group that avoids breaks inside it moves whole.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><div style="display:table-row-group;break-inside:avoid"><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'S', 0), (1, 'K', 0), (1, 'L', 20), (1, 'Z', 40)]
+    );
+    // A row before the group.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><div style="display:table-row"><div style="display:table-cell">J</div></div><div style="display:table-row-group"><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'J', 30),
+            (0, 'K', 50),
+            (0, 'S', 0),
+            (1, 'L', 0),
+            (1, 'Z', 20)
+        ]
+    );
+    // A group tied to the row before it moves with its last row only.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:30px">S</div><div style="display:table-row"><div style="display:table-cell">J</div></div><div style="display:table-row-group;break-before:avoid"><div style="display:table-row"><div style="display:table-cell">K</div></div><div style="display:table-row"><div style="display:table-cell">L</div></div></div><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'J', 30),
+            (0, 'K', 50),
+            (0, 'S', 0),
+            (1, 'L', 0),
+            (1, 'Z', 20)
+        ]
+    );
+}

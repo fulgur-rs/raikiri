@@ -5986,11 +5986,20 @@ fn body_table_break_start(
     let Some(parts) = document.anonymous_table_parts(table) else {
         return run_break_start(document, cascade, table);
     };
+    // The rows among the parts, and the rows of the row groups among them
+    // with their group.
     let rows: Vec<(usize, Option<usize>)> = parts
         .iter()
-        .copied()
-        .filter(|&part| document.nodes[part].display() == DisplayValue::TableRow)
-        .map(|row| (row, None))
+        .flat_map(|&part| match document.nodes[part].display() {
+            DisplayValue::TableRow => vec![(part, None)],
+            DisplayValue::TableRowGroup => document
+                .children_through_contents(part)
+                .into_iter()
+                .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+                .map(|row| (row, Some(part)))
+                .collect(),
+            _ => Vec::new(),
+        })
         .collect();
     tied_rows_start(document, cascade, &rows, false)
 }
