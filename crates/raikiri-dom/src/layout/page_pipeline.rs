@@ -15108,7 +15108,7 @@ fn lines_can_shift_above_blocks(
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                         || (b.kind == IfcBoxKind::Atomic
                             && *atomics_follow.get_or_insert_with(|| {
-                                atomics_follow_text(document, block_id, &ifc.boxes)
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
                             }))
                 })
                 && ifc.lines.as_ref().is_some_and(|lines| {
