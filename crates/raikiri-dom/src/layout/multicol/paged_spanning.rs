@@ -726,18 +726,14 @@ impl FragmentEdits {
         for (&node, &delta) in shifts {
             for id in self.records(node) {
                 if self.parent(id) == Some(container) {
-                    let fragment = &mut self.arena[id];
-                    fragment.rect.y += delta;
-                    if let Some(clip) = &mut fragment.fragmentainer_clip {
-                        clip.rect.y += delta;
-                    }
+                    self.arena[id].translate(0.0, delta);
                 }
             }
         }
     }
 
     /// Move the records of each node in `moved` that are placed in a record
-    /// of `parent` by the node's distance.
+    /// of `parent` by the node's distance, with their column clips.
     pub(in crate::layout) fn shift_following(
         &mut self,
         parent: usize,
@@ -753,7 +749,7 @@ impl FragmentEdits {
                     .parent(id)
                     .is_some_and(|parent| parent_records.contains(&parent))
                 {
-                    self.arena[id].rect.y += delta;
+                    self.arena[id].translate(0.0, delta);
                 }
             }
         }

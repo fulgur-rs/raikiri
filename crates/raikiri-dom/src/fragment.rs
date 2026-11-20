@@ -279,6 +279,17 @@ impl LayoutFragment {
         };
         (base.0 + self.rect.x, base.1 + self.rect.y)
     }
+
+    /// Move this fragment by `(dx, dy)` in its parent's space, with the clip
+    /// of its fragmentainer, which is in the same space.
+    pub(crate) fn translate(&mut self, dx: f32, dy: f32) {
+        self.rect.x += dx;
+        self.rect.y += dy;
+        if let Some(clip) = &mut self.fragmentainer_clip {
+            clip.rect.x += dx;
+            clip.rect.y += dy;
+        }
+    }
 }
 
 // The fixed cap separately bounds retained fragments and additional

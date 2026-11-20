@@ -236,9 +236,7 @@ pub(super) fn layout(
                         .layout_parent_of(id)
                         .expect("spanner roots remain in their source subtree");
                 }
-                let nested = &mut tree.fragment_tree.fragments[index];
-                nested.rect.x += offset.x;
-                nested.rect.y += offset.y;
+                tree.fragment_tree.fragments[index].translate(offset.x, offset.y);
                 tree.fragment_tree.attach_root(index, fragment);
             }
             block_offset =

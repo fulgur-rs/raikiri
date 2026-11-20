@@ -57,28 +57,31 @@ fn words(body: &str) -> String {
         for event in page.paint_order_for_text_runs(&runs) {
             let line = match event {
                 PaintEvent::PushClip(clip, _) => {
-                    clips.push(clip.rect);
+                    clips.push(clip);
                     continue;
                 }
                 PaintEvent::PopClip => {
                     clips.pop();
                     continue;
                 }
-                PaintEvent::TextLine(line) => line,
+                PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => line,
                 _ => continue,
             };
-            let run = runs.iter().find(|run| run.line == line).expect("a run");
-            let mut x = run.origin.0;
-            let y = (run.origin.1 - ASCENT).round();
-            for word in run.text.split(' ') {
-                let visible = clips.iter().all(|clip| {
-                    (clip.x..clip.x + clip.width).contains(&x)
-                        && (clip.y..clip.y + clip.height).contains(&y)
-                });
-                if visible && !word.trim().is_empty() {
-                    words.push(format!("{}@{index}:{},{}", word.trim(), x.round(), y));
+            for run in runs.iter().filter(|run| run.line == line) {
+                let mut x = run.origin.0;
+                let y = (run.origin.1 - ASCENT).round();
+                for word in run.text.split(' ') {
+                    // A clip leaves the axes it does not clip open.
+                    let visible = clips.iter().all(|clip| {
+                        let rect = clip.rect;
+                        (!clip.clip_x || (rect.x..rect.x + rect.width).contains(&x))
+                            && (!clip.clip_y || (rect.y..rect.y + rect.height).contains(&y))
+                    });
+                    if visible && !word.trim().is_empty() {
+                        words.push(format!("{}@{index}:{},{}", word.trim(), x.round(), y));
+                    }
+                    x += ADVANCE * (word.chars().count() + 1) as f32;
                 }
-                x += ADVANCE * (word.chars().count() + 1) as f32;
             }
         }
     }
