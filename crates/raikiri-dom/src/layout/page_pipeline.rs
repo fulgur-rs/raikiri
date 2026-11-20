@@ -19686,41 +19686,75 @@ fn shift_columns_after_spanner(
     // order of the flow. The groups after the spanner are told apart by that
     // order: a negative margin can start them at or above the spanner's top,
     // and pull the spanner up over the group before it.
-    let mut runs_before = 0;
+    let mut runs = 0;
+    let mut runs_before = None;
     let mut content = false;
-    for &id in super::multicol::flow_children(document, container)
-        .iter()
-        .take_while(|&&id| id != spanner)
-    {
-        if super::is_spanner(document, id) {
-            runs_before += usize::from(content);
+    for &id in &super::multicol::flow_children(document, container) {
+        if id == spanner || super::is_spanner(document, id) {
+            runs += usize::from(content);
             content = false;
+            if id == spanner {
+                runs_before = Some(runs);
+            }
         } else {
             content |= super::multicol::spanning::holds_column_content(document, id);
         }
     }
-    runs_before += usize::from(content);
-    let groups = &mut document.nodes[container].multicol_groups;
-    let first_after = runs_before.min(groups.len());
-    let rules_before: usize = groups[..first_after]
-        .iter()
-        .filter(|group| group.height > 0.0)
-        .map(|group| {
-            group
-                .occupied
+    runs += usize::from(content);
+    let groups = &document.nodes[container].multicol_groups;
+    let rules = document.column_rules.get(&container);
+    let (first_group, first_rule) = match runs_before {
+        Some(runs_before) if groups.len() == runs => {
+            let rules_before: usize = groups[..runs_before]
                 .iter()
-                .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
-                .count()
-        })
-        .sum();
-    for group in &mut groups[first_after..] {
+                .filter(|group| group.height > 0.0)
+                .map(|group| {
+                    group
+                        .occupied
+                        .iter()
+                        .filter(|&&column| group.occupied.contains(&column.saturating_add(1)))
+                        .count()
+                })
+                .sum();
+            (runs_before, rules_before)
+        }
+        // Pages split some runs into several groups, or the columns keep no
+        // group per run: those before the spanner start above its top, where
+        // it was before it moved.
+        _ => {
+            let layout_top = document.nodes[spanner].layout.location.y;
+            let top = if grows {
+                layout_top
+            } else {
+                layout_top - delta
+            };
+            let above = |y: f32| y < top - 0.001;
+            (
+                groups
+                    .iter()
+                    .take_while(|group| above(group.context.origin_y))
+                    .count(),
+                rules.map_or(0, |rules| {
+                    rules.iter().take_while(|rule| above(rule.y)).count()
+                }),
+            )
+        }
+    };
+    for group in document.nodes[container]
+        .multicol_groups
+        .iter_mut()
+        .skip(first_group)
+    {
         group.context.origin_y += delta;
     }
-    if let Some(rules) = document.column_rules.get_mut(&container) {
-        let first_after = rules_before.min(rules.len());
-        for rule in &mut rules[first_after..] {
-            rule.y += delta;
-        }
+    for rule in document
+        .column_rules
+        .get_mut(&container)
+        .into_iter()
+        .flatten()
+        .skip(first_rule)
+    {
+        rule.y += delta;
     }
     // The spanner's record holds the content that a break inside it moved;
     // a spanner that moved whole keeps its height.

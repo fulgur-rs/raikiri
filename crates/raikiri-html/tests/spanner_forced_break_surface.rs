@@ -250,3 +250,18 @@ fn a_spanner_that_moves_whole_keeps_its_height() {
     assert!(second.len() >= 4, "{second:?}");
     assert_eq!(second[2..4], [(0.0, 20.0), (0.0, 10.0)], "{second:?}");
 }
+
+#[test]
+fn the_rules_of_columns_that_run_onto_the_spanners_page_stay_beside_them() {
+    // Two columns of twelve lines fill the first page and two more rows of
+    // the second, above the spanner that breaks again.
+    let lines: String = (1..=24).map(|line| format!("<div>L{line}</div>")).collect();
+    assert_eq!(
+        rules(&format!(
+            "<div style='{COLUMNS};column-rule:2px solid'>{lines}\
+             <div style='column-span:all'>{BREAK_BEFORE}</div>\
+             <div>C</div><div>D</div></div>"
+        )),
+        [(0, 0.0, 100.0), (1, 0.0, 20.0), (2, 10.0, 10.0)]
+    );
+}
