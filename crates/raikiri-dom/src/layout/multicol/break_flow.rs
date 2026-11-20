@@ -272,7 +272,7 @@ fn atomic(tree: &LayoutSession<'_>, id: usize) -> bool {
 /// An inline box that holds only block-level boxes and no line of its own.
 /// Block-in-inline splitting leaves no inline fragment with content around
 /// those blocks (CSS 2.1, 9.2.1.1), so the box flows like a block wrapper.
-fn block_in_inline_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+pub(crate) fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
     let node = layout_node(tree, id);
     node.display() == DisplayValue::Inline
         && node.formatting_context == FormattingContext::Block

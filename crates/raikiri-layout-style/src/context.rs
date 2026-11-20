@@ -201,6 +201,10 @@ impl StyleFlags {
     pub const AVOIDS_FLOATS: Self = Self(1 << 22);
     /// A used table-cell box, after blockification.
     pub const TABLE_CELL: Self = Self(1 << 23);
+    /// An HTML `button` laid out as a block container: its content is
+    /// centered along the block axis whatever its `align-content` says
+    /// (HTML Standard, "Button layout").
+    pub const CENTERED_CONTENT: Self = Self(1 << 24);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.

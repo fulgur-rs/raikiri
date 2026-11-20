@@ -16526,8 +16526,24 @@ fn a_truncated_margin_breaks_at_its_first_page_edge() {
     let pages = PageOrigins::new(&[], 100.0);
     // A coinciding forced break keeps the margin on the new page.
     assert_eq!(
-        pages.truncated_margin_target(2, true, 15.0, || unreachable!(), false),
+        pages.truncated_margin_target(2, true, 15.0, || 200.0, false),
         215.0
+    );
+    // A margin that a forced break keeps but that runs past the end of the
+    // page the break opens is cut there: the box starts the next page.
+    assert_eq!(
+        pages.truncated_margin_target(2, true, 150.0, || 100.0, false),
+        200.0
+    );
+    // One that ends on the page the break opens stays whole, even when the
+    // box was further down before the break.
+    assert_eq!(
+        pages.truncated_margin_target(1, true, 50.0, || 100.0, false),
+        150.0
+    );
+    assert_eq!(
+        pages.truncated_margin_target(3, true, 50.0, || 100.0, false),
+        150.0
     );
     // Otherwise the box starts at the first page edge inside its margin.
     assert_eq!(
@@ -17550,6 +17566,8 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
             end: 140.0,
             firm: false,
             closing: None,
+            breaks_inside_start: false,
+            shorter: None,
         },
     );
     let overflow = measure(&breaks, plain, Default::default(), &fit);
@@ -22166,5 +22184,7 @@ fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
     let paragraph = document.append_element(Some(body), "div", Some("display:block"));
     let span = document.append_element(Some(paragraph), "span", None::<&str>);
     document.append_text(span, "  ");
-    assert!(atomics_follow_text(&document, paragraph, &[]));
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).expect("cascade Ok");
+    assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
 }

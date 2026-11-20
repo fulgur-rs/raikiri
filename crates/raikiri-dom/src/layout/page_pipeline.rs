@@ -2120,7 +2120,22 @@ impl PageOrigins {
         follows_forced_break: bool,
     ) -> f32 {
         if forced_before {
-            self.origin(natural_page) + margin_top
+            // The break opens the page at the top of the margin, which may lie
+            // on a page before the box's. A margin that runs past the end of
+            // that page is cut at that end, and the box starts the next page
+            // (Chromium).
+            let break_page = self
+                .page_starting_at_or_after(margin_start())
+                .min(natural_page);
+            let top = self.origin(break_page) + margin_top;
+            let next = self.origin(break_page.saturating_add(1));
+            if break_page >= natural_page {
+                self.origin(natural_page) + margin_top
+            } else if top >= next - 0.001 {
+                next
+            } else {
+                top
+            }
         } else {
             self.origin(self.first_edge_in_margin(
                 margin_start(),
@@ -2155,11 +2170,14 @@ impl PageOrigins {
         };
         // A forced break sits at the top of the margin box. A negative margin
         // puts that top below the border box, past content that runs on
-        // beyond the border box's page.
+        // beyond the border box's page. A positive one that runs over a page
+        // edge leaves the break on the page the margin box starts on: the
+        // margin follows the break, which cuts it at the end of the page the
+        // break opens.
         let margin_box_y = effective_y - margin_top;
         let break_page = self
             .page_index_in_flow(margin_box_y)
-            .map_or(page, |at| at.max(page));
+            .map_or(page, |at| if margin_top > 0.0 { at } else { at.max(page) });
         if !forced_transition {
             page
         } else if break_page > current_page && flow_max >= break_page && margin_box_y.is_finite() {
@@ -5663,6 +5681,15 @@ struct AvoidedRunEnd {
     /// page even when it does not fit there.
     firm: bool,
     closing: Option<ClosingRun>,
+    /// Whether the run starts inside the first box of the run (see
+    /// [`run_break_start`]), at a box that the page may break inside: when
+    /// that box crosses the page end itself, the break inside it is the later
+    /// one, and the run does not move.
+    breaks_inside_start: bool,
+    /// The end of a shorter run that starts at the same box, and whether it
+    /// is firm: when the longer run does not move, the shorter one still
+    /// moves on its own where it crosses the page end.
+    shorter: Option<(f32, bool)>,
 }
 
 /// Normal-flow spans from a direct sibling run's first border-box top.
@@ -5686,6 +5713,252 @@ impl ClosingRun {
                 fit.page_start,
                 fit.page_end,
             )
+    }
+}
+
+/// The box before which the page takes the last break that the block
+/// `node_id` holds between boxes of its own, when the block starts a run of
+/// boxes tied by avoided breaks: Chromium breaks there, inside the first box
+/// of the run, rather than before it, as it takes the latest of equal
+/// breaks. The boxes of the block are searched from the last: a break inside
+/// a box comes after the one before it, and a break between two boxes that
+/// avoided breaks tie is no place to break. Blocks of blocks and flex
+/// containers of one column are searched, and a table breaks before its last
+/// row (see [`last_row_break`]); a paragraph, a box that avoids breaks inside
+/// it, a multicol container and any other box hold no break here.
+fn run_break_start(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    if !may_break_inside(document, cascade, node_id) {
+        return None;
+    }
+    if is_plain_table_box(document, node_id) {
+        return last_row_break(document, cascade, node_id);
+    }
+    if !stacks_boxes(document, cascade, node_id) {
+        return None;
+    }
+    let boxes = flow_boxes(document, cascade, node_id);
+    for (index, &current) in boxes.iter().enumerate().rev() {
+        if let Some(inner) = run_break_start(document, cascade, current) {
+            return Some(inner);
+        }
+        let &before = index.checked_sub(1).and_then(|index| boxes.get(index))?;
+        if !boxes_are_tied(document, cascade, before, current) {
+            return is_plain_block_box(document, current).then_some(current);
+        }
+    }
+    None
+}
+
+/// Whether the box `node_id` stacks the boxes of its flow one below another
+/// as a block of blocks does: a plain block that lays out no lines and no
+/// columns, or a flex container of one column.
+fn stacks_boxes(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    let computed = &cascade.computed[node_id];
+    let column_flex = is_plain_container_box(document, node_id)
+        && node.display() == DisplayValue::Flex
+        && computed.flex_direction == FlexDirectionValue::Column
+        && computed.flex_wrap == FlexWrapValue::NoWrap;
+    (is_plain_block_box(document, node_id) || column_flex)
+        && !node.is_ifc_root()
+        && node.multicol.is_none()
+}
+
+/// The in-flow boxes of the flow of the box `node_id`, in pagination order,
+/// past floats and through `display: contents` elements.
+fn flow_boxes(document: &Document, cascade: &CascadeResult, node_id: usize) -> Vec<usize> {
+    let mut boxes = Vec::new();
+    for child in pagination_child_order(document, cascade, node_id)
+        .into_iter()
+        .rev()
+    {
+        if !is_floating_box_for_pagination(document, cascade, child) {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+    }
+    boxes.reverse();
+    boxes
+}
+
+/// The box whose flow holds the box `node_id`, past `display: contents`
+/// elements.
+fn flow_parent(document: &Document, node_id: usize) -> Option<usize> {
+    let mut parent = document.nodes[node_id].parent?;
+    while document.nodes[parent].display() == DisplayValue::Contents {
+        parent = document.nodes[parent].parent?;
+    }
+    Some(parent)
+}
+
+/// Whether the page holds no break inside the part of the box `outer` from
+/// the top of the box `start` in it (see [`run_break_start`]) to its end:
+/// neither inside `start` nor inside or between the boxes after it.
+fn holds_no_break_from(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    outer: usize,
+    start: usize,
+) -> bool {
+    let next = |&id: &usize| next_flow_box(document, cascade, id);
+    box_holds_no_break(document, cascade, body_id, start)
+        && std::iter::successors(Some(start), |&id| flow_parent(document, id))
+            .take_while(|&id| id != outer)
+            .all(|current| {
+                std::iter::successors(next(&current), next)
+                    .all(|id| box_holds_no_break(document, cascade, body_id, id))
+            })
+}
+
+/// Whether the page may break inside the box `node_id`: it neither avoids
+/// breaks inside it, nor is monolithic, nor clips its overflow at a height of
+/// its own, which Chromium treats as monolithic too.
+fn may_break_inside(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && !clips_at_bounded_height(document, cascade, node_id)
+        && !is_monolithic_for_pagination_with_transposed_axes(
+            document,
+            cascade,
+            node_id,
+            document.context.pagination_on_transposed_axes,
+        )
+}
+
+/// The last row of the table `table` outside its header and footer groups,
+/// when the page may break before it: the table has rows before it in its
+/// row groups, and nothing that avoids or forces a break between that row and
+/// the one before it, whether on the rows, on the row groups they end and
+/// start, or inside a row group that holds both.
+fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) -> Option<usize> {
+    // Each row with the row group that holds it, if any.
+    let mut rows = Vec::new();
+    for child in document.children_through_contents(table) {
+        match document.nodes[child].display() {
+            DisplayValue::TableRowGroup => rows.extend(
+                document
+                    .children_through_contents(child)
+                    .into_iter()
+                    .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+                    .map(|row| (row, Some(child))),
+            ),
+            DisplayValue::TableRow => rows.push((child, None)),
+            _ => {}
+        }
+    }
+    rows.sort_by(|&(a, _), &(b, _)| {
+        current_abs_y(document, a).total_cmp(&current_abs_y(document, b))
+    });
+    let [.., (before, before_group), (last, last_group)] = rows[..] else {
+        return None;
+    };
+    let mut edges = vec![(before, false), (last, true)];
+    if before_group == last_group {
+        if before_group
+            .is_some_and(|group| avoids_page_break_inside(cascade.computed[group].break_inside))
+        {
+            return None;
+        }
+    } else {
+        edges.extend(before_group.map(|group| (group, false)));
+        edges.extend(last_group.map(|group| (group, true)));
+    }
+    edges
+        .into_iter()
+        .all(|(id, before_edge)| {
+            let (forced, avoided) = page_edge_constraint(document, cascade, id, before_edge);
+            !forced && !avoided
+        })
+        .then_some(last)
+}
+
+/// The next in-flow box after the box `node_id` in the flow of its parent,
+/// past floats and through `display: contents` elements on either side.
+fn next_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    let boxes = flow_boxes(document, cascade, flow_parent(document, node_id)?);
+    let index = boxes.iter().position(|&id| id == node_id)?;
+    boxes.get(index + 1).copied()
+}
+
+/// Where the blocks of the document start the runs of boxes tied by avoided
+/// breaks that they open with the box after them (see [`run_break_start`]),
+/// found once for each block, with the next in-flow box of each box found
+/// once for each flow.
+#[derive(Default)]
+pub(super) struct RunBreakStarts {
+    next: HashMap<usize, Option<usize>>,
+    starts: HashMap<usize, Option<usize>>,
+}
+
+impl RunBreakStarts {
+    /// The next in-flow box after `node_id` in the flow of its parent (see
+    /// [`next_flow_box`]).
+    fn next_flow_box(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        if !self.next.contains_key(&node_id)
+            && let Some(parent) = flow_parent(document, node_id)
+        {
+            let boxes = flow_boxes(document, cascade, parent);
+            for (index, &id) in boxes.iter().enumerate() {
+                self.next.insert(id, boxes.get(index + 1).copied());
+            }
+        }
+        *self.next.entry(node_id).or_insert(None)
+    }
+
+    /// The box where the block `block` starts the run it opens with the box
+    /// after it, if avoided breaks tie the two.
+    fn start(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        block: usize,
+    ) -> Option<usize> {
+        if let Some(&start) = self.starts.get(&block) {
+            return start;
+        }
+        let start = self
+            .next_flow_box(document, cascade, block)
+            .filter(|&next| {
+                document.nodes[next].kind() == NodeKind::Element
+                    && boxes_are_tied(document, cascade, block, next)
+            })
+            .and_then(|_| run_break_start(document, cascade, block));
+        self.starts.insert(block, start);
+        start
+    }
+
+    /// Whether the box `node_id` is where a block around it, below the body,
+    /// starts the run of boxes tied by avoided breaks that it opens with the
+    /// box after it: the page may break before it then, so the walk looks at
+    /// it.
+    pub(super) fn starts_break(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+    ) -> bool {
+        document
+            .ancestors(node_id)
+            .take_while(|&ancestor| ancestor != body_id)
+            .filter(|&ancestor| stacks_boxes(document, cascade, ancestor))
+            .any(|ancestor| self.start(document, cascade, ancestor) == Some(node_id))
     }
 }
 
@@ -5776,7 +6049,11 @@ fn avoided_run_ends(
             run_start = None;
         } else if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
-            if !box_holds_no_break(document, cascade, body_id, prior.node_id) {
+            // The first box is told apart below, once it is known where in
+            // it the run starts.
+            if prior.node_id != start
+                && !box_holds_no_break(document, cascade, body_id, prior.node_id)
+            {
                 soft_runs.insert(start);
             }
             let margin_bottom =
@@ -5796,7 +6073,7 @@ fn avoided_run_ends(
     }
     let mut ends: HashMap<usize, AvoidedRunEnd> = run_lasts
         .into_iter()
-        .map(|(start, (last, margin_bottom))| {
+        .map(|(run_first, (last, margin_bottom))| {
             // The last box of the run stays with the box before it only as far
             // as the page has to hold of it.
             let (head, firm) = match first_row_ends.get(&last.node_id) {
@@ -5813,7 +6090,12 @@ fn avoided_run_ends(
                     (held.end, held.firm)
                 }
             };
-            let firm = firm && !soft_runs.contains(&start);
+            // A first box that holds breaks between boxes of its own starts
+            // the run at the last of them (see `run_break_start`).
+            let start = run_break_start(document, cascade, run_first).unwrap_or(run_first);
+            let firm = firm
+                && !soft_runs.contains(&run_first)
+                && holds_no_break_from(document, cascade, body_id, run_first, start);
             let (end, whole) = match head {
                 Some(head) if head < last.height - 0.001 => (last.raw_y + head, false),
                 // Content that runs out past a box that avoids breaks
@@ -5842,7 +6124,18 @@ fn avoided_run_ends(
                         content_height: span - lone.tail + lone.float_reach,
                     }
                 });
-            (start, AvoidedRunEnd { end, firm, closing })
+            let breaks_inside_start =
+                start != run_first && may_break_inside(document, cascade, start);
+            (
+                start,
+                AvoidedRunEnd {
+                    end,
+                    firm,
+                    closing,
+                    breaks_inside_start,
+                    shorter: None,
+                },
+            )
         })
         .collect();
     // A box that holds a run of its own at its start, or starts a run among
@@ -5852,11 +6145,20 @@ fn avoided_run_ends(
         if let Some(unit) = candidate.context.avoided_unit() {
             let end = candidate.raw_y + unit.end;
             let firm = unit.firm;
+            let breaks_inside_start = unit.breaks_inside;
             let unit = unit.end;
             ends.entry(candidate.node_id)
                 .and_modify(|known| {
-                    known.firm = if end > known.end { firm } else { known.firm };
-                    known.end = known.end.max(end);
+                    // The known run stays the longer one on a tie.
+                    let mut runs = [(known.end, known.firm), (end, firm)];
+                    runs.sort_by(|a, b| b.0.total_cmp(&a.0));
+                    let [longer, shorter] = runs;
+                    (known.end, known.firm) = longer;
+                    if shorter.0 < longer.0 - 0.001
+                        && known.shorter.is_none_or(|known| known.0 < shorter.0)
+                    {
+                        known.shorter = Some(shorter);
+                    }
                     if let Some(closing) = &mut known.closing {
                         closing.height = closing.height.max(unit);
                         closing.content_height = closing.content_height.max(unit);
@@ -5866,6 +6168,8 @@ fn avoided_run_ends(
                     end,
                     firm,
                     closing: None,
+                    breaks_inside_start,
+                    shorter: None,
                 });
         }
     }
@@ -5879,6 +6183,10 @@ fn avoided_run_ends(
 pub(super) struct RunUnit {
     pub(super) end: f32,
     pub(super) firm: bool,
+    /// Whether the run starts at this box inside the first box of the run,
+    /// and the page may break inside this box (see
+    /// [`AvoidedRunEnd::breaks_inside_start`]).
+    pub(super) breaks_inside: bool,
 }
 
 /// Whether the page holds no break inside the box `node_id` of a run of
@@ -6827,18 +7135,24 @@ impl AvoidedBreaks {
             next_page_step,
         } = *fit;
         let avoided_run = self.run_ends.get(&node_id).is_some_and(|end| {
-            avoided_run_moves(
-                end.end - raw_y,
-                end.firm,
-                margin_top,
-                effective_y,
-                page_start,
-                page_end,
-                next_page_step,
-            ) || end
-                .closing
-                .as_ref()
-                .is_some_and(|closing| closing.moves(fit))
+            let moves = |(run_end, firm): (f32, bool)| {
+                avoided_run_moves(
+                    run_end - raw_y,
+                    firm,
+                    margin_top,
+                    effective_y,
+                    page_start,
+                    page_end,
+                    next_page_step,
+                )
+            };
+            !(end.breaks_inside_start && flow_y + height > page_end + 0.001)
+                && (moves((end.end, end.firm))
+                    || end.shorter.is_some_and(moves)
+                    || end
+                        .closing
+                        .as_ref()
+                        .is_some_and(|closing| closing.moves(fit)))
         });
         let page_box_end = flow_y + height + trailing_margin;
         let unplaced_line = candidate.context.unplaced_line();
@@ -12671,6 +12985,7 @@ fn nested_run_units(
     body_id: usize,
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
+    run_breaks: &mut HashMap<usize, RunUnit>,
 ) -> (Vec<Option<RunUnit>>, Vec<f32>) {
     // A table ends a run it joins and starts none: only its first row stays
     // with the box before it.
@@ -12707,10 +13022,10 @@ fn nested_run_units(
             None => last_height + margin_bottom,
         };
         let run_end = normal_flow_y(document, cascade, body_id, last_box) + head;
-        // Whether the boxes of the run from `start` up to `end` hold no
-        // break inside them better than the one before the run.
+        // Whether the boxes of the run after its first box, up to `end`,
+        // hold no break inside them better than the one before the run.
         let holds_no_break = |end: usize| {
-            (start..end)
+            (start + 1..end)
                 .filter(|&index| is_flow_box(index))
                 .all(|index| box_holds_no_break(document, cascade, body_id, children[index]))
         };
@@ -12736,17 +13051,40 @@ fn nested_run_units(
                 units[start] = Some(RunUnit {
                     end: normal_flow_y(document, cascade, body_id, paragraph_box) + head
                         - normal_flow_y(document, cascade, body_id, start_box),
-                    firm: held.firm && holds_no_break(paragraph),
+                    firm: held.firm
+                        && box_holds_no_break(document, cascade, body_id, start_box)
+                        && holds_no_break(paragraph),
+                    breaks_inside: false,
                 });
             }
             return;
         }
         // A run from the first box has no break before it to move to.
         if Some(start) != first_in_flow {
-            units[start] = Some(RunUnit {
-                end: run_end - normal_flow_y(document, cascade, body_id, start_box),
-                firm: held.firm && holds_no_break(last),
-            });
+            // A first box that holds breaks between boxes of its own starts
+            // the run at the last of them (see `run_break_start`).
+            let key = run_break_start(document, cascade, start_box);
+            let first = key.unwrap_or(start_box);
+            let unit = RunUnit {
+                end: run_end - normal_flow_y(document, cascade, body_id, first),
+                firm: held.firm
+                    && holds_no_break_from(document, cascade, body_id, start_box, first)
+                    && holds_no_break(last),
+                breaks_inside: key.is_some() && may_break_inside(document, cascade, first),
+            };
+            match key {
+                // Runs of blocks at more than one level can start at the
+                // same box: the longest of them holds the page.
+                Some(key) => {
+                    run_breaks
+                        .entry(key)
+                        .and_modify(|known| {
+                            *known = if unit.end > known.end { unit } else { *known }
+                        })
+                        .or_insert(unit);
+                }
+                None => units[start] = Some(unit),
+            }
         }
     };
     let mut run: Option<(usize, usize)> = None;
@@ -14639,7 +14977,7 @@ fn lines_can_shift_inside(
                             && out_of_flow_follow(document, cascade, block_id, b.node).is_some())
                         || (b.kind == IfcBoxKind::Atomic
                             && *atomics_follow.get_or_insert_with(|| {
-                                atomics_follow_text(document, block_id, &ifc.boxes)
+                                atomics_follow_text(document, cascade, block_id, &ifc.boxes)
                             }))
                 })
         })
@@ -14651,17 +14989,25 @@ fn lines_can_shift_inside(
 /// before it are placed before it is: a move would leave them behind. The
 /// walk stops at the first text or atomic inline, and does not enter the
 /// paragraph's boxes, whose content is not its text.
-fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bool {
+fn atomics_follow_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    boxes: &[IfcBox],
+) -> bool {
     let boxed: HashMap<usize, bool> = boxes
         .iter()
         .map(|b| (b.node, b.kind == IfcBoxKind::Atomic))
         .collect();
-    let mut stack: Vec<usize> = document.nodes[root]
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+    // Children in the order layout and the page candidates take them, which
+    // puts the summary of a `details` first.
+    let children = |node: usize| {
+        pagination_child_order_borrowed(document, cascade, node)
+            .into_owned()
+            .into_iter()
+            .rev()
+    };
+    let mut stack: Vec<usize> = children(root).collect();
     while let Some(node) = stack.pop() {
         if let Some(&atomic) = boxed.get(&node) {
             if atomic {
@@ -14681,7 +15027,7 @@ fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bo
                 if !document.nodes[node].is_display_none()
                     && !document.nodes[node].is_non_rendered_html_element() =>
             {
-                stack.extend(document.nodes[node].children.iter().rev().copied());
+                stack.extend(children(node));
             }
             _ => {}
         }
@@ -15661,8 +16007,11 @@ impl SiblingMargins {
         }
         if let Some(page) = float_break_page {
             // A relayout may already place the box at the next edge. Keep
-            // the margin from the float's forced boundary, not that edge.
-            target_y = target_y.min(page_origins.page_end(page));
+            // the margin from the float's forced boundary, not that edge,
+            // and never above the page the float's break opens.
+            target_y = target_y
+                .min(page_origins.page_end(page))
+                .max(page_origins.origin(page));
         }
         Some(MarginTruncation {
             delta: target_y - effective_y,
@@ -19230,21 +19579,35 @@ fn height_is_capped(document: &super::context::LayoutSession<'_>, block: usize) 
 }
 
 /// Whether `parent` is a block container whose later children follow a
-/// moved child. Flex, grid and table containers place their children
-/// themselves, and a paragraph's lines follow a moved block child through
-/// its line shifts.
+/// moved child, or an inline box that lays only blocks out as one does (see
+/// [`lays_blocks_out_inline_box`]). Flex, grid and table containers place
+/// their children themselves, and a paragraph's lines follow a moved block
+/// child through its line shifts.
 fn moves_later_siblings(document: &Document, parent: usize) -> bool {
-    matches!(
-        document.nodes[parent].display(),
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::ListItem
-            | DisplayValue::InlineBlock
-            | DisplayValue::TableCaption
-    ) && document.nodes[parent].multicol.is_none()
-        && document
-            .ifc_layout_node(parent)
-            .is_none_or(|node| node.ifc.is_none())
+    lays_blocks_out_inline_box(document, parent)
+        || matches!(
+            document.nodes[parent].display(),
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::InlineBlock
+                | DisplayValue::TableCaption
+        ) && document.nodes[parent].multicol.is_none()
+            && document
+                .ifc_layout_node(parent)
+                .is_none_or(|node| node.ifc.is_none())
+}
+
+/// Whether `node_id` is an inline box that holds no line of a paragraph,
+/// only blocks (see [`crate::layout::multicol::block_in_inline_wrapper`]),
+/// with no block-axis padding or border of its own: it stacks those blocks
+/// in block flow, as the anonymous block around a block inside an inline box
+/// does.
+fn lays_blocks_out_inline_box(document: &Document, node_id: usize) -> bool {
+    let layout = &document.nodes[node_id].layout;
+    crate::layout::multicol::block_in_inline_wrapper(document, node_id)
+        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+            <= 0.0
 }
 
 /// Moves the boxes that follow `child` in the block container `parent`

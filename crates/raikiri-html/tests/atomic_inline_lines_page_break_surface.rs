@@ -146,10 +146,12 @@ fn lines_of_atomic_inlines_in_a_contents_wrapper_before_text_keep_their_place() 
 
 #[test]
 fn an_element_never_rendered_before_the_atomic_inlines_is_not_their_text() {
-    // raikiri never renders the content of a script, whatever its display
-    // (Chromium shows it under `display: inline`), so the paragraph lays out
-    // as one without it: the inline-blocks come before the text and keep
-    // their place, as in the test above.
+    // A known difference from Chromium, not a Chromium value: raikiri never
+    // lays out the content of a script, whatever its display, while Chromium
+    // prints the text of `<script style="display:inline">`. Line layout and
+    // the page candidates both skip the script here, so the paragraph must
+    // lay out exactly as one without it: the inline-blocks come before the
+    // text and keep their place, as in the test above.
     let paragraph = |script: &str| {
         glyphs(&format!(
             r#"<div style="height:40px"></div><div style="width:20px">{script}<i>B</i><i>B</i> T T</div><div>Z</div>"#
@@ -301,5 +303,31 @@ fn an_atomic_inline_in_a_ruby_annotation_moves_with_its_line() {
             r#"{ruby}<div style="height:30px"></div><div style="width:20px">T <ruby>R<rt><i>C</i></rt></ruby></div>"#
         )),
         [(1, 'C', 0, 30), (1, 'R', 0, 55), (1, 'T', 0, 5)]
+    );
+}
+
+#[test]
+fn the_summary_of_a_details_is_text_before_the_atomic_inlines_after_it() {
+    // The first summary is laid out first wherever it is among the children
+    // of its details, so its text comes before the inline-blocks and the
+    // lines of inline-blocks move as in a paragraph that starts with the text.
+    let expected = [
+        (0, 'T', 0, 45),
+        (0, 'T', 0, 75),
+        (1, 'B', 0, 5),
+        (1, 'B', 0, 35),
+        (1, 'Z', 0, 65),
+    ];
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><details open style="width:20px"><i>B</i><i>B</i><summary style="display:inline">T T</summary></details><div>Z</div>"#
+        ),
+        expected
+    );
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><div style="width:20px">T T<i>B</i><i>B</i></div><div>Z</div>"#
+        ),
+        expected
     );
 }

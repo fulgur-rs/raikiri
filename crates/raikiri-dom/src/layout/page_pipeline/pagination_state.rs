@@ -2631,16 +2631,19 @@ impl PaginationState {
             } else {
                 0.0
             };
+        // A margin that runs past the end of that page on its own is cut at
+        // that end too, and the box starts the next page (Chromium).
         let margin_pushes_box_on = forced_transition
             && margin_top > 0.0
-            && candidate.context.is_unbreakable()
             && is_block_flow_box(document, cascade, candidate)
-            && starts_on_page_and_runs_past_it(
-                landing_top,
-                landing_top + candidate.height,
-                page_origins.origin(target_page),
-                page_origins.page_end(target_page),
-            );
+            && (landing_top >= page_origins.page_end(target_page) - 0.001
+                || candidate.context.is_unbreakable()
+                    && starts_on_page_and_runs_past_it(
+                        landing_top,
+                        landing_top + candidate.height,
+                        page_origins.origin(target_page),
+                        page_origins.page_end(target_page),
+                    ));
         if margin_pushes_box_on {
             target_page = target_page.saturating_add(1);
             reach_page(control, target_page)?;
@@ -3951,7 +3954,34 @@ impl PaginationState {
                 (metrics, widows) = next;
             }
         }
+        // The run opens the page right after the blocks inside an inline box
+        // that open the paragraph: the break between them is one between
+        // lines, and Chromium counts those blocks as one line of the
+        // paragraph for its orphans. Too few of them move the paragraph
+        // whole, as the break before it does, when they fit the next page
+        // and no forced break comes after them.
         let mut moved = false;
+        let mut paragraph_moved = false;
+        if run.start == 0
+            && page > 0
+            && text.effective_y + metrics[0].0 <= page_origins.origin(page) + 0.5
+            && cascade.computed[root].orphans > 1
+            && self.opening_inline_blocks_break_softly(document, env, root, page)
+            && self
+                .inline_block_paragraph_to_move(document, env, candidate, blocks, text, page - 1)
+                .is_some()
+        {
+            let previous = page - 1;
+            let moved_paragraph = self.move_inline_block_paragraph(
+                document, env, candidate, entry, blocks, text, previous,
+            );
+            moved_paragraph?;
+            paragraph_moved = true;
+            if let Some(next) = run_metrics(document, text.effective_y) {
+                (metrics, widows) = next;
+                page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+            }
+        }
         loop {
             let page_start = page_origins.origin(page);
             let page_step = page_origins.step_at(page);
@@ -4007,7 +4037,9 @@ impl PaginationState {
             );
             // With lines ahead of the run, the widows the paragraph cannot
             // have are relaxed only on the page it opens on.
-            fit.first_fragment = !moved && (lines_before == 0 || opens_on_page);
+            // A paragraph moved whole to the page it opens on relaxes none:
+            // Chromium keeps the natural break there.
+            fit.first_fragment = !moved && !paragraph_moved && (lines_before == 0 || opens_on_page);
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;
             // A run taller than a page moves whole only to keep its orphans,
@@ -4016,6 +4048,7 @@ impl PaginationState {
             // is one between lines, judged with those lines (see
             // `keep_lines_through_inline_block`).
             let can_move_block = !moved
+                && !paragraph_moved
                 && lines_before == 0
                 && (block_fits_page_step(run_height, page_step)
                     || (run_top > page_start + 0.001 && fit.leaves_too_few_orphans()));
@@ -4038,15 +4071,26 @@ impl PaginationState {
                 // before it does; else none comes between those lines and
                 // the run.
                 if !moved
+                    && !paragraph_moved
                     && self
                         .inline_block_paragraph_to_move(
                             document, env, candidate, blocks, text, page,
                         )
                         .is_some()
                 {
-                    return self.move_inline_block_paragraph(
+                    let moved_paragraph = self.move_inline_block_paragraph(
                         document, env, candidate, entry, blocks, text, page,
                     );
+                    moved_paragraph?;
+                    // Judged once more from the page the run is on now, for
+                    // the lines that break again there.
+                    paragraph_moved = true;
+                    if let Some(next) = run_metrics(document, text.effective_y) {
+                        (metrics, widows) = next;
+                        page =
+                            page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
+                    }
+                    continue;
                 }
                 LineBreakFix::Keep
             } else {
@@ -4133,6 +4177,43 @@ impl PaginationState {
             }
         }
         Ok(())
+    }
+
+    /// Whether the blocks that open the paragraph `root`, before its first
+    /// line, end with one inside an inline box, fit the page after `page -
+    /// 1` together, and force no break inside or after them: the break
+    /// between them and the first line on `page` is then one between lines
+    /// of the paragraph, which its orphans can move.
+    fn opening_inline_blocks_break_softly(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        root: usize,
+        page: u32,
+    ) -> bool {
+        let opening: Vec<(usize, usize, bool)> = super::paragraph_blocks(document, root)
+            .into_iter()
+            .filter(|&(_, after, _)| after == 0)
+            .collect();
+        let last_inline = opening.last().is_some_and(|&(_, _, inline)| inline);
+        let height: f32 = opening
+            .iter()
+            .map(|&(block, _, _)| document.nodes[block].layout.size.height)
+            .sum();
+        let mut pending: Vec<usize> = opening.iter().map(|&(block, _, _)| block).collect();
+        let mut forced = false;
+        while let Some(id) = pending.pop() {
+            let computed = &env.cascade.computed[id];
+            forced |= super::page_break_is_forced(document, env.cascade, id, computed.break_before)
+                || super::page_break_after_is_forced(
+                    document,
+                    env.cascade,
+                    id,
+                    computed.break_after,
+                );
+            pending.extend(document.nodes[id].children.iter().copied());
+        }
+        last_inline && !forced && block_fits_page_step(height, env.page_origins.step_at(page))
     }
 
     /// Keeps the lines right before a block of the paragraph with the block,
