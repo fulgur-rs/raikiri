@@ -1501,7 +1501,7 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // its content and whose block edges, if any, its pieces slice, which the custom
 // path breaks between lines in a definite-height container as well. A box with
 // nothing inside it may stand among them, if one of the others holds lines: one
-// with a block size of its own, which the planner places whole in a column, or
+// with a block size of its own, which the planner slices at column ends, or
 // one with no room of its own, whose margins collapse through it. So may a box
 // of lines with a height of its own (see `is_sized_paragraph`), and a box that
 // makes a formatting context of its own (see `is_whole_formatting_context_box`),
@@ -1539,8 +1539,9 @@ fn multicol_has_only_paragraph_children(
             paragraphs += count;
             return true;
         }
-        // A box of lines with a height of its own goes whole to a column, so
-        // it needs the planner as a box of lines does. So does a box that
+        // A box of lines with a height of its own is sliced at column ends,
+        // or goes whole to a column, so it needs the planner as a box of lines
+        // does. So does a box that
         // makes a formatting context of its own.
         if is_sized_paragraph(tree, child)
             || is_whole_formatting_context_box(tree, child)
@@ -1695,8 +1696,9 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
 }
 
 /// Whether `child` is a plain block of lines whose height is authored: a box
-/// the planner places whole in a column, whatever its lines would give it, as
-/// it places a box with no lines. The structure decides this before the box
+/// the planner slices at column ends, whatever its lines would give it, as it
+/// slices a box with no lines, keeping its lines in its first piece, or places
+/// whole in a column. The structure decides this before the box
 /// is laid out; [`paragraph_group`] also checks that the lines fit the height
 /// once they are shaped.
 fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
@@ -4164,6 +4166,10 @@ fn layout_column_group(
             column = placement.last_column;
             cursor = placement.last_y + margin_bottom;
         } else if let Some(placement) = planned {
+            // A sliced box occupies every column a piece of it reaches.
+            if placement.sliced {
+                occupied.extend(placement.first_column..=placement.last_column);
+            }
             column = placement.last_column;
             cursor = placement.last_y;
             let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);

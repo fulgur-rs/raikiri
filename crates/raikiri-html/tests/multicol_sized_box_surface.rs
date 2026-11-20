@@ -6,8 +6,8 @@
 //! documents.
 
 use raikiri_html::{
-    FontCollectionBuilder, FragmentKind, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, FragmentKind, LayoutOptions, LayoutStatus, PaintEvent,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
@@ -20,6 +20,25 @@ const ADVANCE: f32 = 10.0;
 /// Every word of `body` as `word@x,y`, the left and top of its glyphs, in
 /// source order, on an 800x600 page with 10px Ahem lines 10px apart.
 fn words(body: &str) -> String {
+    let result = lay_out(body);
+    let page = result.page(0).expect("one page");
+    assert!(result.page(1).is_none(), "the content fits one page");
+    let mut words = Vec::new();
+    for run in page.text_runs() {
+        let mut x = run.origin.0;
+        let y = (run.origin.1 - ASCENT).round();
+        for word in run.text.split(' ') {
+            if !word.trim().is_empty() {
+                words.push(format!("{}@{},{}", word.trim(), x.round(), y));
+            }
+            x += ADVANCE * (word.chars().count() + 1) as f32;
+        }
+    }
+    words.join(" ")
+}
+
+/// `body` laid out on an 800x600 page with 10px Ahem lines 10px apart.
+fn lay_out(body: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -42,20 +61,7 @@ fn words(body: &str) -> String {
     .unwrap() else {
         panic!("layout must complete")
     };
-    let page = result.page(0).expect("one page");
-    assert!(result.page(1).is_none(), "the content fits one page");
-    let mut words = Vec::new();
-    for run in page.text_runs() {
-        let mut x = run.origin.0;
-        let y = (run.origin.1 - ASCENT).round();
-        for word in run.text.split(' ') {
-            if !word.trim().is_empty() {
-                words.push(format!("{}@{},{}", word.trim(), x.round(), y));
-            }
-            x += ADVANCE * (word.chars().count() + 1) as f32;
-        }
-    }
-    words.join(" ")
+    result
 }
 
 /// A two-column container 200px wide holding `content`, followed by a line.
@@ -195,6 +201,26 @@ fn definite_columns_slice_a_sized_box_of_lines() {
 }
 
 #[test]
+fn a_sized_box_whose_lines_a_column_end_would_cut_goes_whole_to_the_next_column() {
+    assert_eq!(
+        filled(
+            "<div style='width:20px'>cd ef gh</div>\
+             <div style='height:40px;width:20px'>ab cd</div>\
+             <div style='width:20px'>ij kl</div>"
+        ),
+        "cd@0,0 ef@0,10 gh@0,20 ab@100,0 cd@100,10 ij@200,0 kl@200,10 Z@0,45"
+    );
+    assert_eq!(
+        filled(
+            "<div style='width:20px'>cd ef gh ij</div>\
+             <div style='height:20px;width:20px'>ab cd</div>\
+             <div style='width:20px'>kl</div>"
+        ),
+        "cd@0,0 ef@0,10 gh@0,20 ij@0,30 ab@100,0 cd@100,10 kl@100,20 Z@0,45"
+    );
+}
+
+#[test]
 fn a_sized_box_of_lines_in_a_wrapper_joins_the_flow() {
     assert_eq!(
         balanced(&format!("<div>{SIZED}{NARROW}</div>")),
@@ -224,29 +250,11 @@ fn a_sized_box_of_lines_in_a_wrapper_joins_the_flow() {
 
 #[test]
 fn the_pieces_of_a_sliced_box_of_lines_fill_their_columns() {
-    let fonts = FontCollectionBuilder::new()
-        .font_bytes(
-            "Ahem",
-            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
-        )
-        .build()
-        .unwrap();
-    let resources = RenderResources::new().fonts(fonts);
-    let html = "<!doctype html><style>@page{size:800px 600px;margin:0}\
-                body{margin:0;font:10px/10px Ahem}</style><body>\
-                <div style='columns:2;width:200px;column-gap:0'>\
-                <div style='height:50px;background:green'>ab</div>\
-                <div style='width:20px'>cd ef gh ij</div></div>";
-    let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
-    let LayoutStatus::Completed(result) = layout(
-        &document,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        LayoutOptions::new().resources(&resources),
-    )
-    .unwrap() else {
-        panic!("layout must complete")
-    };
+    let result = lay_out(
+        "<div style='columns:2;width:200px;column-gap:0'>\
+         <div style='height:50px;background:green'>ab</div>\
+         <div style='width:20px'>cd ef gh ij</div></div>",
+    );
     let page = result.page(0).expect("one page");
     // The column boxes are 100px wide; the sized box is the only one.
     let pieces: Vec<_> = page
@@ -258,4 +266,21 @@ fn the_pieces_of_a_sliced_box_of_lines_fill_their_columns() {
         })
         .collect();
     assert_eq!(pieces, [(0.0, 0.0, 45.0), (100.0, 0.0, 5.0)]);
+}
+
+#[test]
+fn a_column_holding_only_a_piece_of_a_sliced_box_has_a_rule_before_it() {
+    let content = "<div style='width:20px'>cd ef</div><div style='height:60px'>ab</div>";
+    assert_eq!(balanced(content), "cd@0,0 ef@0,10 ab@0,20 Z@0,40");
+    let result = lay_out(&format!(
+        "<div style='columns:2;width:200px;column-gap:0;column-rule:2px solid'>{content}</div>"
+    ));
+    let rules = result
+        .page(0)
+        .expect("one page")
+        .paint_order()
+        .iter()
+        .filter(|event| matches!(event, PaintEvent::ColumnRule(_)))
+        .count();
+    assert_eq!(rules, 1);
 }
