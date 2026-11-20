@@ -4221,8 +4221,11 @@ fn forces_page_break(
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
-    own && !at_table_cell_edge(document, cascade, node_id, before)
-        || row_takes_cell_break(document, cascade, node_id, before)
+    // Break properties apply to boxes in the flow: an absolutely positioned
+    // box breaks no page before or after itself (Chromium).
+    (own && !at_table_cell_edge(document, cascade, node_id, before)
+        || row_takes_cell_break(document, cascade, node_id, before))
+        && !is_out_of_flow_positioned(document, node_id)
 }
 
 /// Whether `node_id` is a multicol container whose first box is a spanner
@@ -5268,6 +5271,9 @@ fn paginate_flow(
         while let Some(mut candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
+            state
+                .pending_break
+                .leave_scopes(document, candidate.node_id);
             if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
                 halted = true;
                 break;
@@ -10189,6 +10195,10 @@ struct PendingBreak {
     /// Each still falls after its own box once the break inside it has been
     /// taken.
     enclosing: Vec<EnclosingBreak>,
+    /// The nearest absolutely positioned box around the source, if any: a
+    /// break forced inside one falls before the next box inside it only and
+    /// never reaches the flow outside (Chromium).
+    scope: Option<usize>,
 }
 
 /// A pending break forced after a box that holds the source of a later one
@@ -10198,6 +10208,7 @@ struct EnclosingBreak {
     line_peers: Vec<usize>,
     source_end: f32,
     ends_enclosing: bool,
+    scope: Option<usize>,
 }
 
 impl PendingBreak {
@@ -10210,7 +10221,8 @@ impl PendingBreak {
     /// it.
     fn applies_to(&self, document: &Document, node_id: usize) -> bool {
         self.source.is_some_and(|source| {
-            !is_descendant_or_self(document, node_id, source)
+            in_break_scope(document, self.scope, node_id)
+                && !is_descendant_or_self(document, node_id, source)
                 && !self
                     .line_peers
                     .iter()
@@ -10232,13 +10244,35 @@ impl PendingBreak {
         let mut same_break = self.ends_enclosing;
         while let Some(outer) = self.enclosing.pop() {
             if !same_break && is_descendant_or_self(document, node_id, outer.source) {
-                self.source = Some(outer.source);
-                self.line_peers = outer.line_peers;
-                self.source_end = outer.source_end;
-                self.ends_enclosing = outer.ends_enclosing;
+                self.restore(outer);
                 break;
             }
             same_break = outer.ends_enclosing;
+        }
+    }
+
+    fn restore(&mut self, outer: EnclosingBreak) {
+        self.source = Some(outer.source);
+        self.line_peers = outer.line_peers;
+        self.source_end = outer.source_end;
+        self.ends_enclosing = outer.ends_enclosing;
+        self.scope = outer.scope;
+    }
+
+    /// Drop the breaks forced inside an absolutely positioned box that
+    /// `node_id` lies outside of: they break nothing after that box. The
+    /// break forced after a box around that one is pending again.
+    fn leave_scopes(&mut self, document: &Document, node_id: usize) {
+        if self.source.is_none() || in_break_scope(document, self.scope, node_id) {
+            return;
+        }
+        self.source = None;
+        self.line_peers.clear();
+        while let Some(outer) = self.enclosing.pop() {
+            if in_break_scope(document, outer.scope, node_id) {
+                self.restore(outer);
+                break;
+            }
         }
     }
 
@@ -10272,6 +10306,7 @@ impl PendingBreak {
                 line_peers: std::mem::take(&mut self.line_peers),
                 source_end: self.source_end,
                 ends_enclosing: self.ends_enclosing,
+                scope: self.scope,
             });
         } else {
             // A source that does not hold the node is replaced, as are the
@@ -10288,7 +10323,29 @@ impl PendingBreak {
             .is_some_and(|outer| at_block_edge(document, cascade, node_id, outer.source, false));
         self.source = Some(node_id);
         self.line_peers = later_line_peers(document, cascade, body_id, node_id);
+        self.scope = break_scope(document, node_id);
     }
+}
+
+/// The nearest absolutely or fixed positioned box around `node_id`, which
+/// keeps the breaks forced inside it to itself.
+fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
+    document
+        .layout_ancestors(node_id)
+        .find(|&id| is_out_of_flow_positioned(document, id))
+}
+
+/// Whether a break forced inside `scope` (the flow outside every positioned
+/// box when `None`) may fall before `node_id`.
+fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
+    scope.is_none_or(|scope| node_id != scope && is_descendant_or_self(document, node_id, scope))
+}
+
+fn is_out_of_flow_positioned(document: &Document, node_id: usize) -> bool {
+    matches!(
+        document.nodes[node_id].position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    )
 }
 
 /// The last flex item placed in each named flex context, keyed by context:
