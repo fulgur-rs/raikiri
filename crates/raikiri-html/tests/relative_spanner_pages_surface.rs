@@ -10,9 +10,9 @@ use raikiri_html::{
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// The number of pages `body` prints on 100x100 pages with no margin and
-/// 10px Ahem lines 10px apart.
-fn pages(body: &str) -> u32 {
+/// `body` laid out on 100x100 pages with no margin and 10px Ahem lines 10px
+/// apart.
+fn lay_out(body: &str) -> raikiri_html::DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -35,7 +35,12 @@ fn pages(body: &str) -> u32 {
     .unwrap() else {
         panic!("layout must complete")
     };
-    result.page_count()
+    result
+}
+
+/// The number of pages `body` prints.
+fn pages(body: &str) -> u32 {
+    lay_out(body).page_count()
 }
 
 #[test]
@@ -97,5 +102,26 @@ fn a_relative_spanner_moved_past_the_page_end_makes_another_page() {
             expected,
             "{content}{style}"
         );
+    }
+}
+
+#[test]
+fn a_relative_spanner_on_its_page_is_painted_at_its_offset_once() {
+    // Chromium prints S 60px and 5px down: the line before it, then the
+    // offset, added once.
+    for (top, expected) in [(50, 60.0), (-5, 5.0)] {
+        let result = lay_out(&format!(
+            "<div style='columns:2;column-gap:0;width:100px'><div>A</div>\
+             <div style='column-span:all;position:relative;top:{top}px'>S</div>\
+             <div>C</div></div>"
+        ));
+        let page = result.page(0).expect("a page");
+        let run = page
+            .text_runs()
+            .into_iter()
+            .find(|run| run.text.trim() == "S")
+            .expect("the spanner's line");
+        // Ahem's ascent puts the top of a 10px glyph 8px above the baseline.
+        assert_eq!((run.origin.1 - 8.0).round(), expected, "{top}");
     }
 }
