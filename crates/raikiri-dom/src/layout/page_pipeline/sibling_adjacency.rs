@@ -1,8 +1,8 @@
 //! Source sibling positions and lazy reverse walks for margin adjacency.
 
 use super::{
-    CascadeResult, DisplayValue, Document, NodeKind, is_floating_box_for_pagination,
-    takes_no_block_space,
+    CascadeResult, DisplayValue, Document, NodeKind, is_block_level_flow_box,
+    is_floating_box_for_pagination, takes_no_block_space,
 };
 use raikiri_layout_style::values::Position;
 use std::collections::HashMap;
@@ -46,6 +46,35 @@ impl SiblingAdjacency {
         false
     }
 
+    /// The last box before `node_id` among its siblings that takes block
+    /// space, when only empty boxes and boxes out of the flow lie between
+    /// the two.
+    pub(super) fn previous_block(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        // The siblings before a `display: contents` parent come next, as
+        // its children are lifted into its parent's box sequence.
+        let mut current = node_id;
+        for parent in document.ancestors(node_id) {
+            let index = self.index_in(document, parent, current)?;
+            if let Some(found) = document.nodes[parent].children[..index]
+                .iter()
+                .rev()
+                .find_map(|&id| last_block(document, cascade, id))
+            {
+                return found;
+            }
+            if document.nodes[parent].display() != DisplayValue::Contents {
+                break;
+            }
+            current = parent;
+        }
+        None
+    }
+
     /// The siblings that come before `node_id` among the children of its
     /// parent, found from the cached positions instead of a walk over the
     /// children.
@@ -77,6 +106,34 @@ impl SiblingAdjacency {
                 .collect()
         });
         positions.get(&child).copied()
+    }
+}
+
+/// The last box of `node_id` that takes block space, `Some(None)` when
+/// something else that takes space comes first, and `None` when it holds
+/// nothing in the flow.
+fn last_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<Option<usize>> {
+    match flow_box(document, cascade, node_id) {
+        FlowBox::Skip | FlowBox::Phantom => None,
+        FlowBox::Contents => document.nodes[node_id]
+            .children
+            .iter()
+            .rev()
+            .find_map(|&id| last_block(document, cascade, id)),
+        // Chromium breaks after the block before an empty box too, even one
+        // whose margins do not collapse through it.
+        FlowBox::Box if takes_no_block_space(document, node_id) => None,
+        // Only a block-level box has a block-end margin that collapses with
+        // the next box's; an inline-level one sits on a line.
+        FlowBox::Box => Some(
+            (document.nodes[node_id].kind() == NodeKind::Element
+                && is_block_level_flow_box(document.nodes[node_id].display()))
+            .then_some(node_id),
+        ),
     }
 }
 
