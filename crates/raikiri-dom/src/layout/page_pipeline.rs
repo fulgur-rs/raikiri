@@ -4237,10 +4237,13 @@ fn page_edge_child(
         // An inline box has no block edges of its own: a block inside it at
         // its edge is at the paragraph's edge, as it is for an element with
         // no box. Padding, border or margin on its inline sides take room on
-        // a line around the block, which then is not at the edge.
+        // a line around the block, which then is not at the edge, as do a
+        // line break and a replaced element, which are content of a line.
         let display = document.nodes[child].display();
         if (display == DisplayValue::Contents
-            || (display == DisplayValue::Inline && !has_inline_side_edges(cascade, child)))
+            || (display == DisplayValue::Inline
+                && !has_inline_side_edges(cascade, child)
+                && !makes_line_content(document, child)))
             && node.kind() == NodeKind::Element
             && !node.has_before_or_after_content
         {
@@ -4253,6 +4256,15 @@ fn page_edge_child(
         return Ok(Some(child));
     }
     Ok(None)
+}
+
+/// Whether the inline element `id` is content of a line by itself: a line
+/// break opportunity (`br`, `wbr`) or a replaced element.
+fn makes_line_content(document: &Document, id: usize) -> bool {
+    document.nodes[id]
+        .tag_name()
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("br") || tag.eq_ignore_ascii_case("wbr"))
+        || crate::layout::page::is_replaced_for_pagination(document, id)
 }
 
 /// Whether the inline box `id` has padding, border or margin on its left or

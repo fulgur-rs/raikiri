@@ -224,3 +224,18 @@ fn a_break_after_a_block_in_a_span_that_ends_at_the_page_end_opens_the_next_page
         &[("t", (0, 65.0)), ("c", (1, 5.0))],
     );
 }
+
+/// A line break before the block in a span is content of a line of its own,
+/// so a break before the block leaves the row in place and moves only the
+/// block.
+#[test]
+fn a_break_before_a_block_after_a_line_break_in_a_span_at_a_cell_start_keeps_the_row() {
+    assert_places(
+        "<div style='height: 30px'></div>\
+         <table style='border-spacing: 0'><tr>\
+         <td style='padding: 0'><span><br></span><div style='break-before: page'>\
+         <span id=t>T</span></div></td>\
+         <td style='padding: 0'><span id=x>X</span></td></tr></table>",
+        &[("t", (1, 5.0)), ("x", (0, 55.0))],
+    );
+}
