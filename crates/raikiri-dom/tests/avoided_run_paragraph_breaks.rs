@@ -727,3 +727,85 @@ fn the_boxes_tied_before_a_tied_paragraph_move_with_its_first_lines() {
         assert_places(body, expected);
     }
 }
+
+#[test]
+fn a_tied_paragraph_with_room_below_its_lines_breaks_in_that_room() {
+    // A set height that leaves room below the lines holds a break there,
+    // which beats breaking between the lines for the boxes tied after it.
+    let cases: &[Case] = &[
+        (
+            "<div style='height:20px'><span id=S>S</span></div><div style='height:100px;break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 0, 25.0),
+                ("b", 0, 45.0),
+                ("c", 0, 65.0),
+                ("L", 1, 25.0),
+                ("Z", 1, 55.0),
+            ],
+        ),
+        (
+            "<div style='height:120px;break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("a", 0, 5.0),
+                ("b", 0, 25.0),
+                ("c", 0, 45.0),
+                ("d", 0, 65.0),
+                ("L", 1, 25.0),
+                ("Z", 1, 55.0),
+            ],
+        ),
+        (
+            "<div style='height:10px'><span id=S>S</span></div><div style='height:110px;break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 0, 15.0),
+                ("b", 0, 35.0),
+                ("c", 0, 55.0),
+                ("d", 0, 75.0),
+                ("L", 1, 25.0),
+                ("Z", 1, 55.0),
+            ],
+        ),
+        (
+            "<div style='padding-bottom:20px'><div style='height:10px'><span id=S>S</span></div><div style='height:100px;break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:10px'><span id=L>L</span></div></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 0, 15.0),
+                ("b", 0, 35.0),
+                ("c", 0, 55.0),
+                ("d", 0, 75.0),
+                ("L", 1, 15.0),
+                ("Z", 1, 45.0),
+            ],
+        ),
+        (
+            "<div style='height:10px'><span id=S>S</span></div><div style='height:110px;break-after:avoid'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:10px;break-after:avoid'><span id=M>M</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 0, 15.0),
+                ("b", 0, 35.0),
+                ("c", 0, 55.0),
+                ("d", 0, 75.0),
+                ("M", 1, 25.0),
+                ("L", 1, 35.0),
+                ("Z", 1, 65.0),
+            ],
+        ),
+        (
+            "<div style='height:10px'><span id=S>S</span></div><div style='height:110px;break-after:avoid;widows:1;orphans:1'><span id=a>a</span><br><span id=b>b</span><br><span id=c>c</span><br><span id=d>d</span></div><div style='height:30px'><span id=L>L</span></div><div><span id=Z>Z</span></div>",
+            &[
+                ("S", 0, 5.0),
+                ("a", 0, 15.0),
+                ("b", 0, 35.0),
+                ("c", 0, 55.0),
+                ("d", 0, 75.0),
+                ("L", 1, 25.0),
+                ("Z", 1, 55.0),
+            ],
+        ),
+    ];
+    for &(body, expected) in cases {
+        assert_places(body, expected);
+    }
+}

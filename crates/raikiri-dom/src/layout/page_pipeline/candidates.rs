@@ -19,9 +19,10 @@ use super::{
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
     moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    unplaced_line, unplaced_line_after_block,
+    paragraph_has_lines_to_split, paragraph_lines_keep_together, passes_closing_edges,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
+    unplaced_line_after_block,
 };
 use std::collections::HashMap;
 
@@ -1773,6 +1774,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it is the one between boxes, which beats one between
                 // lines that leaves too few at either end.
                 let unbreakable = lines_shape
+                    && !frame.lines_tail
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
@@ -1803,8 +1805,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it, it is still a candidate: the run those boxes
                 // make is kept together only while its first box leaves the
                 // page room for it.
+                // The last box of a tied run whose lines break for the edges
+                // breaks there instead (see `lines_tail`).
                 let lone_tail = (in_flow_block
                     && frame.previous_box.is_some()
+                    && !frame.lines_tail
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
                 .then(|| {
                     lone_box_with_floats(
@@ -2618,7 +2623,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             normal_flow_bottom(document, cascade, body_id, child_order[index])
                         };
                         let span = bottom(last) - bottom(first);
-                        (span > 0.0).then_some((first, span + last_box_edges))
+                        (span >= 0.0).then_some((first, span + last_box_edges))
                     }
                     _ => None,
                 };
@@ -2741,8 +2746,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     };
                     // The last box of a run that avoided breaks tie to the boxes
                     // before it, from a free break on.
+                    // A paragraph with lines to break between breaks there
+                    // instead, when a box of the run before it takes block
+                    // space: a break that leaves fewer lines than `widows`
+                    // beats one that an avoided break forbids (see
+                    // `edge_break_lines`).
+                    let tail_splits = match avoid_chain {
+                        Some(AvoidChain::Run { first }) => {
+                            last_in_flow == Some(index)
+                                && run_paragraph(document, cascade, child_id).is_some_and(
+                                    |paragraph| paragraph_has_lines_to_split(document, paragraph),
+                                )
+                                && flow_flags[first..index].iter().any(|&(in_flow, floated)| {
+                                    in_flow.is_some_and(|id| {
+                                        !floated && !super::takes_no_block_space(document, id)
+                                    })
+                                })
+                        }
+                        _ => false,
+                    };
                     let run_tail = matches!(avoid_chain, Some(AvoidChain::Run { .. }))
-                        && last_in_flow == Some(index);
+                        && last_in_flow == Some(index)
+                        && !tail_splits;
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
                     let child_column_break = can_inherit_column_break && !column_box_before;
@@ -2846,7 +2871,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 && child_scope_is_lone,
                             tied_to_start: child_tied_to_start,
                             lines_closing_edges,
-                            lines_tail: lines_tail.is_some() || run_line_tail > 0.0,
+                            // The last box of a tied run that moved to the
+                            // next page breaks between its lines there
+                            // rather than before itself, away from the run.
+                            lines_tail: lines_tail.is_some()
+                                || run_line_tail > 0.0
+                                || (chain_run.is_some() && tail_splits),
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,

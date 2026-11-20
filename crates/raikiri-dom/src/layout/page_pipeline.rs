@@ -6353,6 +6353,37 @@ fn boxes_are_tied(
             ))
 }
 
+/// Whether an avoided break ties the block `node_id` to the box before it in
+/// the flow of its parent (see [`boxes_are_tied`]). A float or an
+/// out-of-flow box between the two is not counted.
+fn tied_to_box_before(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let children = document.nodes[node_id]
+        .parent
+        .map(|parent| pagination_child_order(document, cascade, parent))
+        .unwrap_or_default();
+    let position = children.iter().position(|&child| child == node_id);
+    children[..position.unwrap_or(0)]
+        .iter()
+        .rev()
+        .copied()
+        .find(|&child| {
+            let node = &document.nodes[child];
+            node.kind() == NodeKind::Element
+                && !node.is_display_none()
+                && is_block_level_flow_box(node.display())
+                && !is_floating_box_for_pagination(document, cascade, child)
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        })
+        .is_some_and(|before| boxes_are_tied(document, cascade, before, node_id))
+}
+
 /// The boxes of a flow that avoid a page break inside them or between them,
 /// and the runs of margins that pass through empty blocks, found once from its
 /// candidates.
@@ -12446,7 +12477,14 @@ fn avoid_chain_before_last_box(
         else {
             break true;
         };
-        if !is_box(before) {
+        // An empty block between the boxes ties them as a box does.
+        let empty_block = |index: usize| {
+            let id = children[index];
+            flow_flags[index] == (Some(id), false)
+                && is_plain_block_box(document, id)
+                && takes_no_block_space(document, id)
+        };
+        if !is_box(before) && !empty_block(before) {
             return None;
         }
         let (forced_after, avoided_after) =
@@ -12477,8 +12515,17 @@ fn avoid_chain_before_last_box(
     let boxes: Vec<usize> = (first..=last)
         .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
         .collect();
+    // A paragraph with lines too few to break between for its `orphans` and
+    // `widows` moves whole too.
+    // A run that starts the block has no break before it to take: its
+    // paragraph breaks between its lines all the same.
     let moves_whole = |index: usize| {
-        moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
+        let id = children[index];
+        moves_whole_at_best(document, cascade, body_id, id, has_named_pages)
+            || (!starts_block
+                && run_paragraph(document, cascade, id).is_some_and(|paragraph| {
+                    paragraph_lines_keep_together(document, cascade, paragraph)
+                }))
     };
     let Some(split) = boxes.iter().rposition(|&index| !moves_whole(index)) else {
         return Some(if starts_block {
@@ -12500,15 +12547,18 @@ fn avoid_chain_before_last_box(
     // paragraph with lines too few to split would move whole without the
     // boxes tied before it, so then the run keeps its placement.
     let paragraph = children[boxes[split]];
-    paragraph_may_split_lines(document, cascade, paragraph, split == 0).then_some(
-        AvoidChain::Lines {
+    run_paragraph(document, cascade, paragraph)
+        .is_some_and(|paragraph| {
+            paragraph_may_split_lines(document, cascade, paragraph, split == 0)
+        })
+        .then_some(AvoidChain::Lines {
             first: boxes[split],
-        },
-    )
+        })
 }
 
 /// Whether the paragraph `node_id` may break between its lines: it has lines,
-/// does not avoid breaks inside it, and, unless `few_lines` allows it, has
+/// does not avoid breaks inside it, has no set height that leaves room below
+/// its lines (the page breaks in that room instead), and, unless `few_lines` allows it, has
 /// lines enough for `orphans` and `widows` on both sides of a break.
 fn paragraph_may_split_lines(
     document: &super::context::LayoutSession<'_>,
@@ -12518,12 +12568,68 @@ fn paragraph_may_split_lines(
 ) -> bool {
     document.nodes[node_id].is_ifc_root()
         && !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && !room_below_lines(document, node_id)
         && document
             .ifc_layout_node(node_id)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
             .is_some_and(|lines| !lines.lines.is_empty())
         && (few_lines || !paragraph_lines_keep_together(document, cascade, node_id))
+}
+
+/// The paragraph that a run of tied boxes ends with in the box `node_id`: the
+/// box itself, or the paragraph inside plain blocks that hold nothing else in
+/// their flow, which breaks as the box does. `None` when there is no such
+/// paragraph.
+fn run_paragraph(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let mut current = node_id;
+    loop {
+        let node = &document.nodes[current];
+        if node.is_ifc_root() {
+            return Some(current);
+        }
+        if !is_plain_block_box(document, current) {
+            return None;
+        }
+        let mut boxes = pagination_child_order(document, cascade, current)
+            .into_iter()
+            .filter(|&child| {
+                let child_node = &document.nodes[child];
+                child_node.kind() == NodeKind::Element
+                    && !child_node.is_display_none()
+                    && !is_floating_box_for_pagination(document, cascade, child)
+                    && !matches!(
+                        child_node.position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    )
+            });
+        let (Some(only), None) = (boxes.next(), boxes.next()) else {
+            return None;
+        };
+        current = only;
+    }
+}
+
+/// Whether the paragraph `node_id` has two lines or more to break between for
+/// the edges that close the blocks around it, whatever its `orphans`,
+/// `widows` and `break-inside` ask. Such a break beats one before the
+/// paragraph that an avoided break forbids. A paragraph whose set height
+/// leaves room below its lines has the edges after that room instead.
+fn paragraph_has_lines_to_split(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> bool {
+    document.nodes[node_id].is_ifc_root()
+        && !room_below_lines(document, node_id)
+        && document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| lines.lines.len() > 1 && lines.block_line_starts.is_empty())
 }
 
 /// Whether the paragraph `node_id` has a set height that leaves room below its
