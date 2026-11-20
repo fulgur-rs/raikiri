@@ -9,9 +9,9 @@ use super::{
     PageLayoutControl, PositionValue, TextLineIndex, UnplacedBlockLine,
     accumulated_relative_offset_y, avoid_chain_before_last_box, avoided_run_head,
     avoids_page_break_inside, block_after_last_line, box_is_unbreakable, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    container_item_tail, content_bottom_edges, edges_break_container, end_margin_through,
-    first_named_item_start_page, first_owned_text_line_top, forces_page_break,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, clears_in_cell_flow,
+    closing_edges_of, container_item_tail, content_bottom_edges, edges_break_container,
+    end_margin_through, first_named_item_start_page, first_owned_text_line_top, forces_page_break,
     has_block_leading_content, has_mandatory_break_inside, height_follows_content, holds_floats,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_flow_table_caption, is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box,
@@ -19,9 +19,10 @@ use super::{
     lineless_leading_piece_end, lone_box_with_floats, margin_above_edges, moves_later_siblings,
     moves_reach_cell_row, nested_run_units, normal_flow_bottom, normal_flow_y, page_applies_to_box,
     page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    paragraph_lines_keep_together, passes_closing_edges, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    unplaced_line, unplaced_line_after_block,
+    paragraph_has_lines_to_split, paragraph_lines_keep_together, passes_closing_edges,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
+    unplaced_line_after_block,
 };
 use std::collections::HashMap;
 
@@ -212,6 +213,12 @@ pub(super) struct ElementContext {
     /// crosses the page end: Chromium does not move overflow of a block that
     /// ends on the page, it cuts it.
     pub(super) unbreakable_room: Option<f32>,
+    /// Content of its parent's flow comes before the box, and the page break
+    /// between the two is avoided, by the box or by the box before it. A
+    /// box that avoids a break inside it does not move past that break on
+    /// its own: Chromium rates both breaks alike and takes the later one,
+    /// inside the box (see [`BoxContext::avoids_break_before`]).
+    pub(super) avoided_break_before: bool,
     /// The block size of the bottom padding and border that close the blocks
     /// around the box, which it ends: they would break away from it if it
     /// stayed on a page they do not fit (see [`super::closing_edges_move`]).
@@ -234,7 +241,7 @@ pub(super) struct ElementContext {
     /// it holds at the start of its own boxes. The box moves to the next page
     /// with the run when the run would cross a page edge (see
     /// [`super::avoided_run_ends`]).
-    pub(super) avoided_unit: Option<f32>,
+    pub(super) avoided_unit: Option<super::RunUnit>,
     /// For a flex container or grid with padding or border above its items:
     /// how far below the border-box top the first piece of its content ends.
     /// The box moves to the next page when that crosses a page edge, so that
@@ -393,6 +400,13 @@ impl BoxContext {
             .filter(|line| line.after_block)
     }
 
+    /// Whether a page break is avoided between the box and content of its
+    /// parent's flow before it (see [`ElementContext::avoided_break_before`]).
+    pub(super) fn avoids_break_before(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.avoided_break_before)
+    }
+
     pub(super) fn is_unbreakable(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.unbreakable)
@@ -427,7 +441,7 @@ impl BoxContext {
             .map(|last| last as usize)
     }
 
-    pub(super) fn avoided_unit(self) -> Option<f32> {
+    pub(super) fn avoided_unit(self) -> Option<super::RunUnit> {
         self.element_attributes()
             .and_then(|attributes| attributes.avoided_unit)
     }
@@ -729,6 +743,9 @@ struct CandidateFrame<'name> {
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
+    /// Whether any in-flow content of the parent comes before the node, text
+    /// included, which `previous_box` leaves out.
+    box_before: bool,
     /// A free boundary before the leading plain blocks of this node. Only
     /// the column's leading-replaced-piece rule, and the leading piece and
     /// first row of a row flex container or grid, inherit this boundary.
@@ -749,12 +766,16 @@ struct CandidateFrame<'name> {
     /// The block size of the bottom padding and border that follow the last
     /// line of the paragraph the node is in or is the text of.
     lines_closing_edges: f32,
+    /// Whether the node is a paragraph whose `closing_edges` are the boxes
+    /// that avoided breaks tie to its last lines: it breaks between its lines
+    /// for them, whatever ties it to the boxes before it.
+    lines_tail: bool,
     /// How the node is tied to the boxes around it by avoided breaks, when it
     /// ends its block or starts the run of boxes that does.
     tie: AvoidTie,
     /// How far below its border-box top the run of boxes tied by avoided
     /// breaks ends that the node starts among the boxes of its parent.
-    run_unit: Option<f32>,
+    run_unit: Option<super::RunUnit>,
     /// Whether the node is the last box of a run that avoided breaks tie it
     /// to, from a free break on, and ends its block: `closing_edges` follows
     /// it.
@@ -830,10 +851,12 @@ impl CandidateFrame<'_> {
             min_height_edges: None,
             capped_edges_block: None,
             previous_box: None,
+            box_before: false,
             column_break_before: false,
             lone_in_edges: true,
             tied_to_start: false,
             lines_closing_edges: 0.0,
+            lines_tail: false,
             tie: AvoidTie::None,
             run_unit: None,
             run_tail: false,
@@ -893,7 +916,7 @@ pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usiz
 /// inline formatting context, so the walk keeps no box before it, but
 /// something before it renders in that flow and does not tie the two.
 fn breaks_after_paragraph_content(
-    document: &Document,
+    document: &super::super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
@@ -1080,18 +1103,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             has_named_pages,
-            finds_nested_runs: !has_named_pages
-                && cascade.computed.iter().any(|computed| {
-                    [computed.break_before, computed.break_after]
-                        .into_iter()
-                        .any(|edge| {
-                            matches!(
-                                edge,
-                                raikiri_style::property::BreakBetween::Avoid
-                                    | raikiri_style::property::BreakBetween::AvoidPage
-                            )
-                        })
-                }),
+            finds_nested_runs: cascade.computed.iter().any(|computed| {
+                [computed.break_before, computed.break_after]
+                    .into_iter()
+                    .any(|edge| {
+                        matches!(
+                            edge,
+                            raikiri_style::property::BreakBetween::Avoid
+                                | raikiri_style::property::BreakBetween::AvoidPage
+                        )
+                    })
+            }),
             forces_break_after: cascade
                 .computed
                 .iter()
@@ -1668,6 +1690,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && inside_table
                     && avoids_by_property
                     && moves_reach_cell_row(document, node_id);
+                // A block in the flow of a table cell that clears floats goes
+                // below a float that pagination moves to a later page, as in
+                // any block flow, and its row grows to hold it.
+                let cell_clear_base = nested_flow_base
+                    && inside_table
+                    && clears_float
+                    && !is_float
+                    && clears_in_cell_flow(document, cascade, node_id, body_id);
                 // A box in the flow of its container, among blocks or among the
                 // items of a flex container.
                 let in_any_flow = participates_in_flow
@@ -1694,9 +1724,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && in_any_flow
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
-                    && frame.previous_box.is_some_and(|previous| {
-                        page_edge_constraint(document, cascade, previous, false).0
-                    });
+                    && frame
+                        .previous_box
+                        .or_else(|| super::spanner_before(document, cascade, node_id))
+                        .is_some_and(|previous| {
+                            page_edge_constraint(document, cascade, previous, false).0
+                        });
                 // A flex container, grid or table is a box that can end a block
                 // too, and move to the next page for the edges it ends.
                 let in_flow_container =
@@ -1728,7 +1761,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // breaks between them.
                 let lines_shape = closing_edges_shape
                     || (closing_edges_base_shape
-                        && (frame.previous_box.is_none() || frame.tied_to_start)
+                        && (frame.previous_box.is_none()
+                            || frame.tied_to_start
+                            || frame.lines_tail)
                         && node.is_ifc_root());
                 // Nothing may break inside it at a better place than before
                 // it. A paragraph with lines enough to break between moves
@@ -1739,6 +1774,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it is the one between boxes, which beats one between
                 // lines that leaves too few at either end.
                 let unbreakable = lines_shape
+                    && !frame.lines_tail
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
@@ -1769,8 +1805,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // before it, it is still a candidate: the run those boxes
                 // make is kept together only while its first box leaves the
                 // page room for it.
+                // The last box of a tied run whose lines break for the edges
+                // breaks there instead (see `lines_tail`).
                 let lone_tail = (in_flow_block
                     && frame.previous_box.is_some()
+                    && !frame.lines_tail
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
                 .then(|| {
                     lone_box_with_floats(
@@ -1848,9 +1887,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && (free_to_break_before || after_paragraph_content))
                         .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
                         .filter(|held| held.tied)
-                        .and_then(|held| held.end);
+                        .and_then(|held| {
+                            held.end.map(|end| super::RunUnit {
+                                end,
+                                firm: held.firm,
+                            })
+                        });
                 let avoided_unit = match (frame.run_unit, leading_unit) {
-                    (Some(run), Some(leading)) => Some(run.max(leading)),
+                    (Some(run), Some(leading)) if leading.end > run.end => Some(leading),
                     (run, leading) => run.or(leading),
                 };
                 // A grid breaks between its padding or border and a first
@@ -1859,7 +1903,45 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // `grid_rows`).
                 // The first box of plain blocks that start after a free
                 // break takes that break too (see `column_break_before`).
-                let container_breaks_before = breaks_before_box || column_break_before;
+                // Content of the parent's flow comes before the box, and the
+                // page break between the two is avoided, by the box or by
+                // the box before it (see `ElementContext::avoided_break_before`).
+                let avoided_break_before =
+                    (frame.box_before || super::lines_before_block(document, node_id)) && {
+                        let (forced, avoided) =
+                            page_edge_constraint(document, cascade, node_id, true);
+                        !forced
+                            && (avoided
+                                || frame.previous_box.is_some_and(|previous| {
+                                    let (forced, avoided) =
+                                        page_edge_constraint(document, cascade, previous, false);
+                                    !forced && avoided
+                                }))
+                    };
+                // The part of that which the page passes on to the content
+                // before the box: lines of its paragraph, which give way
+                // for it (see `PaginationState::keep_lines_with_next_block`),
+                // or a plain block of the same parent tied to it, which
+                // moves on with it as a run (see `nested_run_units` and
+                // `avoided_run_ends`). Only then does a box that avoids
+                // breaks inside it split where it stands rather than move
+                // on alone.
+                let avoided_break_passed_on = avoided_break_before
+                    && (super::lines_before_block(document, node_id)
+                        || frame.previous_box.is_some_and(|previous| {
+                            let parent = document.nodes[node_id].parent;
+                            is_plain_block_box(document, previous)
+                                && document.nodes[previous].parent == parent
+                                && parent.is_some_and(|parent| {
+                                    document.nodes[parent].display() != DisplayValue::Contents
+                                })
+                        }));
+                // A break avoided before the box is still a better one than a
+                // break through the first piece of its content, which cuts a
+                // line or a monolithic box: Chromium takes it when that piece
+                // does not fit.
+                let container_breaks_before =
+                    breaks_before_box || column_break_before || avoided_break_before;
                 let first_grid_row = (in_flow_container && !is_body && container_breaks_before)
                     .then(|| super::grid_rows::first_row(document, cascade, body_id, node_id))
                     .flatten();
@@ -1914,7 +1996,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .flatten();
                 let column_replaced_piece = (in_flow_container
                     && !is_body
-                    && column_break_before
+                    && (column_break_before || avoided_break_before)
                     && !document.context.pagination_on_transposed_axes)
                     .then(|| {
                         super::column_replaced::first_piece(document, cascade, body_id, node_id)
@@ -1975,6 +2057,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inline_level
                     && is_block_flow_box
                     && line_after_block.is_some();
+                // A flex container nested in block flow moves whole when what
+                // follows its items runs past the page end (see
+                // `flex_margins_move`), so it needs a place of its own.
+                let flex_margins_base = nested_candidate_base
+                    && !inline_level
+                    && super::has_flex_trailing_space(document, node_id);
                 let needs_ancestor_constraints = margin_shape
                     || line_after_block_base
                     || (nested_candidate_base
@@ -1982,6 +2070,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             || is_float
                             || clears_float))
                     || (cell_avoid_base && !inline_level && is_block_flow_box)
+                    || cell_clear_base
                     || lines_shape
                     || lone_tail.is_some()
                     || run_tail_base
@@ -1989,7 +2078,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     || (leading_piece.is_some() && !direct_body_child)
                     || (leading_block_piece.is_some() && !direct_body_child)
                     || (column_replaced_piece.is_some() && !direct_body_child)
-                    || (first_grid_row.is_some() && !direct_body_child);
+                    || (first_grid_row.is_some() && !direct_body_child)
+                    || flex_margins_base;
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor. Whether
                 // a clip box around it holds the break depends on where
@@ -2028,9 +2118,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && avoids_break
                     && !side_by_side_ancestor
                     && (!bounded_clipping_ancestor || unbreakable_box);
-                let nested_float_candidate =
-                    nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                let nested_float_candidate = (nested_candidate_base && (is_float || clears_float)
+                    || cell_clear_base)
+                    && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                // Not beside other boxes, but past a clip that the page end
+                // cuts: the clip box moves along with the container.
+                let flex_margins_candidate = flex_margins_base && !side_by_side_ancestor;
                 let run_tail_candidate = run_tail_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
@@ -2124,6 +2218,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
+                        || flex_margins_candidate
                         || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
@@ -2208,6 +2303,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unplaced_line: unplaced_line.or(line_after_block),
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
+                                avoided_break_before: avoided_break_passed_on,
                                 closing_edges: if closing_edges_candidate
                                     || lone_box_candidate.is_some()
                                 {
@@ -2518,6 +2614,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         });
                 // Where the run starts, the block size from the bottom of its
                 // first box to the bottom of its last, and the edges after it.
+                // A run that starts at a paragraph breaking between its lines
+                // puts the block size after the paragraph to the next page
+                // with its last lines, as edges that close it.
+                let chain_lines = match (avoid_chain, last_in_flow) {
+                    (Some(AvoidChain::Lines { first }), Some(last)) if last_box_edges > 0.0 => {
+                        let bottom = |index: usize| {
+                            normal_flow_bottom(document, cascade, body_id, child_order[index])
+                        };
+                        let span = bottom(last) - bottom(first);
+                        (span >= 0.0).then_some((first, span + last_box_edges))
+                    }
+                    _ => None,
+                };
                 let chain_run = match (avoid_chain, last_in_flow) {
                     (Some(AvoidChain::Run { first }), Some(last)) => {
                         let bottom = |index: usize| {
@@ -2535,25 +2644,34 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 // Where the runs of boxes tied by avoided breaks that start
                 // among the boxes of this block end.
-                let run_units = if !self.finds_nested_runs || !in_flow_block || is_body {
-                    Vec::new()
-                } else if !flow_flags.is_empty() {
-                    nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
-                } else if node.is_ifc_root()
-                    && child_order
-                        .iter()
-                        .any(|&child| is_plain_block_box(document, child))
-                {
-                    // A paragraph that mixes text and blocks lays them out as
-                    // its lines, and its blocks follow a moved block through
-                    // its line shifts. A run of blocks tied by avoided breaks
-                    // among them still moves together; text between them is
-                    // a box of the flow that ends the run.
-                    let paragraph_flags = child_flow_flags(document, cascade, &child_order);
-                    nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
-                } else {
-                    Vec::new()
-                };
+                let (run_units, run_line_tails) =
+                    if is_body && self.finds_nested_runs && !flow_flags.is_empty() {
+                        // The runs of the body's own boxes are found from its
+                        // candidates (see `avoided_run_ends`); only the lines a
+                        // paragraph among them keeps with the boxes after it
+                        // are found here.
+                        let (_, tails) =
+                            nested_run_units(document, cascade, body_id, &child_order, &flow_flags);
+                        (Vec::new(), tails)
+                    } else if !self.finds_nested_runs || !in_flow_block || is_body {
+                        (Vec::new(), Vec::new())
+                    } else if !flow_flags.is_empty() {
+                        nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
+                    } else if node.is_ifc_root()
+                        && child_order
+                            .iter()
+                            .any(|&child| is_plain_block_box(document, child))
+                    {
+                        // A paragraph that mixes text and blocks lays them out as
+                        // its lines, and its blocks follow a moved block through
+                        // its line shifts. A run of blocks tied by avoided breaks
+                        // among them still moves together; text between them is
+                        // a box of the flow that ends the run.
+                        let paragraph_flags = child_flow_flags(document, cascade, &child_order);
+                        nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                 // A `display: contents` element lends its boxes to the flow
                 // of its parent: the box before its first one is the box
                 // before the element. A free break or one that gives way may
@@ -2596,11 +2714,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && is_flow_table_caption(document, cascade, node_id, roots.element);
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
-                    let child_closing_edges = match at_chain_start {
-                        Some((_, _, edges, _)) => edges,
-                        None if last_in_flow == Some(index) => last_box_edges,
-                        None => 0.0,
+                    let lines_tail = chain_lines
+                        .filter(|&(first, _)| index == first)
+                        .map(|(_, tail)| tail);
+                    let block_edges = match (at_chain_start, lines_tail) {
+                        (Some((_, _, edges, _)), _) => edges,
+                        (None, Some(tail)) => tail,
+                        (None, None) if last_in_flow == Some(index) => last_box_edges,
+                        (None, None) => 0.0,
                     };
+                    // A paragraph whose last lines a run of tied boxes after
+                    // it takes along carries that run like closing edges.
+                    let run_line_tail = run_line_tails.get(index).copied().unwrap_or(0.0);
+                    let child_closing_edges = block_edges.max(run_line_tail);
                     // A block with edges of its own whose boxes are all tied to
                     // the first one has no break between boxes left to take: its
                     // last box moves alone with them, the avoided break giving
@@ -2620,8 +2746,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     };
                     // The last box of a run that avoided breaks tie to the boxes
                     // before it, from a free break on.
+                    // A paragraph with lines to break between breaks there
+                    // instead, when a box of the run before it takes block
+                    // space: a break that leaves fewer lines than `widows`
+                    // beats one that an avoided break forbids (see
+                    // `edge_break_lines`).
+                    let tail_splits = match avoid_chain {
+                        Some(AvoidChain::Run { first }) => {
+                            last_in_flow == Some(index)
+                                && run_paragraph(document, cascade, child_id).is_some_and(
+                                    |paragraph| paragraph_has_lines_to_split(document, paragraph),
+                                )
+                                && flow_flags[first..index].iter().any(|&(in_flow, floated)| {
+                                    in_flow.is_some_and(|id| {
+                                        !floated && !super::takes_no_block_space(document, id)
+                                    })
+                                })
+                        }
+                        _ => false,
+                    };
                     let run_tail = matches!(avoid_chain, Some(AvoidChain::Run { .. }))
-                        && last_in_flow == Some(index);
+                        && last_in_flow == Some(index)
+                        && !tail_splits;
                     let child_previous_box = previous_box;
                     let child_box_before = box_before;
                     let child_column_break = can_inherit_column_break && !column_box_before;
@@ -2707,27 +2853,36 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             min_height_edges: min_height_edges
                                 .filter(|_| last_in_flow == Some(index)),
                             capped_edges_block: (child_closing_edges > 0.0
-                                && at_chain_start.is_none())
-                            .then(|| {
-                                if contents || height_follows_content(document, node_id) {
-                                    frame.capped_edges_block.filter(|_| inherited_edges > 0.0)
-                                } else {
-                                    Some(node_id)
-                                }
-                            })
-                            .flatten(),
+                                && at_chain_start.is_none()
+                                && lines_tail.is_none()
+                                && run_line_tail <= 0.0)
+                                .then(|| {
+                                    if contents || height_follows_content(document, node_id) {
+                                        frame.capped_edges_block.filter(|_| inherited_edges > 0.0)
+                                    } else {
+                                        Some(node_id)
+                                    }
+                                })
+                                .flatten(),
                             previous_box: child_previous_box,
+                            box_before: child_box_before,
                             column_break_before: child_column_break,
                             lone_in_edges: (!child_box_before || child_tied_to_start)
                                 && child_scope_is_lone,
                             tied_to_start: child_tied_to_start,
                             lines_closing_edges,
+                            // The last box of a tied run that moved to the
+                            // next page breaks between its lines there
+                            // rather than before itself, away from the run.
+                            lines_tail: lines_tail.is_some()
+                                || run_line_tail > 0.0
+                                || (chain_run.is_some() && tail_splits),
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),
                             run_tail,
                             item_tail: child_item_tail,
                             tie_head: child_tied.then_some(run_head).flatten(),
-                            float_bottom: if child_closing_edges > 0.0 {
+                            float_bottom: if block_edges > 0.0 {
                                 floats_bottom
                             } else {
                                 f32::NEG_INFINITY

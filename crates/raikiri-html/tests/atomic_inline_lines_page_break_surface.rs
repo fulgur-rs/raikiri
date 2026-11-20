@@ -127,6 +127,41 @@ fn lines_of_atomic_inlines_before_text_keep_their_place() {
 }
 
 #[test]
+fn lines_of_atomic_inlines_in_a_contents_wrapper_before_text_keep_their_place() {
+    // A `display: contents` wrapper lays the inline-blocks out in its place,
+    // as in the test above.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:40px"></div><div style="width:20px"><span style="display:contents"><i>B</i><i>B</i></span> T T</div><div>Z</div>"#
+        ),
+        [
+            (0, 'B', 0, 45),
+            (0, 'B', 0, 75),
+            (1, 'T', 0, 5),
+            (1, 'T', 0, 35),
+            (1, 'Z', 0, 65),
+        ]
+    );
+}
+
+#[test]
+fn an_element_never_rendered_before_the_atomic_inlines_is_not_their_text() {
+    // raikiri never renders the content of a script, whatever its display
+    // (Chromium shows it under `display: inline`), so the paragraph lays out
+    // as one without it: the inline-blocks come before the text and keep
+    // their place, as in the test above.
+    let paragraph = |script: &str| {
+        glyphs(&format!(
+            r#"<div style="height:40px"></div><div style="width:20px">{script}<i>B</i><i>B</i> T T</div><div>Z</div>"#
+        ))
+    };
+    assert_eq!(
+        paragraph(r#"<script style="display:inline">x</script>"#),
+        paragraph("")
+    );
+}
+
+#[test]
 fn a_line_with_an_image_moves_with_the_text() {
     assert_eq!(
         glyphs(
@@ -237,5 +272,34 @@ fn text_before_an_atomic_inline_in_source_order_moves_the_lines_under_bidi() {
         glyphs(
             r#"<div style="height:10px"></div><div style="width:20px;widows:2">T T <i>B</i><i>B</i></div><div>Z</div>"#
         )
+    );
+}
+
+#[test]
+fn an_atomic_inline_in_a_ruby_annotation_moves_with_its_line() {
+    // Chromium prints the ruby's line on the next page with the annotation's
+    // glyph 25px above the base's. Where the moved line itself starts
+    // depends on how far the annotation reaches above the line, which is
+    // checked elsewhere, so only the page and the gap are compared here.
+    let ruby = r#"<style>rt{font-size:20px;line-height:30px}</style>"#;
+    for top in [30, 40] {
+        let glyphs = glyphs(&format!(
+            r#"{ruby}<div style="position:absolute;top:{top}px;width:20px">T <ruby>R<rt><i>C</i></rt></ruby></div>"#
+        ));
+        let [
+            (0, 'T', 0, text),
+            (1, 'C', 0, annotation),
+            (1, 'R', 0, base),
+        ] = glyphs[..]
+        else {
+            panic!("{top}: {glyphs:?}");
+        };
+        assert_eq!((text, base - annotation), (top + 5, 25), "{top}");
+    }
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ruby}<div style="height:30px"></div><div style="width:20px">T <ruby>R<rt><i>C</i></rt></ruby></div>"#
+        )),
+        [(1, 'C', 0, 30), (1, 'R', 0, 55), (1, 'T', 0, 5)]
     );
 }
