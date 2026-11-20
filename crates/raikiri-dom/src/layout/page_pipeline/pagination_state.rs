@@ -2459,7 +2459,11 @@ impl PaginationState {
                 // The break before a flex item sits at the top of its line.
                 let margin_box_y = effective_y
                     - relative_offset
-                    - margin_top
+                    - if collapses_with_previous_block {
+                        self.forced_break_lead(document, cascade, node_id, margin_top)
+                    } else {
+                        margin_top
+                    }
                     - flex_line.as_ref().map_or(0.0, |line| line.offset);
                 let starts_page = if margin_top < 0.0 {
                     (margin_box_y - page_start).abs() <= 0.001
@@ -2504,6 +2508,33 @@ impl PaginationState {
             starts_after_forced_break: false,
         };
         (page_break, position)
+    }
+
+    /// How far above the border box of `node` a forced break before it sits:
+    /// right after the block before it, whose block-end margin the break
+    /// cuts although the layout collapsed it with the box's own `margin_top`.
+    /// Only that own margin follows the break (CSS Fragmentation 3, 5.2).
+    /// `margin_top` when no block adjoins the box.
+    fn forced_break_lead(
+        &mut self,
+        document: &LayoutSession<'_>,
+        cascade: &CascadeResult,
+        node: usize,
+        margin_top: f32,
+    ) -> f32 {
+        self.sibling_margins
+            .adjacency
+            .previous_block(document, cascade, node)
+            .map_or(margin_top, |previous| {
+                let bottom =
+                    current_abs_y(document, previous) + document.nodes[previous].layout.size.height;
+                let gap = current_abs_y(document, node) - bottom;
+                if gap.is_finite() {
+                    margin_top.max(gap)
+                } else {
+                    margin_top
+                }
+            })
     }
 
     /// Opens the page a box starts on when it meets a page transition: a
@@ -2596,9 +2627,17 @@ impl PaginationState {
         } else {
             position.effective_y - relative_offset
         };
+        let break_lead = if forced_transition
+            && forced_holder.is_none()
+            && page_break.collapses_with_previous_block
+        {
+            self.forced_break_lead(document, cascade, node_id, margin_top)
+        } else {
+            margin_top
+        };
         let natural_page = page_origins.transition_natural_page(
             natural_y,
-            margin_top,
+            break_lead,
             self.current_page,
             self.flow_reach(document, env, node_id, natural_y),
             forced_transition,

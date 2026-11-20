@@ -46,6 +46,24 @@ impl SiblingAdjacency {
         false
     }
 
+    /// The last box before `node_id` among its siblings that takes block
+    /// space, when only empty boxes and boxes out of the flow lie between
+    /// the two.
+    pub(super) fn previous_block(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> Option<usize> {
+        let parent = document.parent_of(node_id)?;
+        let index = self.index_in(document, parent, node_id)?;
+        document.nodes[parent].children[..index]
+            .iter()
+            .rev()
+            .find_map(|&id| last_block(document, cascade, id))
+            .flatten()
+    }
+
     /// The siblings that come before `node_id` among the children of its
     /// parent, found from the cached positions instead of a walk over the
     /// children.
@@ -82,6 +100,28 @@ impl SiblingAdjacency {
 
 /// Return a decision at the first preceding matching or nonempty box,
 /// without visiting the rest of the sibling prefix or copying it to a stack.
+/// The last box of `node_id` that takes block space, `Some(None)` when
+/// something else that takes space comes first, and `None` when it holds
+/// nothing in the flow.
+fn last_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<Option<usize>> {
+    match flow_box(document, cascade, node_id) {
+        FlowBox::Skip | FlowBox::Phantom => None,
+        FlowBox::Contents => document.nodes[node_id]
+            .children
+            .iter()
+            .rev()
+            .find_map(|&id| last_block(document, cascade, id)),
+        FlowBox::Box if takes_no_block_space(document, node_id) => None,
+        FlowBox::Box => {
+            Some((document.nodes[node_id].kind() == NodeKind::Element).then_some(node_id))
+        }
+    }
+}
+
 fn preceding_box(
     document: &Document,
     cascade: &CascadeResult,
