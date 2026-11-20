@@ -469,3 +469,67 @@ fn a_button_in_a_wrapper_moves_past_its_top_margin_with_the_wrapper_left_behind(
         ]
     );
 }
+
+#[test]
+fn auto_height_columns_balance_the_text_around_a_whole_button() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0'><button style='all:unset;display:block;width:20px'>ab</button><div style='width:20px'>c1 c2 c3 c4 c5 c6 c7 c8 c9 c0</div></div><div>Z</div>"
+        ),
+        [
+            (0, '0', 118, 48),
+            (0, '1', 18, 18),
+            (0, '2', 18, 28),
+            (0, '3', 18, 38),
+            (0, '4', 18, 48),
+            (0, '5', 18, 58),
+            (0, '6', 118, 8),
+            (0, '7', 118, 18),
+            (0, '8', 118, 28),
+            (0, '9', 118, 38),
+            (0, 'Z', 8, 68),
+            (0, 'a', 8, 8),
+            (0, 'b', 18, 8),
+            (0, 'c', 8, 18),
+            (0, 'c', 8, 28),
+            (0, 'c', 8, 38),
+            (0, 'c', 8, 48),
+            (0, 'c', 8, 58),
+            (0, 'c', 108, 8),
+            (0, 'c', 108, 18),
+            (0, 'c', 108, 28),
+            (0, 'c', 108, 38),
+            (0, 'c', 108, 48)
+        ]
+    );
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0'><div style='width:20px'>d1 d2 d3</div><button style='all:unset;display:block;width:20px'>ab cd</button><div style='width:20px'>c1 c2 c3 c4 c5 c6</div></div><div>Z</div>"
+        ),
+        [
+            (0, '1', 18, 8),
+            (0, '1', 118, 8),
+            (0, '2', 18, 18),
+            (0, '2', 118, 18),
+            (0, '3', 18, 28),
+            (0, '3', 118, 28),
+            (0, '4', 118, 38),
+            (0, '5', 118, 48),
+            (0, '6', 118, 58),
+            (0, 'Z', 8, 68),
+            (0, 'a', 8, 38),
+            (0, 'b', 18, 38),
+            (0, 'c', 8, 48),
+            (0, 'c', 108, 8),
+            (0, 'c', 108, 18),
+            (0, 'c', 108, 28),
+            (0, 'c', 108, 38),
+            (0, 'c', 108, 48),
+            (0, 'c', 108, 58),
+            (0, 'd', 8, 8),
+            (0, 'd', 8, 18),
+            (0, 'd', 8, 28),
+            (0, 'd', 18, 48)
+        ]
+    );
+}

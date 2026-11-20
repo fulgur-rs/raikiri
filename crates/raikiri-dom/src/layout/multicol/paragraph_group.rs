@@ -756,7 +756,7 @@ fn collect(
         }
         // A button is monolithic, so it goes whole to a column, with its
         // lines, wherever they are.
-        if boxes.is_some() && is_whole_button(tree, child) {
+        if is_whole_button(tree, child) {
             (output.size.height > 0.0 && margin_top.is_finite() && margin_bottom.is_finite())
                 .then_some(())?;
             let lines = layout_node(tree, child)
