@@ -513,7 +513,7 @@ fn clip_holds_breaks(
     };
     let mut edge = node_id;
     while let Some(parent) = document.parent_of(edge).filter(|&id| id != body_id)
-        && !document.nodes[parent].has_before_or_after_content
+        && !renders_edge_pseudo(cascade, parent, before)
         && ordered_edge_child(document, cascade, parent, before)
             .is_some_and(|child| is_descendant_or_self(document, child, edge))
     {
@@ -4314,7 +4314,6 @@ fn page_edge_constraint(
     let mut forced = false;
     let mut avoided = false;
     for _ in 0..128 {
-        let node = &document.nodes[id];
         let computed = &cascade.computed[id];
         if document.nodes[id].display() != DisplayValue::Contents {
             let edge = if before {
@@ -4329,7 +4328,7 @@ fn page_edge_constraint(
             };
             avoided |= matches!(edge, BreakBetween::Avoid | BreakBetween::AvoidPage);
         }
-        if node.has_before_or_after_content
+        if renders_edge_pseudo(cascade, id, before)
             || !matches!(
                 document.nodes[id].display(),
                 DisplayValue::Block
@@ -6887,7 +6886,7 @@ fn forced_break_inside(
         // after that box.
         let mut edge = id;
         while let Some(parent) = document.parent_of(edge).filter(|&parent| parent != node_id)
-            && !document.nodes[parent].has_before_or_after_content
+            && !renders_edge_pseudo(cascade, parent, before)
             && ordered_edge_child(document, cascade, parent, before)
                 .is_some_and(|child| is_descendant_or_self(document, child, edge))
         {
@@ -6977,8 +6976,9 @@ fn looks_through_for_breaks(
 
 /// Whether the box `id` inside the block `block` is the first box at its
 /// start (`before`) or the last at its end, through every box between them.
-/// Generated content of a box between them comes before its first box and
-/// after its last.
+/// The `::before` box of the flow of a box between them comes before its
+/// first box, and its `::after` box after its last (see
+/// [`renders_edge_pseudo`]).
 fn at_block_edge(
     document: &Document,
     cascade: &CascadeResult,
@@ -6991,7 +6991,7 @@ fn at_block_edge(
         .all(|id| {
             document
                 .parent_of(id)
-                .filter(|&parent| !document.nodes[parent].has_before_or_after_content)
+                .filter(|&parent| !renders_edge_pseudo(cascade, parent, before))
                 .and_then(|parent| page_edge_child(document, cascade, parent, before, 0).ok())
                 .flatten()
                 .is_some_and(|edge| edge == id || document.ancestors(edge).any(|up| up == id))
@@ -14844,6 +14844,18 @@ fn renders_pseudo(
 /// [`renders_pseudo`]).
 fn renders_before_pseudo(cascade: &CascadeResult, parent: usize) -> bool {
     renders_pseudo(cascade, parent, raikiri_style::PseudoElem::Before)
+}
+
+/// Whether the element `id` has a `::before` box of the flow (`before`) or
+/// an `::after` one, which stands between the edge of the element on that
+/// side and its first or last box (see [`renders_pseudo`]).
+fn renders_edge_pseudo(cascade: &CascadeResult, id: usize, before: bool) -> bool {
+    let pseudo = if before {
+        raikiri_style::PseudoElem::Before
+    } else {
+        raikiri_style::PseudoElem::After
+    };
+    renders_pseudo(cascade, id, pseudo)
 }
 
 /// Whether a pseudo-element of `style` generates a box of the flow:

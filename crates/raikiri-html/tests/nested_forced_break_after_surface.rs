@@ -17,7 +17,8 @@ const ASCENT: f32 = 16.0;
 const BROKEN: &str = "<div style='height:20px;break-after:page'>T</div>";
 
 /// The page count, and the page and top of the first run of every line, in
-/// the order the pages hold them, on 100px pages with 20px/30px Ahem.
+/// the order the pages hold them, on 100px pages with 20px/30px Ahem. Runs
+/// side by side are in the order of their text.
 fn layout_lines(body: &str) -> (u32, Vec<(u32, String, f32)>) {
     layout_lines_in(20, body)
 }
@@ -54,7 +55,7 @@ fn layout_lines_in(width: u32, body: &str) -> (u32, Vec<(u32, String, f32)>) {
             lines.push((index, run.text.trim_end().to_owned(), run.origin.1 - ASCENT));
         }
     }
-    lines.sort_by(|a, b| (a.0, a.2).partial_cmp(&(b.0, b.2)).unwrap());
+    lines.sort_by(|a, b| (a.0, a.2, &a.1).partial_cmp(&(b.0, b.2, &b.1)).unwrap());
     (result.page_count(), lines)
 }
 
@@ -246,4 +247,50 @@ fn a_break_inside_a_cell_leaves_the_other_cells_of_the_row_in_place() {
         .map(|(page, text, _)| (*page, text.as_str()))
         .collect();
     assert_eq!(pages, [(0, "T"), (0, "Y"), (1, "X"), (2, "Z")], "{lines:?}");
+}
+
+#[test]
+fn generated_content_before_the_boxes_leaves_the_last_box_at_the_end() {
+    let expected = (
+        2,
+        at(&[(0, "P", 5.0), (0, "T", 35.0), (1, "F", 5.0), (1, "Z", 35.0)]),
+    );
+    // Only `::before` content of the outer box, a block or inline one: the
+    // float after the inner box still takes the one break of both boxes.
+    for display in ["block", "inline"] {
+        assert_eq!(
+            layout_lines(&format!(
+                "<style>.o::before{{content:'P';display:{display}}}</style>\
+                 <div class=o style='break-after:page'><div style='break-after:page'>T</div>\
+                 <div style='float:left'>F</div></div>Z"
+            )),
+            expected,
+            "{display}"
+        );
+    }
+    // The same with the `::before` content on a box between them.
+    assert_eq!(
+        layout_lines(
+            "<style>.p::before{content:'P'}</style><div style='break-after:page'>\
+             <div class=p><div style='height:20px;break-after:page'>T</div>\
+             <div style='float:left'>F</div></div></div>Z"
+        ),
+        expected
+    );
+}
+
+#[test]
+fn generated_content_after_the_boxes_leaves_the_first_box_at_the_start() {
+    // Only `::after` content of a clipping box: a break before its first box
+    // is a break before the box itself.
+    assert_eq!(
+        layout_lines(
+            "<style>.o::after{content:'Q'}</style>A<div class=o \
+             style='overflow:hidden;height:60px'><div style='break-before:page'>T</div></div>Z"
+        ),
+        (
+            2,
+            at(&[(0, "A", 5.0), (1, "T", 5.0), (1, "Q", 35.0), (1, "Z", 65.0)])
+        )
+    );
 }
