@@ -14674,8 +14674,12 @@ fn atomics_follow_text(document: &Document, root: usize, boxes: &[IfcBox]) -> bo
             }
             // A `display: contents` element lays its children out in its
             // place, so they are walked as the paragraph's own; a
-            // `display: none` one lays out nothing.
-            crate::node::NodeData::Element(_) if !document.nodes[node].is_display_none() => {
+            // `display: none` one, or one that HTML never renders whatever
+            // its display, lays out nothing.
+            crate::node::NodeData::Element(_)
+                if !document.nodes[node].is_display_none()
+                    && !document.nodes[node].is_non_rendered_html_element() =>
+            {
                 stack.extend(document.nodes[node].children.iter().rev().copied());
             }
             _ => {}

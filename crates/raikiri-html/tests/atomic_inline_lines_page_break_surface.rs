@@ -145,6 +145,23 @@ fn lines_of_atomic_inlines_in_a_contents_wrapper_before_text_keep_their_place() 
 }
 
 #[test]
+fn an_element_never_rendered_before_the_atomic_inlines_is_not_their_text() {
+    // raikiri never renders the content of a script, whatever its display
+    // (Chromium shows it under `display: inline`), so the paragraph lays out
+    // as one without it: the inline-blocks come before the text and keep
+    // their place, as in the test above.
+    let paragraph = |script: &str| {
+        glyphs(&format!(
+            r#"<div style="height:40px"></div><div style="width:20px">{script}<i>B</i><i>B</i> T T</div><div>Z</div>"#
+        ))
+    };
+    assert_eq!(
+        paragraph(r#"<script style="display:inline">x</script>"#),
+        paragraph("")
+    );
+}
+
+#[test]
 fn a_line_with_an_image_moves_with_the_text() {
     assert_eq!(
         glyphs(
