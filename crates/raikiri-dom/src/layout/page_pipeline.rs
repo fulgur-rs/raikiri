@@ -5835,26 +5835,25 @@ fn may_break_inside(
 /// The part of the table `table` before which the page breaks when the table
 /// starts a run of boxes tied by avoided breaks, as in Chromium: the part
 /// that the table ends with in visual order, a caption below the rows or its
-/// last row. The rows of a last row group that avoids breaks inside it move
-/// together from the group's first row. A table that avoids breaks inside it
-/// moves whole, or from the first row after the last break forced between
-/// its rows (see [`row_after_last_forced_break`]). `None` when the table
-/// moves whole: the part is its first row, or an avoided break before the
-/// part ties it to the rows before it. A table with a footer group starts no
-/// run (see [`table_starts_run`]).
+/// last row, together with the rows before it that it may not break from.
+/// Walking back from the last row, a break between two rows that is avoided
+/// by the rows or their row groups, or that falls inside a row group (or a
+/// table) that avoids breaks inside it, ties the rows together, unless a
+/// break is forced there. `None` when the table moves whole: the walk
+/// reaches its first row. A table with a footer group starts no run (see
+/// [`table_starts_run`]).
 fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) -> Option<usize> {
-    if avoids_page_break_inside(cascade.computed[table].break_inside) {
-        return row_after_last_forced_break(document, cascade, table);
-    }
+    let avoids_inside = |id: usize| avoids_page_break_inside(cascade.computed[id].break_inside);
+    let table_avoids_inside = avoids_inside(table);
     // Each row with the row group that holds it, if any, in visual order.
     let rows = body_rows(document, table);
-    let &(first_row, _) = rows.first()?;
-    let &(last, last_group) = rows.last()?;
+    let &(last, _) = rows.last()?;
     let top = |id: usize| current_abs_y(document, id);
     // A caption below the rows is the last part.
     if let Some(caption) = document
         .children_through_contents(table)
         .into_iter()
+        .filter(|_| !table_avoids_inside)
         .filter(|&child| document.nodes[child].display() == DisplayValue::TableCaption)
         .filter(|&caption| {
             top(caption) >= top(last) + document.nodes[last].layout.size.height - 0.001
@@ -5864,41 +5863,34 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
         let (forced, avoided) = page_edge_constraint(document, cascade, caption, true);
         return (forced || !avoided).then_some(caption);
     }
-    // The rows of a last group that avoids breaks inside it move together,
-    // from the row after the last break forced between them.
-    if let Some(group) =
-        last_group.filter(|&group| avoids_page_break_inside(cascade.computed[group].break_inside))
-    {
-        let group_rows: Vec<usize> = rows
-            .iter()
-            .filter(|&&(_, row_group)| row_group == Some(group))
-            .map(|&(row, _)| row)
-            .collect();
-        let start = group_rows
-            .windows(2)
-            .filter(|pair| {
-                forces_page_break(document, cascade, pair[0], false)
-                    || forces_page_break(document, cascade, pair[1], true)
-            })
-            .last()
-            .map_or(group_rows[0], |pair| pair[1]);
-        return (start != first_row).then_some(start);
-    }
-    let [.., (before, before_group), _] = rows[..] else {
-        return None;
-    };
-    let mut edges = vec![(before, false), (last, true)];
-    if before_group != last_group {
-        edges.extend(before_group.map(|group| (group, false)));
-        edges.extend(last_group.map(|group| (group, true)));
-    }
-    let (forced, avoided) = edges
-        .into_iter()
-        .fold((false, false), |(f, a), (id, before_edge)| {
-            let (forced, avoided) = page_edge_constraint(document, cascade, id, before_edge);
-            (f || forced, a || avoided)
-        });
-    (forced || !avoided).then_some(last)
+    rows.windows(2)
+        .rev()
+        .find(|pair| {
+            let ((before, before_group), (after, after_group)) = (pair[0], pair[1]);
+            let mut edges = vec![(before, false), (after, true)];
+            if before_group != after_group {
+                edges.extend(before_group.map(|group| (group, false)));
+                edges.extend(after_group.map(|group| (group, true)));
+            }
+            let (forced, avoided) =
+                edges
+                    .into_iter()
+                    .fold((false, false), |(forced, avoided), (id, before_edge)| {
+                        let (own_forced, own_avoided) =
+                            page_edge_constraint(document, cascade, id, before_edge);
+                        (
+                            forced
+                                || own_forced
+                                || forces_page_break(document, cascade, id, before_edge),
+                            avoided || own_avoided,
+                        )
+                    });
+            let avoided = avoided
+                || table_avoids_inside
+                || (before_group == after_group && after_group.is_some_and(avoids_inside));
+            forced || !avoided
+        })
+        .map(|pair| pair[1].0)
 }
 
 /// The rows of the table `table` outside its header and footer groups, each
@@ -5975,33 +5967,6 @@ fn table_starts_run(document: &Document, cascade: &CascadeResult, table: usize) 
                             && forces_page_break(document, cascade, group, false)
                     })
             })
-}
-
-/// The first row after the last break forced between two rows of the table
-/// `table`, by the rows, the boxes that end or start their cells (see
-/// [`forces_page_break`]), or the row groups between them. The page breaks
-/// there whatever the table avoids, so a table that avoids breaks inside it
-/// moves with a run of boxes after it only from that row on, as in Chromium.
-fn row_after_last_forced_break(
-    document: &Document,
-    cascade: &CascadeResult,
-    table: usize,
-) -> Option<usize> {
-    let rows = body_rows(document, table);
-    rows.windows(2)
-        .filter(|pair| {
-            let ((before, before_group), (after, after_group)) = (pair[0], pair[1]);
-            forces_page_break(document, cascade, before, false)
-                || forces_page_break(document, cascade, after, true)
-                || (before_group != after_group
-                    && (before_group
-                        .is_some_and(|group| forces_page_break(document, cascade, group, false))
-                        || after_group.is_some_and(|group| {
-                            forces_page_break(document, cascade, group, true)
-                        })))
-        })
-        .last()
-        .map(|pair| pair[1].0)
 }
 
 /// The next in-flow box after the box `node_id` in the flow of its parent,

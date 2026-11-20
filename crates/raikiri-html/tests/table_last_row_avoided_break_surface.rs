@@ -422,3 +422,106 @@ fn a_table_that_moves_whole_starts_the_run_inside_a_block() {
         ]
     );
 }
+
+#[test]
+fn rows_tied_to_the_last_row_by_avoided_breaks_move_with_it() {
+    let cases = [
+        // The last row group avoids breaks inside it and the break before it.
+        (
+            r#"<tbody><tr><td>K</td></tr><tr><td>M</td></tr></tbody><tbody style="break-inside:avoid;break-before:avoid"><tr><td>L</td></tr><tr><td>X</td></tr></tbody>"#,
+            &[
+                (0, 'K', 30),
+                (0, 'S', 0),
+                (1, 'L', 20),
+                (1, 'M', 0),
+                (1, 'X', 40),
+                (1, 'Z', 60),
+            ][..],
+        ),
+        // The row before the last row group avoids the break after it.
+        (
+            r#"<tbody><tr><td>K</td></tr><tr style="break-after:avoid"><td>M</td></tr></tbody><tbody style="break-inside:avoid"><tr><td>L</td></tr><tr><td>X</td></tr></tbody>"#,
+            &[
+                (0, 'K', 30),
+                (0, 'S', 0),
+                (1, 'L', 20),
+                (1, 'M', 0),
+                (1, 'X', 40),
+                (1, 'Z', 60),
+            ][..],
+        ),
+        // A row inside the last row group avoids the break after it.
+        (
+            r#"<tbody><tr><td>K</td></tr></tbody><tbody style="break-inside:avoid"><tr style="break-after:avoid"><td>L</td></tr><tr><td>X</td></tr></tbody>"#,
+            &[
+                (0, 'K', 30),
+                (0, 'S', 0),
+                (1, 'L', 0),
+                (1, 'X', 20),
+                (1, 'Z', 40),
+            ][..],
+        ),
+        // Rows without groups.
+        (
+            r#"<tr><td>K</td></tr><tr style="break-after:avoid"><td>M</td></tr><tr><td>X</td></tr>"#,
+            &[
+                (0, 'K', 30),
+                (0, 'S', 0),
+                (1, 'M', 0),
+                (1, 'X', 20),
+                (1, 'Z', 40),
+            ][..],
+        ),
+        // A last row group that avoids the break before it.
+        (
+            r#"<tbody><tr><td>K</td></tr><tr><td>M</td></tr></tbody><tbody style="break-before:avoid"><tr><td>X</td></tr></tbody>"#,
+            &[
+                (0, 'K', 30),
+                (0, 'S', 0),
+                (1, 'M', 0),
+                (1, 'X', 20),
+                (1, 'Z', 40),
+            ][..],
+        ),
+    ];
+    for (rows, expected) in cases {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:30px">S</div><table>{rows}</table><div style="break-before:avoid">Z</div>"#
+            )),
+            expected,
+            "{rows}"
+        );
+    }
+    // A chain of two avoided breaks.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px">S</div><table><tr><td>K</td></tr><tr><td>J</td></tr><tr style="break-before:avoid"><td>M</td></tr><tr style="break-before:avoid"><td>X</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [
+            (0, 'K', 10),
+            (0, 'S', 0),
+            (1, 'J', 0),
+            (1, 'M', 20),
+            (1, 'X', 40),
+            (1, 'Z', 60)
+        ]
+    );
+}
+
+#[test]
+fn a_table_whose_rows_are_all_tied_moves_whole() {
+    let expected = [(0, 'S', 0), (1, 'L', 0), (1, 'X', 20), (1, 'Z', 40)];
+    for rows in [
+        r#"<tbody><tr><td>L</td></tr></tbody><tbody style="break-inside:avoid;break-before:avoid"><tr><td>X</td></tr></tbody>"#,
+        r#"<tbody style="break-after:avoid"><tr><td>L</td></tr></tbody><tbody style="break-inside:avoid"><tr><td>X</td></tr></tbody>"#,
+    ] {
+        assert_eq!(
+            glyphs(&format!(
+                r#"<div style="height:50px">S</div><table>{rows}</table><div style="break-before:avoid">Z</div>"#
+            )),
+            expected,
+            "{rows}"
+        );
+    }
+}
