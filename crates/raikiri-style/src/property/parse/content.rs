@@ -351,6 +351,18 @@ pub(super) fn parse_content_list_items(
         {
             items.push(ContentComponent::Image {
                 url: url.as_ref().to_string(),
+                density: ImageDensity::ONE,
+            });
+            continue;
+        }
+        // `image-set()` whose chosen option is a URL (CSS Images 4 §2.4),
+        // with the density that option was written for.
+        if mode == ContentListMode::CssContent3
+            && let Ok((url, density)) = input.try_parse(super::visual::parse_image_set_url)
+        {
+            items.push(ContentComponent::Image {
+                url: url.to_string(),
+                density,
             });
             continue;
         }

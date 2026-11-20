@@ -205,14 +205,12 @@ pub fn is_in_flow_generated_text(
         {
             return true;
         }
-        return matches!(
-            cv.list_style_image,
-            raikiri_style::property::BackgroundImage::Url(_)
-        ) || match &cv.list_style_type {
-            raikiri_style::ListStyleType::None => false,
-            raikiri_style::ListStyleType::String(text) => !text.is_empty(),
-            _ => true,
-        };
+        return cv.list_style_image.url().is_some()
+            || match &cv.list_style_type {
+                raikiri_style::ListStyleType::None => false,
+                raikiri_style::ListStyleType::String(text) => !text.is_empty(),
+                _ => true,
+            };
     }
     let Some(cv) = cascade
         .pseudo

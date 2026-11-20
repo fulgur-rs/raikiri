@@ -356,7 +356,7 @@ fn content_component(component: &ContentComponent) -> u64 {
                 + separator.capacity() as u64
                 + counter_style(style)
         }
-        ContentComponent::TargetText { url, .. } | ContentComponent::Image { url } => {
+        ContentComponent::TargetText { url, .. } | ContentComponent::Image { url, .. } => {
             url.capacity() as u64
         }
         _ => 0,
@@ -413,10 +413,11 @@ fn background_lists_heap(
 
 fn image(value: &BackgroundImage, parent: &BackgroundImage) -> u64 {
     match (value, parent) {
-        (BackgroundImage::Url(url), BackgroundImage::Url(parent)) => {
-            str_of(Some(url), Some(parent))
-        }
-        (BackgroundImage::Url(url), _) => str_heap(url),
+        (
+            BackgroundImage::Url(url) | BackgroundImage::DensityUrl { url, .. },
+            BackgroundImage::Url(parent) | BackgroundImage::DensityUrl { url: parent, .. },
+        ) => str_of(Some(url), Some(parent)),
+        (BackgroundImage::Url(url) | BackgroundImage::DensityUrl { url, .. }, _) => str_heap(url),
         (BackgroundImage::Gradient(gradient), BackgroundImage::Gradient(parent))
             if Arc::ptr_eq(gradient, parent) =>
         {

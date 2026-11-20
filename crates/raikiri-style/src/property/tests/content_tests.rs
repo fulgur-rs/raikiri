@@ -413,6 +413,7 @@ fn content_parse_image_url_quoted_form() {
         items[0],
         ContentComponent::Image {
             url: String::from("cat.png"),
+            density: ImageDensity::ONE,
         }
     );
 }
@@ -426,6 +427,7 @@ fn content_parse_image_url_unquoted_form() {
         items[0],
         ContentComponent::Image {
             url: String::from("cat.png"),
+            density: ImageDensity::ONE,
         }
     );
 }
@@ -575,6 +577,7 @@ fn content_parse_mixed_sequence_with_new_alternatives() {
             ContentComponent::Leader(LeaderType::Dotted),
             ContentComponent::Image {
                 url: String::from("icon.png"),
+                density: ImageDensity::ONE,
             },
             ContentComponent::Contents,
         ]

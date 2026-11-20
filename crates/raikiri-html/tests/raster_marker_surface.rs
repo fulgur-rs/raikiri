@@ -491,3 +491,35 @@ fn outside_image_events_follow_the_first_line_page_and_baseline() {
         assert_eq!(count, 1);
     }
 }
+
+/// A marker image an `image-set()` option wrote for `2x` is drawn at half its
+/// pixel size, its natural size (CSS Images 4 §2.4), as Chromium draws it.
+#[test]
+fn image_set_marker_takes_the_size_its_density_gives() {
+    let pixels = Pixels::new();
+    for (density, width, height) in [("2x", 4.0, 2.0), ("0.5x", 16.0, 8.0)] {
+        let document = lay_out(
+            "<ul><li>A</li></ul>",
+            &format!(
+                "li{{list-style-position:inside;\
+                 list-style-image:image-set(url(marker.png) {density})}}"
+            ),
+            &pixels,
+        );
+        let page = document.page(0).unwrap();
+        let events = page.paint_order_for_text_runs(&page.text_runs());
+        let owner = events
+            .iter()
+            .find_map(|event| match event {
+                PaintEvent::MarkerImage(owner) => Some(*owner),
+                _ => None,
+            })
+            .unwrap();
+        let image = page.raster_marker(owner, &pixels).unwrap();
+        assert_eq!(
+            image.rect,
+            PaintRect::new(20.0, 16.0 - height, width, height),
+            "{density}"
+        );
+    }
+}

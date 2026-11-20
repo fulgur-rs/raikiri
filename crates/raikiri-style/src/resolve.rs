@@ -3233,7 +3233,9 @@ pub fn resolve_background_image(
     ctx: &ResolveContext,
 ) -> BackgroundImage {
     match specified {
-        BackgroundImage::None | BackgroundImage::Url(_) => specified,
+        BackgroundImage::None | BackgroundImage::Url(_) | BackgroundImage::DensityUrl { .. } => {
+            specified
+        }
         BackgroundImage::Gradient(g) => BackgroundImage::Gradient(Arc::new(resolve_gradient(
             Arc::unwrap_or_clone(g),
             font_size,

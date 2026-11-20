@@ -177,9 +177,12 @@ fn target_text_default_part_is_content() {
 #[test]
 fn image_url_payload() {
     let url = Url::parse("https://example.com/logo.png").expect("valid URL");
-    let c = ContentValueItem::Image { url: url.clone() };
+    let c = ContentValueItem::Image {
+        url: url.clone(),
+        density: ImageDensity::ONE,
+    };
     match c {
-        ContentValueItem::Image { url: u } => {
+        ContentValueItem::Image { url: u, .. } => {
             assert_eq!(u, url);
         }
         // cov:ignore: panic-message literal only executed on assertion

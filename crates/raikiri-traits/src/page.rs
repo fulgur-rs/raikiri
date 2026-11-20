@@ -44,8 +44,8 @@ pub use target::{
 
 use crate::dom::{NodeId, Symbol};
 use raikiri_style::property::{
-    ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword,
-    StringFetchMode,
+    ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, ImageDensity, LeaderType,
+    QuoteKeyword, StringFetchMode,
 };
 use raikiri_style::{Length, PageOrientation, PageSize, PageSizeKeyword};
 #[cfg(test)]
@@ -591,6 +591,10 @@ pub enum ContentValueItem {
         /// Image URL (parsed by [`Url::parse`] in the bridge, matching sibling
         /// [`TargetCounter`](Self::TargetCounter)).
         url: Url,
+        /// The density the image was written for by its `image-set()`
+        /// option: `1x` for a plain `url()`. The image's natural size is its
+        /// size divided by it.
+        density: ImageDensity,
     },
     /// `contents` keyword — CSS Content 3 §2.3
     /// <https://www.w3.org/TR/css-content-3/#element-content>.
@@ -770,8 +774,9 @@ impl TryFrom<ContentComponent> for ContentValueItem {
             ContentComponent::Content { keyword } => Self::Content {
                 part: content_text_keyword_to_content_part(keyword)?,
             },
-            ContentComponent::Image { url } => Self::Image {
+            ContentComponent::Image { url, density } => Self::Image {
                 url: Url::parse(&url)?,
+                density,
             },
             ContentComponent::Contents => Self::Contents,
             ContentComponent::Quote(kw) => Self::Quote(kw),

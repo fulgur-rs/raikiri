@@ -380,8 +380,7 @@ impl DocumentHost for WptDocumentHost {
             {
                 continue;
             }
-            let raikiri_style::property::BackgroundImage::Url(raw) = &computed.list_style_image
-            else {
+            let Some(raw) = computed.list_style_image.url() else {
                 continue;
             };
             if let Some(url) = raikiri::Url::parse(raw).ok().or_else(|| {

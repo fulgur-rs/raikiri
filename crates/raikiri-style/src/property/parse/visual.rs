@@ -813,7 +813,35 @@ fn parse_image_set<'i>(input: &mut Parser<'i, '_>) -> Result<BackgroundImage, Pa
             Ok(())
         })
     })?;
-    Ok(best.map_or(BackgroundImage::None, |option| option.image))
+    Ok(best.map_or(BackgroundImage::None, ImageSetOption::into_image))
+}
+
+impl ImageSetOption {
+    /// The image the option stands for: a URL written for a density other
+    /// than `1x` keeps that density, so its natural size can be divided by it.
+    fn into_image(self) -> BackgroundImage {
+        match (self.image, ImageDensity::new(self.dppx)) {
+            (BackgroundImage::Url(url), Some(density)) if density != ImageDensity::ONE => {
+                BackgroundImage::DensityUrl { url, density }
+            }
+            (image, _) => image,
+        }
+    }
+}
+
+/// Parse an `image-set()` whose chosen option is a URL, for the properties
+/// that take an image only as a URL (`list-style-image`, `content`): the URL
+/// and the density its option was written for. A gradient option, or none at
+/// all, fails the parse, so the declaration is dropped.
+pub(super) fn parse_image_set_url<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(smol_str::SmolStr, ImageDensity), ParseError<'i, ()>> {
+    let image = parse_image_set(input)?;
+    match image {
+        BackgroundImage::Url(url) => Ok((url, ImageDensity::ONE)),
+        BackgroundImage::DensityUrl { url, density } => Ok((url, density)),
+        _ => Err(input.new_custom_error(())),
+    }
 }
 
 /// Whether `option` beats `best`, the option an `image-set()` stands for so

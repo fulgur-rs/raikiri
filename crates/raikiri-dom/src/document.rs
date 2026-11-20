@@ -3353,7 +3353,7 @@ impl Document {
             {
                 continue;
             }
-            let raikiri_style::property::BackgroundImage::Url(raw) = &cv.list_style_image else {
+            let Some(raw) = cv.list_style_image.url() else {
                 continue;
             };
             let Some(url) = crate::image_url::authored_image_url(raw, base_url) else {
@@ -3362,6 +3362,7 @@ impl Document {
             let Some(intrinsic) = source.intrinsic_size(&url) else {
                 continue;
             };
+            let intrinsic = intrinsic.at_density(cv.list_style_image.density());
             let em = cascade
                 .pseudo
                 .get(&(
@@ -3421,11 +3422,13 @@ impl Document {
                 continue;
             }
             let urls = cv.content.iter().filter_map(|component| match component {
-                raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                raikiri_style::property::ContentComponent::Image { url, density } => {
+                    Some((url, *density))
+                }
                 _ => None,
             });
             let replacement = cv.content.len() == 1;
-            for (index, raw) in urls
+            for (index, (raw, density)) in urls
                 .enumerate()
                 .take(crate::generated_content::MAX_GENERATED_IMAGES)
             {
@@ -3435,6 +3438,7 @@ impl Document {
                 let Some(intrinsic) = source.intrinsic_size(&url) else {
                     continue;
                 };
+                let intrinsic = intrinsic.at_density(density);
                 let size = content_image_size(intrinsic, replacement.then_some(cv));
                 if !(size.width > 0.0 && size.height > 0.0) {
                     continue;

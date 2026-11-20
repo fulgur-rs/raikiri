@@ -262,3 +262,86 @@ fn a_repeating_axis_beside_a_spaced_one_keeps_the_gaps_across() {
     assert_eq!(pixel(&pixels, 16, 2), RED, "the second column");
     assert_eq!(pixel(&pixels, 27, 2), RED, "the third column");
 }
+
+/// Pixels of a 100×80 page whose root element is styled by `root_style`, so
+/// its background is propagated to the canvas.
+fn paint_root(root_style: &str) -> Vec<u8> {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Some(format!("display:block;{root_style}").as_str()),
+    );
+    doc.append_element(Some(html), "body", Some("display:block"));
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut doc, &computed, page).unwrap();
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, &Quadrants)
+        .unwrap();
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| {
+            use anyrender::PaintScene;
+            out.append_scene(scene, kurbo::Affine::IDENTITY);
+        },
+        100,
+        80,
+    )
+}
+
+/// An image an `image-set()` option wrote for `2x` has half its pixel size as
+/// its natural size, and one written for `0.5x` twice it (CSS Images 4 §2.4),
+/// as Chromium draws them.
+#[test]
+fn an_image_set_density_divides_the_natural_size_of_the_tile() {
+    let pixels = paint(
+        "width:40px;height:40px;background-repeat:no-repeat;\
+         background-image:image-set(url(file:///quadrants.png) 2x)",
+    );
+    assert_eq!(pixel(&pixels, 1, 1), RED);
+    assert_eq!(pixel(&pixels, 3, 1), BLUE);
+    assert_eq!(pixel(&pixels, 1, 3), GREEN);
+    assert_eq!(pixel(&pixels, 3, 3), BLACK);
+    assert_eq!(pixel(&pixels, 6, 1), WHITE, "the 2x tile is 5px wide");
+    assert_eq!(pixel(&pixels, 1, 6), WHITE, "the 2x tile is 5px tall");
+    let pixels = paint(
+        "width:40px;height:40px;background-repeat:no-repeat;\
+         background-image:image-set(url(file:///quadrants.png) 0.5x)",
+    );
+    assert_eq!(pixel(&pixels, 8, 8), RED);
+    assert_eq!(pixel(&pixels, 12, 8), BLUE);
+    assert_eq!(pixel(&pixels, 8, 12), GREEN);
+    assert_eq!(pixel(&pixels, 18, 18), BLACK);
+    assert_eq!(pixel(&pixels, 22, 2), WHITE, "the 0.5x tile is 20px wide");
+}
+
+/// The tiles of a repeated image follow the natural size the density gives,
+/// and a density given in `dppx` or `dpi` counts as its `x` equivalent.
+#[test]
+fn repeated_tiles_of_an_image_set_follow_its_density() {
+    for density in ["2x", "2dppx", "192dpi"] {
+        let pixels = paint(&format!(
+            "width:40px;height:40px;\
+             background-image:image-set(url(file:///quadrants.png) {density})"
+        ));
+        assert_eq!(pixel(&pixels, 1, 1), RED, "{density}");
+        assert_eq!(pixel(&pixels, 6, 1), RED, "{density}: the second tile");
+        assert_eq!(pixel(&pixels, 8, 1), BLUE, "{density}");
+        assert_eq!(pixel(&pixels, 1, 6), RED, "{density}: the second row");
+    }
+}
+
+/// The canvas background propagated from the root keeps the density too.
+#[test]
+fn a_propagated_root_background_keeps_its_image_set_density() {
+    let pixels = paint_root(
+        "background-repeat:no-repeat;\
+         background-image:image-set(url(file:///quadrants.png) 2x)",
+    );
+    assert_eq!(pixel(&pixels, 1, 1), RED);
+    assert_eq!(pixel(&pixels, 3, 1), BLUE);
+    assert_eq!(pixel(&pixels, 6, 1), WHITE, "the 2x tile is 5px wide");
+}

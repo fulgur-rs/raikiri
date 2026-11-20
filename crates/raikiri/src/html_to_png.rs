@@ -146,7 +146,7 @@ where
         {
             continue;
         }
-        let raikiri_style::property::BackgroundImage::Url(raw) = &computed.list_style_image else {
+        let Some(raw) = computed.list_style_image.url() else {
             continue;
         };
         let Some(url) = url::Url::parse(raw)
@@ -185,7 +185,7 @@ where
             .content
             .iter()
             .filter_map(|component| match component {
-                raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                raikiri_style::property::ContentComponent::Image { url, .. } => Some(url),
                 _ => None,
             })
             .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES);

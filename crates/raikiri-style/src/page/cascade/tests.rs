@@ -6993,7 +6993,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     }
                     match &layer.image {
                         crate::property::BackgroundImage::None
-                        | crate::property::BackgroundImage::Url(_) => None,
+                        | crate::property::BackgroundImage::Url(_)
+                        | crate::property::BackgroundImage::DensityUrl { .. } => None,
                         crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                     }
                 };
@@ -7067,7 +7068,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     }
                 }
                 img.iter().find_map(|img| match img {
-                    crate::property::BackgroundImage::None | crate::property::BackgroundImage::Url(_) => None,
+                    crate::property::BackgroundImage::None
+                    | crate::property::BackgroundImage::Url(_)
+                    | crate::property::BackgroundImage::DensityUrl { .. } => None,
                     crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                 })
             }
@@ -7113,7 +7116,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     }
                 }
                 match img {
-                    crate::property::BackgroundImage::None | crate::property::BackgroundImage::Url(_) => None,
+                    crate::property::BackgroundImage::None
+                    | crate::property::BackgroundImage::Url(_)
+                    | crate::property::BackgroundImage::DensityUrl { .. } => None,
                     crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                 }
             }

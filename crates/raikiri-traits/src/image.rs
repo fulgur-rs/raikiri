@@ -36,6 +36,18 @@ impl ImageIntrinsicSize {
             aspect_ratio,
         }
     }
+
+    /// The natural dimensions of the image written for `density` by its
+    /// `image-set()` option: the width and height divided by the density,
+    /// the ratio kept (CSS Images 4 §2.4).
+    pub fn at_density(self, density: raikiri_style::property::ImageDensity) -> Self {
+        let scale = |value: f32| value / density.dppx();
+        Self {
+            width: self.width.map(scale),
+            height: self.height.map(scale),
+            aspect_ratio: self.aspect_ratio,
+        }
+    }
 }
 
 /// Raster viewport requested by the paint stage, in CSS pixels.

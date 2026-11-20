@@ -3343,17 +3343,20 @@ pub enum ContentComponent {
     /// `repeating-linear-gradient()` / `radial-gradient()` /
     /// `repeating-radial-gradient()`, CSS Images 3 §3.1-2) is deferred because
     /// this crate lacks gradient-stop and color-interpolation infrastructure
-    /// (out of scope; tracked as a follow-up task). `image()` / `image-set()` /
-    /// `element()` / `cross-fade()` / `paint()`, added in CSS Images 4, are
-    /// absent from the referenced CSS Images **3** `<image>` production and
-    /// therefore spec-invalid (at Level 3). Their function names do not match
-    /// any `parse_content_function` match arm, so they are dropped without
-    /// additional code.
+    /// (out of scope; tracked as a follow-up task). Of the functions CSS
+    /// Images 4 adds, `image-set()` is accepted when the option it chooses is
+    /// a URL, as browsers do; `image()` / `element()` / `cross-fade()` /
+    /// `paint()` do not match any `parse_content_function` match arm, so they
+    /// are dropped without additional code.
     ///
     /// URLs are kept as raw `String` values (the same convention as sibling
     /// [`TargetCounter`](Self::TargetCounter) and others; no dependency on the
     /// `url` crate).
-    Image { url: String },
+    ///
+    /// An `image-set()` (CSS Images 4 §2.4) whose chosen option is a URL is
+    /// accepted too: `density` is the density that option was written for,
+    /// and `1x` for a plain `url()`.
+    Image { url: String, density: ImageDensity },
     /// `contents` keyword — CSS Content 3 §2.3 "Elemental Content: the
     /// `contents` keyword" <https://www.w3.org/TR/css-content-3/#element-content>.
     /// Specification verbatim: "The element's descendants". Resolving whether
@@ -8792,10 +8795,10 @@ pub struct CssPosition {
 /// parser for this type is used, except `list-style-image`, and is resolved
 /// while parsing: the one option it selects is stored as a
 /// [`BackgroundImage::Url`] or a [`BackgroundImage::Gradient`], and a function
-/// with no selectable option is stored as [`BackgroundImage::None`]. The stored
-/// value remembers neither the function nor the density the selected option
-/// was authored for, so a selected raster image is drawn at its natural size
-/// even when its option is not `1x`.
+/// with no selectable option is stored as [`BackgroundImage::None`]. A URL
+/// whose option was written for a density other than `1x` is stored as
+/// [`BackgroundImage::DensityUrl`], so its natural size can be divided by that
+/// density (CSS Images 4 §2.4). The function itself is not remembered.
 ///
 /// Scope carving for `<gradient>` (features intentionally omitted from the
 /// Level 4 grammar; see also the [`GradientColorStop`] docs):
@@ -8852,7 +8855,67 @@ pub enum BackgroundImage {
     /// as every descendant does with an inherited `list-style-image`, does not
     /// copy its color stops.
     Gradient(Arc<Gradient>),
+    /// `<url>` selected from an `image-set()` option written for a density
+    /// other than `1x`. The image's natural size is its size divided by
+    /// `density` (CSS Images 4 §2.4), so an image written for `2x` is drawn
+    /// at half its pixel size.
+    DensityUrl {
+        /// The URL, kept as raw text as in [`Self::Url`].
+        url: SmolStr,
+        /// The density the option was written for.
+        density: ImageDensity,
+    },
 }
+
+impl BackgroundImage {
+    /// The URL of the image, when it is one: [`Self::Url`] or
+    /// [`Self::DensityUrl`].
+    pub fn url(&self) -> Option<&SmolStr> {
+        match self {
+            Self::Url(url) | Self::DensityUrl { url, .. } => Some(url),
+            _ => None,
+        }
+    }
+
+    /// The density the image was written for: `1x` unless an `image-set()`
+    /// option chose another one.
+    pub fn density(&self) -> ImageDensity {
+        match self {
+            Self::DensityUrl { density, .. } => *density,
+            _ => ImageDensity::ONE,
+        }
+    }
+}
+
+/// The density, in image pixels per CSS pixel (`dppx`), an image was written
+/// for by its `image-set()` option (CSS Images 4 §2.4): finite and above zero.
+/// The natural size of the image is its size divided by the density.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageDensity(f32);
+
+impl ImageDensity {
+    /// `1x`: the natural size is the image's own size.
+    pub const ONE: Self = Self(1.0);
+
+    /// The density `dppx`, or `None` unless it is finite and above zero.
+    pub fn new(dppx: f32) -> Option<Self> {
+        (dppx.is_finite() && dppx > 0.0).then_some(Self(dppx))
+    }
+
+    /// The density in `dppx`.
+    pub fn dppx(self) -> f32 {
+        self.0
+    }
+
+    /// The natural `width` and `height` of an image of that many image
+    /// pixels.
+    pub fn natural_size(self, width: f32, height: f32) -> (f32, f32) {
+        (width / self.0, height / self.0)
+    }
+}
+
+// Never NaN: `new` only admits finite densities.
+impl Eq for ImageDensity {}
 
 /// `<angle>` (CSS Values 4 §7.1 "Angle Units: the &lt;angle&gt; type and
 /// deg, grad, rad, turn units"
