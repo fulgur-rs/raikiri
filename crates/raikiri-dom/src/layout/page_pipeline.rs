@@ -38,6 +38,7 @@ use pagination_state::{FlowEnv, PaginationState};
 use source_walk::{WalkedSources, walk_sources};
 
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
+use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -15187,11 +15188,8 @@ fn follows_line_of_paragraph(
         .is_some_and(|(lines, block)| {
             (document.nodes[block].display().is_atomic_inline_level()
                 || is_replaced_for_pagination(document, block))
-                && lines.lines.iter().enumerate().any(|(index, shaped)| {
-                index >= line && shaped.fragments().any(|fragment| {
-                    matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == block)
-                })
-            }) || blocks_after_line(document, root, line, with_block_before).contains(&block)
+                && atomic_nodes(lines.lines.get(line..).unwrap_or_default()).contains(&block)
+                || blocks_after_line(document, root, line, with_block_before).contains(&block)
                 // A box out of the flow with no insets along the block axis
                 // keeps the static position of its anchor, on a line. Lines
                 // only move when every such box is one that
@@ -17211,15 +17209,10 @@ fn shift_paragraph_lines(
         .ifc_layout_node(moved.block_id)
         .and_then(|node| node.ifc.as_ref())
         .and_then(|ifc| ifc.lines.as_ref())
+        .map(|lines| atomic_nodes(lines.lines.get(moved.line..).unwrap_or_default()))
+        .unwrap_or_default()
         .into_iter()
-        .flat_map(|lines| lines.lines[moved.line..].iter())
-        .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::Atomic(atomic) => usize::try_from(atomic.node.0)
-                .ok()
-                .filter(|&node| node < document.nodes.len()),
-            _ => None,
-        })
+        .filter(|&node| node < document.nodes.len())
         .collect();
     let blocks = blocks_after_line(
         document,

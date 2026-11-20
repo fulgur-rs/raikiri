@@ -274,3 +274,32 @@ fn text_before_an_atomic_inline_in_source_order_moves_the_lines_under_bidi() {
         )
     );
 }
+
+#[test]
+fn an_atomic_inline_in_a_ruby_annotation_moves_with_its_line() {
+    // Chromium prints the ruby's line on the next page with the annotation's
+    // glyph 25px above the base's. Where the moved line itself starts
+    // depends on how far the annotation reaches above the line, which is
+    // checked elsewhere, so only the page and the gap are compared here.
+    let ruby = r#"<style>rt{font-size:20px;line-height:30px}</style>"#;
+    for top in [30, 40] {
+        let glyphs = glyphs(&format!(
+            r#"{ruby}<div style="position:absolute;top:{top}px;width:20px">T <ruby>R<rt><i>C</i></rt></ruby></div>"#
+        ));
+        let [
+            (0, 'T', 0, text),
+            (1, 'C', 0, annotation),
+            (1, 'R', 0, base),
+        ] = glyphs[..]
+        else {
+            panic!("{top}: {glyphs:?}");
+        };
+        assert_eq!((text, base - annotation), (top + 5, 25), "{top}");
+    }
+    assert_eq!(
+        glyphs(&format!(
+            r#"{ruby}<div style="height:30px"></div><div style="width:20px">T <ruby>R<rt><i>C</i></rt></ruby></div>"#
+        )),
+        [(1, 'C', 0, 30), (1, 'R', 0, 55), (1, 'T', 0, 5)]
+    );
+}
