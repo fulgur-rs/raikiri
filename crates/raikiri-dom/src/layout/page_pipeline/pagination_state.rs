@@ -1626,10 +1626,28 @@ impl PaginationState {
         // negative margin below it pulls the content end back up, takes the
         // edges after it to the next page even where they fit, as in
         // Chromium.
+        // A forced break after a block among the lines of a paragraph that a
+        // line closes takes that line, and the edges below it, to the next
+        // page, though they fit.
+        let forced = self.pending_break.source.is_some_and(|source| {
+            source != node_id
+                && super::is_descendant_or_self(document, source, node_id)
+                && super::line_follows_paragraph_block(document, cascade, node_id, source)
+        });
         if !(end > page_origins.origin(page) + 0.001
             && gap > 0.001
-            && (edges_break.edges > gap + 0.001 || edges_break.margin_reach > gap + 0.001))
+            && (forced
+                || edges_break.edges > gap + 0.001
+                || edges_break.margin_reach > gap + 0.001))
         {
+            // Content that ends at the page end leaves the edges to start the
+            // next page, which takes the break as well.
+            if forced
+                && edges_break.edges > 0.001
+                && (gap <= 0.001 || end <= page_origins.origin(page) + 0.001)
+            {
+                self.pending_break.clear();
+            }
             // The pages of a block leave out the margins in it that a page
             // edge may truncate, so edges that stay where they are reach
             // their pages here, such as a page that they begin.
@@ -1642,6 +1660,10 @@ impl PaginationState {
             return Ok(());
         }
         let next_page = page.saturating_add(1);
+        // The edges start the page the break opens: the break is taken.
+        if forced {
+            self.pending_break.clear();
+        }
         let visible = self.visible_edges(edges_break, gap);
         if visible > 0.001 {
             reach_page(control, next_page)?;

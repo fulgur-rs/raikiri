@@ -4277,6 +4277,102 @@ fn page_edge_child(
     Ok(None)
 }
 
+/// Whether inline content of the paragraph `root` follows its block `block`:
+/// the end of an inline box around the block, or an inline box or text after
+/// it. Chromium closes such a block with a line of its own, empty as it may
+/// be, which a forced break after the block carries to the next page along
+/// with the paragraph's bottom padding and border.
+fn line_follows_paragraph_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    block: usize,
+) -> bool {
+    let node = &document.nodes[block];
+    if matches!(
+        node.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    ) || is_floating_box_for_pagination(document, cascade, block)
+    {
+        return false;
+    }
+    let mut id = block;
+    for _ in 0..128 {
+        let Some(parent) = document.parent_of(id) else {
+            return false;
+        };
+        let children = &document.nodes[parent].children;
+        let after = children
+            .iter()
+            .position(|&child| child == id)
+            .map_or(0, |at| at + 1);
+        if children[after..]
+            .iter()
+            .any(|&child| makes_inline_content(document, cascade, child, 0))
+        {
+            return true;
+        }
+        if parent == root {
+            return false;
+        }
+        // A break inside a box out of the flow, a float or an atomic inline
+        // stays inside that box: no line of the paragraph follows it.
+        let node = &document.nodes[parent];
+        let display = node.display();
+        if matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || is_floating_box_for_pagination(document, cascade, parent)
+            || !(display == DisplayValue::Inline
+                || display == DisplayValue::Contents
+                || is_block_level_flow_box(display))
+        {
+            return false;
+        }
+        if node.kind() == NodeKind::Element && display == DisplayValue::Inline {
+            return true;
+        }
+        id = parent;
+    }
+    false
+}
+
+/// Whether `id` puts content on a line of its paragraph: text that does not
+/// collapse away, or an inline-level box in the flow.
+fn makes_inline_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    depth: usize,
+) -> bool {
+    let node = &document.nodes[id];
+    if depth >= 128
+        || !node.is_in_document()
+        || node.is_non_rendered_html_element()
+        || node.display() == DisplayValue::None
+        || matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        || is_floating_box_for_pagination(document, cascade, id)
+    {
+        return false;
+    }
+    if let crate::node::NodeData::Text(text) = &node.data {
+        return !crate::generated_content::is_collapsed_white_space(
+            &text.text_content,
+            cascade.computed[id].effective_white_space_collapse,
+        );
+    }
+    match node.display() {
+        DisplayValue::Contents => node
+            .children
+            .iter()
+            .any(|&child| makes_inline_content(document, cascade, child, depth + 1)),
+        display => node.kind() == NodeKind::Element && !is_block_level_flow_box(display),
+    }
+}
+
 /// Whether the inline element `id` is content of a line by itself: a line
 /// break opportunity (`br`, `wbr`) or a replaced element.
 fn makes_line_content(document: &Document, id: usize) -> bool {

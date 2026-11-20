@@ -254,3 +254,87 @@ fn a_break_after_a_relatively_offset_block_in_a_span_follows_its_flow_place() {
         &[("c", (1, 5.0))],
     );
 }
+
+/// The paragraph around the block and the edges below it, given as the
+/// block's wrapper inside the paragraph, the content after the block, and the
+/// paragraph's style, below a spacer `above` px tall.
+fn edges_case(above: u32, wrapper: &str, after: &str, style: &str) -> String {
+    let block = "<div style='height: 20px; break-after: page'><span id=t>T</span></div>";
+    let inner = match wrapper {
+        "span" => format!("<span>{block}</span>"),
+        "spans" => format!("<span><span>{block}</span></span>"),
+        _ => block.to_string(),
+    };
+    format!(
+        "<div style='width: 20px'><div style='height: {above}px'></div>\
+         <div style='{style}'>{inner}{after}</div>\
+         <div><span id=z>Z</span></div></div>"
+    )
+}
+
+/// A span around a block that ends in a break closes with a line of its own,
+/// empty as it is, after the block: the break carries that line and the
+/// paragraph's bottom padding or border to the next page, where they fit.
+#[test]
+fn a_break_after_a_block_in_a_span_takes_the_paragraph_edges_along() {
+    assert_places(
+        &edges_case(40, "span", "", "padding-bottom: 10px"),
+        &[("t", (0, 45.0)), ("z", (1, 15.0))],
+    );
+    assert_places(
+        &edges_case(0, "spans", "", "border-bottom: 10px solid"),
+        &[("t", (0, 5.0)), ("z", (1, 15.0))],
+    );
+    assert_places(
+        &edges_case(0, "span", " ", "padding-bottom: 10px; margin-bottom: 15px"),
+        &[("t", (0, 5.0)), ("z", (1, 30.0))],
+    );
+}
+
+/// An inline box after a block of the paragraph makes the closing line too,
+/// while white space that collapses away does not.
+#[test]
+fn only_inline_content_after_a_paragraph_block_takes_the_edges_along() {
+    assert_places(
+        &edges_case(40, "", "<span></span>", "padding-bottom: 10px"),
+        &[("t", (0, 45.0)), ("z", (1, 15.0))],
+    );
+    assert_places(
+        &edges_case(40, "", "", "padding-bottom: 10px"),
+        &[("t", (0, 45.0)), ("z", (1, 5.0))],
+    );
+}
+
+/// Edges that do not fit below a block in a span that ends in a break start
+/// the next page with the closing line, which takes the break: the box after
+/// them follows on that page.
+#[test]
+fn edges_that_start_the_next_page_take_the_break_in_their_span() {
+    assert_places(
+        &edges_case(0, "span", "", "padding-bottom: 70px").replace("height: 20px", "height: 50px"),
+        &[("t", (0, 5.0)), ("z", (1, 75.0))],
+    );
+}
+
+/// Content that ends at the page end leaves the closing line and the edges
+/// to start the next page, which takes the break.
+#[test]
+fn edges_below_a_block_in_a_span_that_ends_at_the_page_end_take_the_break() {
+    assert_places(
+        &edges_case(60, "span", "", "padding-bottom: 10px").replace("height: 20px", "height: 40px"),
+        &[("t", (0, 65.0)), ("z", (1, 15.0))],
+    );
+}
+
+/// A break inside a float in the span stays inside the float: no line of the
+/// paragraph follows it, and the edges stay below the paragraph.
+#[test]
+fn a_break_inside_a_float_in_a_span_leaves_the_edges() {
+    assert_places(
+        "<div style='width: 20px'><div style='height: 40px'></div>\
+         <div style='padding-bottom: 10px'><span><div style='float: left; width: 20px'>\
+         <div style='height: 20px; break-after: page'><span id=t>T</span></div></div></span></div>\
+         <div><span id=z>Z</span></div></div>",
+        &[("t", (0, 45.0)), ("z", (0, 65.0))],
+    );
+}
