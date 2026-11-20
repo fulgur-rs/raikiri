@@ -113,6 +113,25 @@ fn a_block_that_avoids_breaks_moves_to_the_next_page() {
 }
 
 #[test]
+fn a_block_that_avoids_a_break_after_it_moves_with_the_next_one() {
+    // A named page elsewhere in the document forces no break between the two
+    // blocks, so the avoided break still ties them.
+    let (doc, ids, pages) = paginate(
+        "writing-mode:vertical-rl",
+        "margin:0",
+        &[
+            ("div", "width:100px", ""),
+            ("div", "width:200px;break-after:avoid", ""),
+            ("div", "width:600px;break-inside:avoid", ""),
+            ("div", "width:10px;page:chapter", ""),
+        ],
+    );
+    assert_eq!(&origins(&pages)[..2], [0.0, 800.0]);
+    assert_eq!(absolute_rect(&doc, ids[2]), (-200.0, 0.0, 200.0, 600.0));
+    assert_eq!(absolute_rect(&doc, ids[3]), (-800.0, 0.0, 600.0, 600.0));
+}
+
+#[test]
 fn the_block_end_margin_of_the_body_does_not_add_a_page() {
     let (doc, ids, pages) = paginate(
         "writing-mode:vertical-rl",

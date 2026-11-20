@@ -914,11 +914,11 @@ fn a_heading_in_a_wrapper_with_closing_edges_moves_once() {
 }
 
 #[test]
-fn a_document_that_names_pages_ties_a_heading_to_the_first_box_of_a_wrapper_only() {
+fn a_document_that_names_pages_ties_a_heading_through_a_wrapper_as_one_that_names_none() {
     // The wrapper holds a one-line paragraph that avoids a break after it, then
-    // a long paragraph. Without named pages the heading moves with the first
-    // lines of the long paragraph too; named pages break the flow between
-    // boxes of their own, so the heading is tied to the first paragraph alone.
+    // a long paragraph. The heading moves with the first lines of the long
+    // paragraph. A named page later in the document forces no break between
+    // these boxes, so it changes nothing, as in Chromium.
     let positions = |names_pages| {
         let (mut heading, mut first) = (0, 0);
         let (doc, _) = paged_body_with_ifc(|doc, body| {
@@ -934,7 +934,44 @@ fn a_document_that_names_pages_ties_a_heading_to_the_first_box_of_a_wrapper_only
         [heading, first].map(|id| page_flow_y(&doc, id))
     };
     assert_eq!(positions(false), [100.0, 110.0]);
-    assert_eq!(positions(true), [75.0, 85.0]);
+    assert_eq!(positions(true), [100.0, 110.0]);
+}
+
+#[test]
+fn avoided_breaks_tie_boxes_only_where_the_used_page_value_stays_the_same() {
+    // A heading that avoids a break after it, then a wrapper that holds a
+    // one-line paragraph tied to a long paragraph, all in one block whose
+    // `page` value is `outer`. Each case names pages differently; the values
+    // are Chromium's.
+    let positions = |outer: &str, heading_child: Option<&str>, first: &str, long: &str| {
+        let (mut heading, mut first_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            let flow = block(doc, body, &format!("display:block;{outer}"));
+            block(doc, flow, "display:block;height:75px");
+            heading = match heading_child {
+                Some(css) => {
+                    let holder = block(doc, flow, "display:block;break-after:avoid");
+                    block(doc, holder, &format!("display:block;height:10px;{css}"))
+                }
+                None => block(doc, flow, "display:block;height:10px;break-after:avoid"),
+            };
+            let wrapper = block(doc, flow, "display:block");
+            first_id = paragraph(doc, wrapper, &format!("break-after:avoid;{first}"), 1);
+            paragraph(doc, wrapper, long, 6);
+        });
+        [heading, first_id].map(|id| page_flow_y(&doc, id))
+    };
+    // One page value around them all: the boxes are tied as without names.
+    assert_eq!(positions("page:a", None, "", ""), [100.0, 110.0]);
+    // The long paragraph starts a page of another type: the one-line
+    // paragraph is tied to the heading alone, and both fit.
+    assert_eq!(positions("", None, "", "page:chapter"), [75.0, 85.0]);
+    // So does the one-line paragraph, whose start value differs from the
+    // end value of the heading.
+    assert_eq!(positions("page:a", None, "page:chapter", ""), [75.0, 100.0]);
+    // The heading ends with a box that names a page: its end value differs
+    // from the start value of the wrapper, so nothing ties them.
+    assert_eq!(positions("", Some("page:chapter"), "", ""), [100.0, 200.0]);
 }
 
 #[test]

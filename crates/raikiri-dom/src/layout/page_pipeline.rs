@@ -5714,16 +5714,15 @@ fn avoided_run_ends(
             continue;
         }
         let connected = previous.is_some_and(|prior| {
-            let (after_forced, after_avoided) =
-                page_edge_constraint(document, cascade, prior.node_id, false);
-            let (before_forced, before_avoided) =
-                page_edge_constraint(document, cascade, candidate.node_id, true);
-            !after_forced
-                && !before_forced
-                && prior.page_name == candidate.page_name
-                && (after_avoided || before_avoided)
+            boxes_are_tied(document, cascade, prior.node_id, candidate.node_id)
         });
-        if let Some(prior) = previous.filter(|_| connected) {
+        // A paragraph in the run that breaks between its lines is a better
+        // place to break than before the run: the run starts after it, and
+        // the paragraph keeps its last lines with the boxes after it.
+        let splits_lines = |id: usize| paragraph_may_split_lines(document, cascade, id, false);
+        if connected && previous.is_some_and(|prior| splits_lines(prior.node_id)) {
+            run_start = None;
+        } else if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);
             // Of a table, the run holds the part it starts with.
             let held_box = last_parts
@@ -5756,7 +5755,6 @@ fn avoided_run_ends(
             None => previous = Some(candidate),
         }
     }
-    let join_ties = !super::page::has_named_pages(cascade);
     let mut ends: HashMap<usize, AvoidedRunEnd> = run_lasts
         .into_iter()
         .map(|(start, (last, margin_bottom))| {
@@ -5772,8 +5770,7 @@ fn avoided_run_ends(
                     }
                 }
                 None => {
-                    let held =
-                        avoided_run_head(document, cascade, body_id, last.node_id, join_ties);
+                    let held = avoided_run_head(document, cascade, body_id, last.node_id, true);
                     (held.end, held.firm)
                 }
             };
@@ -6470,16 +6467,27 @@ fn ends_a_run_as_table(document: &Document, cascade: &CascadeResult, node_id: us
 
 /// Whether an avoided break (`break-after` of the box `before` or
 /// `break-before` of the box `after`) ties the two boxes, with no forced break
-/// at either.
+/// at either: neither one of their own nor one that a change of the used page
+/// value between them forces (see [`super::page::page_names_meet`]).
 fn boxes_are_tied(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     before: usize,
     after: usize,
 ) -> bool {
     let (forced_after, avoided_after) = page_edge_constraint(document, cascade, before, false);
     let (forced_before, avoided_before) = page_edge_constraint(document, cascade, after, true);
-    !forced_after && !forced_before && (avoided_after || avoided_before)
+    !forced_after
+        && !forced_before
+        && (avoided_after || avoided_before)
+        && (!document.style_views.names_pages(cascade)
+            || super::page::page_names_meet(
+                document,
+                cascade,
+                before,
+                after,
+                document.context.pagination_on_transposed_axes,
+            ))
 }
 
 /// The boxes of a flow that avoid a page break inside them or between them,
@@ -12526,6 +12534,11 @@ enum AvoidChain {
     /// The last box is tied to the boxes before it all the way to the first
     /// box of the block: no break between boxes is left to take.
     Start,
+    /// The run of tied boxes starts at the paragraph `first`, which may break
+    /// between its lines, and the boxes after it move whole at best: the
+    /// page breaks between the paragraph's lines, so that its last lines go
+    /// to the next page with the boxes after it and the edges.
+    Lines { first: usize },
 }
 
 /// The avoided breaks that tie the last box of a block to the boxes before it.
@@ -12600,19 +12613,83 @@ fn avoid_chain_before_last_box(
         }
         first = before;
     };
+    if first == last {
+        return None;
+    }
     // A break inside one of the boxes of the run at a better place than
     // before the run is taken instead.
-    (first != last
-        && (first..=last)
-            .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
-            .all(|index| {
-                moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
-            }))
-    .then_some(if starts_block {
-        AvoidChain::Start
-    } else {
-        AvoidChain::Run { first }
-    })
+    let boxes: Vec<usize> = (first..=last)
+        .filter(|&index| flow_flags[index] != (None, false) && !flow_flags[index].1)
+        .collect();
+    let moves_whole = |index: usize| {
+        moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
+    };
+    let Some(split) = boxes.iter().rposition(|&index| !moves_whole(index)) else {
+        return Some(if starts_block {
+            AvoidChain::Start
+        } else {
+            AvoidChain::Run { first }
+        });
+    };
+    // A box after the paragraph whose set height leaves room below its lines
+    // breaks in that room: the paragraph keeps its lines then.
+    if boxes[split + 1..]
+        .iter()
+        .any(|&index| room_below_lines(document, children[index]))
+    {
+        return None;
+    }
+    // The last paragraph of the run that breaks between its lines takes the
+    // break instead, which leaves its last lines with the boxes after it. A
+    // paragraph with lines too few to split would move whole without the
+    // boxes tied before it, so then the run keeps its placement.
+    let paragraph = children[boxes[split]];
+    paragraph_may_split_lines(document, cascade, paragraph, split == 0).then_some(
+        AvoidChain::Lines {
+            first: boxes[split],
+        },
+    )
+}
+
+/// Whether the paragraph `node_id` may break between its lines: it has lines,
+/// does not avoid breaks inside it, and, unless `few_lines` allows it, has
+/// lines enough for `orphans` and `widows` on both sides of a break.
+fn paragraph_may_split_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    few_lines: bool,
+) -> bool {
+    document.nodes[node_id].is_ifc_root()
+        && !avoids_page_break_inside(cascade.computed[node_id].break_inside)
+        && document
+            .ifc_layout_node(node_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| !lines.lines.is_empty())
+        && (few_lines || !paragraph_lines_keep_together(document, cascade, node_id))
+}
+
+/// Whether the paragraph `node_id` has a set height that leaves room below its
+/// last line, where the page may break inside it.
+fn room_below_lines(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    if !node.is_ifc_root() || height_follows_content(document, node_id) {
+        return false;
+    }
+    let lines_end = document
+        .ifc_layout_node(node_id)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .and_then(|lines| lines.lines.last())
+        .map_or(0.0, |line| line.block_offset() + line.block_size());
+    let layout = &node.layout;
+    let content = layout.size.height
+        - layout.padding.top
+        - layout.padding.bottom
+        - layout.border.top
+        - layout.border.bottom;
+    content > lines_end + 0.5
 }
 
 /// For each child of a block, how far below its border-box top the run of
@@ -12632,7 +12709,7 @@ fn nested_run_units(
     body_id: usize,
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
-) -> Vec<Option<RunUnit>> {
+) -> (Vec<Option<RunUnit>>, Vec<f32>) {
     // A table joins a run by its first row, which stays with the box before
     // it, and starts one by its last part, which stays with the box after it:
     // the run it starts begins inside it (see `table_last_parts`), and the
@@ -12662,12 +12739,15 @@ fn nested_run_units(
         .iter()
         .position(|&(in_flow, _)| in_flow.is_some());
     let mut units = vec![None; children.len()];
+    let mut tails = vec![0.0; children.len()];
     let mut finish = |run: Option<(usize, usize)>| {
-        let Some((start, last)) = run.filter(|&(start, _)| {
-            Some(start) != first_in_flow || table_start(start) == Some(TableRunStart::LastPart)
-        }) else {
+        let Some((start, last)) = run else {
             return;
         };
+        // A table that starts the run with its last part breaks inside it,
+        // so the run has a break before it even from the first box.
+        let breaks_before =
+            Some(start) != first_in_flow || table_start(start) == Some(TableRunStart::LastPart);
         let (start_box, last_box) = (children[start], children[last]);
         let last_height = document.nodes[last_box].layout.size.height;
         let held = avoided_run_head(document, cascade, body_id, last_box, true);
@@ -12677,16 +12757,53 @@ fn nested_run_units(
             Some(head) => head.max(last_height + margin_bottom),
             None => last_height + margin_bottom,
         };
-        let firm = held.firm
-            && (start..last)
-                .filter(|&index| is_flow_box(index))
-                .all(|index| box_holds_no_break(document, cascade, body_id, children[index]));
-        units[start] = Some(RunUnit {
-            end: normal_flow_y(document, cascade, body_id, last_box)
-                - normal_flow_y(document, cascade, body_id, start_box)
-                + head,
-            firm,
-        });
+        let run_end = normal_flow_y(document, cascade, body_id, last_box) + head;
+        // Whether the boxes of the run from `start` up to `end` hold no
+        // break inside them better than the one before the run.
+        let holds_no_break = |end: usize| {
+            // Of a table that starts the run with its last part, the run
+            // holds only that part.
+            (start..end)
+                .filter(|&index| {
+                    is_flow_box(index)
+                        && !(index == start && table_start(start) == Some(TableRunStart::LastPart))
+                })
+                .all(|index| box_holds_no_break(document, cascade, body_id, children[index]))
+        };
+        // A paragraph in the run that breaks between its lines is a better
+        // place to break than before the run: the run does not move whole,
+        // and the last such paragraph keeps its last lines with the boxes
+        // after it instead.
+        if let Some(paragraph) = (start..last).rev().find(|&index| {
+            is_box(index) && paragraph_may_split_lines(document, cascade, children[index], false)
+        }) {
+            tails[paragraph] =
+                run_end - normal_flow_bottom(document, cascade, body_id, children[paragraph]);
+            // The boxes before the paragraph stay tied to its first lines.
+            if start < paragraph && breaks_before {
+                let paragraph_box = children[paragraph];
+                let height = document.nodes[paragraph_box].layout.size.height;
+                let whole = height + document.nodes[paragraph_box].layout.margin.bottom.max(0.0);
+                let held = avoided_run_head(document, cascade, body_id, paragraph_box, true);
+                let head = held
+                    .end
+                    .filter(|&head| head < height - 0.001)
+                    .unwrap_or(whole);
+                units[start] = Some(RunUnit {
+                    end: normal_flow_y(document, cascade, body_id, paragraph_box) + head
+                        - normal_flow_y(document, cascade, body_id, start_box),
+                    firm: held.firm && holds_no_break(paragraph),
+                });
+            }
+            return;
+        }
+        // A run from the first box has no break before it to move to.
+        if breaks_before {
+            units[start] = Some(RunUnit {
+                end: run_end - normal_flow_y(document, cascade, body_id, start_box),
+                firm: held.firm && holds_no_break(last),
+            });
+        }
     };
     let mut run: Option<(usize, usize)> = None;
     let mut previous: Option<usize> = None;
@@ -12718,7 +12835,7 @@ fn nested_run_units(
         previous = Some(index);
     }
     finish(run);
-    units
+    (units, tails)
 }
 
 /// The break that keeps a paragraph's last lines with the `edges` of bottom
@@ -13396,9 +13513,8 @@ fn breaks_only_around(
             // The boxes are tied from the first to the last, and the block
             // breaks only where they do, whatever its padding and border: a
             // break between them and its edges is no better than the one
-            // before the block. Named pages may start a page between boxes
-            // whatever ties them.
-            [_, _, ..] if !has_named_pages => {
+            // before the block.
+            [_, _, ..] => {
                 return boxes
                     .windows(2)
                     .all(|pair| boxes_are_tied(document, cascade, pair[0], pair[1]))
