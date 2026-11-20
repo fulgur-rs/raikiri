@@ -423,6 +423,9 @@ struct Paragraph {
     /// fragment of such a box reaches all of them, however many extents the
     /// plan gives it.
     held_lines: Option<usize>,
+    /// A monolithic box that stays whole at the top of an empty column even
+    /// when it is taller than the column, overflowing its end.
+    overflows: bool,
     /// A box with no lines whose one extent the columns cut wherever a column
     /// ends: a piece of it fills the rest of each column it reaches.
     sliced: bool,
@@ -443,6 +446,7 @@ impl Paragraph {
             edge_end: 0.0,
             cloned: false,
             held_lines: lines,
+            overflows: false,
             sliced: false,
         }
     }
@@ -491,8 +495,17 @@ fn balanced(
     ceiling: f32,
 ) -> Option<(Group, f32)> {
     let divided = divided_height(paragraphs, context, FlowCursor::default(), ceiling)?;
+    // A monolithic box that a column could overflow sets the least height
+    // the columns balance to: the columns are at least as tall as it, as
+    // Chromium balances them, so no trial holds it by overflowing.
+    let monolithic = paragraphs
+        .iter()
+        .flatten()
+        .filter(|paragraph| paragraph.overflows)
+        .map(|paragraph| paragraph.extents[0].1)
+        .fold(0.0, f32::max);
     // Trial work and storage depend on shaped lines, never the declared count.
-    let mut low = 0.0;
+    let mut low = monolithic.min(ceiling);
     let mut high = ceiling;
     for _ in 0..32 {
         if high - low <= 0.001 {
@@ -664,6 +677,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                overflows: false,
                 sliced: edge > 0.0,
             }));
             continue;
@@ -740,6 +754,24 @@ fn collect(
             paragraph_count += 1;
             continue;
         }
+        // A button is monolithic, so it goes whole to a column, with its
+        // lines, wherever they are.
+        if is_whole_button(tree, child) {
+            (output.size.height > 0.0 && margin_top.is_finite() && margin_bottom.is_finite())
+                .then_some(())?;
+            let lines = layout_node(tree, child)
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .map(|lines| lines.lines.len());
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph {
+                overflows: true,
+                ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, lines)
+            }));
+            paragraph_count += 1;
+            continue;
+        }
         // A box that makes a formatting context of its own and holds one row
         // of lines has nowhere to break, so it goes whole to a column, with
         // what it holds. One that a column end could break inside is left to
@@ -812,6 +844,7 @@ fn collect(
                 edge_end: 0.0,
                 cloned: false,
                 held_lines: None,
+                overflows: false,
                 sliced: false,
             }));
             continue;
@@ -840,6 +873,7 @@ fn collect(
             edge_end,
             cloned: node.clones_box_decorations && edge_start + edge_end > 0.0,
             held_lines: None,
+            overflows: false,
             sliced: false,
         }));
         paragraph_count += 1;
@@ -930,6 +964,8 @@ fn fill_chunk(
     let mut cursor = 0.0f32;
     let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
+    // A monolithic box that runs past the end of its column.
+    let mut overflowed = false;
     let mut column_has_content = false;
     // The margins that adjoin through empty boxes and the paragraph after them
     // were cut at a break, and stay cut until that paragraph.
@@ -1121,10 +1157,21 @@ fn fill_chunk(
                     };
                 }
             }
+            // A monolithic box taller than an empty column stays there whole.
+            // One that fits a column, but not below its top margin, goes to
+            // the next column, where the break cuts the margin (Chromium).
+            let below_margin = paragraph.overflows
+                && top > 0.0
+                && paragraph.extents[line_count - 1].1 - origin + lead + paragraph.edge_end
+                    <= height + f32::EPSILON;
+            if end <= start && paragraph.overflows && !column_has_content && !below_margin {
+                end = line_count;
+                overflowed = true;
+            }
             if end <= start {
                 // An unforced break at a block boundary discards both adjoining
                 // margins. A too-tall paragraph at an empty column fails this trial.
-                if start != 0 || !column_has_content {
+                if start != 0 || (!column_has_content && !below_margin) {
                     return None;
                 }
                 maximum = maximum.max(cursor);
@@ -1217,8 +1264,8 @@ fn fill_chunk(
     } else {
         cursor
     });
-    (used <= height + f32::EPSILON).then(|| Chunk {
-        group: finish_group(placements, used),
+    (used <= height + f32::EPSILON || overflowed).then(|| Chunk {
+        group: finish_group(placements, used.min(height)),
         next: None,
     })
 }
