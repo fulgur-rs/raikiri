@@ -5933,13 +5933,7 @@ fn footer_guard(
     let footer = document
         .parent_of(start)
         .filter(|&group| document.nodes[group].display() == DisplayValue::TableFooterGroup)?;
-    let table = std::iter::successors(document.parent_of(footer), |&id| document.parent_of(id))
-        .find(|&id| {
-            matches!(
-                document.nodes[id].display(),
-                DisplayValue::Table | DisplayValue::InlineTable
-            )
-        })?;
+    let table = document.table_of_row(start)?;
     let rows = body_rows(document, table);
     let avoids_inside = avoids_page_break_inside(cascade.computed[table].break_inside);
     let row = tied_rows_start(document, cascade, &rows, avoids_inside)
