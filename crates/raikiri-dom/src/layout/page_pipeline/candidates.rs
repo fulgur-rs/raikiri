@@ -1055,6 +1055,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     sole_table_holders: HashMap<usize, bool>,
     /// The selected inner tail of each plain block on its column-item path.
     inner_tail_paths: HashMap<usize, usize>,
+    /// The runs of boxes tied by avoided breaks that start inside their first
+    /// box, keyed by the box they start at (see `nested_run_units`).
+    run_breaks: HashMap<usize, super::RunUnit>,
+    run_break_starts: super::RunBreakStarts,
     has_named_pages: bool,
     /// Whether runs of boxes tied by avoided breaks may be looked for inside
     /// blocks: some box avoids a break before or after it, and no box names a
@@ -1102,6 +1106,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             named_page_subtree_cache: HashMap::new(),
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
+            run_breaks: HashMap::new(),
+            run_break_starts: super::RunBreakStarts::default(),
             has_named_pages,
             finds_nested_runs: cascade.computed.iter().any(|computed| {
                 [computed.break_before, computed.break_after]
@@ -1891,9 +1897,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             held.end.map(|end| super::RunUnit {
                                 end,
                                 firm: held.firm,
+                                breaks_inside: false,
                             })
                         });
-                let avoided_unit = match (frame.run_unit, leading_unit) {
+                // A run that starts at the box inside the first box of the run
+                // (see `nested_run_units`).
+                // The box may also start a run among the boxes of its parent:
+                // the page holds the longer of the two.
+                let run_unit = [frame.run_unit, self.run_breaks.remove(&node_id)]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|own, inner| if inner.end > own.end { inner } else { own });
+                let avoided_unit = match (run_unit, leading_unit) {
                     (Some(run), Some(leading)) if leading.end > run.end => Some(leading),
                     (run, leading) => run.or(leading),
                 };
@@ -2063,7 +2078,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let flex_margins_base = nested_candidate_base
                     && !inline_level
                     && super::has_flex_trailing_space(document, node_id);
+                let run_break_base = self.finds_nested_runs
+                    && in_flow_block
+                    && !direct_body_child
+                    && self
+                        .run_break_starts
+                        .starts_break(document, cascade, body_id, node_id);
                 let needs_ancestor_constraints = margin_shape
+                    || run_break_base
                     || line_after_block_base
                     || (nested_candidate_base
                         && ((!inline_level && is_block_flow_box && avoids_break)
@@ -2126,6 +2148,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // cuts: the clip box moves along with the container.
                 let flex_margins_candidate = flex_margins_base && !side_by_side_ancestor;
                 let run_tail_candidate = run_tail_base && can_move_nested;
+                // A block that a run of boxes tied by avoided breaks starts at,
+                // inside the first box of the run.
+                let run_break_candidate = run_break_base && can_move_nested;
                 let line_after_block_candidate =
                     line_after_block_base && !bounded_clipping_ancestor;
                 let line_after_block = line_after_block.filter(|_| line_after_block_candidate);
@@ -2222,6 +2247,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || min_height_edges_candidate.is_some()
                         || lone_box_candidate.is_some()
                         || run_tail_candidate
+                        || run_break_candidate
                         || line_after_block_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
@@ -2650,13 +2676,26 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // candidates (see `avoided_run_ends`); only the lines a
                         // paragraph among them keeps with the boxes after it
                         // are found here.
-                        let (_, tails) =
-                            nested_run_units(document, cascade, body_id, &child_order, &flow_flags);
+                        let (_, tails) = nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &flow_flags,
+                            &mut HashMap::new(),
+                        );
                         (Vec::new(), tails)
                     } else if !self.finds_nested_runs || !in_flow_block || is_body {
                         (Vec::new(), Vec::new())
                     } else if !flow_flags.is_empty() {
-                        nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
+                        nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &flow_flags,
+                            &mut self.run_breaks,
+                        )
                     } else if node.is_ifc_root()
                         && child_order
                             .iter()
@@ -2668,7 +2707,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // among them still moves together; text between them is
                         // a box of the flow that ends the run.
                         let paragraph_flags = child_flow_flags(document, cascade, &child_order);
-                        nested_run_units(document, cascade, body_id, &child_order, &paragraph_flags)
+                        nested_run_units(
+                            document,
+                            cascade,
+                            body_id,
+                            &child_order,
+                            &paragraph_flags,
+                            &mut self.run_breaks,
+                        )
                     } else {
                         (Vec::new(), Vec::new())
                     };
