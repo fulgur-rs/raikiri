@@ -195,3 +195,25 @@ fn floats_and_positioned_boxes_follow_the_moved_content() {
     assert_eq!(top(&leading, "q"), 30.0);
     assert_eq!(rects(&leading, "b"), vec![(50.0, 30.0, 50.0, 10.0)]);
 }
+
+#[test]
+fn percentage_heights_resolve_against_the_unmoved_content_box() {
+    // Half of the 100px content box is 50px of content, cut into two
+    // 25px fragments whether or not the columns move.
+    let normal = columns(
+        "height:100px",
+        "<div id=d style='height:50%;min-height:1px'></div>",
+    );
+    let at_end = columns(
+        "height:100px;align-content:end",
+        "<div id=d style='height:50%;min-height:1px'></div>",
+    );
+    assert_eq!(
+        rects(&normal, "d"),
+        vec![(0.0, 0.0, 50.0, 25.0), (50.0, 0.0, 50.0, 25.0)]
+    );
+    assert_eq!(
+        rects(&at_end, "d"),
+        vec![(0.0, 75.0, 50.0, 25.0), (50.0, 75.0, 50.0, 25.0)]
+    );
+}

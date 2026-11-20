@@ -492,8 +492,13 @@ pub(crate) fn compute_multicol_layout(
             (a, b) => a.or(b),
         };
         let block_size = output.size;
+        // The columns are laid out from `content_origin` and end
+        // `block_end_inset` above the border box end. An aligned layout moves
+        // the origin and shrinks that inset by the same amount, which keeps
+        // the column height that percentages resolve against.
         let lay_out_columns = |tree: &mut LayoutSession<'_>,
                                content_origin: Point<f32>,
+                               block_end_inset: f32,
                                output: &mut LayoutOutput| {
             if let Some(children) = &lineless_children {
                 lineless::layout(
@@ -563,7 +568,7 @@ pub(crate) fn compute_multicol_layout(
                     tree.fragment_tree.break_tokens.len(),
                 )
             });
-        let mut used_height = lay_out_columns(tree, content_origin, &mut output);
+        let mut used_height = lay_out_columns(tree, content_origin, block_end_inset, &mut output);
         // Balanced columns size an auto-height container even under a
         // maximum height, which only bounds the balanced columns.
         let balances_height =
@@ -600,9 +605,8 @@ pub(crate) fn compute_multicol_layout(
                     x: content_origin.x,
                     y: content_origin.y + offset,
                 };
-                used_height = lay_out_columns(tree, aligned, &mut output);
+                used_height = lay_out_columns(tree, aligned, block_end_inset - offset, &mut output);
                 if column_content_extent(tree, index, records).is_some() {
-                    used_height -= offset;
                     pass.leading_shift = offset - block_pass;
                 }
             }
