@@ -19685,12 +19685,16 @@ fn shift_columns_after_spanner(
     // order, not by where they lie: a negative margin can start them at or
     // above the spanner's top, and pull the spanner up over the group before
     // it.
-    let before = &children[..spanner_index.unwrap_or(0)];
+    let before: HashSet<usize> = children[..spanner_index.unwrap_or(children.len())]
+        .iter()
+        .copied()
+        .collect();
     let groups = &document.nodes[container].multicol_groups;
     let first_group = groups
         .iter()
         .take_while(|group| group.run_start.is_some_and(|run| before.contains(&run)))
         .count();
+    // The rules of a group as the column rules counted them.
     let first_rule: usize = groups[..first_group]
         .iter()
         .filter(|group| group.height > 0.0)
