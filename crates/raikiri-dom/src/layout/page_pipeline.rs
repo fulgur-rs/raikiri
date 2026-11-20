@@ -9799,10 +9799,22 @@ struct PendingBreak {
     /// Where the box that forced the break ends in the flow, its end margin
     /// left out.
     source_end: f32,
-    /// The breaks forced after boxes that hold the source, outermost first,
-    /// as `(source, line_peers, source_end)`. Each still falls after its own
-    /// box once the break inside it has been taken.
-    enclosing: Vec<(usize, Vec<usize>, f32)>,
+    /// Whether the source is the last box at the end of the innermost box in
+    /// `enclosing`, so that its break is that box's break too.
+    ends_enclosing: bool,
+    /// The breaks forced after boxes that hold the source, outermost first.
+    /// Each still falls after its own box once the break inside it has been
+    /// taken.
+    enclosing: Vec<EnclosingBreak>,
+}
+
+/// A pending break forced after a box that holds the source of a later one
+/// (see [`PendingBreak::note_after`]).
+struct EnclosingBreak {
+    source: usize,
+    line_peers: Vec<usize>,
+    source_end: f32,
+    ends_enclosing: bool,
 }
 
 impl PendingBreak {
@@ -9823,31 +9835,35 @@ impl PendingBreak {
         })
     }
 
-    /// Take the pending break before `node_id`, which it applies to. A break
-    /// forced after a box that holds its source, and that ends at the same
-    /// place or before `node_id`, is the same break; one forced after a box
-    /// that also holds `node_id` is pending again, as it falls after that box.
+    /// Take the pending break before `node_id`, which it applies to. The
+    /// break forced after a box that holds the source is the same break when
+    /// the source ends that box, or when that box ends before `node_id`; a
+    /// float after the source takes both. Otherwise it is pending again, as
+    /// it falls after its own box.
     fn take(&mut self, document: &Document, node_id: usize) {
         if !self.applies_to(document, node_id) {
             return;
         }
         self.source = None;
         self.line_peers.clear();
-        while let Some((source, line_peers, source_end)) = self.enclosing.pop() {
-            if is_descendant_or_self(document, node_id, source) {
-                self.source = Some(source);
-                self.line_peers = line_peers;
-                self.source_end = source_end;
+        let mut same_break = self.ends_enclosing;
+        while let Some(outer) = self.enclosing.pop() {
+            if !same_break && is_descendant_or_self(document, node_id, outer.source) {
+                self.source = Some(outer.source);
+                self.line_peers = outer.line_peers;
+                self.source_end = outer.source_end;
+                self.ends_enclosing = outer.ends_enclosing;
                 break;
             }
+            same_break = outer.ends_enclosing;
         }
     }
 
     /// Make `node_id` the source of the pending break when it forces a break
-    /// after itself, unless that source is already the node itself or one of
-    /// its ancestors. A break forced after a box inside the source falls
-    /// before the next box in the source, and the source's own break waits
-    /// for the box after the source.
+    /// after itself, unless that source is already the node itself. A break
+    /// forced after a box inside the source falls before the next box in the
+    /// source, and the source's own break waits for the box after the
+    /// source; Chromium breaks twice.
     fn note_after(
         &mut self,
         document: &Document,
@@ -9868,22 +9884,30 @@ impl PendingBreak {
             .source
             .filter(|&source| is_descendant_or_self(document, node_id, source))
         {
-            self.enclosing.push((
+            self.enclosing.push(EnclosingBreak {
                 source,
-                std::mem::take(&mut self.line_peers),
-                self.source_end,
-            ));
+                line_peers: std::mem::take(&mut self.line_peers),
+                source_end: self.source_end,
+                ends_enclosing: self.ends_enclosing,
+            });
         } else {
             // A source that does not hold the node is replaced, as are the
             // boxes around it that end before the node.
             while self
                 .enclosing
                 .last()
-                .is_some_and(|&(source, ..)| !is_descendant_or_self(document, node_id, source))
+                .is_some_and(|outer| !is_descendant_or_self(document, node_id, outer.source))
             {
                 self.enclosing.pop();
             }
         }
+        // Only floats and out-of-flow boxes, which take no break of the flow,
+        // may follow a box at the end of the one around it (CSS
+        // Fragmentation 3 §4.1).
+        self.ends_enclosing = self
+            .enclosing
+            .last()
+            .is_some_and(|outer| at_block_edge(document, cascade, node_id, outer.source, false));
         self.source = Some(node_id);
         self.line_peers = later_line_peers(document, cascade, body_id, node_id);
     }

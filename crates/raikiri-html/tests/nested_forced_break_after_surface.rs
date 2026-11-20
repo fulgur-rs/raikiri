@@ -19,6 +19,11 @@ const BROKEN: &str = "<div style='height:20px;break-after:page'>T</div>";
 /// The page count, and the page and top of the first run of every line, in
 /// the order the pages hold them, on 100px pages with 20px/30px Ahem.
 fn layout_lines(body: &str) -> (u32, Vec<(u32, String, f32)>) {
+    layout_lines_in(20, body)
+}
+
+/// [`layout_lines`] in a container `width` pixels wide.
+fn layout_lines_in(width: u32, body: &str) -> (u32, Vec<(u32, String, f32)>) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -30,7 +35,7 @@ fn layout_lines(body: &str) -> (u32, Vec<(u32, String, f32)>) {
     let html = format!(
         "<!doctype html><style>@page{{size:100px 100px;margin:0}}\
          body{{margin:0;font:20px/30px Ahem}}</style>\
-         <body><div style='width:20px'>{body}</div></body>"
+         <body><div style='width:{width}px'>{body}</div></body>"
     );
     let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
     let LayoutStatus::Completed(result) = layout(
@@ -44,7 +49,7 @@ fn layout_lines(body: &str) -> (u32, Vec<(u32, String, f32)>) {
     };
     let mut lines = Vec::new();
     for index in 0..result.page_count() {
-        let page = result.page(index as usize).expect("page in range");
+        let page = result.page(index).expect("page in range");
         for run in page.text_runs() {
             lines.push((index, run.text.trim_end().to_owned(), run.origin.1 - ASCENT));
         }
@@ -198,4 +203,47 @@ fn a_break_after_a_flex_item_or_a_cell_box_keeps_the_outer_break() {
         )),
         at(&[(0, "T", 45.0), (1, "C", 5.0), (2, "Z", 5.0)])
     );
+}
+
+#[test]
+fn a_float_after_the_last_box_takes_the_one_break_of_both_boxes() {
+    // Only a float follows the inner box: its break is the outer box's, the
+    // float takes it and the line after the outer box goes on below it.
+    assert_eq!(
+        lines(&format!(
+            "{}<div style='break-after:page'>{BROKEN}\
+             <div style='float:left;width:20px'>F</div></div>Z",
+            spacer(40)
+        )),
+        at(&[(0, "T", 45.0), (1, "F", 5.0), (1, "Z", 35.0)])
+    );
+    // With a line after the float, the outer break still falls after it.
+    assert_eq!(
+        lines(&format!(
+            "{}<div style='break-after:page'>{BROKEN}\
+             <div style='float:left;width:20px'>F</div>C</div>Z",
+            spacer(40)
+        )),
+        at(&[(0, "T", 45.0), (1, "F", 5.0), (1, "C", 35.0), (2, "Z", 5.0)])
+    );
+}
+
+#[test]
+fn a_break_inside_a_cell_leaves_the_other_cells_of_the_row_in_place() {
+    // The break moves the rest of the first cell; the second cell keeps its
+    // first page, and the table's own break falls after the table.
+    let (_, lines) = layout_lines_in(
+        40,
+        &format!(
+            "{}<table style='break-after:page;border-spacing:0'><tr>\
+             <td style='padding:0;width:20px'><div style='break-after:page'>T</div>X</td>\
+             <td style='padding:0;width:20px'>Y</td></tr></table>Z",
+            spacer(40)
+        ),
+    );
+    let pages: Vec<_> = lines
+        .iter()
+        .map(|(page, text, _)| (*page, text.as_str()))
+        .collect();
+    assert_eq!(pages, [(0, "T"), (0, "Y"), (1, "X"), (2, "Z")], "{lines:?}");
 }

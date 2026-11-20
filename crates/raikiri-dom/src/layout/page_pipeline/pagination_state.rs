@@ -5277,9 +5277,9 @@ impl PaginationState {
         // content that follows a nested named box.  Carry the containing
         // box's page type so that content after `page:b` inside a
         // `page:a` box resumes on an `a` page rather than becoming an
-        // anonymous page.  Only direct body text consumes a pending
-        // break-after; descendants must wait until their containing box
-        // has finished.
+        // anonymous page.  Text consumes a pending break-after only
+        // outside the box that forced it and off that box's flex line or
+        // grid row (see `PendingBreak::applies_to`).
         let named_page_change = text_changes_page_name(
             entry.name_context_seen,
             name_participates_in_flow,
