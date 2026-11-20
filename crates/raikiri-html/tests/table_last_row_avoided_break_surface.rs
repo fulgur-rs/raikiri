@@ -562,3 +562,37 @@ fn rows_of_an_anonymous_table_tied_to_its_last_row_move_with_it() {
         [(0, 'S', 0), (1, 'M', 0), (1, 'X', 20), (1, 'Z', 40)]
     );
 }
+
+#[test]
+fn a_caption_below_the_rows_tied_to_them_moves_with_the_rows_tied_to_the_last() {
+    let caption = r#"<caption style="caption-side:bottom;break-before:avoid">C</caption>"#;
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:30px">S</div><table>{caption}<tr><td>K</td></tr><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        )),
+        [
+            (0, 'K', 30),
+            (0, 'S', 0),
+            (1, 'C', 20),
+            (1, 'L', 0),
+            (1, 'Z', 40)
+        ]
+    );
+    // With one row, the whole table moves.
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:50px">S</div><table>{caption}<tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        )),
+        [(0, 'S', 0), (1, 'C', 20), (1, 'L', 0), (1, 'Z', 40)]
+    );
+}
+
+#[test]
+fn a_break_forced_after_a_caption_below_the_rows_keeps_the_table_on_its_page() {
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:50px">S</div><table><caption style="caption-side:bottom;break-after:page">C</caption><tr><td>L</td></tr></table><div style="break-before:avoid">Z</div>"#
+        ),
+        [(0, 'C', 70), (0, 'L', 50), (0, 'S', 0), (1, 'Z', 0)]
+    );
+}

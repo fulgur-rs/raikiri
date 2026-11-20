@@ -5847,23 +5847,40 @@ fn last_row_break(document: &Document, cascade: &CascadeResult, table: usize) ->
     let table_avoids_inside = avoids_inside(table);
     // Each row with the row group that holds it, if any, in visual order.
     let rows = body_rows(document, table);
-    let &(last, _) = rows.last()?;
+    let &(last, last_group) = rows.last()?;
+    // A caption below the rows is the last part, unless a break it may not
+    // take ties it to the last row: then it goes with the rows tied to that
+    // row.
+    if let Some(caption) = bottom_caption(document, table, last).filter(|_| !table_avoids_inside) {
+        let edges = [(caption, true), (last, false)]
+            .into_iter()
+            .chain(last_group.map(|group| (group, false)));
+        let (forced, avoided) = edges.fold((false, false), |(forced, avoided), (id, before)| {
+            let (own_forced, own_avoided) = page_edge_constraint(document, cascade, id, before);
+            (
+                forced || own_forced || forces_page_break(document, cascade, id, before),
+                avoided || own_avoided,
+            )
+        });
+        if forced || !avoided {
+            return Some(caption);
+        }
+    }
+    tied_rows_start(document, cascade, &rows, table_avoids_inside)
+}
+
+/// The caption of the table `table` below its rows, whose last row is
+/// `last`: the lowest caption that starts at or below the row's end.
+fn bottom_caption(document: &Document, table: usize, last: usize) -> Option<usize> {
     let top = |id: usize| current_abs_y(document, id);
-    // A caption below the rows is the last part.
-    if let Some(caption) = document
+    document
         .children_through_contents(table)
         .into_iter()
-        .filter(|_| !table_avoids_inside)
         .filter(|&child| document.nodes[child].display() == DisplayValue::TableCaption)
         .filter(|&caption| {
             top(caption) >= top(last) + document.nodes[last].layout.size.height - 0.001
         })
         .max_by(|&a, &b| top(a).total_cmp(&top(b)))
-    {
-        let (forced, avoided) = page_edge_constraint(document, cascade, caption, true);
-        return (forced || !avoided).then_some(caption);
-    }
-    tied_rows_start(document, cascade, &rows, table_avoids_inside)
 }
 
 /// The first of the `rows` (each with the row group that holds it, if any,
@@ -5968,6 +5985,9 @@ fn table_starts_run(document: &Document, cascade: &CascadeResult, table: usize) 
         && body_rows(document, table)
             .last()
             .is_none_or(|&(last, group)| {
+                if let Some(caption) = bottom_caption(document, table, last) {
+                    return !forces_page_break(document, cascade, caption, false);
+                }
                 !forces_page_break(document, cascade, last, false)
                     && !group.is_some_and(|group| {
                         document
