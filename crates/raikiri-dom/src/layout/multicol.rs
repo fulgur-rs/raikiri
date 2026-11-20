@@ -1532,9 +1532,10 @@ fn multicol_has_only_paragraph_children(
         }
         // A wrapper whose paragraphs join the flow of the columns counts as
         // the paragraphs it holds. A chain of wrappers around one paragraph
-        // keeps the strategies of such chains.
+        // that is the container's only box keeps the strategies of such
+        // chains; beside other boxes, nothing else breaks it between columns.
         if let Some(count) =
-            paragraph_group::wrapped_paragraphs(tree, child).filter(|&count| count > 1)
+            paragraph_group::wrapped_paragraphs(tree, child).filter(|&count| count > 1 || several)
         {
             paragraphs += count;
             return true;
