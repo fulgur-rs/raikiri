@@ -450,3 +450,22 @@ fn a_button_keeps_the_margins_inside_it() {
         ]
     );
 }
+
+#[test]
+fn a_button_in_a_wrapper_moves_past_its_top_margin_with_the_wrapper_left_behind() {
+    assert_eq!(
+        glyphs(
+            "<div style='columns:2;width:200px;column-gap:0;height:50px;column-fill:auto'><div><button style='all:unset;display:block;width:20px;margin-top:20px'>cd ef gh ij</button></div></div>"
+        ),
+        [
+            (0, 'c', 108, 8),
+            (0, 'd', 118, 8),
+            (0, 'e', 108, 18),
+            (0, 'f', 118, 18),
+            (0, 'g', 108, 28),
+            (0, 'h', 118, 28),
+            (0, 'i', 108, 38),
+            (0, 'j', 118, 38)
+        ]
+    );
+}
