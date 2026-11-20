@@ -1,5 +1,6 @@
 mod authored;
 mod break_flow;
+pub(crate) use break_flow::block_in_inline_wrapper;
 mod column_line_boxes;
 mod column_lines;
 mod constrained_chain;

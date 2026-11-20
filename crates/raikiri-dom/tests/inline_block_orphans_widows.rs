@@ -602,3 +602,49 @@ fn edges_and_blocks_above_the_first_line_decide_whether_the_paragraph_starts_its
         ),
     ]);
 }
+
+#[test]
+fn a_paragraph_moved_whole_for_its_orphans_still_breaks_between_its_lines() {
+    assert_places(&[
+        (spanned("", 10, [0, 20, 3], [4, 1]), [(1, 5.0), (2, 35.0)]),
+        (spanned("", 40, [0, 20, 3], [3, 2]), [(1, 5.0), (2, 35.0)]),
+    ]);
+}
+
+#[test]
+fn a_block_that_opens_the_paragraph_is_one_line_for_the_orphans_of_a_break_after_it() {
+    assert_places(&[
+        // The block ends the page and the lines after it start the next.
+        (spanned("", 80, [0, 20, 1], [2, 1]), [(1, 5.0), (1, 55.0)]),
+        (spanned("", 60, [0, 40, 2], [3, 1]), [(1, 5.0), (2, 5.0)]),
+    ]);
+}
+
+#[test]
+fn an_inline_box_that_holds_only_blocks_stacks_them_in_block_flow() {
+    let z = "<div><span id=z>Z</span></div>";
+    assert_places(&[
+        // The line that starts the block crosses the page end: the block
+        // moves whole, as one outside the inline box does.
+        (
+            paragraph(80, "", &format!("<span>{}</span>", block(40))),
+            [(1, 5.0), (1, 45.0)],
+        ),
+        // The blocks after it in the inline box follow it.
+        (
+            format!(
+                "<div style=\"width:20px\"><div style=\"height:80px\"></div><div><span>{}{z}</span></div></div>",
+                block(40)
+            ),
+            [(1, 5.0), (1, 45.0)],
+        ),
+        (
+            format!(
+                "<div style=\"width:20px\"><div style=\"height:50px\"></div><div><span>\
+                 <div style=\"height:10px\"></div>{}{z}</span></div></div>",
+                block(40)
+            ),
+            [(0, 65.0), (1, 5.0)],
+        ),
+    ]);
+}
