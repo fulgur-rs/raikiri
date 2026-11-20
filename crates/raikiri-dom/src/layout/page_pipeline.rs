@@ -2751,14 +2751,6 @@ fn positioned_line_moves(
         start += delta;
         page = next;
     }
-    let tallest = line_metrics
-        .iter()
-        .map(|&(top, bottom)| bottom - top)
-        .fold(0.0_f32, f32::max);
-    if tallest > page_origins.step_at(page.saturating_add(1)) + 0.001 {
-        moves.extend(crossing_line_moves(line_metrics, start, page_origins));
-        return moves;
-    }
     let fit = ParagraphLineFit::measure(
         line_metrics,
         start,
@@ -2768,14 +2760,43 @@ fn positioned_line_moves(
         widows,
         0.0,
     );
-    moves.extend(paragraph_line_moves(
-        line_metrics,
-        start,
-        page,
-        &fit,
-        page_origins,
-    ));
+    let kept = paragraph_line_moves(line_metrics, start, page, &fit, page_origins);
+    // A line that runs over the end of the page it lands on, as it is taller
+    // than that page, fits no page: the lines then break only where they
+    // cross.
+    if leaves_a_line_across(line_metrics, start, &kept, page_origins) {
+        moves.extend(crossing_line_moves(line_metrics, start, page_origins));
+    } else {
+        moves.extend(kept);
+    }
     moves
+}
+
+/// Whether a line crosses the end of the page it starts on once `moves`
+/// have moved the lines down, or is taller than that page.
+fn leaves_a_line_across(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    moves: &[LineBreakMove],
+    page_origins: &PageOrigins,
+) -> bool {
+    let mut shift = 0.0_f32;
+    line_metrics
+        .iter()
+        .enumerate()
+        .any(|(line, &(line_top, line_bottom))| {
+            shift += moves
+                .iter()
+                .filter(|&&(moved, _, _)| moved == line)
+                .map(|&(_, delta, _)| delta)
+                .sum::<f32>();
+            let top = effective_y + line_top + shift;
+            let page = page_origins.page_index_for_y(top + 0.001);
+            line_bottom - line_top > page_origins.step_at(page) + 0.001
+                || top > page_origins.origin(page) + 0.001
+                    && effective_y + line_bottom + shift
+                        > page_origins.origin(page.saturating_add(1)) + 0.001
+        })
 }
 
 /// The moves that start a page with each line after the first that crosses a

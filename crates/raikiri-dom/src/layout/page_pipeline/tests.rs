@@ -16889,6 +16889,16 @@ fn positioned_line_moves_start_the_next_page_with_the_line_that_crosses() {
         positioned_line_moves(&taller, 0.0, &pages, 2, 2),
         vec![(3, 20.0, 2)]
     );
+    // A line that would run over a shorter page after it stays where it
+    // crosses, and the lines break only where they cross.
+    let shrinking = PageOrigins::new(&[100.0, 100.0, 40.0, 40.0], 100.0);
+    let sixty: Vec<(f32, f32)> = (0..4)
+        .map(|line| (line as f32 * 60.0, line as f32 * 60.0 + 60.0))
+        .collect();
+    assert_eq!(
+        positioned_line_moves(&sixty, 0.0, &shrinking, 1, 1),
+        vec![(1, 40.0, 1)]
+    );
     // A box without lines has nothing to move.
     assert_eq!(positioned_line_moves(&[], 50.0, &pages, 1, 1), Vec::new());
 }
