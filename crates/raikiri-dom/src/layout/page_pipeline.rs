@@ -2119,7 +2119,20 @@ impl PageOrigins {
         follows_forced_break: bool,
     ) -> f32 {
         if forced_before {
-            self.origin(natural_page) + margin_top
+            // The break opens the page at the top of the margin, which may lie
+            // on a page before the box's. A margin that runs past the end of
+            // that page is cut at that end, and the box starts the next page
+            // (Chromium).
+            let break_page = self
+                .page_starting_at_or_after(margin_start())
+                .min(natural_page);
+            let top = self.origin(break_page) + margin_top;
+            let next = self.origin(break_page.saturating_add(1));
+            if break_page < natural_page && top >= next - 0.001 {
+                next
+            } else {
+                self.origin(natural_page) + margin_top
+            }
         } else {
             self.origin(self.first_edge_in_margin(
                 margin_start(),
@@ -2154,11 +2167,14 @@ impl PageOrigins {
         };
         // A forced break sits at the top of the margin box. A negative margin
         // puts that top below the border box, past content that runs on
-        // beyond the border box's page.
+        // beyond the border box's page. A positive one that runs over a page
+        // edge leaves the break on the page the margin box starts on: the
+        // margin follows the break, which cuts it at the end of the page the
+        // break opens.
         let margin_box_y = effective_y - margin_top;
         let break_page = self
             .page_index_in_flow(margin_box_y)
-            .map_or(page, |at| at.max(page));
+            .map_or(page, |at| if margin_top > 0.0 { at } else { at.max(page) });
         if !forced_transition {
             page
         } else if break_page > current_page && flow_max >= break_page && margin_box_y.is_finite() {
