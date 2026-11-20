@@ -564,6 +564,92 @@ fn repeated_table_headers_do_not_become_continuation_starts() {
     assert_owner_index_matches_uncached_records(&doc);
 }
 
+/// A table with a one-row header and six 40px body rows, which a 100px page
+/// breaks so that the header repeats, and the header group's node.
+fn table_with_repeated_header() -> (Document, CascadeResult, usize) {
+    let mut header = 0;
+    let (doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        let body_parent = doc.parent_of(root).unwrap();
+        let table = doc.append_element(
+            Some(body_parent),
+            "table",
+            Some("display:table;border-spacing:0;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        header = doc.append_element(
+            Some(table),
+            "thead",
+            Some("display:table-header-group;break-inside:avoid"),
+        );
+        let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Some("display:table-cell;padding:0;height:10px"),
+        );
+        doc.append_text(cell, "H");
+        let body = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+        for _ in 0..6 {
+            let row = doc.append_element(Some(body), "tr", Some("display:table-row"));
+            let cell = doc.append_element(
+                Some(row),
+                "td",
+                Some("display:table-cell;padding:0;height:40px"),
+            );
+            doc.append_text(cell, "B");
+        }
+    });
+    (doc, cascade, header)
+}
+
+#[test]
+fn a_repeated_table_header_lands_on_pages_numbered_from_another_page() {
+    let (mut doc, cascade, header) = table_with_repeated_header();
+    let page = page_box(100.0, 100.0);
+    let slices = paginate(&mut doc, &cascade, page);
+    let header_id = NodeId::new(header as u64);
+    let header_pages = |doc: &Document| -> Vec<(u32, f32)> {
+        doc.page_projection
+            .pages
+            .iter()
+            .flat_map(|projected| {
+                projected
+                    .items
+                    .iter()
+                    .filter(|item| item.node_id == header_id)
+                    .map(move |item| (projected.page_index, item.rect.y))
+            })
+            .collect()
+    };
+    let laid_out = header_pages(&doc);
+    assert!(laid_out.len() > 2, "{laid_out:?}");
+    // The same pages projected under numbers five higher, as a relayout
+    // numbers the pages it lays out after those of an earlier layout.
+    let renumbered: Vec<PageSlice> = slices
+        .iter()
+        .map(|slice| PageSlice {
+            page_index: slice.page_index + 5,
+            ..slice.clone()
+        })
+        .collect();
+    let geometries: Vec<_> = renumbered
+        .iter()
+        .map(|_| {
+            (
+                page,
+                crate::PageMargins::default(),
+                crate::PageContentInsets::default(),
+            )
+        })
+        .collect();
+    doc.project_pages(&cascade, page, &renumbered, &geometries)
+        .expect("projection");
+    let expected: Vec<(u32, f32)> = laid_out
+        .iter()
+        .map(|&(page_index, y)| (page_index + 5, y))
+        .collect();
+    assert_eq!(header_pages(&doc), expected);
+}
+
 // The old public-path calculation is an oracle for raw line offsets, which
 // can be negative even when page_start clamps its resume offset to zero.
 fn uncached_token_offset(doc: &Document, page_index: u32, token: PageStartToken) -> Option<f32> {

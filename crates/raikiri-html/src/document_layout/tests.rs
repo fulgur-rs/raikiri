@@ -1179,6 +1179,35 @@ fn laid_out(html: &str) -> DocumentLayout {
     )
 }
 
+/// A table on a named page with other margins starts after the first page
+/// and is laid out at its own width, under page numbers of its own. The
+/// header that repeats on each of its pages has a fragment on each.
+#[test]
+fn a_repeated_table_header_has_a_fragment_on_each_page_of_a_named_page_run() {
+    let before: String = (0..80).map(|_| "<p>before</p>").collect();
+    let rows: String = (0..120).map(|row| format!("<tr><td>{row}</tr>")).collect();
+    let layout = laid_out(&format!(
+        "<style>@page wide {{ margin: .3in }} table {{ page: wide }}</style>\
+         {before}<table><thead><tr><th>head</tr></thead><tbody>{rows}</tbody></table>"
+    ));
+    let mut pages_of_the_table = 0;
+    for index in 0..layout.page_count() {
+        let page = layout.page(index).expect("page");
+        let dom = page.dom();
+        let body = find(&dom, dom.root(), "tbody").expect("tbody");
+        if !page.fragments().any(|fragment| fragment.node() == body) {
+            continue;
+        }
+        pages_of_the_table += 1;
+        let head = find(&dom, dom.root(), "thead").expect("thead");
+        assert!(
+            page.fragments().any(|fragment| fragment.node() == head),
+            "page {index} has no fragment of the header"
+        );
+    }
+    assert!(pages_of_the_table > 2, "the table spans pages");
+}
+
 #[test]
 fn anchors_index_ids_and_a_names_first_in_document_order() {
     let layout = laid_out(NAV);
