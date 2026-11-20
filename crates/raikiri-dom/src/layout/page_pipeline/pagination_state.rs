@@ -769,7 +769,7 @@ impl PaginationState {
         let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
         if step.consumes_pending_break {
-            self.pending_break.clear();
+            self.pending_break.take(document, node_id);
         }
         self.pending_break.note_after(
             document,
@@ -834,7 +834,7 @@ impl PaginationState {
         text.effective_y += delta;
         self.current_page = target_page;
         self.page_names.current = candidate.page_name.clone();
-        self.pending_break.clear();
+        self.pending_break.take(document, node_id);
         Ok(true)
     }
 
@@ -1107,7 +1107,7 @@ impl PaginationState {
             self.move_delegated_line(document, env, entry, owner, shift, target);
         }
         if pending {
-            self.pending_break.clear();
+            self.pending_break.take(document, candidate.node_id);
         }
         self.saw_child = true;
         self.current_page = self.current_page.max(target);
@@ -2986,7 +2986,7 @@ impl PaginationState {
                     .source
                     .map(|source| (source, target_page));
             }
-            self.pending_break.clear();
+            self.pending_break.take(document, node_id);
         }
         Ok(())
     }

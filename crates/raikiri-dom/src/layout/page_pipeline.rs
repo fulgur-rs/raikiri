@@ -9799,6 +9799,10 @@ struct PendingBreak {
     /// Where the box that forced the break ends in the flow, its end margin
     /// left out.
     source_end: f32,
+    /// The breaks forced after boxes that hold the source, outermost first,
+    /// as `(source, line_peers, source_end)`. Each still falls after its own
+    /// box once the break inside it has been taken.
+    enclosing: Vec<(usize, Vec<usize>, f32)>,
 }
 
 impl PendingBreak {
@@ -9819,15 +9823,31 @@ impl PendingBreak {
         })
     }
 
-    /// Drop the pending break once a later box has consumed it.
-    fn clear(&mut self) {
+    /// Take the pending break before `node_id`, which it applies to. A break
+    /// forced after a box that holds its source, and that ends at the same
+    /// place or before `node_id`, is the same break; one forced after a box
+    /// that also holds `node_id` is pending again, as it falls after that box.
+    fn take(&mut self, document: &Document, node_id: usize) {
+        if !self.applies_to(document, node_id) {
+            return;
+        }
         self.source = None;
         self.line_peers.clear();
+        while let Some((source, line_peers, source_end)) = self.enclosing.pop() {
+            if is_descendant_or_self(document, node_id, source) {
+                self.source = Some(source);
+                self.line_peers = line_peers;
+                self.source_end = source_end;
+                break;
+            }
+        }
     }
 
     /// Make `node_id` the source of the pending break when it forces a break
     /// after itself, unless that source is already the node itself or one of
-    /// its ancestors.
+    /// its ancestors. A break forced after a box inside the source falls
+    /// before the next box in the source, and the source's own break waits
+    /// for the box after the source.
     fn note_after(
         &mut self,
         document: &Document,
@@ -9841,13 +9861,31 @@ impl PendingBreak {
         // a change of page name after it still applies.
         let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
             || deferred_named_break_after;
-        let source_is_ancestor = self
-            .source
-            .is_some_and(|source| is_descendant_or_self(document, node_id, source));
-        if breaks_after && !source_is_ancestor {
-            self.source = Some(node_id);
-            self.line_peers = later_line_peers(document, cascade, body_id, node_id);
+        if !breaks_after || self.source == Some(node_id) {
+            return;
         }
+        if let Some(source) = self
+            .source
+            .filter(|&source| is_descendant_or_self(document, node_id, source))
+        {
+            self.enclosing.push((
+                source,
+                std::mem::take(&mut self.line_peers),
+                self.source_end,
+            ));
+        } else {
+            // A source that does not hold the node is replaced, as are the
+            // boxes around it that end before the node.
+            while self
+                .enclosing
+                .last()
+                .is_some_and(|&(source, ..)| !is_descendant_or_self(document, node_id, source))
+            {
+                self.enclosing.pop();
+            }
+        }
+        self.source = Some(node_id);
+        self.line_peers = later_line_peers(document, cascade, body_id, node_id);
     }
 }
 
