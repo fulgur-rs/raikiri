@@ -920,6 +920,26 @@ impl Node {
     }
 }
 
+/// The display a `<button>` with the computed `display` lays out as. Button
+/// layout gives a button no table box: an inline-level table behaves as
+/// `inline-block` and the other table displays as `flow-root` (HTML Standard
+/// §15.5.13, "Button layout").
+fn button_display(display: DisplayValue) -> DisplayValue {
+    match display {
+        DisplayValue::InlineTable => DisplayValue::InlineBlock,
+        DisplayValue::Table
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup
+        | DisplayValue::TableRow
+        | DisplayValue::TableColumnGroup
+        | DisplayValue::TableColumn
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption => DisplayValue::FlowRoot,
+        display => display,
+    }
+}
+
 impl Node {
     /// The CSS display retained before lowering the box for Taffy.
     pub(crate) fn display(&self) -> DisplayValue {
@@ -952,6 +972,11 @@ impl Node {
 
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        let display = if self.is_html_button() {
+            button_display(display)
+        } else {
+            display
+        };
         self.flags.set(
             NodeFlags::ROOTS_BLOCK_CONTEXT,
             display == DisplayValue::Block && self.is_html_fieldset(),

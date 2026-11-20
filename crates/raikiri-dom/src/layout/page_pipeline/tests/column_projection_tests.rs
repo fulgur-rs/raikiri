@@ -221,7 +221,10 @@ fn a_block_level_after_follows_the_text_it_comes_after() {
     };
     assert_eq!((owner, kind), (root, crate::GeneratedKind::After));
     // It sits on the second line, below the text, and is as tall as its line.
-    assert_eq!((offset.0, shift, top, height), (0.0, 0.0, 10.0, 10.0));
+    assert_eq!(
+        (offset.0, shift, top, height),
+        (0.0, (0.0, 0.0), 10.0, 10.0)
+    );
     assert_eq!(piece.border_box.y, 10.0);
 }
 
@@ -257,7 +260,7 @@ fn an_inline_generated_box_is_painted_apart_from_its_text_by_the_piece_on_its_li
         panic!("one inline piece");
     };
     assert_eq!((owner, kind), (root, crate::GeneratedKind::Before));
-    assert_eq!((offset, shift, height), ((0.0, 0.0), 0.0, 10.0));
+    assert_eq!((offset, shift, height), ((0.0, 0.0), (0.0, 0.0), 10.0));
 }
 
 #[test]
