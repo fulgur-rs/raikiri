@@ -200,3 +200,27 @@ fn the_break_after_a_box_around_the_absolute_box_still_falls_after_it() {
         );
     }
 }
+
+#[test]
+fn a_break_still_pending_when_the_flow_enters_an_absolute_box_falls_after_it() {
+    // The break after a flex item waits for the end of its line, past an
+    // absolute box with a break of its own in the next item.
+    expect(
+        "<div style='width:60px'><div style='display:flex'>\
+         <div style='break-after:page;width:20px'>S</div><div style='width:20px'>\
+         <div style='position:absolute;width:20px'><div style='break-after:page'>T</div></div>\
+         </div></div><div>Z</div></div>",
+        2,
+        &["S@0:0", "T@0:0", "Z@1:0"],
+    );
+}
+
+#[test]
+fn a_positioned_element_that_generates_no_box_leaves_its_breaks_in_the_flow() {
+    expect(
+        "<div style='width:20px'><div style='display:contents;position:absolute'>\
+         <div style='break-after:page'>T</div></div><div>Z</div></div>",
+        2,
+        &["T@0:0", "Z@1:0"],
+    );
+}
