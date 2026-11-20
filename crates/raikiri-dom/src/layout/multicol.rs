@@ -556,27 +556,36 @@ pub(crate) fn compute_multicol_layout(
         let align_content = style_of(tree, index).align_content();
         let before_columns = (!tree.nodes[index].used_writing_mode.is_vertical()
             && align_content.keyword != AlignContentKeyword::Normal)
-            .then(|| subtree_layouts(tree, index));
+            .then(|| {
+                (
+                    subtree_layouts(tree, index),
+                    tree.fragment_tree.records_of(index).len(),
+                    tree.fragment_tree.break_tokens.len(),
+                )
+            });
         let mut used_height = lay_out_columns(tree, content_origin, &mut output);
         // Balanced columns size an auto-height container even under a
         // maximum height, which only bounds the balanced columns.
         let balances_height =
             fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite);
-        // The rows end where the border box of the lowest box in them ends,
-        // as in Chromium: a trailing margin is left out, as the end of a
-        // column truncates it.
-        if let Some(layouts) = before_columns
-            && let Some(end) = column_content_extent(tree, index)
+        // Only one row of columns that this layout placed is aligned: a
+        // strategy that gave up placed none, and a container broken across
+        // outer fragmentainers has a record in each.
+        if let Some((layouts, records, breaks)) = before_columns
+            && let Some(end) = column_content_extent(tree, index, records)
         {
-            let height = if balances_height {
-                used_height.max(minimum)
+            // Balanced columns are as tall as their content, so only a
+            // minimum height leaves room. Columns of a set height end where
+            // the border box of the lowest box in them ends, as in Chromium:
+            // a trailing margin is left out, as the end of a column
+            // truncates it.
+            let free = if balances_height {
+                minimum - used_height
             } else {
-                output.size.height
+                output.size.height - block_end_inset - end
             };
-            let offset = crate::layout::dispatch::block_flow::content_alignment_offset(
-                align_content,
-                height - block_end_inset - end,
-            );
+            let offset =
+                crate::layout::dispatch::block_flow::content_alignment_offset(align_content, free);
             if offset != 0.0 {
                 output.size = block_size;
                 for (node, layout) in layouts {
@@ -584,11 +593,18 @@ pub(crate) fn compute_multicol_layout(
                     tree.context.variant_caches.forget(node);
                     tree.set_unrounded_layout(NodeId::from(node), &layout);
                 }
+                tree.fragment_tree.break_tokens.truncate(breaks);
+                let block_pass = block_pass_alignment(tree, index, content_origin.y);
+                let records = tree.fragment_tree.records_of(index).len();
                 let aligned = Point {
                     x: content_origin.x,
                     y: content_origin.y + offset,
                 };
-                used_height = lay_out_columns(tree, aligned, &mut output) - offset;
+                used_height = lay_out_columns(tree, aligned, &mut output);
+                if column_content_extent(tree, index, records).is_some() {
+                    used_height -= offset;
+                    pass.leading_shift = offset - block_pass;
+                }
             }
         }
         if balances_height {
@@ -610,6 +626,24 @@ pub(crate) fn compute_multicol_layout(
     pass.finish(tree, node_id, &inputs, output)
 }
 
+/// How far the pass across the whole width of the multicol container `index`
+/// moved its content by `align-content`: where the highest box in flow starts
+/// below the content box top `content_top`, margin and all.
+fn block_pass_alignment(tree: &LayoutSession<'_>, index: usize, content_top: f32) -> f32 {
+    flow_children(tree, index)
+        .into_iter()
+        .filter(|&child| {
+            is_rendered_element(tree, child)
+                && tree.nodes[child].layout_position() != Position::Absolute
+        })
+        .map(|child| {
+            let layout = tree.nodes[child].layout;
+            layout.location.y - layout.margin.top - content_top
+        })
+        .reduce(f32::min)
+        .unwrap_or(0.0)
+}
+
 /// The layouts of the boxes inside `index`.
 fn subtree_layouts(tree: &LayoutSession<'_>, index: usize) -> Vec<(usize, BoxLayout)> {
     let mut pending = tree.nodes[index].children.clone();
@@ -623,15 +657,18 @@ fn subtree_layouts(tree: &LayoutSession<'_>, index: usize) -> Vec<(usize, BoxLay
 
 /// Where the boxes the columns of the multicol container `index` placed end,
 /// from the top of its border box: the lowest border-box edge among the
-/// records under the container's latest record. `None` when the columns
-/// placed no records.
-fn column_content_extent(tree: &LayoutSession<'_>, index: usize) -> Option<f32> {
+/// records under the one record of the container from its `from`th on that
+/// is still live. `None` when there is no such single record, or nothing
+/// under it.
+fn column_content_extent(tree: &LayoutSession<'_>, index: usize, from: usize) -> Option<f32> {
     let fragments = &tree.fragment_tree;
-    let &container = fragments
-        .records_of(index)
+    let mut placed = fragments.records_of(index)[from..]
         .iter()
-        .rev()
-        .find(|&&record| !fragments.is_retired(record))?;
+        .filter(|&&record| !fragments.is_retired(record));
+    let &container = placed.next()?;
+    if placed.next().is_some() {
+        return None;
+    }
     fragments
         .children_of(container)
         .iter()
@@ -657,6 +694,10 @@ struct FlowPass {
     /// Where the content box starts and ends and the columns, when a column
     /// strategy lays the children out again.
     columns: Option<ColumnBox>,
+    /// How far content alignment moved the columns past where the pass put
+    /// the start of the content, which moves the static position of a box
+    /// before every box in flow.
+    leading_shift: f32,
 }
 
 /// The columns of a multicol container inside its border box.
@@ -711,6 +752,7 @@ impl FlowPass {
             height: output.size.height,
             locations,
             columns: None,
+            leading_shift: 0.0,
         }
     }
 
@@ -902,7 +944,7 @@ impl FlowPass {
                     },
                 }
             }
-            None => (0, static_y - columns.origin.y),
+            None => (0, static_y + self.leading_shift - columns.origin.y),
         };
         Some(static_move_to(columns, column, y, static_y))
     }
