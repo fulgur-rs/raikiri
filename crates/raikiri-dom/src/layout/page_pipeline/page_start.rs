@@ -3,8 +3,9 @@
 
 use super::sibling_adjacency::{FlowBox, flow_box};
 use super::{
-    CascadeResult, DisplayValue, Document, NodeKind, current_abs_y, has_unusual_coordinates,
-    is_floating_box_for_pagination, is_plain_block_box, layout_relative_offset_y,
+    CascadeResult, DisplayValue, Document, IfcBoxKind, NodeKind, current_abs_y,
+    has_unusual_coordinates, is_floating_box_for_pagination, is_plain_block_box,
+    layout_relative_offset_y,
 };
 use std::collections::HashMap;
 
@@ -190,20 +191,24 @@ enum Before {
 /// `past_empty_starts`, neither are boxes of no height at the page start,
 /// when the child itself starts at the page start. The nearest of the others
 /// decides.
+#[allow(clippy::too_many_arguments)]
 fn before_child(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     parent: usize,
     page_start: f32,
+    child: usize,
     child_index: Option<usize>,
     past_empty_starts: bool,
 ) -> Before {
     let siblings = document.nodes[parent].layout_children();
     // A child that its parent does not list is held by a box the parent does
-    // not show, such as the anonymous box around inline content.
+    // not show, such as the anonymous box around inline content, or sits
+    // among the lines of the paragraph the parent lays out.
     let Some(index) = child_index else {
-        return Before::Other;
+        return before_block_among_lines(document, cascade, body_id, parent, child)
+            .unwrap_or(Before::Other);
     };
     // Empty boxes count as nothing only while the child starts right at the
     // page start: a margin they leave above it is room a break there would
@@ -273,6 +278,73 @@ fn before_child(
     phantom_top.map_or(Before::Nothing, |top| Before::Ends { top, bottom: top })
 }
 
+/// What the paragraph `root` lays out before its block child `block`, which
+/// sits among the paragraph's lines rather than in a box the root lists: the
+/// block right before it when no line comes between them, else the last line
+/// before it, at their places in the flow. `None` when the block is not one of
+/// the paragraph's, or when floats, generated blocks or column fragments of
+/// the paragraph may lie between, which this does not follow.
+fn before_block_among_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root: usize,
+    block: usize,
+) -> Option<Before> {
+    let ifc = document.ifc_layout_node(root)?.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    let starts = &lines.block_line_starts;
+    let mut entries = starts
+        .iter()
+        .enumerate()
+        .filter(|(_, (child, _))| *child == block);
+    let (index, &(_, after)) = entries.next()?;
+    let plain = entries.next().is_none()
+        && ifc.multicol_fragments.is_none()
+        && lines.generated_block_starts.is_empty()
+        && ifc.boxes.iter().all(|b| b.kind != IfcBoxKind::Float)
+        && !generates_content_within(document, root);
+    plain.then_some(())?;
+    let flow_y = |id: usize| {
+        current_abs_y(document, id) - layout_relative_offset_y(document, cascade, body_id, id)
+    };
+    if let Some(&(previous, previous_after)) = index.checked_sub(1).map(|i| &starts[i])
+        && previous_after == after
+    {
+        let block_box =
+            is_plain_block_box(document, previous) && !has_unusual_coordinates(document, previous);
+        block_box.then_some(())?;
+        let top = flow_y(previous);
+        let bottom = top + document.nodes[previous].layout.size.height;
+        return Some(Before::Ends { top, bottom });
+    }
+    let Some(line) = after.checked_sub(1) else {
+        return Some(Before::Nothing);
+    };
+    let (top, bottom) = *super::ifc_root_line_bounds(document, root)?.get(line)?;
+    let layout = &document.nodes[root].layout;
+    let content_top = flow_y(root) + layout.border.top + layout.padding.top;
+    Some(Before::Ends {
+        top: content_top + top,
+        bottom: content_top + bottom,
+    })
+}
+
+/// Whether `root` or an element inside it generates `::before` or `::after`
+/// content, which the paragraph lays out without a line or box of its own
+/// that the lines record.
+fn generates_content_within(document: &Document, root: usize) -> bool {
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        if node.has_before_or_after_content {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
+}
+
 /// Whether a page does not break between the start of `parent` and its first
 /// child: a plain block of the normal flow, or a `display: contents` element
 /// that is no box.
@@ -337,6 +409,7 @@ fn begins_page_with_positions(
                     body_id,
                     parent,
                     page_start,
+                    child,
                     child_position(parent, child),
                     past_empty_starts.is_some(),
                 ) {
