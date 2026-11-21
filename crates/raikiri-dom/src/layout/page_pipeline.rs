@@ -4804,12 +4804,20 @@ fn layout_pages_core(
     let mut unpaged_plain_columns = false;
     let mut spanning_origins = HashMap::new();
     let mut page_filled_origins = HashMap::new();
+    let mut spanner_growth = HashMap::new();
     // Each container whose columns are filled page by page may take one
-    // more attempt, to fill them from where the walk moved it.
+    // more attempt, to fill them from where the walk moved it. Each spanner
+    // that the breaks inside it grew may take two: one to plan the columns
+    // after it below the growth, and one more when that plan moves what
+    // comes before it.
     let mut attempts = 0;
     // Floats moved whole to a later page take one more attempt to lay the
     // content beside them out without them.
-    while attempts < 3 + page_filled_origins.len() + usize::from(resumptions.has_pushed_floats()) {
+    while attempts
+        < 3 + page_filled_origins.len()
+            + 2 * spanner_growth.len()
+            + usize::from(resumptions.has_pushed_floats())
+    {
         attempts += 1;
         let next = layout_pages_attempt(
             document,
@@ -4823,12 +4831,14 @@ fn layout_pages_core(
                 resumptions: &resumptions,
                 spanning_origins: &spanning_origins,
                 page_filled_origins: &page_filled_origins,
+                spanner_growth: &spanner_growth,
             },
         )?;
         if !next.moved_columns
             && next.resumptions == resumptions
             && next.spanning_origins == spanning_origins
             && next.page_filled_origins == page_filled_origins
+            && next.spanner_growth == spanner_growth
         {
             return Ok(next.slices);
         }
@@ -4836,6 +4846,7 @@ fn layout_pages_core(
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
         page_filled_origins = next.page_filled_origins;
+        spanner_growth = next.spanner_growth;
     }
     // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
     Err(LayoutError::Internal {
@@ -4848,6 +4859,7 @@ struct PageAttempt<'a> {
     resumptions: &'a float_resumption::Plan,
     spanning_origins: &'a HashMap<usize, f32>,
     page_filled_origins: &'a HashMap<usize, f32>,
+    spanner_growth: &'a HashMap<usize, f32>,
 }
 
 struct PageAttemptResult {
@@ -4856,6 +4868,7 @@ struct PageAttemptResult {
     resumptions: float_resumption::Plan,
     spanning_origins: HashMap<usize, f32>,
     page_filled_origins: HashMap<usize, f32>,
+    spanner_growth: HashMap<usize, f32>,
 }
 
 /// Lay out and break `document` into pages once, retaining the reasons to
@@ -4878,9 +4891,11 @@ fn layout_pages_attempt(
     session.context.float_resumptions = attempt.resumptions.clone();
     session.context.spanning_page_origins = attempt.spanning_origins.clone();
     session.context.page_filled_origins = attempt.page_filled_origins.clone();
+    session.context.spanner_growth = attempt.spanner_growth.clone();
     if !attempt.resumptions.is_empty()
         || !attempt.spanning_origins.is_empty()
         || !attempt.page_filled_origins.is_empty()
+        || !attempt.spanner_growth.is_empty()
     {
         session.layout_dirty = true;
     }
@@ -4906,6 +4921,7 @@ fn layout_pages_attempt(
             resumptions: float_resumption::Plan::default(),
             spanning_origins: HashMap::new(),
             page_filled_origins: HashMap::new(),
+            spanner_growth: HashMap::new(),
         });
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
@@ -4973,6 +4989,7 @@ fn layout_pages_attempt(
         resumptions,
         spanning_origins: session.context.spanning_page_origins.clone(),
         page_filled_origins: session.context.page_filled_origins.clone(),
+        spanner_growth: grown_spanners(&session),
     })
 }
 
@@ -5323,6 +5340,7 @@ fn paginate_flow(
     // once all owners are paginated.
     let mut fragment_edits = FragmentEdits::new(&document.fragment_tree);
     document.context.spanner_column_slack.clear();
+    document.context.planned_spanners.clear();
     // So are the moves of the boxes after each owner, which are applied to a
     // parent's children before they are read.
     let mut sibling_shifts = sibling_shifts::SiblingShifts::default();
@@ -5505,6 +5523,7 @@ fn paginate_flow(
         clip_edges: &clip_edges,
     };
     document.context.spanner_column_shifts.clear();
+    document.context.spanner_breaks_growth.clear();
     state.prepare_float_gaps(document, cascade, body_id, &candidates);
     normal_block_shifts::begin(document, cascade, body_id);
     let candidate_result = (|| -> Result<(), LayoutError> {
@@ -20923,6 +20942,71 @@ pub(super) fn absorbed_by_slack(
     asked.clamp(0.0, slack)
 }
 
+/// The growth the next attempt plans the columns after each spanner below:
+/// what this attempt planned, and the distance its page walk still had to
+/// move those columns, for the breaks inside the spanner.
+fn grown_spanners(document: &super::context::LayoutSession<'_>) -> HashMap<usize, f32> {
+    let context = &document.context;
+    // A spanner that its breaks no longer grow, as when it moved whole or
+    // fits on its page now, keeps no growth.
+    let mut growth: HashMap<usize, f32> = context
+        .spanner_growth
+        .iter()
+        .filter(|&(spanner, _)| {
+            context
+                .spanner_breaks_growth
+                .get(spanner)
+                .is_some_and(|&grown| grown > 0.001)
+        })
+        .map(|(&spanner, &planned)| (spanner, planned))
+        .collect();
+    for (&spanner, &grown) in &context.spanner_breaks_growth {
+        let planned = growth.get(&spanner).copied().unwrap_or(0.0);
+        let slack = context
+            .spanner_column_slack
+            .get(&spanner)
+            .copied()
+            .unwrap_or(0.0);
+        // Only a plan that placed the columns below the growth it was given
+        // learns more: the pages may plan a spanner's columns otherwise, or
+        // not at all. A spanner with no columns after it has none to plan.
+        if slack + 0.001 < planned
+            || !context.planned_spanners.contains(&spanner)
+            || !has_columns_after(document, spanner)
+        {
+            continue;
+        }
+        let asked = context
+            .spanner_column_shifts
+            .get(&spanner)
+            .copied()
+            .unwrap_or(0.0);
+        // What the columns still moved, as far as the breaks inside the
+        // spanner grew it rather than moved it whole.
+        let moved = (asked - absorbed_by_slack(document, spanner)).min(grown);
+        if moved > 0.001 {
+            growth.insert(spanner, planned + moved);
+        }
+    }
+    growth
+}
+
+/// Whether column content follows the spanner `spanner` in its container.
+fn has_columns_after(document: &super::context::LayoutSession<'_>, spanner: usize) -> bool {
+    use super::multicol::spanning;
+    document.taffy_parent_of(spanner).is_some_and(|container| {
+        document
+            .children_through_contents(container)
+            .into_iter()
+            .skip_while(|&child| child != spanner)
+            .skip(1)
+            .any(|child| {
+                !spanning::is_spanner(document, child)
+                    && spanning::holds_column_content(document, child)
+            })
+    })
+}
+
 /// Moves what follows the spanner `spanner` in the multicol container
 /// `container` down by `delta`, the distance the spanner's end moved: the
 /// columns after a spanner start below it (CSS Multi-column Layout 1, 6.1),
@@ -20947,6 +21031,13 @@ fn shift_columns_after_spanner(
         .spanner_column_shifts
         .entry(spanner)
         .or_default() += delta;
+    if grows {
+        *document
+            .context
+            .spanner_breaks_growth
+            .entry(spanner)
+            .or_default() += delta;
+    }
     let grown = delta;
     // A spanner that shrinks back gives up the space it took first.
     let delta = delta - (absorbed_by_slack(document, spanner) - absorbed);

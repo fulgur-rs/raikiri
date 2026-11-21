@@ -124,6 +124,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     };
     let mut groups = Vec::<MulticolGroup>::new();
     let mut replacements = Vec::<(usize, Vec<LayoutFragment>)>::new();
+    let mut wrapped_children = HashSet::new();
     // Fragment shifts are applied in one pass after the walk: scanning every
     // fragment for each shifted child is quadratic in the group's children.
     let mut shifts = HashMap::<usize, f32>::new();
@@ -273,6 +274,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 for fragment in planned.fragments {
                     if fragment.wrapper.is_some() && !per_child.contains_key(&fragment.child) {
                         wrapped.push(fragment.child);
+                        wrapped_children.insert(fragment.child);
                     }
                     per_child.entry(fragment.child).or_default().push(fragment);
                 }
@@ -356,6 +358,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
             }
         }
         if let Some(id) = spanner {
+            tree.context.planned_spanners.insert(id);
             shift_child(tree, &mut shifts, id, delta);
             let layout = tree.nodes[id].layout;
             let y = owner_y + layout.location.y;
@@ -413,6 +416,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 shift_child(tree, &mut shifts, id, shift);
                 delta += shift;
             }
+            // The breaks inside the spanner grow it, as an earlier attempt
+            // found: the columns after it are planned below what it grows to,
+            // and it grows into that space without moving them.
+            let growth = tree.context.spanner_growth.get(&id).copied().unwrap_or(0.0);
+            if growth > 0.0 {
+                delta += growth;
+                note_slack(tree, id, growth);
+            }
         }
         content_before |= segment_has_content;
         start = end + 1;
@@ -420,7 +431,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
     edits.shift_children(container, &shifts);
     let refilled = refilled_lineless || !replacements.is_empty();
     for (id, fragments) in replacements {
-        edits.replace(id, fragments);
+        // A box in a wrapper that had no records of its own was drawn
+        // through the wrapper's; its pieces now say which column each of
+        // its lines is in.
+        if wrapped_children.contains(&id) {
+            edits.replace_or_add(id, fragments);
+        } else {
+            edits.replace(id, fragments);
+        }
     }
     if spanner_free {
         if refilled {
@@ -442,7 +460,11 @@ pub(in crate::layout) fn paginate_spanning_columns(
 /// `shift_columns_after_spanner` in the page walk).
 fn note_slack(tree: &mut LayoutSession<'_>, spanner: usize, pushed: f32) {
     if pushed > EPSILON {
-        tree.context.spanner_column_slack.insert(spanner, pushed);
+        *tree
+            .context
+            .spanner_column_slack
+            .entry(spanner)
+            .or_default() += pushed;
     }
 }
 
@@ -638,6 +660,9 @@ pub(in crate::layout) struct FragmentEdits {
     by_node: HashMap<usize, Vec<usize>>,
     /// Records whose source node was given new records since.
     dropped: Vec<bool>,
+    /// Records of nodes that had none in the tree, each installed after its
+    /// parent.
+    added: Vec<usize>,
 }
 
 impl FragmentEdits {
@@ -651,6 +676,7 @@ impl FragmentEdits {
             original: tree.fragments.len(),
             by_node,
             dropped: vec![false; tree.fragments.len()],
+            added: Vec::new(),
         }
     }
 
@@ -698,6 +724,25 @@ impl FragmentEdits {
         self.dropped.resize(self.arena.len(), false);
         self.by_node
             .insert(node, (start..self.arena.len()).collect());
+    }
+
+    /// Replace the records of `node` with `fragments`, or give it them when
+    /// it has none.
+    pub(in crate::layout) fn replace_or_add(
+        &mut self,
+        node: usize,
+        fragments: Vec<LayoutFragment>,
+    ) {
+        if self.by_node.get(&node).is_some_and(|ids| !ids.is_empty()) {
+            self.replace(node, fragments);
+            return;
+        }
+        let start = self.arena.len();
+        self.arena.extend(fragments);
+        self.dropped.resize(self.arena.len(), false);
+        self.by_node
+            .insert(node, (start..self.arena.len()).collect());
+        self.added.extend(start..self.arena.len());
     }
 
     /// Move the records of the shifted children placed in `container`, with
@@ -765,6 +810,12 @@ impl FragmentEdits {
         let mut sources = Vec::new();
         let mut remap = vec![None; self.arena.len()];
         let mut emitted = HashSet::new();
+        let mut children = HashMap::<usize, Vec<usize>>::new();
+        for &id in &self.added {
+            if let Some(parent) = self.parent(id) {
+                children.entry(parent).or_default().push(id);
+            }
+        }
         for id in 0..self.original {
             let ids = if !self.dropped[id] {
                 vec![id]
@@ -773,10 +824,14 @@ impl FragmentEdits {
             } else {
                 continue;
             };
-            for id in ids {
+            // Each record is followed by the added records placed in it, and
+            // those by theirs.
+            let mut pending: Vec<usize> = ids.into_iter().rev().collect();
+            while let Some(id) = pending.pop() {
                 remap[id] = Some(updated.len());
                 updated.push(self.arena[id]);
                 sources.push(id);
+                pending.extend(children.remove(&id).unwrap_or_default().into_iter().rev());
             }
             if updated.len() > tree.fragment_tree.limit {
                 // cov:ignore: the preceding work reservation bounds the original plus all replacement records by the same fragment limit.

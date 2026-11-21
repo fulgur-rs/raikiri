@@ -90,7 +90,7 @@ fn words(body: &str) -> String {
     words.join(" ")
 }
 
-/// The words of `expected`, sorted as [`words`] gives them.
+/// The words of `expected`, sorted as `words` gives them.
 fn sorted(expected: &str) -> String {
     let mut words: Vec<_> = expected.split(' ').collect();
     words.sort();
@@ -307,6 +307,94 @@ fn a_spanner_breaks_at_a_page_end_and_at_a_forced_break() {
         (
             "<div class='m'><div>A</div><div style='column-span:all'><div style='height:85px'>S</div><div style='height:20px'>R</div><div style='break-before:page'>Q</div></div><div>C</div></div><div>X</div>",
             "A@0:0,0 S@0:0,10 R@1:0,0 Q@2:0,0 C@2:0,10 X@2:0,20",
+        ),
+    ] {
+        assert_eq!(words(body), sorted(expected), "{body}");
+    }
+}
+
+/// Columns after a spanner that run over more pages than one break where
+/// those pages end, below what the spanner grows to on its pages.
+#[test]
+fn the_columns_after_a_spanner_break_where_their_pages_end() {
+    for (body, expected) in [
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='width:20px'>aa bb cc dd ee ff gg hh ii</div></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 aa@0:0,15 bb@0:0,25 cc@0:0,35 dd@0:0,45 ee@0:0,55 ff@0:0,65 gg@0:0,75 hh@1:0,0 ii@1:0,10 c00@1:0,20 c01@1:0,30 c02@1:0,40 c03@1:0,50 c04@1:0,60 c05@1:0,70 c06@1:0,80 c07@1:0,90 c08@1:50,20 c09@1:50,30 c10@1:50,40 c11@1:50,50 c12@1:50,60 c13@1:50,70 c14@1:50,80 c15@1:50,90 c16@2:0,0 c17@2:0,10 X@2:0,20",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div>S</div><div style='break-before:page'>R</div></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 R@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:0,30 c03@1:0,40 c04@1:0,50 c05@1:0,60 c06@1:0,70 c07@1:0,80 c08@1:0,90 c09@1:50,10 c10@1:50,20 c11@1:50,30 c12@1:50,40 c13@1:50,50 c14@1:50,60 c15@1:50,70 c16@1:50,80 c17@1:50,90 X@2:0,0",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='height:60px'>S</div><table style='border-spacing:0'><tr><td style='padding:0;width:20px'>aa bb cc</td></tr></table></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 S@0:0,15 aa@0:0,75 bb@0:0,85 cc@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:0,30 c03@1:0,40 c04@1:0,50 c05@1:0,60 c06@1:0,70 c07@1:0,80 c08@1:0,90 c09@1:50,10 c10@1:50,20 c11@1:50,30 c12@1:50,40 c13@1:50,50 c14@1:50,60 c15@1:50,70 c16@1:50,80 c17@1:50,90 X@2:0,0",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='height:60px'>S</div><div style='float:left;width:20px'>aa bb cc</div></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 S@0:0,15 aa@0:0,75 bb@0:0,85 cc@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:0,30 c03@1:0,40 c04@1:0,50 c05@1:0,60 c06@1:0,70 c07@1:0,80 c08@1:0,90 c09@1:50,10 c10@1:50,20 c11@1:50,30 c12@1:50,40 c13@1:50,50 c14@1:50,60 c15@1:50,70 c16@1:50,80 c17@1:50,90 X@2:0,0",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='width:20px'>aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr</div></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 aa@0:0,15 bb@0:0,25 cc@0:0,35 dd@0:0,45 ee@0:0,55 ff@0:0,65 gg@0:0,75 hh@0:0,85 ii@1:0,0 jj@1:0,10 kk@1:0,20 ll@1:0,30 mm@1:0,40 nn@1:0,50 oo@1:0,60 pp@1:0,70 qq@1:0,80 rr@1:0,90 c00@2:0,0 c01@2:0,10 c02@2:0,20 c03@2:0,30 c04@2:0,40 c05@2:0,50 c06@2:0,60 c07@2:0,70 c08@2:0,80 X@2:0,90 c09@2:50,0 c10@2:50,10 c11@2:50,20 c12@2:50,30 c13@2:50,40 c14@2:50,50 c15@2:50,60 c16@2:50,70 c17@2:50,80",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='width:20px'>aa bb cc dd ee ff gg hh ii</div></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div><div style='column-span:all'>T</div><div>D</div></div><div>X</div>",
+            "A@0:0,0 aa@0:0,15 bb@0:0,25 cc@0:0,35 dd@0:0,45 ee@0:0,55 ff@0:0,65 gg@0:0,75 hh@1:0,0 ii@1:0,10 c00@1:0,20 c01@1:0,30 c02@1:0,40 c03@1:0,50 c04@1:0,60 c05@1:0,70 c06@1:0,80 c07@1:0,90 c08@1:50,20 c09@1:50,30 c10@1:50,40 c11@1:50,50 c12@1:50,60 c13@1:50,70 c14@1:50,80 c15@1:50,90 c16@2:0,0 c17@2:0,10 T@2:0,20 D@2:0,30 X@2:0,40",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='height:60px'>S</div><ul style='margin:0;padding:0;list-style:none'><li>aa</li><li>bb</li><li>cc</li></ul></div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div><div>X</div>",
+            "A@0:0,0 S@0:0,15 aa@0:0,75 bb@0:0,85 cc@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:0,30 c03@1:0,40 c04@1:0,50 c05@1:0,60 c06@1:0,70 c07@1:0,80 c08@1:0,90 c09@1:50,10 c10@1:50,20 c11@1:50,30 c12@1:50,40 c13@1:50,50 c14@1:50,60 c15@1:50,70 c16@1:50,80 c17@1:50,90 X@2:0,0",
+        ),
+    ] {
+        assert_eq!(words(body), sorted(expected), "{body}");
+    }
+}
+
+#[test]
+fn a_box_in_a_wrapper_keeps_its_lines_when_the_spanner_before_it_moves() {
+    // The lines of a box in a wrapper are drawn in the columns they are in,
+    // on the page the spanner before it moved them to.
+    for (body, expected) in [
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;break-before:page'><div>S</div></div><div><div>C</div></div></div><div>X</div>",
+            "A@0:0,0 S@1:0,0 C@1:0,10 X@1:0,20",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:85px'><div>S</div></div><div><div>C</div></div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 C@1:0,0 X@1:0,10",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:95px'><div>S</div></div><div><div>C</div></div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 C@1:0,5 X@1:0,15",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;break-before:page'><div>S</div></div><div><div>C<br>E</div></div></div><div>X</div>",
+            "A@0:0,0 S@1:0,0 C@1:0,10 E@1:0,20 X@1:0,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;break-before:page'><div>S</div></div><div><div><div>C</div></div></div></div><div>X</div>",
+            "A@0:0,0 S@1:0,0 C@1:0,10 X@1:0,20",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div>S</div><div style='break-before:page'>R</div></div><div><div>C</div></div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 R@1:0,0 C@1:0,10 X@1:0,20",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div>S</div></div><div><div style='width:30px'>c00 c01 c02 c03 c04 c05 </div></div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 c00@0:0,20 c01@0:0,30 c02@0:0,40 c03@0:50,20 c04@0:50,30 c05@0:50,40 X@0:0,50",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;break-before:page'><div>S</div></div><div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 </div></div></div><div>X</div>",
+            "A@0:0,0 S@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:0,30 c03@1:0,40 c04@1:0,50 c05@1:0,60 c06@1:0,70 c07@1:50,10 c08@1:50,20 c09@1:50,30 c10@1:50,40 c11@1:50,50 c12@1:50,60 c13@1:50,70 X@1:0,80",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;break-before:page'><div>S</div></div><div><div><div style='width:30px'>c00 c01 c02 c03 </div></div></div></div><div>X</div>",
+            "A@0:0,0 S@1:0,0 c00@1:0,10 c01@1:0,20 c02@1:50,10 c03@1:50,20 X@1:0,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div style='width:20px'>aa bb cc dd ee ff gg hh ii</div></div><div><div style='width:30px'>c00 c01 c02 c03 c04 c05 c06 c07 c08 c09 c10 c11 c12 c13 c14 c15 c16 c17 </div></div></div><div>X</div>",
+            "A@0:0,0 aa@0:0,15 bb@0:0,25 cc@0:0,35 dd@0:0,45 ee@0:0,55 ff@0:0,65 gg@0:0,75 hh@1:0,0 ii@1:0,10 c00@1:0,20 c01@1:0,30 c02@1:0,40 c03@1:0,50 c04@1:0,60 c05@1:0,70 c06@1:0,80 c07@1:0,90 c08@1:50,20 c09@1:50,30 c10@1:50,40 c11@1:50,50 c12@1:50,60 c13@1:50,70 c14@1:50,80 c15@1:50,90 c16@2:0,0 c17@2:0,10 X@2:0,20",
         ),
     ] {
         assert_eq!(words(body), sorted(expected), "{body}");

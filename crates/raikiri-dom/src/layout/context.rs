@@ -235,6 +235,16 @@ pub(crate) struct LayoutContext {
     /// multicol container below where it would start, which the spanner may
     /// grow into without moving that content.
     pub(crate) spanner_column_slack: std::collections::HashMap<usize, f32>,
+    /// How far an earlier attempt's page walk had to move the columns after
+    /// each spanner, for the breaks inside it: the columns are planned that
+    /// far below it from the start, so that they break where their pages
+    /// end.
+    pub(crate) spanner_growth: std::collections::HashMap<usize, f32>,
+    /// The spanners whose columns after them were planned page by page
+    /// before this page walk, which can plan them below a growth.
+    pub(crate) planned_spanners: std::collections::HashSet<usize>,
+    /// How far the breaks inside each spanner grew it in this page walk.
+    pub(crate) spanner_breaks_growth: std::collections::HashMap<usize, f32>,
     /// How deeply the child layouts of this pass are nested, and whether that
     /// passed its limit.
     pub(crate) recursion: LayoutRecursion,
