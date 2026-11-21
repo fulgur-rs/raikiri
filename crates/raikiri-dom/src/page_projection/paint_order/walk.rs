@@ -560,7 +560,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         let Some(node) = document.get_node(node_id) else {
             return; // cov:ignore: node ids on the stack come from the arena
         };
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
             return;
         }
         match node.kind() {

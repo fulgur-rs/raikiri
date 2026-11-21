@@ -816,11 +816,11 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
 
 /// Whether layout draws no CSS box for anything in the subtree of `node`,
 /// whose computed values are `cv`: a non-rendered HTML element (see
-/// [`crate::Node::is_non_rendered_html_element`]) is left out with its
+/// [`crate::Node::is_unrendered_html_element`]) is left out with its
 /// subtree, an inline SVG is drawn as a unit, its elements without generated
 /// content, and a table column or column group only describes tracks.
 fn draws_no_boxes_below(node: &crate::Node, cv: Option<&raikiri_style::ComputedValues>) -> bool {
-    node.is_non_rendered_html_element()
+    node.is_unrendered_html_element()
         || node.is_inline_svg_root()
         || cv.is_some_and(|cv| {
             matches!(

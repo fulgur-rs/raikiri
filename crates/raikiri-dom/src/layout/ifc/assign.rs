@@ -276,7 +276,7 @@ fn inline_content(
                 None => {
                     let cv = &cascade.computed[id];
                     if doc.nodes[id].display() == DisplayValue::None
-                        || node.is_non_rendered_html_element()
+                        || node.is_unrendered_html_element()
                         || node.is_inline_svg_content()
                     {
                         continue;
@@ -488,7 +488,7 @@ fn check_text_in_paragraphs(doc: &Document) -> Result<(), LayoutError> {
 
 /// The first rendered text node with more than collapsible white space that
 /// no paragraph lays out: it would be neither measured nor drawn. Text of
-/// non-rendered elements (`head`, `script`, `template`, ...), of elements
+/// unrendered hidden elements (`head`, `script`, `template`, ...), of elements
 /// that do not generate boxes (`display: none` on an ancestor), and SVG
 /// content (drawn by the SVG renderer) is not text of the document flow.
 fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
@@ -511,7 +511,7 @@ fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
         !doc.ancestors(idx).any(|id| {
             let element = &doc.nodes[id];
             element.kind() == NodeKind::Element
-                && (element.is_non_rendered_html_element()
+                && (element.is_unrendered_html_element()
                     || doc.nodes[id].display() == DisplayValue::None)
         })
     })
@@ -687,7 +687,7 @@ pub(crate) fn only_item(doc: &Document, container: usize) -> Option<usize> {
             node.is_in_document()
                 && node.kind() == NodeKind::Element
                 && node.display() != DisplayValue::None
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
         });
     let item = items.next()?;
     items.next().is_none().then_some(item)
@@ -726,7 +726,7 @@ fn anonymous_text_runs(doc: &Document, container: usize) -> Vec<TextRun> {
         match node.kind() {
             NodeKind::Text if node.display() != DisplayValue::None => members.push(child),
             NodeKind::Element
-                if node.display() != DisplayValue::None && !node.is_non_rendered_html_element() =>
+                if node.display() != DisplayValue::None && !node.is_unrendered_html_element() =>
             {
                 close(&mut members);
             }

@@ -226,7 +226,7 @@ fn content_overflow(
         let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.kind() != NodeKind::Element
         {
             continue;
@@ -564,7 +564,7 @@ fn ordered_edge_child(
     let is_item = |&child: &usize| {
         let node = &document.nodes[child];
         node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && node.display() != DisplayValue::None
             && !matches!(
                 node.position(),
@@ -3552,7 +3552,7 @@ fn clear_floats_at_forced_breaks<'name>(
         let node = &document.nodes[id];
         node.kind() == NodeKind::Element
             && node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && !matches!(
                 document.nodes[id].display(),
                 DisplayValue::None | DisplayValue::Contents
@@ -3596,7 +3596,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
             } else if node.kind() == NodeKind::Element
                 && node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && (document.nodes[child].display() == DisplayValue::Contents
                     || document.nodes[child].display().is_inline_flow()
                         && in_flow(document, child)
@@ -3626,7 +3626,7 @@ fn clear_floats_at_forced_breaks<'name>(
             } else if static_absolute
                 && node.kind() == NodeKind::Element
                 && node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && document.nodes[child].display() != DisplayValue::None
                 && is_static_position_absolute(document, cascade, child)
             {
@@ -4318,7 +4318,7 @@ fn page_edge_child(
         }];
         let node = &document.nodes[child];
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || document.nodes[child].display() == DisplayValue::None
             || matches!(
                 document.nodes[child].position(),
@@ -4432,7 +4432,7 @@ fn makes_inline_content(
     let node = &document.nodes[id];
     if depth >= 128
         || !node.is_in_document()
-        || node.is_non_rendered_html_element()
+        || node.is_unrendered_html_element()
         || node.display() == DisplayValue::None
         || matches!(
             node.position(),
@@ -7419,7 +7419,7 @@ fn forced_break_inside(
             continue;
         }
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.kind() != NodeKind::Element
             || node.display() == DisplayValue::None
             || matches!(
@@ -8003,7 +8003,7 @@ fn sibling_renders(document: &Document, sibling: usize) -> bool {
     match node.kind() {
         NodeKind::Element => {
             node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && node.display() != DisplayValue::None
         }
         _ => node
@@ -14091,7 +14091,7 @@ fn has_mandatory_break_inside(
         // Text and elements that generate no box break nothing.
         if node.kind() != NodeKind::Element
             || !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.display() == DisplayValue::None
             // A positioned box keeps the breaks inside it to itself.
             || is_out_of_flow_positioned(document, id)
@@ -15910,7 +15910,7 @@ fn atomics_follow_text(
             // its display, lays out nothing.
             crate::node::NodeData::Element(_)
                 if !document.nodes[node].is_display_none()
-                    && !document.nodes[node].is_non_rendered_html_element() =>
+                    && !document.nodes[node].is_unrendered_html_element() =>
             {
                 stack.extend(children(node));
             }

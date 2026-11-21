@@ -64,7 +64,7 @@ pub(super) fn truncate(
         let mut preceding_float = false;
         for child in children {
             let node = &document.nodes[child];
-            if node.is_display_none() || node.is_non_rendered_html_element() {
+            if node.is_display_none() || node.is_unrendered_html_element() {
                 continue;
             }
             let style = document.pagination_style(child);

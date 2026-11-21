@@ -440,19 +440,19 @@ fn rtl_and_astral_text_do_not_fail() {
 }
 
 #[test]
-fn non_rendered_html_elements_contribute_no_text() {
-    // `display:inline` is forced so only the non-rendered-element check can
-    // keep the source text of `<style>` and `<script>` out of the paragraph.
+fn hidden_html_elements_with_an_author_display_contribute_their_text() {
+    // An author `display` renders the source text of `<style>` and
+    // `<script>`, as in browsers, but never the contents of a `<template>`.
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
-        for tag in ["style", "script"] {
+        for tag in ["style", "script", "template"] {
             let hidden = doc.append_element(Some(root), tag, Some("display:inline"));
-            doc.append_text(hidden, "zz");
+            doc.append_text(hidden, tag);
         }
         doc.append_text(root, "bb");
     });
     let projected = project(&fixture).expect("project");
-    assert_eq!(line_texts(&projected, 500.0), ["aabb"]);
+    assert_eq!(line_texts(&projected, 500.0), ["aastylescriptbb"]);
 }
 
 #[test]
