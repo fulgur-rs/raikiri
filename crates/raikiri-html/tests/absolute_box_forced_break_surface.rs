@@ -224,6 +224,18 @@ fn a_break_still_pending_when_the_flow_enters_an_absolute_box_falls_after_it() {
         2,
         &["S@0:0", "T@0:0", "Z@1:0"],
     );
+    // The same inside an absolute box in the next item, and the flow leaves
+    // both absolute boxes at once.
+    expect(
+        "<div style='width:60px'><div style='display:flex'>\
+         <div style='break-after:page;width:20px'>S</div><div style='width:40px'>\
+         <div style='position:absolute;width:40px'><div style='display:flex'>\
+         <div style='break-after:page;width:20px'>S2</div><div style='width:20px'>\
+         <div style='position:absolute;width:20px'><div style='break-after:page'>T</div></div>\
+         </div></div></div></div></div><div>Z</div></div>",
+        2,
+        &["S2@0:0", "S@0:0", "T@0:0", "Z@1:0"],
+    );
 }
 
 #[test]
