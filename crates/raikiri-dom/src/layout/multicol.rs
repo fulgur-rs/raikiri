@@ -219,7 +219,7 @@ pub(crate) fn compute_multicol_layout(
                 placement,
                 Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
             ))
-        && !sized_by_own_content(tree, node_id, &inputs, placement);
+        && (style.height_definite || !sized_by_own_content(tree, node_id, &inputs, placement));
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -671,8 +671,9 @@ pub(crate) fn compute_multicol_layout(
 /// measures the container before it balances its columns, as one column
 /// across the whole width, and a line that nothing else makes taller gives
 /// that height back. Such a container balances its columns as one of auto
-/// height does. A sibling that makes the line exactly that tall is taken for
-/// the same case.
+/// height does. A line that a sibling makes exactly that tall, or one that a
+/// maximum height clamps to it, is taken for the same case, as the line has
+/// no balanced measure of the container to tell them apart.
 fn sized_by_own_content(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
