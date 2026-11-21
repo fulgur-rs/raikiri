@@ -4484,6 +4484,10 @@ impl PaginationState {
         let mut pending: Vec<usize> = opening.iter().map(|&(block, _, _)| block).collect();
         let mut forced = false;
         while let Some(id) = pending.pop() {
+            // A positioned box keeps the breaks inside it to itself.
+            if super::is_out_of_flow_positioned(document, id) {
+                continue;
+            }
             let computed = &env.cascade.computed[id];
             forced |= super::page_break_is_forced(document, env.cascade, id, computed.break_before)
                 || super::page_break_after_is_forced(
