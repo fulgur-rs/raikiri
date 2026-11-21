@@ -6884,6 +6884,7 @@ fn avoided_run_ends(
                     lone_box_with_floats(document, cascade, body_id, last.node_id, false, false)
                 })
                 .flatten()
+                .filter(|lone| !lone.sized)
                 .filter(|lone| lone.tail > 0.001)
                 .map(|lone| {
                     let flow_top = |id| {
@@ -12040,6 +12041,7 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let inside = candidate.context.closing_edges_inside();
     let span = candidate.context.closing_edges_span();
     let reach = candidate.context.closing_edges_float_reach();
+    let gap = candidate.context.closing_edges_gap();
     let BoxFit {
         flow_y,
         margin_top,
@@ -12049,14 +12051,26 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         ..
     } = *fit;
     let box_end = flow_y + candidate.height + span;
-    edges + inside > 0.0
+    edges + inside - gap.min(0.0) > 0.0
         && box_end - inside + reach <= page_end + 0.001
         && candidate.height + span - inside + reach <= next_page_step + 0.001
         && candidate
             .context
             .lone_run_head_offset()
             .is_none_or(|offset| flow_y - offset <= page_start + 0.001)
-        && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
+        && avoided_box_moves(
+            flow_y,
+            margin_top,
+            // Only the edges that follow the box move it: the room at the
+            // end of a block of set size does not (see `LoneBox::gap`).
+            if gap > 0.0 {
+                box_end - gap
+            } else {
+                box_end + edges.max(-gap)
+            },
+            page_start,
+            page_end,
+        )
 }
 
 /// Where the lines in the flow of the box `node_id` end, from the top of its
@@ -13743,6 +13757,7 @@ fn lone_box_tail(
         ancestor_edges_follow,
         false,
     )
+    .filter(|lone| !lone.sized)
     .map(|lone| lone.tail)
 }
 
@@ -13753,6 +13768,31 @@ struct LoneBox {
     tail: f32,
     /// How far below the box the floats beside it reach, or zero.
     float_reach: f32,
+    /// When positive, the room at the end of a block of set size in the
+    /// chain that its content does not reach, and all that follows it in the
+    /// block (see [`sized_block_ends_below_content`]): the part of `tail`
+    /// that does not follow the box, which moves for the rest of `tail` only.
+    /// When negative, how far the edges that follow the box run past the end
+    /// of the block, out of a block of set size too short for its content.
+    gap: f32,
+    /// Whether a block of set size that its content does not fill, or runs
+    /// past, holds the box in the chain: only [`closing_edges_move`] weighs
+    /// `gap`, and the other callers leave such a block alone.
+    sized: bool,
+}
+
+impl LoneBox {
+    /// The block size at the end of the block that follows its box, as
+    /// [`closing_edges_move`] weighs it: a box that sticks out below the block
+    /// has none, but for a box that a block of set size lets run past its
+    /// end, which keeps the negative `tail` so that its true end is known.
+    fn inside(&self) -> f32 {
+        if self.sized {
+            self.tail
+        } else {
+            self.tail.max(0.0)
+        }
+    }
 }
 
 /// [`lone_box_tail`], along with how far the floats beside the box reach below
@@ -13773,6 +13813,13 @@ fn lone_box_with_floats(
     let mut content_end = 0.0;
     // The lowest margin-box bottom of the floats beside the box.
     let mut float_bottom = f32::NEG_INFINITY;
+    // The lowest end of the blocks in the chain inside the innermost block
+    // of set size that leaves room at its end, or of all of them without one:
+    // the edges that follow the box. From the top of `node_id`.
+    let mut follow_end = f32::NEG_INFINITY;
+    let mut room_found = false;
+    let mut sized = false;
+    let mut edges_follow = ancestor_edges_follow;
     loop {
         let node = &document.nodes[current];
         // Generated boxes are not among the children, and the columns of a
@@ -13802,7 +13849,7 @@ fn lone_box_with_floats(
             // own, such lines are split between them instead, as browsers
             // print it.
             let computed = &cascade.computed[current];
-            let together = if ancestor_edges_follow {
+            let together = if edges_follow {
                 lines_keep_together(lines.lines.len(), computed.orphans, computed.widows)
             } else {
                 lines.lines.len() <= 1
@@ -13834,12 +13881,33 @@ fn lone_box_with_floats(
                 return None;
             }
         }
+        // A block of set size that its content does not fill holds its box
+        // all the same: when the box moves with the edges that close it, the
+        // break falls before the outermost block of the chain, which moves
+        // whole, as in Chromium (see `gap` below).
+        let sized_room = block_flow_closing_edges(document, cascade, body_id, current)
+            .is_none()
+            .then(|| sized_block_ends_below_content(document, cascade, body_id, current));
+        let holds_box = sized_room.is_none_or(|room| room.is_some());
+        if !boxes.is_empty() {
+            let end = content_end + node.layout.size.height;
+            if let Some(Some(room)) = sized_room {
+                sized = true;
+                if room > CONTENT_END_TOLERANCE {
+                    // The edges outside this block no longer follow the box.
+                    room_found = true;
+                    edges_follow = false;
+                    follow_end = f32::NEG_INFINITY;
+                } else {
+                    follow_end = follow_end.max(end);
+                }
+            } else {
+                follow_end = follow_end.max(end);
+            }
+        }
         match boxes[..] {
             [] if current != node_id => break,
-            [only]
-                if block_flow_closing_edges(document, cascade, body_id, current).is_some()
-                    && is_plain_block_box(document, only) =>
-            {
+            [only] if holds_box && is_plain_block_box(document, only) => {
                 // The box sits at its normal-flow position, less the
                 // relative offset that layout applied.
                 content_end += normal_flow_y(document, cascade, body_id, only);
@@ -13849,10 +13917,7 @@ fn lone_box_with_floats(
             // ends the chain. Named pages are assumed, as the walk does not
             // know whether the document has any: a column flex container
             // then moves whole only if its item holds nothing to break at.
-            [only]
-                if block_flow_closing_edges(document, cascade, body_id, current).is_some()
-                    && container_moves_whole(document, cascade, only, true) =>
-            {
+            [only] if holds_box && container_moves_whole(document, cascade, only, true) => {
                 content_end += normal_flow_y(document, cascade, body_id, only);
                 current = only;
                 break;
@@ -13861,10 +13926,69 @@ fn lone_box_with_floats(
         }
     }
     content_end += document.nodes[current].layout.size.height;
+    let height = document.nodes[node_id].layout.size.height;
+    let tail = height - content_end;
+    // The edges of the blocks around the box follow it from the innermost
+    // block out, up to a block of set size that leaves room at its end: that
+    // room, and all that comes after it in `node_id`, stays behind when the
+    // box moves. Without such room, or with room that itself runs past the
+    // end of `node_id`, the edges that a block of set size lets run past
+    // that end follow the box as well. A box that runs past the end of `node_id` out of a block of set
+    // size keeps its negative `tail`, so that the caller sees where it ends.
+    let follow_end = follow_end.max(content_end);
+    let gap = if room_found {
+        height - follow_end
+    } else if sized {
+        -(follow_end - height).max(0.0)
+    } else {
+        0.0
+    };
+    // Only the edges of the blocks inside it follow the box: without them
+    // nothing breaks away from the box, and the block does not move for the
+    // room at its end.
+    if tail - gap <= 0.001 && gap > 0.0 {
+        return None;
+    }
     Some(LoneBox {
-        tail: document.nodes[node_id].layout.size.height - content_end,
+        tail,
         float_reach: (float_bottom - (current_abs_y(document, node_id) + content_end)).max(0.0),
+        gap,
+        sized,
     })
+}
+
+/// The block size at the end of the block `node_id` below its flow content
+/// when a set `height`, `min-height` or `max-height` ends its content box at
+/// or below the end of that content, where its own bottom padding and border
+/// do not follow its last box (see [`edges_below_last_box`]): the room the
+/// content leaves, and those edges. Zero for a block whose content runs past
+/// its end unclipped, as that content and the edges in it follow the box.
+/// `None` for a block whose height follows its content, whose edges follow
+/// its last box, or that clips the content that runs past its end.
+fn sized_block_ends_below_content(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    if node.kind() != NodeKind::Element
+        || node.used_writing_mode.is_vertical()
+        || !moves_later_siblings(document, node_id)
+        || height_follows_content(document, node_id)
+        || edges_below_last_box(document, cascade, body_id, node_id).is_some()
+    {
+        return None;
+    }
+    let overflow = flow_content_overflow(document, cascade, body_id, node_id)?;
+    let edges = node.layout.padding.bottom + node.layout.border.bottom;
+    if overflow <= CONTENT_END_TOLERANCE {
+        Some((-overflow).max(0.0) + edges)
+    } else {
+        // Content that runs past its end follows the box unless a clip
+        // hides it.
+        (!element_clips_overflow(document, cascade, node_id)).then_some(0.0)
+    }
 }
 
 /// Whether `node_id` is a block box that stacks in the normal flow of a

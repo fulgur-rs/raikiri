@@ -282,6 +282,10 @@ pub(super) struct ElementContext {
     /// has a break to take of its own, and the box stays; one that does not
     /// moves along with the box (see [`super::closing_edges_move`]).
     pub(super) closing_edges_float_reach: f32,
+    /// For a block that holds one box: the room at its end that its set size
+    /// leaves below its content, which is part of `closing_edges_inside` but
+    /// does not follow the box (see [`super::closing_edges_move`]).
+    pub(super) closing_edges_gap: f32,
     /// The block that the box ends, and the bottom padding and border that
     /// close it, when the block's `min-height` leaves room below the box: the
     /// edges follow the box only once pagination moved content in the block
@@ -479,6 +483,11 @@ impl BoxContext {
     pub(super) fn closing_edges_float_reach(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
+    }
+
+    pub(super) fn closing_edges_gap(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges_gap)
     }
 
     pub(super) fn capped_edges_block(self) -> Option<usize> {
@@ -1838,7 +1847,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 })
                 .flatten()
                 .filter(|lone| {
-                    lone.tail + frame.closing_edges > 0.001
+                    lone.tail + frame.closing_edges - lone.gap.min(0.0) > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -2209,14 +2218,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
-                    .map(|lone| lone.tail.max(0.0));
+                    .map(|lone| lone.inside());
                 // How far the floats beside the box of such a block, and those
                 // of the blocks it ends, reach below the box. Both ends are
                 // measured at their normal-flow positions, as the page fit is.
                 let closing_edges_float_reach =
                     if let Some(lone) = lone_tail.filter(|_| can_move_nested) {
                         let box_end = candidate_raw_y + node.layout.size.height
-                            - lone.tail.max(0.0)
+                            - lone.inside()
                             - accumulated_relative_offset_y(document, cascade, body_id, node_id);
                         lone.float_reach
                             .max((frame.float_bottom - box_end).max(0.0))
@@ -2421,6 +2430,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
                                 closing_edges_float_reach,
+                                closing_edges_gap: lone_tail
+                                    .filter(|_| can_move_nested)
+                                    .map_or(0.0, |lone| lone.gap),
                                 min_height_edges: min_height_edges_candidate,
                             },
                         ),
