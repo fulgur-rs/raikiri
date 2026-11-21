@@ -466,7 +466,7 @@ fn sides_match(
 /// The color band `ring` of a side is painted with, `currentcolor` taking the
 /// text color, or `None` for a transparent one. `top_left` says whether the side
 /// is the top or the left one.
-fn band_color(
+pub(super) fn band_color(
     side: &raikiri_style::resolve::ComputedBorder,
     ring: usize,
     top_left: bool,
@@ -489,9 +489,9 @@ fn band_color(
 /// One band of a side: how far it starts inside the outer edge of the box, and
 /// how thick it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Band {
-    offset: f64,
-    width: f64,
+pub(super) struct Band {
+    pub(super) offset: f64,
+    pub(super) width: f64,
 }
 
 /// The bands of the sides of one ring: where each starts and how thick it is.
@@ -512,7 +512,7 @@ struct Ring {
 /// width is not a multiple of three. This is how Chromium divides them. Every
 /// other style, and a `groove`, `ridge` or `double` that is too thin to divide,
 /// is a single band.
-fn bands(style: BorderStyle, width: f64, top_left: bool) -> [Band; 2] {
+pub(super) fn bands(style: BorderStyle, width: f64, top_left: bool) -> [Band; 2] {
     if bevel::has_two_bands(style, width) {
         let nearer = bevel::nearer_half(width);
         let outer = if top_left { nearer } else { width - nearer };

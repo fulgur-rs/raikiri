@@ -62,6 +62,7 @@ mod margin_box;
 mod negative_levels;
 mod page_geometry;
 mod paint_walk;
+mod rounded_border;
 mod rounded_dashes;
 mod visit;
 mod visit_element;
@@ -3675,12 +3676,18 @@ pub(crate) fn paint_element_border_rounded(
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color); // cov:ignore: BorderColor variants currently always produce Some
         return; // cov:ignore: all current BorderColor variants produce Some
     };
+    let rect = (abs_x, abs_y, width, height);
     if !(uniform_width && uniform_style && uniform_color) {
-        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        // Sides drawn in dashes keep their straight strips, cut to the rounded
+        // outer edge.
+        if !rounded_border::paint_rounded_border_bands(scene, rect, radii, border, current_color) {
+            within_rounded_outer_edge(scene, rect, radii, |scene| {
+                paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+            });
+        }
         return;
     }
 
-    let rect = (abs_x, abs_y, width, height);
     match style {
         BorderStyle::Solid => fill_rounded_border_ring(scene, rect, radii, widths[0], color),
         BorderStyle::Dashed | BorderStyle::Dotted if inner_edge_is_rounded(radii, widths[0]) => {
@@ -3698,7 +3705,9 @@ pub(crate) fn paint_element_border_rounded(
                 paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
             });
         }
-        _ => paint_element_border(scene, width, height, abs_x, abs_y, border, current_color),
+        _ => {
+            rounded_border::paint_rounded_border_bands(scene, rect, radii, border, current_color);
+        }
     }
 }
 
