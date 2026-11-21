@@ -2175,14 +2175,14 @@ fn pipeline_keeps_a_named_page_after_a_float_on_its_page() {
 
 #[test]
 fn pipeline_clears_a_named_page_after_a_non_rendered_element() {
-    // A `style` element is never rendered, even as `display: contents`, so
+    // A `template` element is never rendered, even as `display: contents`, so
     // the box after it still changes page from page `b` and starts the new
     // page clear of the float escaping page `b`.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
          <div style='page:b'><div class='f'></div>a</div>\
-         <style style='display:contents'>x</style>\
+         <template style='display:contents'>x</template>\
          <div style='display:flow-root; height:50px'>b</div>",
     );
     let out = run(&doc);

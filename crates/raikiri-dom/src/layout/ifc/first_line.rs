@@ -408,8 +408,7 @@ fn first_content(doc: &Document, cascade: &CascadeResult, root: usize) -> Start 
                         }
                     }
                     NodeKind::Element => {
-                        if node.display() == DisplayValue::None
-                            || node.is_non_rendered_html_element()
+                        if node.display() == DisplayValue::None || node.is_unrendered_html_element()
                         {
                             continue;
                         }

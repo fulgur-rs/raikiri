@@ -40,7 +40,7 @@ impl ChildPositions {
             cascade,
             body_id,
             node_id,
-            true,
+            (true, false),
             |document, parent, child| {
                 let first = self.forced_first_children.entry(parent).or_insert_with(|| {
                     // Generated before content is not an arena child. Even a

@@ -40,7 +40,7 @@ impl NegativeLevels {
                 continue;
             };
             if !node.is_in_document()
-                || node.is_non_rendered_html_element()
+                || node.is_unrendered_html_element()
                 || cv.display == DisplayValue::None
             {
                 continue;

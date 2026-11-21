@@ -11,7 +11,7 @@ enum Column {
     /// A comment, which is no node of the document the table sees.
     Comment,
     /// A `display: contents` element that is never rendered, whatever its
-    /// style says (`<script>`), holding column boxes.
+    /// style says (`<template>`), holding column boxes.
     NeverRendered(Vec<Column>),
     /// A `display: contents` element whose children are column boxes.
     Contents(Vec<Column>),
@@ -74,7 +74,7 @@ fn append_column(doc: &mut Document, parent: usize, column: &Column) {
             doc.append_comment(Some(parent), "between columns");
         }
         Column::NeverRendered(children) => {
-            let wrapper = doc.append_element(Some(parent), "script", Some("display:contents"));
+            let wrapper = doc.append_element(Some(parent), "template", Some("display:contents"));
             for child in children {
                 append_column(doc, wrapper, child);
             }
@@ -1190,7 +1190,7 @@ fn a_comment_among_the_columns_makes_no_column() {
 
 #[test]
 fn columns_under_an_element_that_is_never_rendered_make_no_column() {
-    // The `<script>` is `display: contents` by author CSS, but it and its
+    // The `<template>` is `display: contents` by author CSS, but it and its
     // subtree stay out of the table, so its collapsed column is no column.
     let fixture = table_with(
         SEPARATE,

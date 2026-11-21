@@ -272,7 +272,8 @@ fn non_rendered_html_elements_are_not_being_rendered() {
          <svg><rect id=drawn width=5 height=5 /><defs><rect id=template tabindex=0 /></defs>\
          <title id=label>t</title></svg><button id=gone hidden></button>\
          <div id=found hidden=UNTIL-FOUND>y</div><input id=field type=HIDDEN tabindex=0>\
-         <embed id=plugin hidden>",
+         <embed id=plugin hidden><script id=shown_code style='display:block'></script>\
+         <template id=boxed style='display:block'></template>",
         DEFAULT_REFTTEST_WIDTH,
         DEFAULT_REFTTEST_HEIGHT,
         dir.path(),
@@ -296,6 +297,12 @@ fn non_rendered_html_elements_are_not_being_rendered() {
     assert!(host.is_being_rendered(found).unwrap());
     assert!(!host.is_being_rendered(field).unwrap());
     assert!(host.is_being_rendered(plugin).unwrap());
+    // An author display renders a script, as browsers do; a template's
+    // contents stay hidden whatever its display.
+    let shown_code = find_by_id(host.document(), "shown_code");
+    let boxed = find_by_id(host.document(), "boxed");
+    assert!(host.is_being_rendered(shown_code).unwrap());
+    assert!(!host.is_being_rendered(boxed).unwrap());
 }
 
 /// Visibility is the element's own computed value, so a visible descendant

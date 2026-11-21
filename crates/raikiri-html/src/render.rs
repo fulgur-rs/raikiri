@@ -292,7 +292,7 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
         if !node.is_in_document() {
             continue; // cov:ignore: detached nodes are excluded before traversal
         }
-        if node.is_non_rendered_html_element() {
+        if node.is_unrendered_html_element() {
             continue;
         }
         if let Some(text) = node.text_content() {

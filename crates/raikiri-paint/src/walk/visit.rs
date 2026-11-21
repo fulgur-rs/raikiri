@@ -51,16 +51,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             node_layout.size.height = rect.height;
         }
         // Do not paint subtrees of HTML hidden elements (metadata, raw text,
-        // or fallback parentheses for ruby).
-        // Treat `Node::is_non_rendered_html_element` match arms as the
-        // single source of truth for the current set of tags.
-        // Author / user CSS can override UA CSS `display: none`, so painting
-        // fails closed with a cascade-independent defense-in-depth gate
-        // (HTML LS §15.3.1 "Hidden elements":
+        // or fallback parentheses for ruby) that layout leaves out as well:
+        // `Node::is_unrendered_html_element` is the single source of truth
+        // for the set of tags. An author `display` on a metadata or raw text
+        // element renders it, as in browsers (HTML LS §15.3.1 "Hidden
+        // elements":
         // https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements).
         // Namespace checks exclude same-named SVG / MathML elements.
         // <template> is doubly gated by is_in_document().
-        if node.is_non_rendered_html_element() {
+        if node.is_unrendered_html_element() {
             return;
         }
         match node.kind() {

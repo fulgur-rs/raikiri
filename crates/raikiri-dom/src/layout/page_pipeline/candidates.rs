@@ -546,7 +546,7 @@ fn can_descend_for_named_page(
 ) -> bool {
     document.get_node(node_id).is_some_and(|node| {
         node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && document.nodes[node_id].display() != DisplayValue::None
             && !matches!(
                 document.nodes[node_id].position(),
@@ -1229,7 +1229,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         let Some(node) = document.get_node(node_id) else {
             return Ok(()); // cov:ignore: traversal IDs come from this document's valid child graph.
         };
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
             return Ok(());
         }
         match node.kind() {
@@ -1598,7 +1598,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !node.children.iter().any(|&child| {
                         let child_node = &document.nodes[child];
                         if child_node.is_display_none()
-                            || child_node.is_non_rendered_html_element()
+                            || child_node.is_unrendered_html_element()
                             || matches!(
                                 document.nodes[child].position(),
                                 PositionValue::Absolute | PositionValue::Fixed
@@ -2075,7 +2075,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A flex container nested in block flow moves whole when what
                 // follows its items runs past the page end (see
                 // `flex_margins_move`), so it needs a place of its own.
-                let flex_margins_base = nested_candidate_base
+                // Inside the item of a flex row, it moves the row it begins
+                // with it (see `starts_single_row`); the walk over its
+                // ancestors drops it where some other one lays boxes beside it.
+                let flex_margins_base = (nested_candidate_base
+                    || (inside_flex
+                        && participates_in_flow
+                        && !direct_body_child
+                        && !out_of_flow_subtree
+                        && !inside_table))
                     && !inline_level
                     && super::has_flex_trailing_space(document, node_id);
                 let run_break_base = self.finds_nested_runs
@@ -2119,7 +2127,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // with a height of its own does not keep it from
                         // moving. The conditions are those under which
                         // `open_page_for_box` moves the holder.
-                        let holder = (unbreakable_box
+                        let holder = ((unbreakable_box || flex_margins_base || avoids_by_property)
                             && !sets_page_flow
                             && !after_forced_break
                             && !inside_float
@@ -2128,7 +2136,34 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !flex_item_candidate
                             && !grid_item_candidate)
                             .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
-                            .filter(|&holder| holder != node_id);
+                            .filter(|&holder| holder != node_id)
+                            // A box that avoids a break inside it goes only as
+                            // far up as `avoided_box_holder` takes it, also
+                            // when it moves for the margins of its items: not
+                            // past padding or border above it, and not out of
+                            // columns, where it splits instead. Nor does it
+                            // take a box it runs out of, such as a clip of a
+                            // smaller height, which holds it where it is.
+                            .filter(|&holder| {
+                                let bottom = super::current_abs_y(document, node_id)
+                                    + node.layout.size.height;
+                                unbreakable_box
+                                    || (flex_margins_base && !avoids_by_property)
+                                    || document
+                                        .ancestors(node_id)
+                                        .take_while(|&id| id != holder)
+                                        .chain(std::iter::once(holder))
+                                        .all(|id| {
+                                            let ancestor = &document.nodes[id];
+                                            !ancestor.is_multicol_container()
+                                                && ancestor.layout.border.top == 0.0
+                                                && ancestor.layout.padding.top == 0.0
+                                                && bottom
+                                                    <= super::current_abs_y(document, id)
+                                                        + ancestor.layout.size.height
+                                                        + 0.01
+                                        })
+                            });
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
                         (false, false)
@@ -3046,25 +3081,29 @@ fn unbreakable_room(
     let overflows = |bottom: f32| bottom - top < height + node.layout.margin.bottom.min(0.0) - 0.01;
     let mut room = f32::INFINITY;
     let mut child = node_id;
+    let mut box_child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_in_flow_before(document, ancestor, child) {
+        let starts_row = super::starts_single_row(document, cascade, ancestor, box_child);
+        if renders_in_flow_before(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
+        box_child = ancestor;
         // Positions inside an inline formatting context or out of the flow
         // are not those of the flow: the walk stops below such a box.
         if super::has_unusual_coordinates(document, ancestor) {
             break;
         }
         room = room.min(flow_y(ancestor) + document.nodes[ancestor].layout.size.height - top);
-        if !is_plain_block_box(document, ancestor)
-            || document.nodes[ancestor].is_multicol_container()
+        if !(is_plain_block_box(document, ancestor) || starts_row)
+            || (document.nodes[ancestor].is_multicol_container()
+                && !super::is_single_column(document, ancestor))
             || is_floating_box_for_pagination(document, cascade, ancestor)
         {
             break;

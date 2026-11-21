@@ -624,7 +624,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
     for &child_id in child_order.iter() {
         let node = document.get_node(child_id)?;
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || (node.kind() == NodeKind::Element
                 && boxes.identity(child_id).display() == DisplayValue::None)
         {
@@ -1317,9 +1317,9 @@ fn table_pagination_child_order(
     while let Some(child) = pending.pop() {
         let node = &document.nodes[child];
         // Table layout drops these without a box, as it does for any
-        // non-rendered element whatever its `display`.
+        // hidden HTML element that keeps the user agent `display: none`.
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || boxes.identity(child).display() == DisplayValue::None
             || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         {
