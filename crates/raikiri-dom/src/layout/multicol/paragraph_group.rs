@@ -331,16 +331,15 @@ fn has_block_padding(tree: &LayoutSession<'_>, id: usize) -> bool {
 
 /// Whether `id`, inside a wrapper, is a sized box with no lines that joins
 /// the flow beside the paragraphs, as one does among the container's own
-/// boxes. The columns hold it whole: nothing places the pieces of one inside
-/// a wrapper that a column end would cut.
+/// boxes.
 fn is_wrapped_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
     lineless::is_sized_leaf(tree, id) && insets_are_a_relative_offset(tree, id)
 }
 
 /// Whether `id`, inside a wrapper, can join the flow of the columns: white
 /// space, a paragraph of lines alone, with no padding or border above or
-/// below them, that spans no columns, a sized box of lines, which goes whole to
-/// a column, or a sized box with no lines (see [`is_wrapped_leaf`]).
+/// below them, that spans no columns, a sized box of lines, or a sized box
+/// with no lines (see [`is_wrapped_leaf`]).
 fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     if node.kind() == NodeKind::Text {
@@ -778,12 +777,16 @@ fn collect(
             }));
             continue;
         }
-        // A sized box with no lines inside a wrapper goes whole to a column
-        // that holds it. One taller than the columns of a definite height is
-        // left to the other strategies.
+        // A sized box with no lines inside a wrapper is sliced where a column
+        // ends, as one outside it is, unless it avoids breaks or a cut would
+        // paint it wrong: then it goes whole to a column that holds it. Such
+        // a box taller than the columns of a definite height is left to the
+        // other strategies.
         if flow.parents[index].is_some() && is_wrapped_leaf(tree, child) {
+            let sliced = lineless::slices_sized_leaf(tree, child);
             (output.size.height > 0.0
-                && boxes.is_none_or(|column_height| output.size.height <= column_height)
+                && (sliced
+                    || boxes.is_none_or(|column_height| output.size.height <= column_height))
                 && margin_top.is_finite()
                 && margin_bottom.is_finite())
             .then_some(())?;
@@ -791,6 +794,7 @@ fn collect(
             room = true;
             paragraphs.push(Some(Paragraph {
                 sized_leaf: true,
+                sliced,
                 ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None)
             }));
             continue;
@@ -850,15 +854,13 @@ fn collect(
                 margin_bottom,
                 Some(lines.lines.len()),
             );
-            // Nothing places the pieces of a box inside a wrapper that a
-            // column end would cut, so one there goes whole to a column. So
-            // does one with block margins, as a sized box with no lines
-            // needs none to be sliced (see `lineless::is_sized_leaf`).
+            // One with block margins goes whole to a column, as a sized box
+            // with no lines needs none to be sliced (see
+            // `lineless::is_sized_leaf`).
             paragraphs.push(Some(Paragraph {
                 opens: None,
                 closes: false,
-                sliced: flow.parents[index].is_none()
-                    && margin_top == 0.0
+                sliced: margin_top == 0.0
                     && margin_bottom == 0.0
                     && lineless::slices_sized_leaf(tree, child),
                 held_reach: before + reach,
