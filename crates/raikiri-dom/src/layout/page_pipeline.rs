@@ -8137,9 +8137,8 @@ fn avoided_box_holder(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, ancestor, child)
-            && !starts_single_row(document, cascade, ancestor, child)
-        {
+        let starts_row = starts_single_row(document, cascade, ancestor, box_child);
+        if renders_before_child(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
@@ -8147,8 +8146,7 @@ fn avoided_box_holder(
             continue;
         }
         let layout = &document.nodes[ancestor].layout;
-        if !(is_plain_block_box(document, ancestor)
-            || starts_single_row(document, cascade, ancestor, box_child))
+        if !(is_plain_block_box(document, ancestor) || starts_row)
             || document.nodes[ancestor].is_multicol_container()
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, box_child)
@@ -8244,9 +8242,13 @@ fn contained_cloned_leading_holder(
 /// (CSS Break 3 §4.1), so the ancestor starts the next page with the child
 /// rather than leaving its start, and a fixed height, a background, a padding
 /// or a border, behind on this one. An ancestor that is not a plain block of
-/// the normal flow, that lays its children out in columns, or that is placed
-/// by an inline formatting context or out of flow, is left to the box alone;
-/// the walk stops below it.
+/// the normal flow, that lays its children out in several columns, or that is
+/// placed by an inline formatting context or out of flow, is left to the box
+/// alone; the walk stops below it. Two exceptions move with the box: a flex
+/// or grid container that lays out a single row the box begins (see
+/// [`starts_single_row`]), whose whole row Chromium moves when the page
+/// cannot break before the box, and a multicol container of a single column,
+/// which follows the page as block flow does.
 ///
 /// With `edges` false the walk stops below the first ancestor that keeps
 /// something above the box, so the holder starts where the box does and the
@@ -8258,9 +8260,9 @@ fn contained_cloned_leading_holder(
 /// box moves. Whether a holder that already starts its page is worth moving is
 /// for the caller to judge from its top.
 ///
-/// Every ancestor the walk passes is a plain block of the normal flow that is
-/// not a multicol container, so none of them lays its children out side by
-/// side.
+/// Every other ancestor the walk passes is a plain block of the normal flow
+/// that is not a multicol container, so the only boxes beside the box that
+/// move with it are the other items of such a row.
 fn leading_holder(
     document: &Document,
     cascade: &CascadeResult,
@@ -8292,24 +8294,25 @@ fn leading_holder_with(
     let top = current_abs_y(document, node_id);
     let mut holder = node_id;
     let mut child = node_id;
+    // The nearest box at or below `child`: a `display: contents` element has
+    // no box of its own.
+    let mut box_child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        let item = child;
         // The items of a row sit beside the one that holds the box, not
         // before it.
-        if renders_before(document, ancestor, child)
-            && !starts_single_row(document, cascade, ancestor, item)
-        {
+        let starts_row = starts_single_row(document, cascade, ancestor, box_child);
+        if renders_before(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
-        if !(is_plain_block_box(document, ancestor)
-            || starts_single_row(document, cascade, ancestor, item))
+        box_child = ancestor;
+        if !(is_plain_block_box(document, ancestor) || starts_row)
             || (document.nodes[ancestor].is_multicol_container()
                 && !is_single_column(document, ancestor))
             || is_floating_box_for_pagination(document, cascade, ancestor)

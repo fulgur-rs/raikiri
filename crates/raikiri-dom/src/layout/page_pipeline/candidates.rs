@@ -2137,17 +2137,24 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !grid_item_candidate)
                             .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
                             .filter(|&holder| holder != node_id)
-                            // A box that only avoids a break inside it splits
-                            // in columns rather than move them on (see
-                            // `avoided_box_holder`).
+                            // A box that avoids a break inside it goes only as
+                            // far up as `avoided_box_holder` takes it, also
+                            // when it moves for the margins of its items: not
+                            // past padding or border above it, and not out of
+                            // columns, where it splits instead.
                             .filter(|&holder| {
                                 unbreakable_box
-                                    || flex_margins_base
-                                    || !document
+                                    || (flex_margins_base && !avoids_by_property)
+                                    || document
                                         .ancestors(node_id)
                                         .take_while(|&id| id != holder)
                                         .chain(std::iter::once(holder))
-                                        .any(|id| document.nodes[id].is_multicol_container())
+                                        .all(|id| {
+                                            let node = &document.nodes[id];
+                                            !node.is_multicol_container()
+                                                && node.layout.border.top == 0.0
+                                                && node.layout.padding.top == 0.0
+                                        })
                             });
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
@@ -3066,25 +3073,29 @@ fn unbreakable_room(
     let overflows = |bottom: f32| bottom - top < height + node.layout.margin.bottom.min(0.0) - 0.01;
     let mut room = f32::INFINITY;
     let mut child = node_id;
+    let mut box_child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_in_flow_before(document, ancestor, child) {
+        let starts_row = super::starts_single_row(document, cascade, ancestor, box_child);
+        if renders_in_flow_before(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
+        box_child = ancestor;
         // Positions inside an inline formatting context or out of the flow
         // are not those of the flow: the walk stops below such a box.
         if super::has_unusual_coordinates(document, ancestor) {
             break;
         }
         room = room.min(flow_y(ancestor) + document.nodes[ancestor].layout.size.height - top);
-        if !is_plain_block_box(document, ancestor)
-            || document.nodes[ancestor].is_multicol_container()
+        if !(is_plain_block_box(document, ancestor) || starts_row)
+            || (document.nodes[ancestor].is_multicol_container()
+                && !super::is_single_column(document, ancestor))
             || is_floating_box_for_pagination(document, cascade, ancestor)
         {
             break;

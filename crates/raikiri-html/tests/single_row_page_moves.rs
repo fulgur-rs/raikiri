@@ -174,3 +174,27 @@ fn avoided_break_splits_in_a_single_column() {
         vec![(0, 'A', 0, 0), (0, 'T', 0, 60), (1, 'Z', 0, 10)]
     );
 }
+
+#[test]
+fn forced_break_in_the_second_item_moves_the_flex_row() {
+    let body = r#"<div style="height:30px">A</div><div style="display:flex"><div style="width:50px">C</div><div><div style="break-before:page">T</div></div></div><div>Z</div>"#;
+    assert_eq!(
+        glyphs(body),
+        vec![
+            (0, 'A', 0, 0),
+            (1, 'C', 0, 0),
+            (1, 'T', 50, 0),
+            (1, 'Z', 0, 30)
+        ]
+    );
+}
+
+#[test]
+fn avoided_break_moves_the_clipping_block_it_begins() {
+    let body =
+        format!(r#"{LEAD}<div style="height:80px;overflow:hidden">{AVOID}</div><div>Z</div>"#);
+    assert_eq!(
+        glyphs(&body),
+        vec![(0, 'A', 0, 0), (1, 'T', 0, 0), (2, 'Z', 0, 0)]
+    );
+}
