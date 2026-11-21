@@ -3841,6 +3841,9 @@ fn clear_floats_at_forced_breaks<'name>(
         // or a change of named page there, and not just the break of the box
         // before it.
         let mut float_own_break = false;
+        // Whether that float stands on a line of an inline box, after which
+        // a box with another page type opens a page of its own.
+        let mut float_on_line = false;
         // The last in-flow block among the parent's boxes: when the parent
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
@@ -3941,6 +3944,9 @@ fn clear_floats_at_forced_breaks<'name>(
                     );
                     cleared.push(child);
                     float_after_break = true;
+                    float_on_line = document
+                        .layout_parent_of(child)
+                        .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
                     if carries_flow_break {
                         page_start_float = Some(child);
                     }
@@ -3950,8 +3956,9 @@ fn clear_floats_at_forced_breaks<'name>(
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
             let starts_at_inherited = std::mem::take(&mut page_start_inherited);
-            let beside_page_start_float =
-                std::mem::take(&mut float_after_break) || starts_at_inherited;
+            let float_took_break = std::mem::take(&mut float_after_break);
+            let beside_page_start_float = float_took_break || starts_at_inherited;
+            let float_took_break_off_line = float_took_break && !std::mem::take(&mut float_on_line);
             let float_took_own_break = std::mem::take(&mut float_own_break);
             let resumed_float = page_start_float.take();
             last_block = Some(child);
@@ -3981,10 +3988,12 @@ fn clear_floats_at_forced_breaks<'name>(
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too. A break before the box
             // coincides with the break of the box before the float that
-            // started the page, but not with the float's own break.
+            // started the page, but not with the float's own break. A change
+            // of page type there coincides with the break the float took, unless
+            // the float stands on a line.
             let at_page_start_float = (forced || starts_at_inherited)
                 && beside_page_start_float
-                && !named_break
+                && (!named_break || float_took_break_off_line)
                 && !(breaks_before && float_took_own_break)
                 && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
@@ -4001,6 +4010,9 @@ fn clear_floats_at_forced_breaks<'name>(
                     trailing_page_start_float(document, &mut trailing_floats, child)
             {
                 float_after_break = true;
+                float_on_line = document
+                    .layout_parent_of(float)
+                    .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
                 // The parents are walked outside in, so the first box found
@@ -5018,6 +5030,9 @@ struct PageNames {
     /// outside a named flex context compares its own against it.
     outer: Option<String>,
     by_page: Vec<Option<String>>,
+    /// A page whose type the box that goes on onto it set, which the
+    /// content placed beside that box on the page does not change.
+    kept: Option<u32>,
 }
 
 impl PageNames {
@@ -5029,6 +5044,7 @@ impl PageNames {
             by_page: vec![first.clone()],
             outer: first.clone(),
             current: first,
+            kept: None,
         }
     }
 
@@ -5038,6 +5054,7 @@ impl PageNames {
             current: None,
             outer: None,
             by_page: Vec::new(),
+            kept: None,
         }
     }
 
@@ -5104,7 +5121,36 @@ impl PageNames {
         if self.by_page.len() <= index {
             self.by_page.resize(index + 1, None);
         }
+        match self.kept {
+            Some(kept) if kept == page => return,
+            // The flow went on past the kept page.
+            Some(kept) if kept < page => self.kept = None,
+            _ => {}
+        }
         self.by_page[index].clone_from(&self.current);
+    }
+
+    /// Give `page` the type `name` for good: the content placed on it later
+    /// does not change it.
+    fn keep_page(&mut self, page: u32, name: Option<String>) {
+        let current = std::mem::replace(&mut self.current, name);
+        self.kept = None;
+        self.name_page(page);
+        self.current = current;
+        self.kept = Some(page);
+    }
+
+    /// The number of pages that have a type so far.
+    fn reached(&self) -> u32 {
+        self.by_page.len() as u32
+    }
+
+    /// Give the pages from `first` on that have a type so far the type
+    /// `name`.
+    fn name_pages_from(&mut self, first: u32, name: &Option<String>) {
+        for slot in self.by_page.iter_mut().skip(first as usize) {
+            slot.clone_from(name);
+        }
     }
 
     /// Name the pages after `from` through `end`, where content on page
@@ -5120,8 +5166,17 @@ impl PageNames {
             self.by_page.resize(end + 1, self.current.clone());
         }
         if overwrite && end > from as usize {
-            for name in &mut self.by_page[from as usize + 1..=end] {
-                name.clone_from(&self.current);
+            let kept = self.kept.map(|page| page as usize);
+            for (index, name) in self
+                .by_page
+                .iter_mut()
+                .enumerate()
+                .take(end + 1)
+                .skip(from as usize + 1)
+            {
+                if kept != Some(index) {
+                    name.clone_from(&self.current);
+                }
             }
         }
     }
