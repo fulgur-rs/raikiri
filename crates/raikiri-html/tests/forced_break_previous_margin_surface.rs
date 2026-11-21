@@ -196,14 +196,15 @@ fn page_of(words: &str, word: &str) -> u32 {
 
 #[test]
 fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
-    // The margin of an inline-block is part of its line, which Chromium ends
-    // on the fourth page with the box after it: no block margin to cut.
+    // The margin of an inline-block is part of its line: no block margin to
+    // cut. The line starts the second page and runs on to the fourth, where
+    // the box after it follows (see the test below).
     let inline = words(
         "<div style='height:40px'></div><span style='display:inline-block;width:10px;\
          height:10px;margin-bottom:250px;vertical-align:top'></span>\
          <div style='break-before:page'>S</div><div>X</div>",
     );
-    assert!(page_of(&inline, "S") >= 3, "{inline}");
+    assert_eq!(inline, "S@3:0,60 X@3:0,70");
     // A generated block between the two comes before the box, on an earlier
     // page.
     let generated = words(
@@ -342,5 +343,109 @@ fn a_margin_inside_its_page_keeps_the_lines_below_it() {
             )
         });
         assert_eq!(words.join(" "), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_forced_break_after_a_line_that_runs_past_its_page_opens_the_next_page() {
+    // No page break goes through a line, so what runs past the page it starts
+    // on is overflow. The break opens the page after the line's, and the box
+    // keeps its place in the flow below the overflow there, as in Chromium.
+    let tall = "<span style='display:inline-block;width:10px;height:10px;\
+                margin-bottom:150px;vertical-align:top'></span>";
+    let cases = [
+        (
+            format!("{tall}<div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The line holds text too.
+        (
+            format!("R{tall}<div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A box of the line's height in place of its margin.
+        (
+            "<span style='display:inline-block;width:10px;height:160px;\
+             vertical-align:top'></span><div style='break-before:page'>S</div>"
+                .to_owned(),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A line below the baseline of a box as tall as the line.
+        (
+            "<span style='display:inline-block;width:10px;height:160px'></span>\
+             <div style='break-before:page'>S</div>"
+                .to_owned(),
+            "S@2:0,62 X@2:0,72",
+        ),
+        // Blocks around the line end with it.
+        (
+            format!("<div>{tall}</div><div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        (
+            format!("<div><div>{tall}</div></div><div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The break at the start of a wrapper.
+        (
+            format!("<div>{tall}</div><div><div style='break-before:page'>S</div></div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The box keeps its own margin below the overflow.
+        (
+            format!("{tall}<div style='break-before:page;margin-top:20px'>S</div>"),
+            "S@2:0,80 X@2:0,90",
+        ),
+        // The margin of a block around the line goes with the break.
+        (
+            format!(
+                "<div style='margin-bottom:20px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A relative offset moves the line only where it paints.
+        (
+            format!(
+                "<div style='position:relative;top:5px'><div>{tall}</div></div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A relative offset on the block that holds the line.
+        (
+            format!(
+                "<div style='position:relative;top:5px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A block of set height runs on past its line, and the break follows
+        // it.
+        (
+            "<div style='height:165px'>R</div><div style='break-before:page'>S</div>".to_owned(),
+            "S@3:0,0 X@3:0,10",
+        ),
+        // An empty box opens the page after the overflow, and the margin that
+        // collapses through it goes with it.
+        (
+            format!("{tall}<div style='break-before:page;margin-top:20px'></div><div>S</div>"),
+            "S@3:0,20 X@3:0,30",
+        ),
+        // Padding below the line is no line: the break follows it.
+        (
+            format!(
+                "<div style='padding-bottom:10px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@3:0,0 X@3:0,10",
+        ),
+    ];
+    for (content, expected) in cases {
+        let words = words(&format!(
+            "<div style='height:40px'></div>{content}<div>X</div>"
+        ));
+        let boxes = words
+            .split(' ')
+            .filter(|word| word.starts_with("S@") || word.starts_with("X@"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(boxes, expected, "{content}: {words}");
     }
 }
