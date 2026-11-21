@@ -227,6 +227,14 @@ pub(crate) struct LayoutContext {
     pub(crate) page_filled_origins: std::collections::HashMap<usize, f32>,
     /// Accepted owner origins used to replan leading spanners from source layout.
     pub(crate) spanning_page_origins: std::collections::HashMap<usize, f32>,
+    /// How far the page walk has moved the columns after each spanner of a
+    /// multicol container whose children are boxes, for the breaks inside
+    /// the spanner.
+    pub(crate) spanner_column_shifts: std::collections::HashMap<usize, f32>,
+    /// How far the pages pushed the column content after each spanner of a
+    /// multicol container below where it would start, which the spanner may
+    /// grow into without moving that content.
+    pub(crate) spanner_column_slack: std::collections::HashMap<usize, f32>,
     /// How deeply the child layouts of this pass are nested, and whether that
     /// passed its limit.
     pub(crate) recursion: LayoutRecursion,

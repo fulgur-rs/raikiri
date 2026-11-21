@@ -5322,6 +5322,7 @@ fn paginate_flow(
     // Fragment records change for every owner; they are installed together
     // once all owners are paginated.
     let mut fragment_edits = FragmentEdits::new(&document.fragment_tree);
+    document.context.spanner_column_slack.clear();
     // So are the moves of the boxes after each owner, which are applied to a
     // parent's children before they are read.
     let mut sibling_shifts = sibling_shifts::SiblingShifts::default();
@@ -5503,6 +5504,7 @@ fn paginate_flow(
         page_box,
         clip_edges: &clip_edges,
     };
+    document.context.spanner_column_shifts.clear();
     state.prepare_float_gaps(document, cascade, body_id, &candidates);
     normal_block_shifts::begin(document, cascade, body_id);
     let candidate_result = (|| -> Result<(), LayoutError> {
@@ -5552,6 +5554,7 @@ fn paginate_flow(
                 halt.finish()?;
             }
         }
+        state.leave_spanner(document);
         state.subtree_shifts.finish_rows(document);
         Ok(())
     })();
@@ -19561,12 +19564,19 @@ fn grow_ancestors_walk(
             );
             return (bounded, 0.0);
         }
-        shift_later_block_siblings(
-            document,
-            parent,
-            shifted_after.take().unwrap_or(child),
-            flow_delta,
-        );
+        let after_child = shifted_after.take().unwrap_or(child);
+        shift_later_block_siblings(document, parent, after_child, flow_delta);
+        if spans_box_columns(document, cascade, after_child, parent) {
+            // A box that clears a float below the spanner moves the columns
+            // after it without growing it.
+            let grows = after_child == child;
+            let moved =
+                shift_columns_after_spanner(document, parent, after_child, flow_delta, grows);
+            // The container holds what the spanner grew into above the
+            // columns after it.
+            flow_delta = moved;
+            size_delta = size_delta.min(moved);
+        }
         let height = document.nodes[parent].layout.size.height;
         normal_block_shifts::refresh(document, cascade, body_id, parent);
         let grown = grown_auto_height(
@@ -20445,7 +20455,8 @@ fn placed_in_flow_or_floats_to_body(
             Some(parent)
                 if !placed_apart
                     && (document.nodes[parent].display() == DisplayValue::Contents
-                        || moves_later_siblings(document, parent)
+                        || (moves_later_siblings(document, parent)
+                            || spans_box_columns(document, cascade, child, parent))
                             && holds_moved_lines(document, cascade, parent, through_clips)) =>
             {
                 child = parent;
@@ -20874,6 +20885,44 @@ fn spans_box_columns(
         && super::is_spanner_in(document, cascade, child)
 }
 
+/// The spanner of a multicol container whose children are boxes that
+/// holds `node_id` or is `node_id`, with that container (see
+/// [`spans_box_columns`]).
+fn enclosing_box_column_spanner(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<(usize, usize)> {
+    let mut child = node_id;
+    for parent in document.ancestors(node_id) {
+        if spans_box_columns(document, cascade, child, parent) {
+            return Some((child, parent));
+        }
+        child = parent;
+    }
+    None
+}
+
+/// How much of the move asked of the columns after `spanner` so far the
+/// space the pages left above them takes up, which moves them not at all.
+pub(super) fn absorbed_by_slack(
+    document: &super::context::LayoutSession<'_>,
+    spanner: usize,
+) -> f32 {
+    let context = &document.context;
+    let asked = context
+        .spanner_column_shifts
+        .get(&spanner)
+        .copied()
+        .unwrap_or(0.0);
+    let slack = context
+        .spanner_column_slack
+        .get(&spanner)
+        .copied()
+        .unwrap_or(0.0);
+    asked.clamp(0.0, slack)
+}
+
 /// Moves what follows the spanner `spanner` in the multicol container
 /// `container` down by `delta`, the distance the spanner's end moved: the
 /// columns after a spanner start below it (CSS Multi-column Layout 1, 6.1),
@@ -20881,13 +20930,26 @@ fn spans_box_columns(
 /// records the columns placed under the container's record, so those move
 /// along with the boxes. `grows` tells that a break inside the spanner grew
 /// it, rather than the spanner moving whole.
+///
+/// The pages may have pushed the columns down below the spanner already, as
+/// when their first line crossed a page end: the spanner's end moves into
+/// that space before it moves them. Returns how far they moved.
 fn shift_columns_after_spanner(
     document: &mut super::context::LayoutSession<'_>,
     container: usize,
     spanner: usize,
     delta: f32,
     grows: bool,
-) {
+) -> f32 {
+    let absorbed = absorbed_by_slack(document, spanner);
+    *document
+        .context
+        .spanner_column_shifts
+        .entry(spanner)
+        .or_default() += delta;
+    let grown = delta;
+    // A spanner that shrinks back gives up the space it took first.
+    let delta = delta - (absorbed_by_slack(document, spanner) - absorbed);
     let children = document.children_through_contents(container);
     let spanner_index = children.iter().position(|&id| id == spanner);
     let after = spanner_index.map_or(children.len(), |index| index + 1);
@@ -20937,7 +20999,7 @@ fn shift_columns_after_spanner(
     // The spanner's record holds the content that a break inside it moved;
     // a spanner that moved whole keeps its height.
     if grows {
-        grow_last_record(document, spanner, delta);
+        grow_last_record(document, spanner, grown);
     }
     let tree = &document.fragment_tree;
     let container_records: HashSet<usize> = tree
@@ -20978,6 +21040,7 @@ fn shift_columns_after_spanner(
     for &later in &children[after..] {
         shift_block_sibling(document, later, delta);
     }
+    delta
 }
 
 /// Moves the box `sibling`, one of the boxes after a moved child in block
@@ -21708,6 +21771,17 @@ fn holds_floats_by_style(
         || document.nodes[node_id].multicol.is_some()
         || document.nodes[node_id].roots_block_context()
         || establishes_containment_context(computed)
+        || is_column_spanner(document, cascade, node_id)
+}
+
+/// Whether `node_id` is a spanner of the multicol container around it,
+/// which establishes a block formatting context of its own (CSS Multi-column
+/// Layout 1, 6.1).
+fn is_column_spanner(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    super::is_spanner_in(document, cascade, node_id)
+        && document
+            .parent_of(node_id)
+            .is_some_and(|parent| lays_out_in_columns(document, parent))
 }
 
 /// Whether the box `node_id` is an item of a flex or grid container.
@@ -21875,7 +21949,9 @@ fn candidate_ancestor_constraints(
     // A holder that is not among the ancestors takes none of them along.
     let holder = holder.filter(|&holder| document.ancestors(node_id).any(|id| id == holder));
     let mut moves_whole = holder.is_some();
+    let mut child = node_id;
     for id in document.ancestors(node_id) {
+        let below = std::mem::replace(&mut child, id);
         let moves_with_candidate = moves_whole;
         moves_whole &= Some(id) != holder;
         if moves_with_candidate {
@@ -21884,7 +21960,9 @@ fn candidate_ancestor_constraints(
         if id != body_id && !bounded_clipping {
             bounded_clipping = clips_at_bounded_height(document, cascade, id);
         }
-        side_by_side = side_by_side || puts_boxes_side_by_side(document, id);
+        side_by_side = side_by_side
+            || puts_boxes_side_by_side(document, id)
+                && !spans_box_columns(document, cascade, below, id);
         if (side_by_side && bounded_clipping) || id == body_id {
             break;
         }
@@ -21929,8 +22007,12 @@ fn edges_break_container(
     body_id: usize,
 ) -> Option<Option<usize>> {
     let mut container = None;
+    let mut child = node_id;
     for id in document.ancestors(node_id) {
-        if puts_boxes_side_by_side(document, id) {
+        let below = std::mem::replace(&mut child, id);
+        if puts_boxes_side_by_side(document, id)
+            && !spans_box_columns(document, document.style_views.cascade(), below, id)
+        {
             if document.nodes[id].multicol.is_some() || container.is_some() {
                 return None;
             }
@@ -22282,7 +22364,13 @@ fn shift_flow_after(
         if !moved_lines {
             shift_later_block_siblings(document, parent, child, flow_delta);
             if spans_box_columns(document, cascade, child, parent) {
-                shift_columns_after_spanner(document, parent, child, flow_delta, child != node_id);
+                flow_delta = shift_columns_after_spanner(
+                    document,
+                    parent,
+                    child,
+                    flow_delta,
+                    child != node_id,
+                );
             }
         }
         // The moved box moved whole; an ancestor of it keeps its stored
