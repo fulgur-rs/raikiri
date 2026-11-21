@@ -268,8 +268,9 @@ fn apply_computed_to_style_in_session_inner(
             doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
         }
         // A block box that spans all columns establishes a new block
-        // formatting context (CSS Multi-column Layout 1, 6.1). Browsers give
-        // it one whether or not a multicol container holds it.
+        // formatting context (CSS Multi-column Layout 1, 6.1). Chromium goes
+        // beyond the spec here and gives one to any block box with
+        // `column-span: all`, whether or not a multicol container holds it.
         if doc.nodes[idx].column_span_all
             && matches!(
                 doc.nodes[idx].display(),

@@ -6939,8 +6939,9 @@ impl AncestorFacts {
             // is the fit-content one; a box whose width follows its height
             // through the aspect ratio does not stretch.
             || node.is_html_button()
-            // A fieldset roots its own formatting context, so its `auto`
-            // width is the room the floats beside it leave.
+            // A fieldset, a size query container or a box that spans the
+            // columns roots its own formatting context, so its `auto` width
+            // is the room the floats beside it leave.
             || node.roots_block_context()
             || AuthoredBox::new(doc, cascade, id).is_floated()
             || width_follows_height(doc, cascade, id)
