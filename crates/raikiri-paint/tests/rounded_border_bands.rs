@@ -358,3 +358,107 @@ fn mixed_sides_with_a_dashed_one_stay_inside_the_rounded_outer_edge() {
         "the bottom side is still painted"
     );
 }
+
+#[test]
+fn a_transparent_side_leaves_its_part_of_the_corner_unpainted() {
+    // A 6px green border with a transparent top and 16px corners: the left
+    // side keeps its part of the upper-left corner, up to the cut, and the
+    // top part shows the page.
+    let pixels = boxed("border:6px solid green;border-top-color:transparent;border-radius:16px");
+    assert_rows(
+        &pixels,
+        10,
+        10,
+        &[
+            "....................",
+            "....................",
+            "....................",
+            "....................",
+            "....o...............",
+            "...ooo..............",
+            "..oo##o.............",
+            "..o####o............",
+            ".oo#####o...........",
+            ".o######o...........",
+            "oo#####oo...........",
+            "o#####oo............",
+            "o#####o.............",
+            "o#####o.............",
+            "o#####o.............",
+            "o#####o.............",
+            "######..............",
+            "######..............",
+        ],
+    );
+}
+
+#[test]
+fn two_sides_wider_than_the_box_share_the_corners_of_the_top() {
+    // A 10px wide box with 30px green and blue sides, a 5px red top and 20px
+    // corners: the corners of the top would overlap, so they share its width
+    // and each side keeps its own part of the curve.
+    let pixels = boxed(
+        "width:10px;border-left:30px solid green;border-right:30px solid blue;border-top:5px solid red;border-radius:20px",
+    );
+    assert_rows(
+        &pixels,
+        10,
+        10,
+        &[
+            "..............oooooorrrrrrrrrrrrrrrrrrrrrrrrrrrrrroooooo..............",
+            "...........ooorrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrooo...........",
+            ".........ooooooooorrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrooooooooo.........",
+            ".......ooo########oooooorrrrrrrrrrrrrrrrrrrrrroooooobbbbbbbbooo.......",
+            "......ooo###############oooooorrrrrrrrrroooooobbbbbbbbbbbbbbbooo......",
+            ".....oo#######################..........bbbbbbbbbbbbbbbbbbbbbbboo.....",
+            "....oo########################..........bbbbbbbbbbbbbbbbbbbbbbbboo....",
+            "....o#########################..........bbbbbbbbbbbbbbbbbbbbbbbbbo....",
+            "...oo#########################..........bbbbbbbbbbbbbbbbbbbbbbbbboo...",
+            "..oo##########################..........bbbbbbbbbbbbbbbbbbbbbbbbbboo..",
+            "..o###########################..........bbbbbbbbbbbbbbbbbbbbbbbbbbbo..",
+            ".oo###########################..........bbbbbbbbbbbbbbbbbbbbbbbbbbboo.",
+            ".o############################..........bbbbbbbbbbbbbbbbbbbbbbbbbbbbo.",
+            ".o############################..........bbbbbbbbbbbbbbbbbbbbbbbbbbbbo.",
+            "o#############################..........bbbbbbbbbbbbbbbbbbbbbbbbbbbbbo",
+            "o#############################..........bbbbbbbbbbbbbbbbbbbbbbbbbbbbbo",
+        ],
+    );
+}
+
+#[test]
+fn a_wide_side_and_a_large_corner_share_the_top() {
+    // A 10px wide box with a 30px green left side, a 5px red top and a 50px
+    // upper-right corner: the box of that corner and the left side would
+    // overlap along the top, so they share it, and the left side is cut along
+    // the line toward its inner corner.
+    let pixels = boxed(
+        "width:10px;border-left:30px solid green;border-top:5px solid red;border-top-right-radius:50px",
+    );
+    assert_rows(
+        &pixels,
+        10,
+        10,
+        &[
+            "ooooooooo...............................",
+            "######oooooo............................",
+            "############oooo........................",
+            "###############ooo......................",
+            "#################oo.....................",
+            "###################oo...................",
+            "####################ooo.................",
+            "######################oo................",
+            "#######################ooo..............",
+            "#########################oo.............",
+            "##########################oo............",
+            "###########################oo...........",
+            "############################oo..........",
+            "#############################oo.........",
+            "##############################o.........",
+            "##############################ro........",
+            "##############################ooo.......",
+            "##############################oroo......",
+            "##############################ooro......",
+            "##############################.oooo.....",
+        ],
+    );
+}
