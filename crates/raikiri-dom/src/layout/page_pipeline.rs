@@ -3664,15 +3664,18 @@ fn clear_floats_at_forced_breaks<'name>(
                 found = known;
                 break;
             }
-            let boxes = (!is_monolithic_for_pagination_with_transposed_axes(
+            let boxes = if is_monolithic_for_pagination_with_transposed_axes(
                 document,
                 cascade,
                 id,
                 pagination_on_transposed_axes,
-            ) && !holds_floats_in_preparation(document, cascade, id)
-                && !renders_edge_pseudo(cascade, id, false))
-            .then(|| child_boxes(document, id, false))
-            .unwrap_or_default();
+            ) || holds_floats_in_preparation(document, cascade, id)
+                || renders_edge_pseudo(cascade, id, false)
+            {
+                Vec::new()
+            } else {
+                child_boxes(document, id, false)
+            };
             let last = boxes
                 .iter()
                 .rposition(|item| item.is_none_or(|item| !is_float(document, item)));

@@ -175,3 +175,26 @@ fn the_floats_before_the_break_do_not_hold_the_content_after_the_wrapper() {
         );
     }
 }
+
+#[test]
+fn a_float_before_the_break_after_the_wrapper_stays_on_its_page() {
+    // The wrapper's own break falls after the float, so the float is no
+    // page-start float.
+    expect(
+        &format!("<div style='break-after:page'><div>T</div>{F}</div><div>Z</div>"),
+        &["F@0:0,30", "T@0:0,0", "Z@1:0,0"],
+    );
+}
+
+#[test]
+fn generated_content_after_the_wrapper_lines_up_beside_the_float() {
+    // Only the inline position is checked: which page the generated line
+    // lands on is decided apart from this.
+    let glyphs = glyphs(&format!(
+        "<style>.p::after{{content:'A'}}</style><div class=p>{}</div><div>Z</div>",
+        wrapper(F)
+    ));
+    let generated: Vec<_> = glyphs.iter().filter(|g| g.starts_with('A')).collect();
+    assert_eq!(generated.len(), 1, "{glyphs:?}");
+    assert!(generated[0].contains(":20,"), "{glyphs:?}");
+}
