@@ -183,9 +183,11 @@ pub(crate) fn compute_multicol_layout(
     // A row flex container or a grid container stretches an auto-height
     // item to its line or area, a column flex container grows or bases
     // it on its flex properties, and an absolutely positioned box with
-    // both block insets fills its containing block; the columns then
-    // take that height. Other known heights come from the item's own
-    // content and are rebalanced here.
+    // both block insets fills its containing block. A definite height
+    // bounds the columns; under an auto-height flex line the columns
+    // balance and the container takes the stretched height as a minimum.
+    // Other known heights, including a line that only the item's own
+    // content sized, come from that content and are rebalanced here.
     let css = style_of(tree, index);
     let positioned = tree.nodes[index].layout_position() == Position::Absolute;
     let inset = css.inset();
@@ -211,12 +213,15 @@ pub(crate) fn compute_multicol_layout(
             _ => FlowPlacement::Stretched(false),
         }
     });
-    let stretched_height = inputs.known_dimensions.height.is_some()
-        && (inset_height
+    let stretched_height = inputs.known_dimensions.height.is_some_and(|height| {
+        (inset_height
             || matches!(
                 placement,
                 Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
-            ));
+            ))
+            && (style.height_definite
+                || !sized_by_own_content(tree, node_id, &inputs, placement, height))
+    });
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -490,6 +495,13 @@ pub(crate) fn compute_multicol_layout(
                     + multicol_resolve_inset(tree, border.bottom, basis)
             }
         });
+        // A box stretched to an auto-height flex line or grid area balances
+        // its columns as usual and then takes the size it was stretched to,
+        // like a minimum height: the columns do not fill it.
+        let minimum = match inputs.known_dimensions.height {
+            Some(height) if stretched_height && available_height.is_none() => minimum.max(height),
+            _ => minimum,
+        };
         let lineless_definite = available_height.is_some() || stretched_height;
         // An auto-basis item of a column flex container that does not grow
         // keeps its content height unless flexing shrinks it, so its known
@@ -584,10 +596,14 @@ pub(crate) fn compute_multicol_layout(
             });
         let mut used_height = lay_out_columns(tree, content_origin, block_end_inset, &mut output);
         // Balanced columns size an auto-height container even under a
-        // maximum height, which only bounds the balanced columns.
-        let balances_height = fragmentainer_height.is_none()
-            || bounded_by_maximum
-            || (lineless_children.is_some() && !lineless_definite);
+        // maximum height, which only bounds the balanced columns. Columns
+        // sliced inside a height that layout fixed, such as the size a flex
+        // line stretched the box to, leave the container that height.
+        let balances_height = if lineless_children.is_some() {
+            !lineless_definite
+        } else {
+            fragmentainer_height.is_none() || bounded_by_maximum
+        };
         // Only one row of columns that this layout placed is aligned: a
         // strategy that gave up placed none, and a container broken across
         // outer fragmentainers has a record in each.
@@ -650,6 +666,38 @@ pub(crate) fn compute_multicol_layout(
     // future child strategy starts pushing a nested context of its own.
     tree.context.fragmentation_stack.truncate(stack_depth);
     pass.finish(tree, node_id, &inputs, output)
+}
+
+/// Whether the height `stretched` an auto-height flex line stretched the
+/// multicol container `node_id` to is only the height of its own content. The line
+/// measures the container before it balances its columns, as one column
+/// across the whole width, and a line that nothing else makes taller gives
+/// that height back. Such a container balances its columns as one of auto
+/// height does. A line that a sibling makes exactly that tall, or one that a
+/// maximum height clamps to it, is taken for the same case, as the line has
+/// no balanced measure of the container to tell them apart.
+fn sized_by_own_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+    placement: Option<FlowPlacement>,
+    stretched: f32,
+) -> bool {
+    // A definite line or grid area bounds the columns instead.
+    if inputs.run_mode != RunMode::PerformLayout
+        || !matches!(placement, Some(FlowPlacement::Stretched(true)))
+        || (inputs.parent_size.height.is_some() && inputs.known_dimensions_are_definite.height)
+    {
+        return false;
+    }
+    let mut probe = *inputs;
+    probe.run_mode = RunMode::ComputeSize;
+    probe.axis = RequestedAxis::Vertical;
+    probe.known_dimensions.height = None;
+    probe.known_dimensions_are_definite.height = false;
+    // Measured as the parent measured it, through the cache of the box.
+    let content = tree.compute_child_layout(node_id, probe).size.height;
+    (stretched - content).abs() <= lineless::EPSILON
 }
 
 /// How far the pass across the whole width of the multicol container `index`
