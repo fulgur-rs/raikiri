@@ -385,18 +385,26 @@ pub(crate) fn compute_multicol_layout(
                 && outer_height.is_some_and(|outer| output.size.height <= outer + lineless::EPSILON)
     });
     custom_scope |= definite_paragraphs && lineless_children.is_none();
+    // Balanced columns that only a maximum height bounds balance as those of
+    // an auto height do, up to that height. Columns stretched to a size their
+    // parent gives, and columns nested in others, keep to the height of the
+    // content laid out across the container instead.
+    let bounded_by_maximum = available_height.is_none()
+        && style.column_fill != ColumnFillValue::Auto
+        && !stretched_height
+        && stack_depth == 0
+        && !multicol_has_nested_descendant(tree, index);
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
             index,
             output.size.height,
+            !bounded_by_maximum,
             inputs.parent_size.height,
             parent_width,
         )
     });
-    // Columns that only a maximum height bounds balance as those of an auto
-    // height do, up to that height.
-    let bounded_by_maximum = available_height.is_none() && fragmentainer_height.is_some();
+    let bounded_by_maximum = bounded_by_maximum && fragmentainer_height.is_some();
     // Children that hold no lines are sliced below instead, minimum and all,
     // unless the slicing fails.
     if lineless_children.is_none() {
@@ -1182,10 +1190,14 @@ enum FlowPlacement {
     ColumnFlex { flexed: bool },
 }
 
+/// The content height that the maximum height of `node_id` leaves its
+/// columns, no more than the content height of its border box of
+/// `border_box_height` with `within_border_box`.
 fn multicol_max_fragmentainer_height(
     tree: &LayoutSession<'_>,
     node_id: usize,
     border_box_height: f32,
+    within_border_box: bool,
     parent_height: Option<f32>,
     parent_width: Option<f32>,
 ) -> Option<f32> {
@@ -1208,6 +1220,9 @@ fn multicol_max_fragmentainer_height(
     } else {
         max_height
     };
+    if !within_border_box {
+        return Some(max_content_height);
+    }
     let used_content_height = (border_box_height - insets).max(0.0);
     Some(used_content_height.min(max_content_height))
 }
@@ -3585,9 +3600,9 @@ fn layout_column_group(
         // Balanced columns also hold the positioned boxes whose containing
         // block they hold, which can make them taller than the content in
         // flow needs, its paragraphs broken between their lines.
-        let boxes = if retain_group
+        let boxes = if (retain_group || bounded_by_maximum)
             && fragment_height.is_none()
-            && definite_balance.is_none()
+            && (definite_balance.is_none() || bounded_by_maximum)
             && !spanned
         {
             out_of_flow_boxes(tree, index, children, &tops)
@@ -3631,7 +3646,8 @@ fn layout_column_group(
             })
             .flatten();
         if let Some(floor) = floor {
-            out_of_flow_height = Some(floor);
+            // Under a maximum height, they are no taller than it allows.
+            out_of_flow_height = Some(definite_balance.map_or(floor, |height| floor.min(height)));
         }
         Some((measurements, target))
     } else {

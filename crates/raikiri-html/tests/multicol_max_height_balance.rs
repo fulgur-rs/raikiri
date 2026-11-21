@@ -201,3 +201,37 @@ fn margins_floats_spanners_and_positioned_boxes_balance_as_without_a_maximum() {
         (15.0, 15.0)
     );
 }
+
+#[test]
+fn positioned_boxes_in_the_columns_make_them_taller_up_to_the_maximum() {
+    let positioned = "<div style='position:relative'>a<div style='position:absolute;top:0;\
+                      height:80px;width:5px'></div></div><div>b</div><div>c</div>";
+    assert_eq!(
+        height(&container("max-height:500px", positioned)),
+        (40.0, 40.0)
+    );
+    assert_eq!(
+        height(&container("max-height:30px", positioned)),
+        (30.0, 30.0)
+    );
+}
+
+#[test]
+fn the_maximum_and_not_the_content_across_the_container_bounds_the_columns() {
+    // Six words in columns 30px wide need three lines a column, more than
+    // the two lines they take across the container.
+    let words = "<div>aa aa aa aa aa aa</div>";
+    assert_eq!(
+        height(&container("column-gap:40px;max-height:500px", words)),
+        (30.0, 30.0)
+    );
+}
+
+#[test]
+fn a_flex_item_keeps_the_height_its_line_stretches_it_to() {
+    let body = format!(
+        "<div style='display:flex'><div style='height:100px;width:10px'></div>{}</div>",
+        container("max-height:500px", ABC)
+    );
+    assert_eq!(height(&body), (100.0, 100.0));
+}
