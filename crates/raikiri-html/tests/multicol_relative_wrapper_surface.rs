@@ -123,3 +123,15 @@ fn a_relative_wrapper_breaks_between_the_columns() {
         assert_eq!(in_columns(wrapper), expected, "{wrapper}");
     }
 }
+
+#[test]
+fn a_relative_wrapper_moved_past_the_page_end_breaks_on_the_next_page() {
+    assert_eq!(
+        words(
+            "<div style='columns:2;height:30px;column-fill:auto'>\
+             <div style='position:relative;top:150px'>\
+             <div>S</div><div>T</div><div>U</div><div>V</div></div></div>"
+        ),
+        "S@1:0,50 T@1:0,60 U@1:0,70 V@1:55,50"
+    );
+}
