@@ -579,21 +579,18 @@ fn a_spanner_whose_lines_end_above_the_page_end_continues_on_the_next_page() {
 fn a_spanner_with_content_at_the_page_end_moves_whole_to_the_next_page() {
     // The spanner is 40px tall and starts at 40px on pages of 70px, so a page
     // would end 30px into it. Each spanner has something there that the page
-    // does not cut, so it moves whole to the top of the next page, and the
-    // paragraph after the container starts below it.
+    // does not cut and no place to break before it but its own top, so it
+    // moves whole to the top of the next page, and the paragraph after the
+    // container starts below it. The positions are the ones Chromium prints.
     for spanner in [
-        // A line crosses the page end.
+        // A line crosses the page end below the top padding.
         "<div class=span style='padding-top:20px;height:20px'>E</div>",
-        // So does a line of a paragraph inside it.
-        "<div class=span style='height:40px'><div style='height:20px'></div><p>E</p></div>",
-        // A float crosses it although the only line ends above.
-        "<div class=span style='height:40px'>E<span style='float:left;width:10px;height:40px'></span></div>",
         // A border and a padding lie there.
         "<div class=span style='border-top:40px solid'></div>",
         "<div class=span style='padding-bottom:40px'></div>",
         // The spanner may not break inside.
         "<div class=span style='height:40px;break-inside:avoid'></div>",
-        // Nor may a box inside it.
+        // Nor may the box that begins it.
         "<div class=span><div style='height:40px;break-inside:avoid'></div></div>",
     ] {
         let document = lay_out(
@@ -611,18 +608,57 @@ fn a_spanner_with_content_at_the_page_end_moves_whole_to_the_next_page() {
 }
 
 #[test]
-fn a_spanner_is_cut_only_where_every_page_end_it_crosses_allows() {
+fn a_page_breaks_inside_a_spanner_as_inside_any_block() {
+    // The spanner is 40px tall and starts at 40px on pages of 70px, so the page
+    // ends 30px into it. A paragraph whose line crosses there starts the next
+    // page, and the spanner's height runs on to 10px into it; a float that
+    // crosses there is cut, as the empty space below the spanner's line is.
+    // The paragraph after the container follows the spanner. The positions
+    // are the ones Chromium prints.
+    for (spanner, line) in [
+        (
+            "<div class=span style='height:40px'><div style='height:20px'></div><p>E</p></div>",
+            (1, (0.0, 16.0)),
+        ),
+        (
+            "<div class=span style='height:40px'>E<span style='float:left;width:10px;height:40px'></span></div>",
+            (0, (10.0, 56.0)),
+        ),
+    ] {
+        let document = lay_out(
+            &format!("<div class=mc><p>A<br>B<br>C<br>D</p>{spanner}</div><p>K</p>"),
+            "@page{size:180px 70px}",
+        );
+        assert_eq!(document.page_count(), 2, "{spanner}");
+        let (page, origin) = line;
+        let runs = document.page(page).unwrap().text_runs();
+        assert!(
+            runs.iter()
+                .any(|run| run.text == "E" && run.origin == origin),
+            "{spanner}"
+        );
+        let runs = document.page(1).unwrap().text_runs();
+        assert_eq!(
+            runs.last().map(|run| (run.text, run.origin)),
+            Some(("K", (0.0, 26.0))),
+            "{spanner}"
+        );
+    }
+}
+
+#[test]
+fn a_spanner_is_cut_at_every_page_end_it_crosses() {
     // The first page is 100px tall and the next ones 50px. The spanner is 80px
     // tall and starts at 80px, so it crosses the page ends at 100px and 150px.
-    // Cut at both, a plain spanner stays, and the paragraph after the
-    // container starts at 160px, 10px into the third page. The border of the
-    // other one would be cut at 150px, so it moves whole to the top of the
-    // second page and the paragraph starts at 180px.
+    // It is cut at both, through the bottom border of the second one too, and
+    // the paragraph after the container starts 10px into the third page, or
+    // 20px with the border, which is cut at its end. The positions are the
+    // ones Chromium prints.
     for (spanner, expected) in [
         ("<div class=span style='height:80px'></div>", 26.0),
         (
             "<div class=span style='height:60px;border-bottom:20px solid'></div>",
-            46.0,
+            36.0,
         ),
     ] {
         let document = lay_out(
@@ -637,23 +673,21 @@ fn a_spanner_is_cut_only_where_every_page_end_it_crosses_allows() {
 }
 
 #[test]
-fn a_cut_in_a_border_is_found_among_ranges_that_overlap() {
+fn a_page_cuts_the_border_of_a_block_in_a_spanner() {
     // The pages are 120px tall and the spanner starts at 40px, so the page ends
-    // 80px into it. The box inside it is 50px tall and has a 40px border below
-    // that, which lies from 51px to 91px. A box in it that overflows its 50px
-    // has a border from 61px to 66px, which ends before the page does. The cut
-    // still lies in the first border, so the spanner moves whole to the top of
-    // the next page and the paragraph after the container starts below it.
+    // 80px into it. The box inside it is 51px tall and has a 40px border below
+    // that, which lies from 51px to 91px. The page cuts the border as it cuts
+    // that of a block in the body, and the paragraph after the container
+    // starts where the spanner ends, 20px into the next page (Chromium).
     let document = lay_out(
         "<div class=mc><p>A<br>B<br>C<br>D</p>\
          <div class=span style='height:100px'>\
-         <div style='padding-top:1px;height:50px;border-bottom:40px solid'>\
-         <div style='margin-top:55px;height:5px;border-bottom:5px solid'></div>\
-         </div></div></div><p>K</p>",
+         <div style='padding-top:1px;height:50px;border-bottom:40px solid'></div>\
+         </div></div><p>K</p>",
         "@page{size:180px 120px}",
     );
     assert_eq!(document.page_count(), 2);
-    assert_page_runs(&document, 1, &[("K", (0.0, 116.0))]);
+    assert_page_runs(&document, 1, &[("K", (0.0, 36.0))]);
 }
 
 #[test]
@@ -850,6 +884,11 @@ fn absolute_owners_and_ancestors_do_not_extend_normal_following_flow() {
 
 #[test]
 fn bare_ifc_text_follows_the_paginated_owner_height_before_outer_following_flow() {
+    // The spanner is 30px tall and starts at 40px on pages of 60px. Its line
+    // fits on the first page, and the page ends inside its empty space below.
+    // The columns after it continue on the next page 10px down, and the text
+    // after the container follows them. The positions are the ones Chromium
+    // prints.
     let document = lay_out(
         "<section><div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div>L</section><p>Z</p>",
         "@page{size:180px 60px}.span{height:30px}",
@@ -863,24 +902,25 @@ fn bare_ifc_text_follows_the_paginated_owner_height_before_outer_following_flow(
             ("B", (0.0, 36.0)),
             ("C", (60.0, 16.0)),
             ("D", (60.0, 36.0)),
+            ("E", (0.0, 56.0)),
         ],
     );
     assert_page_runs(
         &document,
         1,
-        &[("E", (0.0, 16.0)), ("F", (0.0, 46.0)), ("G", (60.0, 46.0))],
+        &[
+            ("F", (0.0, 26.0)),
+            ("G", (0.0, 46.0)),
+            ("H", (60.0, 26.0)),
+            ("I", (60.0, 46.0)),
+        ],
     );
     // Mixed IFC roots already enumerate their own text before block children.
     // This control checks once-only text and its physical following position.
     let page = document.page(2).unwrap();
     let runs = page.text_runs();
-    assert_eq!(runs.len(), 4);
-    for (text, origin) in [
-        ("H", (0.0, 16.0)),
-        ("I", (60.0, 16.0)),
-        ("L", (0.0, 36.0)),
-        ("Z", (0.0, 56.0)),
-    ] {
+    assert_eq!(runs.len(), 2);
+    for (text, origin) in [("L", (0.0, 16.0)), ("Z", (0.0, 36.0))] {
         let matching: Vec<_> = runs.iter().filter(|run| run.text == text).collect();
         assert_eq!(matching.len(), 1, "{text}");
         assert_eq!(matching[0].origin, origin, "{text}");
