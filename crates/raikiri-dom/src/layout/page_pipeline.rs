@@ -669,7 +669,7 @@ fn layout_relative_offset(
             document.nodes[node_id].display(),
             DisplayValue::Contents | DisplayValue::None
         )
-        || relative_offset_is_painted(document, cascade, body_id, node_id)
+        || relative_offset_is_painted(document, cascade, Some(body_id), node_id)
     {
         return (0.0, 0.0);
     }
@@ -731,7 +731,29 @@ fn painted_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    if !relative_offset_is_painted(document, cascade, body_id, node_id) {
+    if !relative_offset_is_painted(document, cascade, Some(body_id), node_id) {
+        return 0.0;
+    }
+    super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
+}
+
+/// How far down the painter moves `node_id` by its own relative or sticky
+/// offset, when layout places the box without it (see
+/// [`relative_offset_is_painted`]): a float, a table part, a sticky box, a box
+/// the columns of a multicol container place. Chromium fragments such a box
+/// where the offset puts it, as it does a relatively positioned box in normal
+/// flow, which layout already places with its offset.
+pub(crate) fn painter_relative_shift_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    let node = &document.nodes[node_id];
+    // A `display: contents` element has no box for the painter to move.
+    if node.kind() != NodeKind::Element
+        || matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
+        || !relative_offset_is_painted(document, cascade, None, node_id)
+    {
         return 0.0;
     }
     super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
@@ -741,7 +763,7 @@ fn painted_relative_offset_y(
 fn relative_offset_is_painted(
     document: &Document,
     cascade: &CascadeResult,
-    body_id: usize,
+    body_id: Option<usize>,
     node_id: usize,
 ) -> bool {
     if !matches!(
@@ -750,12 +772,8 @@ fn relative_offset_is_painted(
     ) {
         return false;
     }
-    super::relative::placed_without_relative_offset_for_layout(
-        document,
-        cascade,
-        Some(body_id),
-        node_id,
-    ) || document.nodes[node_id].needs_relative_block_paint_offset()
+    super::relative::placed_without_relative_offset_for_layout(document, cascade, body_id, node_id)
+        || document.nodes[node_id].needs_relative_block_paint_offset()
 }
 
 /// The block-end edge of the root's border box in page coordinates.
@@ -3440,11 +3458,12 @@ pub(crate) fn project_slices_with_control(
 
     let WalkedSources {
         mut nodes,
-        text_roots,
+        mut text_roots,
         placement_overflow_clips,
         paragraph_cache,
         repeated_placement_nodes,
     } = walk_sources(document, cascade, body_id, &mut work)?;
+    keep_painted_shifts_after_flow_start(&pages, flow_axis, &mut nodes, &mut text_roots);
     restore_crossing_tops(document, &mut nodes, &pages);
 
     place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
@@ -3462,6 +3481,33 @@ pub(crate) fn project_slices_with_control(
         paragraph_cache,
         work.remaining(),
     ))
+}
+
+/// Limits the painted shifts of `nodes` and `text_roots` so that a box the
+/// painter moves up stops at the start of the flow. Nothing comes before the
+/// first page, so a box moved above it stays on that page, as layout placed
+/// it, and overflows its top.
+fn keep_painted_shifts_after_flow_start(
+    pages: &[PageFragment],
+    flow_axis: FlowAxis,
+    nodes: &mut [PageFragmentSource],
+    text_roots: &mut [ProjectedTextRoot],
+) {
+    let Some(start) = pages
+        .iter()
+        .filter_map(|page| page.flow_range.map(|(start, _)| start))
+        .reduce(f32::min)
+        .filter(|_| flow_axis == FlowAxis::Y)
+    else {
+        return;
+    };
+    let limit = |shift: f32, y: f32| shift.max(start.min(y) - y);
+    for node in nodes {
+        node.painted_shift = limit(node.painted_shift, node.abs_y);
+    }
+    for root in text_roots {
+        root.painted_shift = limit(root.painted_shift, root.y);
+    }
 }
 
 /// Group page snapshots into a deterministic NodeId-ordered geometry table.

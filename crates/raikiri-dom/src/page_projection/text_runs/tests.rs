@@ -72,6 +72,7 @@ fn marker_projection_propagates_a_cached_counter_snapshot_budget_error() {
         fragmentainer: None,
         fragment_clip: None,
         overflow_chain: None,
+        painted_shift: 0.0,
     }];
     let error = prepare_markers(&document, &cascade, &roots, &[]).unwrap_err();
     let raikiri_traits::LayoutError::CounterSnapshotLimitExceeded { limit, actual } = error else {
