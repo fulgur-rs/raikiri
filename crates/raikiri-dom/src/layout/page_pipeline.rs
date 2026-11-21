@@ -13747,15 +13747,16 @@ struct LoneBox {
     /// How far below the box the floats beside it reach, or zero.
     float_reach: f32,
     /// When positive, the room at the end of a block of set size in the
-    /// chain that its content does not reach, and all that follows it in the
-    /// block (see [`sized_block_ends_below_content`]): the part of `tail`
+    /// chain that its content does not reach, or the boxes after the first
+    /// box of a block, and all that follows them in the block (see [`sized_block_ends_below_content`]): the part of `tail`
     /// that does not follow the box, which moves for the rest of `tail` only.
     /// When negative, how far the edges that follow the box run past the end
     /// of the block, out of a block of set size too short for its content.
     gap: f32,
     /// Whether a block of set size that its content does not fill, or runs
-    /// past, holds the box in the chain: only [`closing_edges_move`] weighs
-    /// `gap`, and the other callers leave such a block alone.
+    /// past, or a block whose first box is followed by others, holds the box
+    /// in the chain: only [`closing_edges_move`] weighs `gap`, and the other
+    /// callers leave such a block alone.
     sized: bool,
 }
 
@@ -13838,8 +13839,24 @@ fn lone_box_with_floats(
             break;
         }
         let mut boxes = Vec::new();
+        let mut first_box = None;
+        let mut float_after_first = false;
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
+                // A float after the first box that starts below the end of
+                // `node_id`, with no edges of the blocks around `node_id` to
+                // follow it there, is no part of what follows the box: it
+                // stays behind the box, as the boxes after that one do.
+                if !boxes.is_empty()
+                    && !ancestor_edges_follow
+                    && float_extent(document, child).0
+                        >= current_abs_y(document, node_id)
+                            + document.nodes[node_id].layout.size.height
+                            - 0.001
+                {
+                    float_after_first = true;
+                    continue;
+                }
                 // A float beside the box moves along with the block.
                 let accepted = float_within_box(document, node_id, child)
                     || (floats_may_reach && float_starts_within_box(document, node_id, child));
@@ -13854,10 +13871,22 @@ fn lone_box_with_floats(
                 float_bottom = float_bottom.max(float_extent(document, child).1 - offset_below);
                 continue;
             }
+            let before = boxes.len();
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
-            if boxes.len() > 1 {
-                return None;
+            // The boxes of one child come last first.
+            if before == 0 && boxes.len() > before {
+                first_box = boxes.last().copied();
             }
+        }
+        // A block whose first box is followed by others holds that box at
+        // its start: when the box moves with the edges that close it, the
+        // page breaks before the block, which moves whole, as in Chromium.
+        // The boxes after the first one, and the block's own edges, stay
+        // behind the box, as the room at the end of a block of set size does.
+        let followed = boxes.len() > 1 || float_after_first;
+        if followed {
+            boxes.clear();
+            boxes.extend(first_box);
         }
         // A block of set size that its content does not fill holds its box
         // all the same: when the box moves with the edges that close it, the
@@ -13866,8 +13895,13 @@ fn lone_box_with_floats(
         let sized_room = block_flow_closing_edges(document, cascade, body_id, current)
             .is_none()
             .then(|| sized_block_ends_below_content(document, cascade, body_id, current));
-        let holds_box = sized_room.is_none_or(|room| room.is_some());
-        if !boxes.is_empty() {
+        let holds_box = followed || sized_room.is_none_or(|room| room.is_some());
+        if followed {
+            sized = true;
+            room_found = true;
+            edges_follow = false;
+            follow_end = f32::NEG_INFINITY;
+        } else if !boxes.is_empty() {
             let end = content_end + node.layout.size.height;
             if let Some(Some(room)) = sized_room {
                 sized = true;
@@ -13915,7 +13949,11 @@ fn lone_box_with_floats(
     // size keeps its negative `tail`, so that the caller sees where it ends.
     let follow_end = follow_end.max(content_end);
     let gap = if room_found {
-        height - follow_end
+        // Room that ends right where `node_id` does still cuts the edges of
+        // the blocks around `node_id` off from the box; a hair of it keeps
+        // [`closing_edges_move`] from counting them.
+        let room = height - follow_end;
+        if room.abs() <= 0.001 { 0.001 } else { room }
     } else if sized {
         -(follow_end - height).max(0.0)
     } else {
