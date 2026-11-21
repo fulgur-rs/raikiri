@@ -159,4 +159,10 @@ fn margins_collapse_through_a_wrapper_in_a_column() {
     // Nested wrappers pass it on as well.
     let nested = "<div><div><div style='margin-bottom:20px'>a</div></div></div>";
     assert_eq!(height("", nested), (15.0, 15.0));
+    // A wrapper that its margins collapse through, holding only an empty
+    // box with margins, has no block size of its own.
+    let empty = "<div id=a>a</div><div id=w><div style='margin:30px 0'></div></div><div>b</div>";
+    let body = format!("<div id=m style='width:100px;columns:2;column-gap:0'>{empty}</div>");
+    assert_eq!(rects(&body, "a"), vec![(0.0, 0.0, 50.0, 10.0)]);
+    assert_eq!(rects(&body, "w"), vec![(50.0, 0.0, 50.0, 0.0)]);
 }
