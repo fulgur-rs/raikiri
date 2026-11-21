@@ -42,39 +42,78 @@ impl ChildPositions {
             node_id,
             true,
             |document, parent, child| {
-                let first = self.forced_first_children.entry(parent).or_insert_with(|| {
-                    // Generated before content is not an arena child. Even a
-                    // zero-height generated box precedes the forced boundary.
-                    if super::renders_before_pseudo(cascade, parent) {
-                        return None;
-                    }
-                    // An IFC keeps its block tokens outside the box child
-                    // list. Its source children still give the leading order.
-                    let node = &document.nodes[parent];
-                    let children = if node.layout_children().is_empty()
-                        && document
-                            .ifc_layout_node(parent)
-                            .is_some_and(|node| node.ifc.is_some())
-                    {
-                        &node.children
-                    } else {
-                        node.layout_children()
-                    };
-                    children.iter().copied().find(|&sibling| {
-                        super::sibling_renders(document, sibling)
-                            && !(document.nodes[sibling].kind() == NodeKind::Element
-                                && matches!(
-                                    document.nodes[sibling].position(),
-                                    super::PositionValue::Absolute | super::PositionValue::Fixed
-                                ))
-                    })
-                });
-                *first != Some(child)
+                self.first_forced_child(document, cascade, parent) != Some(child)
             },
         );
         (holder != node_id
             && lead <= super::leading_space_between(document, cascade, node_id, holder) + 0.01)
             .then_some((holder, lead))
+    }
+
+    /// The child of `parent` that a forced break before it would carry to
+    /// `parent`: its first child that renders in the flow, unless generated
+    /// before content comes first.
+    fn first_forced_child(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        parent: usize,
+    ) -> Option<usize> {
+        *self.forced_first_children.entry(parent).or_insert_with(|| {
+            // Generated before content is not an arena child. Even a
+            // zero-height generated box precedes the forced boundary.
+            if super::renders_before_pseudo(cascade, parent) {
+                return None;
+            }
+            // An IFC keeps its block tokens outside the box child
+            // list. Its source children still give the leading order.
+            let node = &document.nodes[parent];
+            let children = if node.layout_children().is_empty()
+                && document
+                    .ifc_layout_node(parent)
+                    .is_some_and(|node| node.ifc.is_some())
+            {
+                &node.children
+            } else {
+                node.layout_children()
+            };
+            children.iter().copied().find(|&sibling| {
+                super::sibling_renders(document, sibling)
+                    && !(document.nodes[sibling].kind() == NodeKind::Element
+                        && matches!(
+                            document.nodes[sibling].position(),
+                            super::PositionValue::Absolute | super::PositionValue::Fixed
+                        ))
+            })
+        })
+    }
+
+    /// Whether a box that `node_id` begins has a forced break before it that
+    /// `node_id` holds (see [`Self::forced_holder`]): the break then sits
+    /// before `node_id` too, between it and the box before it.
+    pub(super) fn holds_forced_child_break(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+    ) -> bool {
+        let mut parent = node_id;
+        while let Some(child) = self.first_forced_child(document, cascade, parent) {
+            if super::forces_page_break(document, cascade, child, true) {
+                return self
+                    .forced_holder(document, cascade, body_id, child)
+                    .is_some_and(|(holder, _)| holder == node_id);
+            }
+            if document.nodes[child].kind() != NodeKind::Element
+                || !(is_plain_block_box(document, child)
+                    || document.nodes[child].display() == DisplayValue::Contents)
+            {
+                return false;
+            }
+            parent = child;
+        }
+        false
     }
 
     /// Whether the page that starts at `page_start` holds nothing above

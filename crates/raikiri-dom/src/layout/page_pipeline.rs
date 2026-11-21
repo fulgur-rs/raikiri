@@ -16812,12 +16812,20 @@ impl SiblingMargins {
                 underflows: false,
             });
         }
-        let natural_page = run_end.map_or(at.natural_page, |end| {
+        let mut natural_page = run_end.map_or(at.natural_page, |end| {
             page_origins.start_page(effective_y, end.height)
         });
         let margin_node = run_end.map_or(node_id, |end| end.node_id);
-        let page_top = page_origins.origin(natural_page);
         let previous_bottom = effective_y - gap;
+        // A margin that ends right at a page edge holds no break there; the
+        // first edge it crosses is one page up, when it reaches that far.
+        if natural_page > 1
+            && (effective_y - page_origins.origin(natural_page)).abs() <= 0.001
+            && previous_bottom <= page_origins.origin(natural_page - 1) + 0.001
+        {
+            natural_page -= 1;
+        }
+        let page_top = page_origins.origin(natural_page);
         // The float landed where the margin it was placed after collapsed
         // to, so the box after it may already sit at the top of the page,
         // above the margin that the break keeps. Moving the box down moves
