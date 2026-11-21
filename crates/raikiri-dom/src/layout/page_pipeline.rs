@@ -12647,16 +12647,44 @@ fn content_bottom_edges(
 ) -> Option<f32> {
     let node = &document.nodes[node_id];
     let edges = node.layout.padding.bottom + node.layout.border.bottom;
-    (edges > 0.0
-        && node.kind() == NodeKind::Element
+    (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
         && node.multicol.is_none()
-        && (node.is_ifc_root() || moves_later_siblings(document, node_id))
+        && if edges > 0.0 {
+            node.is_ifc_root() || moves_later_siblings(document, node_id)
+        } else {
+            // A set height keeps the place of the line in the block.
+            document.block_axis(node_id).height().is_auto()
+                && closes_forced_block_with_line(document, cascade, node_id)
+        }
         && (height_follows_content(document, node_id)
             || min_height_left_behind(document, node_id)
             || content_ends_above_edges(document, cascade, body_id, node_id)
             || ends_with_collapsed_empty_box(document, cascade, node_id)))
     .then_some(edges)
+}
+
+/// Whether the paragraph `root` closes a block among its lines that forces a
+/// page break after itself with a line of its own (see
+/// [`line_follows_paragraph_block`]). That line starts the page the break
+/// opens, empty as it may be, so the paragraph ends there like one whose
+/// bottom padding and border the break carries over: a break forced after
+/// the paragraph or before the box after it opens one more page (Chromium).
+fn closes_forced_block_with_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> bool {
+    document.nodes[root]
+        .children
+        .iter()
+        .filter(|&&child| document.nodes[child].display() == DisplayValue::Inline)
+        .any(|&child| {
+            document.preorder(child).skip(1).any(|id| {
+                forces_page_break(document, cascade, id, false)
+                    && line_follows_paragraph_block(document, cascade, root, id)
+            })
+        })
 }
 
 /// Whether the flow of the block `node_id`, whose height nothing caps, ends
