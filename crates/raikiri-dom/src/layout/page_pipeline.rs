@@ -10377,21 +10377,27 @@ impl PendingBreak {
     /// break forced after a box around that one, or one that was pending
     /// before the flow entered that box, is pending again.
     fn leave_scopes(&mut self, document: &Document, node_id: usize) {
-        if self.source.is_some() && !in_break_scope(document, self.scope, node_id) {
-            self.source = None;
-            self.line_peers.clear();
-            while let Some(outer) = self.enclosing.pop() {
-                if in_break_scope(document, outer.scope, node_id) {
-                    self.restore(outer);
-                    break;
+        loop {
+            if self.source.is_some() && !in_break_scope(document, self.scope, node_id) {
+                self.source = None;
+                self.line_peers.clear();
+                while let Some(outer) = self.enclosing.pop() {
+                    if in_break_scope(document, outer.scope, node_id) {
+                        self.restore(outer);
+                        break;
+                    }
                 }
             }
-        }
-        while self
-            .suspended
-            .last()
-            .is_some_and(|&(scope, _)| !in_break_scope(document, Some(scope), node_id))
-        {
+            if self
+                .suspended
+                .last()
+                .is_none_or(|&(scope, _)| in_break_scope(document, Some(scope), node_id))
+            {
+                return;
+            }
+            // A break restored here may lie in a positioned box that the
+            // node is outside of too: the next round drops it and restores
+            // the one before it.
             if let Some((_, outer)) = self.suspended.pop()
                 && self.source.is_none()
             {
