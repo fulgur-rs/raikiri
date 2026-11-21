@@ -2372,6 +2372,10 @@ fn place_wrapped_boxes(
                 .filter(|range| range.line_start < range.line_end)
                 .map(|range| range.fragmentainer),
         );
+        // A sliced box occupies every column a piece of it reaches.
+        if placement.sliced {
+            columns.extend(placement.first_column..=placement.last_column);
+        }
         let column_context = context.in_column(
             placement.first_column,
             context.origin_x + context.column_offset_x(placement.first_column),
@@ -2412,9 +2416,8 @@ fn record_wrapped_fragments(
             .and_then(|root| root.lines.as_ref())
             .filter(|_| !wrapped.placement.fragments.is_empty());
         // A sliced box with no lines has a piece in each column it reaches.
-        let sliced_leaf = lines.is_none()
-            && wrapped.placement.sliced
-            && wrapped.placement.fragments.len() > 1;
+        let sliced_leaf =
+            lines.is_none() && wrapped.placement.sliced && wrapped.placement.fragments.len() > 1;
         if lines.is_none() && !sliced_leaf {
             let fragment = tree
                 .fragment_tree
@@ -2454,6 +2457,10 @@ fn record_wrapped_fragments(
         let columns_top = -wrapped.parent.first_y;
         // What the pieces of a sliced box took of its block size so far.
         let mut taken = 0.0f32;
+        // A sliced box whose decorations slice paints whole in each piece,
+        // moved up by what the earlier pieces took, and the column clips it.
+        let whole_box = (sliced && lineless::slices_decorations(tree, wrapped.node))
+            .then_some(layout.size.height);
         for (index, range) in wrapped.placement.fragments.iter().enumerate() {
             let y = layout.location.y + range.y;
             let last = if sliced {
@@ -2488,12 +2495,19 @@ fn record_wrapped_fragments(
                 width: layout.size.width,
                 height,
             };
+            // A piece of a sliced box past its first holds none of its lines,
+            // and is placed as a box, so the column it is in counts as used.
+            let holds_lines = !sliced_leaf && (!sliced || range.line_start < range.line_end);
             // The clip cuts a piece at the block edges of its column, so the
             // lines of its neighbours stay out, and leaves the inline axis
             // open. The edge where the paragraph begins or ends has no
-            // neighbour behind it.
+            // neighbour behind it; a sliced box ends where its column does.
             let clip = (count > 1).then(|| {
-                let reach = paragraph_group::BLOCK_INK_REACH;
+                let reach = if sliced {
+                    0.0
+                } else {
+                    paragraph_group::BLOCK_INK_REACH
+                };
                 let top = if index == 0 {
                     columns_top - reach
                 } else {
@@ -2512,12 +2526,12 @@ fn record_wrapped_fragments(
                     node_id: wrapped.node,
                     parent: Some(parent_fragment),
                     fragmentainer: range.fragmentainer,
-                    rect,
+                    rect: lineless::sliced_rect(rect, whole_box.map(|whole| (taken, whole))),
                     fragmentainer_clip: clip,
                     fragment_index: index,
                     fragment_count: count,
-                    line_start: (!sliced_leaf).then_some(range.line_start),
-                    line_end: (!sliced_leaf).then_some(range.line_end),
+                    line_start: holds_lines.then_some(range.line_start),
+                    line_end: holds_lines.then_some(range.line_end),
                 })?;
             taken += height;
         }
