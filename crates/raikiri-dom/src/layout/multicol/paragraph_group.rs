@@ -437,6 +437,19 @@ struct Paragraph {
     /// piece of it fills the rest of each column it reaches. The lines of one
     /// that holds lines lie in its first piece.
     sliced: bool,
+    /// The padding above the first box of a wrapper, with the index of the
+    /// entry that closes the wrapper. A break between it and that box is a
+    /// last resort: the columns break before the wrapper when what comes
+    /// before it gives them a place to, and balance taller rather than take
+    /// that break.
+    opens: Option<usize>,
+    /// The padding below the last box of a wrapper. Balanced columns grow
+    /// rather than break between it and that box.
+    closes: bool,
+    /// A sized box with no lines. A column end may cut it even where these
+    /// columns hold it whole, so the padding above it needs none of it at the
+    /// top of a column.
+    sized_leaf: bool,
 }
 
 impl Paragraph {
@@ -445,6 +458,9 @@ impl Paragraph {
     /// then set. `lines` is the number of lines it holds, if any.
     fn whole_box(height: f32, margin_top: f32, margin_bottom: f32, lines: Option<usize>) -> Self {
         Self {
+            opens: None,
+            closes: false,
+            sized_leaf: false,
             extents: vec![(0.0, height)],
             margin_top,
             margin_bottom,
@@ -543,7 +559,16 @@ fn balanced(
     // least height that holds them. The margin below the last box does not
     // have to fit in the columns, but counts in what is divided.
     let group = fill(paragraphs, context, divided.max(high), false)?;
-    let height = divided.max(group.height);
+    // A last line that goes to the next column with the padding below it can
+    // leave every column shorter than the least height that holds the
+    // content: the columns keep that height, as Chromium balances them, at
+    // the layout unit just above the tallest height that failed.
+    let least = if group.height + 0.01 < low {
+        ((low * 64.0).floor() / 64.0 + 1.0 / 64.0).min(high)
+    } else {
+        group.height
+    };
+    let height = divided.max(least);
     Some((group, height))
 }
 
@@ -728,6 +753,12 @@ fn collect(
                 .then_some(())?;
             high += edge + margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
+                opens: match role {
+                    Role::Open(close) if edge > 0.0 => Some(close),
+                    _ => None,
+                },
+                closes: role == Role::Close && edge > 0.0,
+                sized_leaf: false,
                 extents: if edge > 0.0 {
                     vec![(0.0, edge)]
                 } else {
@@ -758,12 +789,10 @@ fn collect(
             .then_some(())?;
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             room = true;
-            paragraphs.push(Some(Paragraph::whole_box(
-                output.size.height,
-                margin_top,
-                margin_bottom,
-                None,
-            )));
+            paragraphs.push(Some(Paragraph {
+                sized_leaf: true,
+                ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None)
+            }));
             continue;
         }
         let node = layout_node(tree, child);
@@ -782,7 +811,10 @@ fn collect(
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
             paragraphs.push(Some(Paragraph {
+                opens: None,
+                closes: false,
                 sliced: lineless::slices_sized_leaf(tree, child),
+                sized_leaf: true,
                 ..whole
             }));
             continue;
@@ -823,6 +855,8 @@ fn collect(
             // does one with block margins, as a sized box with no lines
             // needs none to be sliced (see `lineless::is_sized_leaf`).
             paragraphs.push(Some(Paragraph {
+                opens: None,
+                closes: false,
                 sliced: flow.parents[index].is_none()
                     && margin_top == 0.0
                     && margin_bottom == 0.0
@@ -847,6 +881,8 @@ fn collect(
                 .map(|lines| lines.lines.len());
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
+                opens: None,
+                closes: false,
                 overflows: true,
                 ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, lines)
             }));
@@ -916,6 +952,9 @@ fn collect(
             has_empty = true;
             high += margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
+                opens: None,
+                closes: false,
+                sized_leaf: false,
                 extents: Vec::new(),
                 margin_top,
                 margin_bottom,
@@ -946,6 +985,9 @@ fn collect(
         high += height + margin_top.abs() + margin_bottom.abs();
         let (edge_start, edge_end) = block_edges(&layout);
         paragraphs.push(Some(Paragraph {
+            opens: None,
+            closes: false,
+            sized_leaf: false,
             extents,
             margin_top,
             margin_bottom,
@@ -1034,6 +1076,78 @@ fn fill(
         trailing_margin,
     )?;
     chunk.next.is_none().then_some(chunk.group)
+}
+
+/// The least block size that the padding of a wrapper, `padding` tall, takes
+/// at the top of a column together with what follows it, from
+/// `paragraphs[start]` up to `paragraphs[close]`, the end of the wrapper: the
+/// first lines that orphans keep together, or a box held whole, below the
+/// margins that collapse above it and the padding of the wrappers it opens. A
+/// box the columns slice takes the lines it holds, which stay in its first
+/// piece. A wrapper that holds nothing takes the padding below it.
+fn first_piece(paragraphs: &[Option<Paragraph>], padding: f32, start: usize, close: usize) -> f32 {
+    let mut need = padding;
+    let mut margins = Margins::default();
+    let end = close.min(paragraphs.len().saturating_sub(1));
+    for (index, paragraph) in paragraphs.iter().enumerate().take(end + 1).skip(start) {
+        let Some(paragraph) = paragraph else {
+            continue;
+        };
+        margins = margins.with(paragraph.margin_top);
+        let Some(&(first_top, first_bottom)) = paragraph.extents.first() else {
+            margins = margins.with(paragraph.margin_bottom);
+            continue;
+        };
+        need = (need + margins.value()).max(0.0);
+        margins = Margins::default();
+        if index == close {
+            return need + first_bottom - first_top;
+        }
+        if paragraph.opens.is_some() || paragraph.closes {
+            // The padding of a wrapper inside, and below one that holds
+            // nothing before it.
+            need += first_bottom - first_top;
+            margins = margins.with(paragraph.margin_bottom);
+            continue;
+        }
+        if paragraph.sliced || paragraph.sized_leaf {
+            return need + paragraph.held_lines.map_or(0.0, |_| paragraph.held_reach);
+        }
+        let lines = paragraph.orphans.clamp(1, paragraph.extents.len());
+        let mut piece = paragraph.edge_start + paragraph.extents[lines - 1].1 - first_top;
+        if lines == paragraph.extents.len() || paragraph.cloned {
+            piece += paragraph.edge_end;
+        }
+        return need + piece;
+    }
+    need
+}
+
+/// The room below the last line of `last`, which is `paragraphs[index]`, that
+/// stays with it: the padding below the wrappers that end right after it,
+/// with the margins between, which collapse as they do in the columns.
+fn closing_room(paragraphs: &[Option<Paragraph>], index: usize, last: &Paragraph) -> f32 {
+    let mut margins = Margins::default().with(last.margin_bottom);
+    let mut room = 0.0;
+    for paragraph in paragraphs
+        .get(index + 1..)
+        .unwrap_or_default()
+        .iter()
+        .flatten()
+    {
+        if paragraph.closes {
+            room += margins.with(paragraph.margin_top).value() + paragraph.extents[0].1
+                - paragraph.extents[0].0;
+            margins = Margins::default().with(paragraph.margin_bottom);
+        } else if paragraph.extents.is_empty() && paragraph.opens.is_none() {
+            margins = margins
+                .with(paragraph.margin_top)
+                .with(paragraph.margin_bottom);
+        } else {
+            break;
+        }
+    }
+    f32::max(room, 0.0)
 }
 
 /// [`fill`] that places even a remainder below a layout unit that a sliced box
@@ -1163,6 +1277,39 @@ fn fill_chunk_with(
             continue;
         }
         cut_margins = false;
+        if let Some(close) = paragraph.opens {
+            // The padding of a wrapper and the first piece of what it holds
+            // go together, unless no other break leaves room for them.
+            let need = first_piece(
+                paragraphs,
+                paragraph.extents[0].1 - paragraph.extents[0].0,
+                paragraph_index + 1,
+                close,
+            );
+            if top + need > height + f32::EPSILON {
+                if column_has_content && need <= height + f32::EPSILON {
+                    // The column breaks before the wrapper, which cuts the
+                    // margin above it.
+                    maximum = maximum.max(cursor);
+                    column = column.checked_add(1)?;
+                    if column >= context.column_count {
+                        return Some(Chunk {
+                            group: finish_group(placements, height),
+                            next: Some(FlowCursor {
+                                paragraph: paragraph_index,
+                                line: 0,
+                            }),
+                        });
+                    }
+                    top = 0.0;
+                    column_has_content = false;
+                } else if strict {
+                    // Balanced columns grow rather than break below the
+                    // padding.
+                    return None;
+                }
+            }
+        }
         if paragraph.sliced {
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
             let mut fragments: Vec<MulticolTextFragment> = Vec::new();
@@ -1254,14 +1401,18 @@ fn fill_chunk_with(
                 + paragraph.extents[start..].partition_point(|extent| {
                     extent.1 - origin + lead + tail <= available + f32::EPSILON
                 });
-            // The last line stays with the edge below it: when the edge does
-            // not fit after it, the line goes to the next column, to be
-            // followed there by the edge, so that the paragraph does not
-            // break between its last line and its bottom padding or border.
-            if end == line_count
-                && paragraph.extents[line_count - 1].1 - origin + lead + paragraph.edge_end
-                    > available + f32::EPSILON
-            {
+            // The last line stays with the edge below it, and with the
+            // padding below the wrappers it ends: when the edge does not fit
+            // after it, the line goes to the next column, to be followed there
+            // by the edge, so that no break falls between the last line and
+            // the bottom padding or border.
+            let held_with_edge = end == line_count
+                && paragraph.extents[line_count - 1].1 - origin
+                    + lead
+                    + paragraph.edge_end
+                    + closing_room(paragraphs, paragraph_index, paragraph)
+                    > available + f32::EPSILON;
+            if held_with_edge {
                 end -= 1;
             }
             let remaining = line_count - end;
@@ -1279,10 +1430,14 @@ fn fill_chunk_with(
                     // else the lines that fit stay and orphans and widows
                     // yield, as no later column would do better.
                     let decorated = paragraph.edge_start > 0.0 || paragraph.edge_end > 0.0;
+                    // Orphans and widows also yield when the edge below the
+                    // last line leaves no other break, as in Chromium.
                     end = if decorated && !column_has_content && fitting > start {
                         fitting
                     } else {
-                        relaxed_piece_end(paragraph, start, fitting, height).unwrap_or(start)
+                        relaxed_piece_end(paragraph, start, fitting, height)
+                            .or((held_with_edge && fitting > start).then_some(fitting))
+                            .unwrap_or(start)
                     };
                 }
             }
@@ -2014,4 +2169,46 @@ fn holds_one_row_of_lines(tree: &LayoutSession<'_>, id: usize) -> bool {
         }
     }
     has_line
+}
+
+#[cfg(test)]
+mod first_piece_tests {
+    use super::*;
+
+    /// The padding at the start or the end of a wrapper, `height` tall.
+    fn edge(height: f32, opens: Option<usize>, closes: bool) -> Option<Paragraph> {
+        Some(Paragraph {
+            opens,
+            closes,
+            sliced: true,
+            ..Paragraph::whole_box(height, 0.0, 0.0, None)
+        })
+    }
+
+    #[test]
+    fn a_sized_box_with_no_lines_adds_nothing_below_the_padding() {
+        let paragraphs = [
+            edge(3.0, Some(2), false),
+            Some(Paragraph {
+                sized_leaf: true,
+                ..Paragraph::whole_box(20.0, 0.0, 0.0, None)
+            }),
+            edge(4.0, None, true),
+        ];
+        assert_eq!(first_piece(&paragraphs, 3.0, 1, 2), 3.0);
+    }
+
+    #[test]
+    fn a_wrapper_that_holds_nothing_takes_its_paddings() {
+        let paragraphs = [edge(3.0, Some(2), false), None, edge(4.0, None, true)];
+        assert_eq!(first_piece(&paragraphs, 3.0, 1, 2), 7.0);
+        let empty = || {
+            Some(Paragraph {
+                extents: Vec::new(),
+                ..Paragraph::whole_box(0.0, 0.0, 0.0, None)
+            })
+        };
+        let paragraphs = [edge(3.0, Some(2), false), empty(), empty()];
+        assert_eq!(first_piece(&paragraphs, 3.0, 1, 2), 3.0);
+    }
 }
