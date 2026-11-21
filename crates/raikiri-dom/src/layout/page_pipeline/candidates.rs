@@ -1727,14 +1727,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // takes the break there whatever holds that box: a flex item,
                 // a grid item or a table cell, anonymous or not.
                 // The same holds in the flow inside an absolutely positioned
-                // box left at its static position, which takes the breaks
-                // forced inside it.
+                // box, which takes the breaks forced inside it, though not
+                // inside a fixed box.
                 let in_static_positioned_flow = out_of_flow_subtree
-                    && !inset_out_of_flow_subtree
                     && !inside_float
                     && !inline_level
                     && !is_float
-                    && !super::is_out_of_flow_positioned(document, node_id);
+                    && !super::is_out_of_flow_positioned(document, node_id)
+                    && super::splits_at_forced_breaks(document, node_id);
                 let after_forced_break = self.forces_break_after
                     && (in_any_flow || in_static_positioned_flow)
                     && is_plain_block_box(document, node_id)

@@ -465,7 +465,46 @@ fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
         2,
         &["T@0:40", "U@1:0", "V@0:70", "W@1:0", "Z@0:40"],
     );
-    // An inset absolute box beside the flow inside its container.
+    // An absolute box inside the one that breaks, which its own break
+    // splits, with nothing between the two breaks.
+    expect(
+        &relative(
+            "<div>T</div><div style='position:absolute;width:20px'>\
+             <div style='break-after:page'>V</div><div>W</div></div>\
+             <div style='break-before:page'>U</div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "V@0:70", "W@1:0", "Z@0:40"],
+    );
+    // The box after the break already at the top of the next page.
+    expect(
+        &format!(
+            "<div style='width:20px'><div style='height:10px'></div><div style='position:relative'>\
+             <div style='position:absolute;width:20px'><div style='height:90px;break-after:page'></div>\
+             <div>U</div></div></div>Z<div>Y</div><div>X</div></div>"
+        ),
+        2,
+        &["U@1:0", "X@0:70", "Y@0:40", "Z@0:10"],
+    );
+    // Straight inside the body.
+    expect(
+        &format!(
+            "<div style='height:40px'></div><div style='position:absolute;width:20px'>{tail}\
+             <div>U</div></div><div>Z</div>"
+        ),
+        2,
+        &["T@0:40", "U@1:0", "Z@0:40"],
+    );
+    // An inset absolute box beside the flow inside its container, with a
+    // break before a box or after one.
+    expect(
+        &after_spacer(&format!(
+            "<div style='position:relative'><div style='position:absolute;top:0;width:20px'>\
+             {tail}<div style='border-top:5px solid'>U</div></div>Y</div>"
+        )),
+        2,
+        &["T@0:40", "U@1:5", "Y@0:40", "Z@0:70"],
+    );
     expect(
         &after_spacer(
             "<div style='position:relative'><div style='position:absolute;top:0;width:20px'>\
@@ -511,5 +550,28 @@ fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
         ),
         2,
         &["T@0:70", "U@1:0", "X@0:40", "Z@0:70"],
+    );
+}
+
+#[test]
+fn a_break_forced_inside_a_fixed_box_breaks_no_page() {
+    // A fixed box takes no break, nor does an absolute box inside one.
+    for body in [
+        "<div style='position:fixed;width:20px'><div style='height:20px;break-after:page'>T</div>\
+         <div>U</div></div>",
+        "<div style='position:fixed;width:20px'><div style='height:20px;break-after:page'>T</div>U</div>",
+        "<div style='position:fixed;top:0;left:50px;width:20px'><div style='position:absolute;width:20px'>\
+         <div style='break-after:page'>T</div><div>U</div></div></div>",
+    ] {
+        assert_eq!(lines(&after_spacer(body)).0, 1, "{body}");
+    }
+    expect(
+        &after_spacer(
+            "<div style='position:fixed;top:0;left:50px;width:20px'>\
+             <div style='position:absolute;width:20px'><div style='break-after:page'>T</div>\
+             <div>U</div></div></div>",
+        ),
+        1,
+        &["T@0:0", "U@0:30", "Z@0:40"],
     );
 }
