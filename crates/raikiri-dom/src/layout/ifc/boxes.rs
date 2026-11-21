@@ -1629,11 +1629,26 @@ fn run_boxes_segment(
                 // it on a new page, which the floats before the break do not
                 // reach: the lines get clearance past them, as a block after
                 // the break does (CSS Fragmentation 3, 3.1).
-                if tree
+                // When the block ends with a float that took the break and
+                // starts the new page, the lines line up beside that float,
+                // below the floats before it only.
+                let block_id = node.0 as usize;
+                let threshold = if tree
                     .forced_break_line_clearance
-                    .binary_search(&(node.0 as usize))
+                    .binary_search(&block_id)
                     .is_ok()
-                    && let Some(threshold) = ctx.cleared_threshold(Clear::Both)
+                {
+                    ctx.cleared_threshold(Clear::Both)
+                } else if tree
+                    .forced_break_line_float_floor
+                    .binary_search(&block_id)
+                    .is_ok()
+                {
+                    ctx.page_start_float_floor()
+                } else {
+                    None
+                };
+                if let Some(threshold) = threshold
                     && threshold - top_edge > y + pending.resolve()
                 {
                     y = threshold - top_edge;
