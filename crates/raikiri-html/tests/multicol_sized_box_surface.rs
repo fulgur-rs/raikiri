@@ -313,3 +313,186 @@ fn a_sized_box_of_lines_in_a_wrapper_keeps_its_height() {
         );
     }
 }
+
+#[test]
+fn a_column_end_slices_a_sized_box_in_a_wrapper() {
+    assert_eq!(
+        balanced(&format!(
+            "<div><div style='height:50px'>ab</div>{NARROW}</div>"
+        )),
+        "ab@0,0 cd@100,5 ef@100,15 gh@100,25 ij@100,35 Z@0,45"
+    );
+    assert_eq!(
+        balanced(
+            "<div><div style='width:20px'>cd ef</div><div style='height:20px'>ab</div>\
+             <div style='width:20px'>gh ij kl</div></div>"
+        ),
+        "cd@0,0 ef@0,10 ab@0,20 gh@100,5 ij@100,15 kl@100,25 Z@0,35"
+    );
+    // Wrappers inside wrappers, and padding above the box.
+    assert_eq!(
+        balanced(&format!(
+            "<div><div><div style='height:50px'>ab</div></div>{NARROW}</div>"
+        )),
+        "ab@0,0 cd@100,5 ef@100,15 gh@100,25 ij@100,35 Z@0,45"
+    );
+    assert_eq!(
+        balanced(&format!(
+            "<div style='padding-top:5px'><div style='height:50px'>ab</div>{NARROW}</div>"
+        )),
+        "ab@0,5 cd@100,8 ef@100,18 gh@100,28 ij@100,38 Z@0,48"
+    );
+    // Three columns, where the box ends in the second.
+    assert_eq!(
+        words(
+            "<div style='columns:3;width:300px;column-gap:0'><div>\
+             <div style='height:70px'>ab</div>\
+             <div style='width:20px'>cd ef gh ij</div></div></div><div>Z</div>"
+        ),
+        "ab@0,0 cd@200,0 ef@200,10 gh@200,20 ij@200,30 Z@0,40"
+    );
+    // Definite columns.
+    assert_eq!(
+        filled(
+            "<ul style='margin:0;padding:0;list-style:none'><li style='width:20px'>cd ef</li>\
+             <li style='height:40px'>ab</li><li style='width:20px'>gh ij</li></ul>"
+        ),
+        "cd@0,0 ef@0,10 ab@0,20 gh@100,15 ij@100,25 Z@0,45"
+    );
+}
+
+#[test]
+fn a_column_end_slices_a_sized_box_with_no_lines_in_a_wrapper() {
+    assert_eq!(
+        balanced(&format!(
+            "<div><div style='height:50px'></div>{NARROW}</div>"
+        )),
+        "cd@100,5 ef@100,15 gh@100,25 ij@100,35 Z@0,45"
+    );
+    assert_eq!(
+        filled(
+            "<div><div style='width:20px'>cd ef</div><div style='height:40px'></div>\
+             <div style='width:20px'>gh ij</div></div>"
+        ),
+        "cd@0,0 ef@0,10 gh@100,15 ij@100,25 Z@0,45"
+    );
+}
+
+#[test]
+fn a_sized_list_item_is_a_sized_box_of_lines() {
+    let list = |items: &str| {
+        balanced(&format!(
+            "<ul style='margin:0;padding:0;list-style:none'>{items}</ul>"
+        ))
+    };
+    assert_eq!(
+        list("<li style='height:20px'>ab</li><li style='width:20px'>cd ef gh ij</li>"),
+        "ab@0,0 cd@0,20 ef@0,30 gh@100,0 ij@100,10 Z@0,40"
+    );
+    assert_eq!(
+        list("<li style='height:20px'>ab cd</li><li style='width:20px'>ef gh ij kl mn op</li>"),
+        "ab@0,0 cd@30,0 ef@0,20 gh@0,30 ij@100,0 kl@100,10 mn@100,20 op@100,30 Z@0,40"
+    );
+    assert_eq!(
+        list("<li style='height:50px'>ab</li><li style='width:20px'>cd ef gh ij</li>"),
+        "ab@0,0 cd@100,5 ef@100,15 gh@100,25 ij@100,35 Z@0,45"
+    );
+    assert_eq!(
+        filled(
+            "<ul style='margin:0;padding:0;list-style:none'><li style='height:30px'>ab</li>\
+             <li style='width:20px'>cd ef gh ij</li></ul>"
+        ),
+        "ab@0,0 cd@100,0 ef@100,10 gh@100,20 ij@100,30 Z@0,45"
+    );
+}
+
+#[test]
+fn the_pieces_of_a_sliced_box_in_a_wrapper_fill_their_columns() {
+    let result = lay_out(
+        "<div style='columns:2;width:200px;column-gap:0'><div>\
+         <div style='height:50px;background:green'>ab</div>\
+         <div style='width:20px'>cd ef gh ij</div></div></div>",
+    );
+    let page = result.page(0).expect("one page");
+    // The wrapper, which paints nothing, then the pieces of the sized box.
+    let pieces: Vec<_> = page
+        .fragments()
+        .filter(|fragment| fragment.kind() == FragmentKind::Box && fragment.rect().width == 100.0)
+        .map(|fragment| {
+            let rect = fragment.rect();
+            (rect.x, rect.y, rect.height)
+        })
+        .collect();
+    assert_eq!(
+        pieces,
+        [(0.0, 0.0, 45.0), (0.0, 0.0, 45.0), (100.0, 0.0, 5.0)]
+    );
+}
+
+#[test]
+fn a_column_holding_only_a_piece_of_a_sliced_box_in_a_wrapper_has_a_rule_before_it() {
+    let content = "<div><div style='width:20px'>cd ef</div><div style='height:60px'>ab</div></div>";
+    let result = lay_out(&format!(
+        "<div style='columns:2;width:200px;column-gap:0;column-rule:2px solid'>{content}</div>"
+    ));
+    let rules = result
+        .page(0)
+        .expect("one page")
+        .paint_order()
+        .iter()
+        .filter(|event| matches!(event, PaintEvent::ColumnRule(_)))
+        .count();
+    assert_eq!(rules, 1);
+}
+
+#[test]
+fn a_sliced_box_in_a_wrapper_slices_its_borders_as_one_outside_it() {
+    // The boxes a column wide: the wrapper, if there is one, then the pieces
+    // of the bordered box.
+    let pieces = |content: &str| -> Vec<(f32, f32, f32)> {
+        let result = lay_out(&format!(
+            "<div style='columns:2;width:200px;column-gap:0'>{content}</div>"
+        ));
+        let page = result.page(0).expect("one page");
+        page.fragments()
+            .filter(|fragment| {
+                fragment.kind() == FragmentKind::Box && fragment.rect().width == 100.0
+            })
+            .map(|fragment| {
+                let rect = fragment.rect();
+                (rect.x, rect.y, rect.height)
+            })
+            .collect()
+    };
+    let bordered = "<div style='height:46px;border:2px solid'></div>\
+                    <div style='width:20px'>cd ef gh ij</div>";
+    let outside = pieces(bordered);
+    assert_eq!(outside.len(), 2, "{outside:?}");
+    assert_eq!(pieces(&format!("<div>{bordered}</div>"))[1..], outside[..]);
+}
+
+#[test]
+fn a_sized_box_with_no_lines_in_a_wrapper_fills_the_columns_between_its_ends() {
+    // The 100px box runs from the second line of the first column through the
+    // second column into the third.
+    assert_eq!(
+        words(
+            "<div style='columns:3;width:300px;column-gap:0'><div>\
+             <div style='width:20px'>ab</div><div style='height:100px'></div>\
+             <div style='width:20px'>cd ef</div></div></div><div>Z</div>"
+        ),
+        "ab@0,0 cd@200,23 ef@200,33 Z@0,43"
+    );
+}
+
+#[test]
+fn a_sized_box_in_a_wrapper_that_avoids_breaks_goes_whole_to_the_next_column() {
+    assert_eq!(
+        balanced(
+            "<div><div style='width:20px'>ab cd ef</div>\
+             <div style='height:30px;break-inside:avoid'></div>\
+             <div style='width:20px'>gh ij</div></div>"
+        ),
+        "ab@0,0 cd@0,10 ef@0,20 gh@100,30 ij@100,40 Z@0,50"
+    );
+}

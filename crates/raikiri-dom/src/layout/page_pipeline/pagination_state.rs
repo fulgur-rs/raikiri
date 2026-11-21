@@ -425,6 +425,25 @@ pub(super) struct PaginationState {
     pub(super) table_headers: HeaderRepeats,
     /// The table rows the flow is in, and the pages they start and end on.
     cell_rows: super::cell_rows::CellRows,
+    /// The spanner of a multicol container whose children are boxes that
+    /// the flow is in (see [`Self::leave_spanner`]).
+    open_spanner: Option<OpenSpanner>,
+}
+
+/// A spanner of a multicol container whose children are boxes, as the flow
+/// found it when it reached the spanner.
+#[derive(Clone, Copy)]
+struct OpenSpanner {
+    spanner: usize,
+    container: usize,
+    /// `flow_shift` when the flow reached the spanner.
+    flow_shift: f32,
+    /// How far the walks had asked the columns after the spanner to move.
+    column_shift: f32,
+    /// How much of that move the space above the columns took up.
+    absorbed: f32,
+    /// The top of the spanner.
+    top: f32,
 }
 
 /// A paragraph placed with a single unplaced line after a block child (see
@@ -488,6 +507,7 @@ impl PaginationState {
             entered_paragraphs: EnteredParagraphs::default(),
             table_headers,
             cell_rows: super::cell_rows::CellRows::default(),
+            open_spanner: None,
         }
     }
 
@@ -653,6 +673,7 @@ impl PaginationState {
             .enter(document, candidate.ifc_root, node_id);
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
         self.settle_shifts(document, env, candidate);
+        self.track_spanner(document, env, node_id);
         if !document.is_source_node(node_id) {
             return Ok(None);
         }
@@ -6029,6 +6050,73 @@ impl PaginationState {
         )
     }
 
+    /// Notes the spanner of a multicol container whose children are boxes
+    /// that the flow enters at `node_id`, and leaves the one it was in when
+    /// `node_id` lies outside it.
+    fn track_spanner(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+    ) {
+        if let Some(open) = self.open_spanner
+            && !super::is_descendant_or_self(document, node_id, open.spanner)
+        {
+            self.leave_spanner(document);
+        }
+        if self.open_spanner.is_none()
+            && let Some((spanner, container)) =
+                super::enclosing_box_column_spanner(document, env.cascade, node_id)
+        {
+            let (column_shift, absorbed) = column_moves(document, spanner);
+            self.open_spanner = Some(OpenSpanner {
+                spanner,
+                container,
+                flow_shift: self.flow_shift,
+                column_shift,
+                absorbed,
+                top: current_abs_y(document, spanner),
+            });
+        }
+    }
+
+    /// Ends the spanner the flow is in. The breaks inside it that moved the
+    /// flow after them by `flow_shift` alone, such as a moved table row,
+    /// move the columns after the spanner too: they start below it (CSS
+    /// Multi-column Layout 1, 6.1), and their boxes are placed from the
+    /// records the columns made rather than by the flow. The part of the
+    /// move that the spanner took up in the space above the columns moves
+    /// neither them nor the flow after the container.
+    pub(super) fn leave_spanner(&mut self, document: &mut LayoutSession<'_>) {
+        let Some(open) = self.open_spanner.take() else {
+            return;
+        };
+        let accrued = self.flow_shift - open.flow_shift;
+        // The walks that moved the boxes after the spanner moved its columns
+        // as they went.
+        let (column_shift, _) = column_moves(document, open.spanner);
+        let delta = accrued - (column_shift - open.column_shift);
+        if delta > 0.001 {
+            // Only what the breaks inside the spanner added grows it; the
+            // part of the move that took the spanner along with them, as a
+            // clearance above it does, leaves its height alone.
+            let moved = (current_abs_y(document, open.spanner) - open.top).clamp(0.0, delta);
+            for (part, grows) in [(moved, false), (delta - moved, true)] {
+                if part > 0.001 {
+                    super::shift_columns_after_spanner(
+                        document,
+                        open.container,
+                        open.spanner,
+                        part,
+                        grows,
+                    );
+                }
+            }
+        }
+        let (_, absorbed) = column_moves(document, open.spanner);
+        self.flow_shift -= (absorbed - open.absorbed).min(accrued.max(0.0));
+    }
+
     /// Settles the shifts that end or begin at `candidate`, before it is
     /// placed: those it has reached, those of the subtrees and the moved
     /// float it is outside of, and the clearance below the moved floats of
@@ -6558,6 +6646,20 @@ fn trailing_line_top(
         }
         current = last;
     }
+}
+
+/// How far the page walks have asked the columns after the spanner
+/// `spanner` to move, and how much of that the space above them took up.
+fn column_moves(document: &LayoutSession<'_>, spanner: usize) -> (f32, f32) {
+    (
+        document
+            .context
+            .spanner_column_shifts
+            .get(&spanner)
+            .copied()
+            .unwrap_or(0.0),
+        super::absorbed_by_slack(document, spanner),
+    )
 }
 
 /// The page that a float opened by taking a forced break.
