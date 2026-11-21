@@ -75,11 +75,9 @@ fn a_stretched_container_takes_the_height_of_the_flex_line() {
 
 #[test]
 fn a_container_that_is_not_stretched_keeps_its_content_height() {
-    let body = format!(
-        "<div style='display:flex;align-items:start'><div style='height:200px;width:10px'></div>\
-         <div id=m style='width:100px;columns:2;column-gap:0'><div>a</div></div></div>"
-    );
-    assert_eq!(rects(&body, "m"), vec![(10.0, 0.0, 100.0, 10.0)]);
+    let body = "<div style='display:flex;align-items:start'><div style='height:200px;width:10px'></div>\
+                <div id=m style='width:100px;columns:2;column-gap:0'><div>a</div></div></div>";
+    assert_eq!(rects(body, "m"), vec![(10.0, 0.0, 100.0, 10.0)]);
     // A line its own content makes taller than the sibling measures the
     // container as one column across its whole width; the container still
     // balances its columns and takes their height.

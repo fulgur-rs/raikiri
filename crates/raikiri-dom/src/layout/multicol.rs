@@ -213,13 +213,15 @@ pub(crate) fn compute_multicol_layout(
             _ => FlowPlacement::Stretched(false),
         }
     });
-    let stretched_height = inputs.known_dimensions.height.is_some()
-        && (inset_height
+    let stretched_height = inputs.known_dimensions.height.is_some_and(|height| {
+        (inset_height
             || matches!(
                 placement,
                 Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
             ))
-        && (style.height_definite || !sized_by_own_content(tree, node_id, &inputs, placement));
+            && (style.height_definite
+                || !sized_by_own_content(tree, node_id, &inputs, placement, height))
+    });
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -666,8 +668,8 @@ pub(crate) fn compute_multicol_layout(
     pass.finish(tree, node_id, &inputs, output)
 }
 
-/// Whether the height an auto-height flex line stretched the multicol
-/// container `node_id` to is only the height of its own content. The line
+/// Whether the height `stretched` an auto-height flex line stretched the
+/// multicol container `node_id` to is only the height of its own content. The line
 /// measures the container before it balances its columns, as one column
 /// across the whole width, and a line that nothing else makes taller gives
 /// that height back. Such a container balances its columns as one of auto
@@ -679,10 +681,8 @@ fn sized_by_own_content(
     node_id: NodeId,
     inputs: &LayoutInput,
     placement: Option<FlowPlacement>,
+    stretched: f32,
 ) -> bool {
-    let Some(stretched) = inputs.known_dimensions.height else {
-        return false;
-    };
     // A definite line or grid area bounds the columns instead.
     if inputs.run_mode != RunMode::PerformLayout
         || !matches!(placement, Some(FlowPlacement::Stretched(true)))
