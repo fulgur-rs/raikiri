@@ -2141,8 +2141,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             // far up as `avoided_box_holder` takes it, also
                             // when it moves for the margins of its items: not
                             // past padding or border above it, and not out of
-                            // columns, where it splits instead.
+                            // columns, where it splits instead. Nor does it
+                            // take a box it runs out of, such as a clip of a
+                            // smaller height, which holds it where it is.
                             .filter(|&holder| {
+                                let bottom = super::current_abs_y(document, node_id)
+                                    + node.layout.size.height;
                                 unbreakable_box
                                     || (flex_margins_base && !avoids_by_property)
                                     || document
@@ -2150,10 +2154,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                         .take_while(|&id| id != holder)
                                         .chain(std::iter::once(holder))
                                         .all(|id| {
-                                            let node = &document.nodes[id];
-                                            !node.is_multicol_container()
-                                                && node.layout.border.top == 0.0
-                                                && node.layout.padding.top == 0.0
+                                            let ancestor = &document.nodes[id];
+                                            !ancestor.is_multicol_container()
+                                                && ancestor.layout.border.top == 0.0
+                                                && ancestor.layout.padding.top == 0.0
+                                                && bottom
+                                                    <= super::current_abs_y(document, id)
+                                                        + ancestor.layout.size.height
+                                                        + 0.01
                                         })
                             });
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)

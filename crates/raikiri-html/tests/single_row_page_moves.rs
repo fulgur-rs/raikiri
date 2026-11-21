@@ -198,3 +198,14 @@ fn avoided_break_moves_the_clipping_block_it_begins() {
         vec![(0, 'A', 0, 0), (1, 'T', 0, 0), (2, 'Z', 0, 0)]
     );
 }
+
+#[test]
+fn avoided_break_stays_in_a_clipping_block_it_runs_out_of() {
+    let body = format!(
+        r#"{LEAD}<div style="height:40px;overflow:hidden"><div style="height:60px;break-inside:avoid">T</div></div><div>Z</div>"#
+    );
+    assert_eq!(
+        glyphs(&body),
+        vec![(0, 'A', 0, 0), (0, 'T', 0, 60), (1, 'Z', 0, 0)]
+    );
+}
