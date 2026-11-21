@@ -126,12 +126,18 @@ fn beside_floats(
 /// Float placement storage owned by one CSS block formatting context.
 pub(crate) struct BlockFormattingContext {
     floats: Arc<FloatContext>,
+    /// How low the floats reached before the float that last started a
+    /// page, in the float storage's own coordinates. The context keeps it
+    /// rather than the block that holds that float, so the box after it
+    /// sees it when that block ends with the float.
+    page_start_floor: Option<f32>,
 }
 
 impl BlockFormattingContext {
     pub(crate) fn new() -> Self {
         Self {
             floats: Arc::new(FloatContext::new()),
+            page_start_floor: None,
         }
     }
 
@@ -164,9 +170,6 @@ struct FlowState {
     leading_adjoining: Option<[bool; 2]>,
     resolved: bool,
     leading_strut: Option<LeadingStrut>,
-    /// How low the floats reached before the float that starts a page, in the
-    /// float storage's own coordinates.
-    page_start_floor: Option<f32>,
 }
 
 impl FlowState {
@@ -177,7 +180,6 @@ impl FlowState {
             leading_adjoining: None,
             resolved: false,
             leading_strut: None,
-            page_start_floor: None,
         }
     }
 }
@@ -186,6 +188,7 @@ impl FlowState {
 /// Saved float storage is shared until placement or width changes require a copy.
 pub(crate) struct BlockContextSnapshot {
     floats: Arc<FloatContext>,
+    page_start_floor: Option<f32>,
     state: FlowState,
     content_insets: [f32; 2],
 }
@@ -206,6 +209,7 @@ impl FloatView {
     pub(crate) fn query<R>(&self, query: impl FnOnce(&BlockContext<'_>) -> R) -> R {
         let mut owner = BlockFormattingContext {
             floats: Arc::clone(&self.floats),
+            page_start_floor: None,
         };
         let context = BlockContext {
             owner: &mut owner,
@@ -315,6 +319,7 @@ impl BlockContext<'_> {
     pub(crate) fn snapshot(&self) -> BlockContextSnapshot {
         BlockContextSnapshot {
             floats: Arc::clone(&self.owner.floats),
+            page_start_floor: self.owner.page_start_floor,
             state: self.state,
             content_insets: self.content_insets,
         }
@@ -322,6 +327,7 @@ impl BlockContext<'_> {
 
     pub(crate) fn restore(&mut self, saved: &BlockContextSnapshot) {
         self.owner.floats = Arc::clone(&saved.floats);
+        self.owner.page_start_floor = saved.page_start_floor;
         self.state = saved.state;
         self.content_insets = saved.content_insets;
     }
@@ -614,12 +620,12 @@ impl BlockContext<'_> {
     /// the float about to be placed when it starts a page: the box after it
     /// is held below them but not below that float.
     pub(crate) fn record_page_start_float_floor(&mut self, clear: Clear) {
-        self.state.page_start_floor = self.owner.floats.cleared_threshold(clear);
+        self.owner.page_start_floor = self.owner.floats.cleared_threshold(clear);
     }
 
     /// The floor recorded for the last float that started a page.
     pub(crate) fn page_start_float_floor(&self) -> Option<f32> {
-        self.state.page_start_floor.map(|floor| floor - self.origin)
+        self.owner.page_start_floor.map(|floor| floor - self.origin)
     }
 
     pub(crate) fn has_adjoining_float(&self, clear: Clear) -> bool {
