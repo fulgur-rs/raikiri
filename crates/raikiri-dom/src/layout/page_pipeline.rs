@@ -13888,18 +13888,12 @@ fn lone_box_with_floats(
         }
         let mut boxes = Vec::new();
         let mut first_box = None;
-        // The floats after the first box, judged once it is known whether
-        // other boxes follow that box.
-        let mut later_floats = Vec::new();
+        // The floats, each with whether it comes after the first box: those
+        // are judged once it is known whether other boxes follow that box.
+        let mut floats = Vec::new();
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
-                if !boxes.is_empty() {
-                    later_floats.push(child);
-                    continue;
-                }
-                if !accept_float(child, &mut float_bottom) {
-                    return None;
-                }
+                floats.push((child, !boxes.is_empty()));
                 continue;
             }
             let before = boxes.len();
@@ -13920,13 +13914,14 @@ fn lone_box_with_floats(
         let node_end =
             current_abs_y(document, node_id) + document.nodes[node_id].layout.size.height;
         let mut followed = boxes.len() > 1;
-        if !followed {
-            for &float in &later_floats {
-                if !edges_follow && float_extent(document, float).0 >= node_end - 0.001 {
-                    followed = true;
-                } else if !accept_float(float, &mut float_bottom) {
-                    return None;
-                }
+        for &(float, after_box) in &floats {
+            if after_box
+                && (followed
+                    || (!edges_follow && float_extent(document, float).0 >= node_end - 0.001))
+            {
+                followed = true;
+            } else if !accept_float(float, &mut float_bottom) {
+                return None;
             }
         }
         if followed {
