@@ -234,27 +234,30 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
     }
 }
 
-/// A spanner of `height` that holds `children` empty blocks, laid out on a
-/// page. Returns the document with its cascade and the spanner.
-fn spanner_with_blocks(
-    children: usize,
-    height: f32,
+/// A spanner that holds `depth` blocks nested in one another, each with a
+/// padding of 5px at its top, the innermost one empty but for a bottom border
+/// of 3px, and then `siblings` empty blocks of 10px. Returns the document with
+/// its cascade and the spanner.
+fn nested_spanner(
+    depth: usize,
+    siblings: usize,
 ) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Some("display:block"));
     document.append_element(Some(html), "head", None::<&str>);
-    let body = document.append_element(
-        Some(html),
-        "body",
-        Some("display:block;margin:0;font:10px/10px Ahem"),
-    );
-    let spanner = document.append_element(
-        Some(body),
-        "div",
-        Some(format!("display:block;height:{height}px")),
-    );
-    for _ in 0..children {
-        document.append_element(Some(spanner), "div", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let spanner = document.append_element(Some(body), "div", Some("display:block"));
+    let mut parent = spanner;
+    for level in 0..depth {
+        let style = if level + 1 == depth {
+            "display:block;padding-top:5px;border-bottom:3px solid"
+        } else {
+            "display:block;padding-top:5px"
+        };
+        parent = document.append_element(Some(parent), "div", Some(style));
+    }
+    for _ in 0..siblings {
+        document.append_element(Some(spanner), "div", Some("display:block;height:10px"));
     }
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();
@@ -265,67 +268,35 @@ fn spanner_with_blocks(
     (document, cascade, spanner)
 }
 
-/// Pages of 10px each, as `(index, origin, height)`.
-fn short_pages(y: f32) -> (u32, f32, f32) {
-    let index = (y / 10.0).floor() as u32;
-    (index, index as f32 * 10.0, 10.0)
-}
-
-/// The scan of a spanner that starts 5px into the first page, so that it
-/// crosses the page ends at 10, 20, ..., 200.
-fn scan_cost(control: &PageLayoutControl<'_>) -> (Result<bool, LayoutError>, usize) {
-    let (mut document, cascade, spanner) = spanner_with_blocks(50, 200.0);
+/// The first piece of a spanner holding 4 nested blocks and 50 blocks after
+/// them, with the work it charged.
+fn piece_cost(control: &PageLayoutControl<'_>) -> (Result<f32, LayoutError>, usize) {
+    let (mut document, cascade, spanner) = nested_spanner(4, 50);
     let tree = crate::layout::context::LayoutSession::bridged(&mut document, &cascade);
     let mut work = ProjectionWork::new(control, 10_000);
-    let result = breaks_at_every_page_end(&tree, spanner, 5.0, 10.0, &short_pages, &mut work);
+    let result = first_piece_end(&tree, spanner, &mut work);
     (result, 10_000 - work.remaining())
 }
 
 #[test]
-fn the_scan_of_a_spanner_charges_each_box_and_each_page_end_once() {
-    let (result, cost) = scan_cost(&PageLayoutControl::new(None));
-    assert!(result.unwrap());
-    // The spanner and its 50 blocks are visited once, whatever the number of
-    // page ends, and each of the 20 page ends is charged.
-    assert_eq!(cost, 51 + 20);
+fn the_first_piece_of_a_spanner_runs_down_its_first_boxes() {
+    let (result, cost) = piece_cost(&PageLayoutControl::new(None));
+    // The top padding of each nested block and the innermost one, which has
+    // nothing in it but its border, no page cuts. Only the spanner and the
+    // first box at each level are visited, whatever comes after them.
+    assert_eq!(result.unwrap(), 4.0 * 5.0 + 3.0);
+    assert_eq!(cost, 5);
 }
 
 #[test]
-fn the_scan_of_a_spanner_stops_where_discovery_truncates_at_the_page_limit() {
-    let control = PageLayoutControl::for_geometry_discovery(Some(3));
-    let (result, cost) = scan_cost(&control);
-    // Pages 1 and 2 exist; the cut at the end of page 2 would continue on page
-    // 3, which discovery does not lay out.
-    assert!(result.unwrap());
-    assert!(control.page_limit_reached());
-    assert_eq!(cost, 51 + 3);
-}
-
-#[test]
-fn the_scan_of_a_spanner_fails_at_the_page_limit_of_a_strict_control() {
-    let (result, cost) = scan_cost(&PageLayoutControl::new(Some(3)));
-    assert!(matches!(
-        result,
-        Err(LayoutError::PageLimitExceeded {
-            limit: 3,
-            actual: 4
-        })
-    ));
-    assert_eq!(cost, 51 + 3);
-}
-
-#[test]
-fn the_scan_of_a_spanner_checks_for_an_abort_while_it_visits_the_boxes() {
-    // The control is asked once per box visited. At each page end it is asked
-    // again when the page end is charged and when its page is looked up.
+fn the_first_piece_of_a_spanner_checks_for_an_abort_at_each_box() {
     let asked = std::cell::Cell::new(0_usize);
     let abort = || {
         asked.set(asked.get() + 1);
-        asked.get() > 10
+        asked.get() > 2
     };
     let control = PageLayoutControl::new(None).with_abort_check(&abort);
-    let (result, cost) = scan_cost(&control);
+    let (result, _) = piece_cost(&control);
     assert!(matches!(result, Err(LayoutError::Aborted)));
-    assert_eq!(asked.get(), 11);
-    assert_eq!(cost, 10);
+    assert_eq!(asked.get(), 3);
 }
