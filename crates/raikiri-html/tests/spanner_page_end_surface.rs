@@ -400,3 +400,64 @@ fn a_box_in_a_wrapper_keeps_its_lines_when_the_spanner_before_it_moves() {
         assert_eq!(words(body), sorted(expected), "{body}");
     }
 }
+
+#[test]
+fn a_spanner_breaks_at_a_page_end_around_a_multicol_with_spanners_of_its_own() {
+    // The columns of the multicol inside the spanner start its first piece,
+    // and the columns after the inner spanner follow what the page moves
+    // inside it, as do the columns after the outer one.
+    for (body, expected) in [
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div class='m'><div>B</div><div style='column-span:all'><div style='height:50px'>S</div><table style='border-spacing:0'><tr><td style='padding:0;width:20px'>aa bb cc</td></tr></table></div><div>C</div></div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 B@0:0,15 S@0:0,25 aa@0:0,75 bb@0:0,85 cc@1:0,0 C@1:0,10 D@1:0,20 X@1:0,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:5px'></div><div style='column-span:all'><div class='m'><div style='column-span:all'><div style='height:60px'>S</div><table style='border-spacing:0'><tr><td style='padding:0;width:20px'>aa bb cc</td></tr></table></div><div>C</div></div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 S@0:0,15 aa@0:0,75 bb@0:0,85 cc@1:0,0 C@1:0,10 D@1:0,20 X@1:0,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div class='m'><div>B</div><div style='column-span:all'><div style='height:75px'>S</div><div>aa</div><div>bb</div><div>cc</div></div><div>C</div><div>E</div></div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 B@0:0,10 S@0:0,20 aa@1:0,0 bb@1:0,10 cc@1:0,20 C@1:0,30 D@1:0,40 X@1:0,50 E@1:50,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div class='m'><div>B</div><div style='column-span:all'><div style='height:65px'>S</div><div style='width:20px'>aa bb cc</div></div><div>C</div><div>E</div><div>F</div></div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 B@0:0,10 S@0:0,20 aa@1:0,0 bb@1:0,10 cc@1:0,20 C@1:0,30 E@1:0,40 D@1:0,50 X@1:0,60 F@1:50,30",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div class='m'><div>B</div><div style='column-span:all'><div style='height:65px'>S</div><div>aa</div><div>bb</div></div><div>C</div></div><div>T</div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 B@0:0,10 S@0:0,20 aa@0:0,85 bb@1:0,0 C@1:0,10 T@1:0,20 D@1:0,30 X@1:0,40",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div>P</div><div class='m'><div>B</div><div style='column-span:all'><div style='height:55px'>S</div><table style='border-spacing:0'><tr><td style='padding:0;width:20px'>aa bb cc</td></tr></table></div><div>C</div></div></div><div>D</div></div><div>X</div>",
+            "A@0:0,0 P@0:0,10 B@0:0,20 S@0:0,30 aa@1:0,0 bb@1:0,10 cc@1:0,20 C@1:0,30 D@1:0,40 X@1:0,50",
+        ),
+    ] {
+        assert_eq!(words(body), sorted(expected), "{body}");
+    }
+}
+
+#[test]
+fn a_spanner_breaks_at_a_page_end_inside_the_columns_it_starts_with() {
+    // A multicol at the top of a spanner breaks between its rows of boxes
+    // or lines as the page ends, so it leaves the spanner on its page.
+    for (body, expected) in [
+        (
+            "<div class='m'><div>A</div><div style='column-span:all'><div style='height:70px'>S</div><div class='m'><div>a</div><div>b</div><div>c</div><div>d</div><div>e</div><div>f</div></div></div><div>C</div></div><div>X</div>",
+            "A@0:0,0 S@0:0,10 a@0:0,80 b@0:0,90 c@0:50,80 d@0:50,90 e@1:0,0 C@1:0,10 X@1:0,20 f@1:50,0",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:60px'></div><div style='column-span:all'><div class='m'><div>a</div><div>b</div><div>c</div><div>d</div><div>e</div><div>f</div></div></div><div>C</div></div><div>X</div>",
+            "A@0:0,0 a@0:0,70 b@0:0,80 c@0:0,90 d@0:50,70 e@0:50,80 f@0:50,90 C@1:0,0 X@1:0,10",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:60px'></div><div style='column-span:all'><div class='m'><div>a<br>b<br>c<br>d<br>e<br>f</div></div></div><div>C</div></div><div>X</div>",
+            "A@0:0,0 a@0:0,70 b@0:0,80 c@0:0,90 d@0:50,70 e@0:50,80 f@0:50,90 C@1:0,0 X@1:0,10",
+        ),
+        (
+            "<div class='m'><div>A</div><div style='column-span:all;height:65px'></div><div style='column-span:all'><div class='m' style='overflow:hidden'><div>a</div><div>b</div><div>c</div><div>d</div><div>e</div><div>f</div></div></div><div>C</div></div><div>X</div>",
+            "A@0:0,0 a@0:0,75 b@0:0,85 c@0:50,75 d@0:50,85 e@1:0,0 C@1:0,10 X@1:0,20 f@1:50,0",
+        ),
+    ] {
+        assert_eq!(words(body), sorted(expected), "{body}");
+    }
+}

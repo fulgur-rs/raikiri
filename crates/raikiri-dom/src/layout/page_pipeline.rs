@@ -5663,7 +5663,7 @@ fn paginate_flow(
                 halt.finish()?;
             }
         }
-        state.leave_spanner(document);
+        state.leave_spanners(document);
         state.subtree_shifts.finish_rows(document);
         Ok(())
     })();
