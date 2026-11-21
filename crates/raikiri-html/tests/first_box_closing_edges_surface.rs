@@ -124,3 +124,46 @@ fn a_block_of_set_size_as_the_first_box_moves_its_parent() {
     let body = "<div style='height:40px'></div><div><div style='height:100px'><div style='height:51px;border-bottom:40px solid'><div style='height:60px'></div></div></div><div style='height:5px'></div></div><p style='margin:0'>K</p>";
     assert_eq!(marker(body), (2, 0, 0, 3), "{body}");
 }
+
+#[test]
+fn what_follows_the_first_box_stays_behind_it() {
+    let s = "<div style='height:40px'></div>";
+    let x = "<div style='border-bottom:40px solid'><div style='height:60px'></div></div>";
+    let k = "<p style='margin:0'>K</p>";
+    for (body, expected) in [
+        // A float beside a later box.
+        (
+            format!(
+                "{s}<div>{x}<div style='float:left;width:10px;height:50px'></div><div style='height:5px'></div></div>{k}"
+            ),
+            (2, 10, 0, 3),
+        ),
+        // A clip hides the border past the end of the block.
+        (
+            format!(
+                "{s}<div style='height:80px;overflow:hidden'>{x}<div style='height:5px'></div></div>{k}"
+            ),
+            (1, 0, 0, 2),
+        ),
+        // The padding around the block does not follow the first box.
+        (
+            format!(
+                "<div style='height:20px'></div><div style='padding-bottom:30px'><div style='height:80px'>{x}<div style='height:5px'></div></div></div>{k}"
+            ),
+            (1, 0, 30, 2),
+        ),
+        (
+            format!(
+                "{s}<div style='padding-bottom:30px'><div style='height:80px'>{x}<div style='height:5px'></div></div></div>{k}"
+            ),
+            (2, 0, 0, 3),
+        ),
+        // The border of the first box runs past the end of a short block.
+        (
+            format!("{s}<div style='height:80px'>{x}<div style='height:5px'></div></div>{k}"),
+            (1, 0, 80, 2),
+        ),
+    ] {
+        assert_eq!(marker(&body), expected, "{body}");
+    }
+}

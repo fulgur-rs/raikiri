@@ -2383,9 +2383,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 avoided_break_before: avoided_break_passed_on,
-                                closing_edges: if closing_edges_candidate
-                                    || lone_box_candidate.is_some()
+                                closing_edges: if lone_tail
+                                    .filter(|_| can_move_nested)
+                                    .is_some_and(|lone| lone.cut)
                                 {
+                                    0.0
+                                } else if closing_edges_candidate || lone_box_candidate.is_some() {
                                     frame.closing_edges
                                 } else {
                                     0.0
