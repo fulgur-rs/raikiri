@@ -478,13 +478,30 @@ fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
     );
     // The box after the break already at the top of the next page.
     expect(
-        &format!(
-            "<div style='width:20px'><div style='height:10px'></div><div style='position:relative'>\
+        "<div style='width:20px'><div style='height:10px'></div><div style='position:relative'>\
              <div style='position:absolute;width:20px'><div style='height:90px;break-after:page'></div>\
-             <div>U</div></div></div>Z<div>Y</div><div>X</div></div>"
-        ),
+             <div>U</div></div></div>Z<div>Y</div><div>X</div></div>",
         2,
         &["U@1:0", "X@0:70", "Y@0:40", "Z@0:10"],
+    );
+    // A float after the break, which takes nothing after it along, and the
+    // flow beside the absolute box.
+    expect(
+        &relative(
+            "<div style='height:20px;break-after:page'>T</div>\
+             <div style='float:left;width:20px'>U</div><div>V</div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "V@1:30", "Z@0:40"],
+    );
+    expect(
+        &after_spacer(
+            "<div style='position:relative'><div style='position:absolute;width:20px'>\
+             <div style='height:20px;break-after:page'>T</div>\
+             <div style='float:left;width:20px'>U</div></div><div>Y</div></div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "Y@0:40", "Z@0:70"],
     );
     // Straight inside the body.
     expect(
@@ -524,11 +541,9 @@ fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
     );
     // The flow after it runs on to the next page under its own breaks.
     expect(
-        &format!(
-            "<div style='width:20px'><div style='height:40px'></div><div style='position:relative'>\
+        "<div style='width:20px'><div style='height:40px'></div><div style='position:relative'>\
              <div style='position:absolute;width:20px'><div style='break-after:page'>T</div>\
-             <div>U</div></div></div>Z<div>A</div><div>B</div><div>C</div></div>"
-        ),
+             <div>U</div></div></div>Z<div>A</div><div>B</div><div>C</div></div>",
         2,
         &["A@0:70", "B@1:0", "C@1:30", "T@0:40", "U@1:0", "Z@0:40"],
     );
@@ -543,11 +558,9 @@ fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
     );
     // Inside an inline box.
     expect(
-        &format!(
-            "<div style='width:20px'><div style='height:40px'></div><span style='position:relative'>X\
+        "<div style='width:20px'><div style='height:40px'></div><span style='position:relative'>X\
              <span style='position:absolute;width:20px;display:block'>\
-             <span style='display:block;break-after:page'>T</span>U</span></span><div>Z</div></div>"
-        ),
+             <span style='display:block;break-after:page'>T</span>U</span></span><div>Z</div></div>",
         2,
         &["T@0:70", "U@1:0", "X@0:40", "Z@0:70"],
     );
