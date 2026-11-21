@@ -1292,9 +1292,8 @@ fn end_margin_escapes(tree: &LayoutSession<'_>, parent: usize, child: usize) -> 
 
 /// Lay `child` of the column container `parent` out with `input` as
 /// [`collapsing_through`] lays it out, and give its output with its
-/// block-start and block-end margins. A box with no block size that its
-/// margins collapse through is laid out with its children's margins inside
-/// it instead, as the placement of empty boxes collapses their own margins.
+/// block-start and block-end margins: the block-end margin collapsed with
+/// the ones inside it that adjoin its end.
 fn lay_out_column_child(
     tree: &mut LayoutSession<'_>,
     parent: usize,
@@ -1302,19 +1301,14 @@ fn lay_out_column_child(
     input: LayoutInput,
     column_width: f32,
 ) -> (LayoutOutput, BoxLayout, f32, f32) {
-    let collapsing = collapsing_through(tree, parent, child, input);
-    let output = tree.compute_child_layout(NodeId::from(child), collapsing);
-    let layout = column_child_layout(tree, child, column_width);
-    if !output.margins_can_collapse_through || !collapsing.vertical_margins_are_collapsible.end {
-        let bottom = output
-            .bottom_margin
-            .collapse_with_margin(layout.margin.bottom)
-            .resolve();
-        return (output, layout, layout.margin.top, bottom);
-    }
+    let input = collapsing_through(tree, parent, child, input);
     let output = tree.compute_child_layout(NodeId::from(child), input);
     let layout = column_child_layout(tree, child, column_width);
-    (output, layout, layout.margin.top, layout.margin.bottom)
+    let bottom = output
+        .bottom_margin
+        .collapse_with_margin(layout.margin.bottom)
+        .resolve();
+    (output, layout, layout.margin.top, bottom)
 }
 
 /// The left and right margins of a box that are not auto, with percentages
