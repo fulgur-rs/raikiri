@@ -145,3 +145,24 @@ fn the_columns_hold_at_least_the_stream_divided_among_them() {
                      <div style='contain:size;height:10px;margin-top:30px;margin-bottom:30px'></div>";
     assert_eq!(height("", collapsed), (40.0, 40.0));
 }
+
+#[test]
+fn margins_collapse_through_a_wrapper_in_a_column() {
+    // The margin below the last child leaves the wrapper and is truncated
+    // with it at the end of the column, the wrapper's own margin too.
+    let wrapped = "<div id=w><div style='margin-bottom:10px'>a</div></div>";
+    assert_eq!(height("", wrapped), (10.0, 10.0));
+    let body = format!("<div id=m style='width:100px;columns:2;column-gap:0'>{wrapped}</div>");
+    assert_eq!(rects(&body, "w"), vec![(0.0, 0.0, 50.0, 10.0)]);
+    let own = "<div id=w style='margin-bottom:7px'><div style='margin-bottom:10px'>a</div></div>";
+    assert_eq!(height("", own), (10.0, 10.0));
+    // Nested wrappers pass it on as well.
+    let nested = "<div><div><div style='margin-bottom:20px'>a</div></div></div>";
+    assert_eq!(height("", nested), (15.0, 15.0));
+    // A wrapper that its margins collapse through, holding only an empty
+    // box with margins, has no block size of its own.
+    let empty = "<div id=a>a</div><div id=w><div style='margin:30px 0'></div></div><div>b</div>";
+    let body = format!("<div id=m style='width:100px;columns:2;column-gap:0'>{empty}</div>");
+    assert_eq!(rects(&body, "a"), vec![(0.0, 0.0, 50.0, 10.0)]);
+    assert_eq!(rects(&body, "w"), vec![(50.0, 0.0, 50.0, 0.0)]);
+}
