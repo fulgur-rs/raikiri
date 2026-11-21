@@ -10596,6 +10596,15 @@ fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
         .find(|&id| is_out_of_flow_positioned(document, id))
 }
 
+/// Whether a break forced inside the positioned box `scope` splits it: a
+/// fixed box, and every box inside one, is monolithic and takes no break
+/// (Chromium).
+fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
+    std::iter::once(scope)
+        .chain(document.layout_ancestors(scope))
+        .all(|id| document.nodes[id].position() != &PositionValue::Fixed)
+}
+
 /// Whether a break forced inside `scope` (the flow outside every positioned
 /// box when `None`) may fall before `node_id`.
 fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
@@ -17560,6 +17569,12 @@ impl SubtreeShifts {
         }
     }
 
+    /// Bound a shift of the flow inside `node_id`, which the flow past it
+    /// gives back, returning to `flow_page`.
+    pub(super) fn bound(&mut self, node_id: usize, delta: f32, flow_page: u32) {
+        self.bounded.push((node_id, delta, flow_page));
+    }
+
     /// How much of the shift of the flow inside the block `node_id` the
     /// block holds: its height kept it from growing that far, so the flow
     /// after it gives that much back once it leaves the block.
@@ -21939,6 +21954,14 @@ fn shift_flow_after(
     let mut child_total = None;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        // An absolutely positioned box is out of the flow: a break inside it
+        // moves what follows inside it, and the flow past it gives the shift
+        // back (Chromium).
+        if child != node_id && is_out_of_flow_positioned(document, child) {
+            shifts.bounded.push((child, flow_delta, flow_page));
+            bounded = true;
+            break;
+        }
         walk.advance(document);
         // The columns after a spanner, in a container whose children are
         // boxes, follow it down.

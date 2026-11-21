@@ -3194,6 +3194,31 @@ impl PaginationState {
             // after a box it pulls back over the break follows the box, as
             // in Chromium.
             self.flow_shift += landing.node_delta;
+            // A break forced inside an absolutely positioned box moves
+            // nothing outside that box: the flow past the box returns to the
+            // page the break left, even when the box was already at the top
+            // of the next page. A float takes nothing after it along, so the
+            // flow past the box gives its whole move back; the move of a box
+            // in the flow is given back where it reaches the box.
+            // The break falls inside the box around the one that forced it,
+            // or around this box when this box forces it before itself.
+            let forced_scope = if pending_break_applies {
+                self.pending_break.scope
+            } else {
+                super::break_scope(document, node_id).filter(|_| page_break.forced_before)
+            };
+            if lands_after_forced_break
+                && let Some(scope) = forced_scope
+                && super::splits_at_forced_breaks(document, scope)
+            {
+                let given_back = if is_floating_box_for_pagination(document, cascade, node_id) {
+                    landing.node_delta
+                } else {
+                    0.0
+                };
+                self.subtree_shifts
+                    .bound(scope, given_back, entry.page_before_candidate);
+            }
             if lands_after_forced_break && margins_collapse_through {
                 let kept = self.sibling_margins.forced_empty_box_shift(
                     document,
@@ -5583,7 +5608,13 @@ impl PaginationState {
             &entry.comparison_page_name,
         );
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
-        let consumes_pending_break = pending_break_applies && name_participates_in_flow;
+        // A break forced inside an absolutely positioned box falls before
+        // the text after it inside that box, which is out of the flow.
+        let scope = self.pending_break.scope.filter(|&scope| {
+            pending_break_applies && super::splits_at_forced_breaks(document, scope)
+        });
+        let consumes_pending_break =
+            pending_break_applies && (name_participates_in_flow || scope.is_some());
         if self.saw_child {
             if consumes_pending_break || named_page_change {
                 // The break before the first text of a flex line moves the
@@ -5669,9 +5700,16 @@ impl PaginationState {
                     }
                     self.flow_shift += delta;
                     text.effective_y += delta;
+                    // The flow past the positioned box gives the move back.
+                    if let Some(scope) = scope {
+                        self.subtree_shifts
+                            .bound(scope, delta, entry.page_before_candidate);
+                    }
                 }
                 self.current_page = target_page;
-                self.page_names.current = candidate.page_name.clone();
+                if name_participates_in_flow || named_page_change {
+                    self.page_names.current = candidate.page_name.clone();
+                }
             } else if let Some(natural_page) =
                 page_origins.page_index_in_flow(text.effective_y - relative_offset)
                 // Text that a clip hides whole starts no page.
