@@ -651,7 +651,18 @@ fn layout_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    layout_relative_offset(document, cascade, body_id, node_id).1
+    layout_relative_offset(document, cascade, Some(body_id), node_id).1
+}
+
+/// The block offset that block flow applied to `node_id` for its
+/// `position: relative` insets, as [`layout_relative_offset_y`] takes it:
+/// none for a box whose offset the painter adds.
+pub(crate) fn block_flow_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    layout_relative_offset(document, cascade, None, node_id).1
 }
 
 /// The inline and block offsets that layout applied to a relatively
@@ -659,7 +670,7 @@ fn layout_relative_offset_y(
 fn layout_relative_offset(
     document: &Document,
     cascade: &CascadeResult,
-    body_id: usize,
+    body_id: Option<usize>,
     node_id: usize,
 ) -> (f32, f32) {
     // A `display: contents` element generates no box to offset.
@@ -669,7 +680,7 @@ fn layout_relative_offset(
             document.nodes[node_id].display(),
             DisplayValue::Contents | DisplayValue::None
         )
-        || relative_offset_is_painted(document, cascade, Some(body_id), node_id)
+        || relative_offset_is_painted(document, cascade, body_id, node_id)
     {
         return (0.0, 0.0);
     }
@@ -907,9 +918,9 @@ fn block_border_box_end(
     // The border-box end of the last child with a border box of its own,
     // and that child.
     let mut last_flow_end = None;
-    // Where the margin box of the last child ends in the committed flow.
-    // Pagination may have cut a margin that crossed a page edge, which the
-    // margins themselves do not show.
+    // The furthest the margins that end the content reach in the committed
+    // flow. Pagination may have cut a margin that crossed a page edge, which
+    // the margins themselves do not show.
     let mut last_margin_end = f32::INFINITY;
     // The margins of the empty children after the last child with a border
     // box of its own, which collapse through them (CSS 2 §8.3.1). The block-end
@@ -1012,16 +1023,23 @@ fn block_border_box_end(
             if root.formatting_context == FormattingContext::Flex {
                 content_end = content_end.max(end);
             }
-            last_margin_end = end;
             if block_children
                 && child_computed.clear == ClearValue::None
                 && collapses_through(document, cascade, child, layout.size.height)
             {
+                // An empty box sits where the flow put it, below the margins
+                // before it that pagination kept.
+                last_margin_end = end;
                 let (positive, negative) = empty_box_margin_extremes(document, cascade, child);
                 trailing = trailing
                     .collapse_with_margin(positive)
                     .collapse_with_margin(negative);
             } else {
+                // The block-end margins of the box's own last boxes collapse
+                // with its own one (CSS 2 §8.3.1), so its own margin alone
+                // does not bound them; only a page edge that cut them does.
+                last_margin_end =
+                    flow_end_cap.map_or(f32::INFINITY, |cap| (top + cap).max(border_end));
                 last_flow_end = Some((border_end, child));
                 trailing = CollapsibleMarginSet::ZERO;
             }
@@ -10690,6 +10708,15 @@ fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
         .find(|&id| is_out_of_flow_positioned(document, id))
 }
 
+/// Whether a break forced inside the positioned box `scope` splits it: a
+/// fixed box, and every box inside one, is monolithic and takes no break
+/// (Chromium).
+fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
+    std::iter::once(scope)
+        .chain(document.layout_ancestors(scope))
+        .all(|id| document.nodes[id].position() != &PositionValue::Fixed)
+}
+
 /// Whether a break forced inside `scope` (the flow outside every positioned
 /// box when `None`) may fall before `node_id`.
 fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
@@ -12115,7 +12142,8 @@ fn flex_margins_move(
         let item_layout = &document.nodes[item].layout;
         let top = flow_y + item_layout.location.y
             - layout_relative_offset_y(document, cascade, body_id, item);
-        let x = item_layout.location.x - layout_relative_offset(document, cascade, body_id, item).0;
+        let x = item_layout.location.x
+            - layout_relative_offset(document, cascade, Some(body_id), item).0;
         let span = (
             x - item_layout.margin.left,
             x + item_layout.size.width + item_layout.margin.right,
@@ -17699,6 +17727,12 @@ impl SubtreeShifts {
         }
     }
 
+    /// Bound a shift of the flow inside `node_id`, which the flow past it
+    /// gives back, returning to `flow_page`.
+    pub(super) fn bound(&mut self, node_id: usize, delta: f32, flow_page: u32) {
+        self.bounded.push((node_id, delta, flow_page));
+    }
+
     /// How much of the shift of the flow inside the block `node_id` the
     /// block holds: its height kept it from growing that far, so the flow
     /// after it gives that much back once it leaves the block.
@@ -18209,7 +18243,7 @@ fn flex_line_of(
         == (computed.direction == raikiri_style::property::Direction::Ltr);
     let span = |id: usize| {
         let layout = &document.nodes[id].layout;
-        let x = layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
+        let x = layout.location.x - layout_relative_offset(document, cascade, Some(body_id), id).0;
         (
             x - layout.margin.left,
             x + layout.size.width + layout.margin.right,
@@ -22107,6 +22141,14 @@ fn shift_flow_after(
     let mut child_total = None;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        // An absolutely positioned box is out of the flow: a break inside it
+        // moves what follows inside it, and the flow past it gives the shift
+        // back (Chromium).
+        if child != node_id && is_out_of_flow_positioned(document, child) {
+            shifts.bounded.push((child, flow_delta, flow_page));
+            bounded = true;
+            break;
+        }
         walk.advance(document);
         // The columns after a spanner, in a container whose children are
         // boxes, follow it down.

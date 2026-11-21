@@ -126,6 +126,36 @@ impl FlowSlots {
         Self { ranges, ordered }
     }
 
+    /// The page slots whose flow range starts at `origin`, all of one page:
+    /// the last page that starts there, as an empty page that comes before
+    /// it starts there too.
+    fn starting_at(&self, origin: f32, pages: &[PageFragment]) -> Vec<(usize, f32)> {
+        let near = |start: f32| (start - origin).abs() <= 0.001;
+        let candidates: Vec<(usize, f32)> = if self.ordered {
+            let first = self
+                .ranges
+                .partition_point(|&(_, start, _)| start < origin - 0.001);
+            self.ranges[first..]
+                .iter()
+                .take_while(|&&(_, start, _)| near(start))
+                .map(|&(slot, start, _)| (slot, start))
+                .collect()
+        } else {
+            self.ranges
+                .iter()
+                .filter(|&&(_, start, _)| near(start))
+                .map(|&(slot, start, _)| (slot, start))
+                .collect()
+        };
+        let Some(page_index) = candidates.last().map(|&(slot, _)| pages[slot].page_index) else {
+            return Vec::new();
+        };
+        candidates
+            .into_iter()
+            .filter(|&(slot, _)| pages[slot].page_index == page_index)
+            .collect()
+    }
+
     /// The pages `source` can intersect. A repeated source lands on every
     /// page. Any other source only intersects the pages whose flow range
     /// overlaps it, which form one run of the ranges when they are ordered.
@@ -220,7 +250,7 @@ fn fragment_placements(
             // copy is charged so header size times page count stays bounded.
             for (page_index, origin, shift) in header_placements {
                 let start = pages.partition_point(|page| page.page_index < page_index);
-                let header_pages = pages
+                let mut header_pages: Vec<(usize, f32)> = pages
                     .iter()
                     .enumerate()
                     .skip(start)
@@ -229,7 +259,16 @@ fn fragment_placements(
                         page.flow_range
                             .filter(|&(page_start, _)| (page_start - origin).abs() <= 0.001)
                             .map(|(page_start, _)| (page_slot, page_start))
-                    });
+                    })
+                    .collect();
+                // The table layout numbers the pages it places a header on
+                // from the first page it laid out. A relayout projects its
+                // pages under the numbers of the pages they stand for, so
+                // there the page is the one that begins where the header's
+                // page did, as for painting the header.
+                if header_pages.is_empty() {
+                    header_pages = slots.starting_at(origin, pages);
+                }
                 for (page_slot, page_start) in header_pages {
                     work.charge(1)?;
                     let y = source.abs_y + shift - page_start;
@@ -483,3 +522,6 @@ pub(super) fn overflow_clip_sources(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;
