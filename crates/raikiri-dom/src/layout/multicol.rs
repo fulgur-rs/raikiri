@@ -2511,12 +2511,14 @@ struct FloatLine {
 }
 
 /// A float that the lines of the blocks after it flow beside: the size of its
-/// margin box, its side, and the block offset of its top in the column.
+/// margin box, its side, the block offset of its top in the column, and its
+/// block-end margin.
 #[derive(Clone, Copy)]
 struct WrappedFloat {
     size: Size<f32>,
     right: bool,
     top: f32,
+    margin_bottom: f32,
 }
 
 /// The floats of a column that the in-flow blocks after them flow beside
@@ -2527,6 +2529,9 @@ struct ColumnFloatRun {
     start: f32,
     next: f32,
     bottom: f32,
+    /// How low the border boxes of the floats reach, without the margins
+    /// below them, which the end of a column truncates.
+    end: f32,
     floats: Vec<WrappedFloat>,
     /// The floats a float after the blocks may still sit beside.
     line: Vec<PlacedFloat>,
@@ -2544,6 +2549,11 @@ impl ColumnFloatRun {
                 .placed
                 .iter()
                 .map(|float| float.top + float.size.height)
+                .fold(line.start, f32::max),
+            end: line
+                .placed
+                .iter()
+                .map(|float| float.top + float.size.height - float.margin_bottom)
                 .fold(line.start, f32::max),
             floats: line.placed.clone(),
             line: line.floats.clone(),
@@ -2657,17 +2667,20 @@ impl FloatLine {
             },
             right: float.right,
             top: spot.top,
+            margin_bottom: float.margin_bottom,
         });
     }
 }
 
 /// A float child of a column container: the side it floats to, the floats it
-/// clears, and the width of its margin box in a column.
+/// clears, the width of its margin box in a column, and the block-end margin
+/// that a column end truncates.
 #[derive(Clone, Copy)]
 struct ColumnFloat {
     right: bool,
     clear: Clear,
     margin_box_width: f32,
+    margin_bottom: f32,
 }
 
 impl ColumnFloat {
@@ -2681,6 +2694,13 @@ impl ColumnFloat {
                 right: matches!(style.float(), Float::Right),
                 clear: style.clear(),
                 margin_box_width: left + width + right,
+                // A column end truncates the margin below a float it may
+                // break, but a monolithic float keeps its whole margin box.
+                margin_bottom: if is_monolithic_float(tree, child) {
+                    0.0
+                } else {
+                    column_child_layout(tree, child, column_width).margin.bottom
+                },
             }
         })
     }
@@ -3368,6 +3388,10 @@ fn layout_column_group(
     }
     let mut column = 0usize;
     let mut cursor = 0.0f32;
+    // The margin below the last box that `cursor` includes. The end of a
+    // column truncates it (CSS Fragmentation 3, 5.2), so it does not make
+    // the column taller.
+    let mut trailing = 0.0f32;
     let mut maximum = 0.0f32;
     // For balance-filled auto-height multicol containers, measure block
     // children once before placing them. This gives the simple balancing pass
@@ -3399,6 +3423,10 @@ fn layout_column_group(
     // The height of balanced columns that the positioned boxes in them need,
     // when it is more than the content in flow needs.
     let mut out_of_flow_height = None;
+    // The content in flow divided among the columns, margins and all: the
+    // least height of balanced columns, even where a column end would
+    // truncate a margin of it.
+    let mut divided_stream = 0.0f32;
     // Rows of columns between spanners keep the heights their content in
     // flow gives them.
     let spanned = flow_children(tree, index)
@@ -3494,7 +3522,26 @@ fn layout_column_group(
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
         let total = stack.height();
-        let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
+        if fragment_height.is_none() {
+            divided_stream = collapsed_stream(tree, &measurements, total)
+                / context
+                    .column_count
+                    .saturating_sub(context.column_index)
+                    .max(1) as f32;
+        }
+        // The tallest box sets the least height, without the margin below
+        // it, which the end of its column truncates, unless it is a
+        // monolithic float, whose margin box is whole.
+        let largest = measurements
+            .iter()
+            .map(|entry| {
+                if is_monolithic_float(tree, entry.0) {
+                    entry.5
+                } else {
+                    entry.5 - entry.4
+                }
+            })
+            .fold(0.0, f32::max);
         // Columns that may fill the container's height instead are measured
         // as placed, so that what does not fit goes to overflow columns.
         let breaks_inside = measured_beside.contains(&true)
@@ -3594,6 +3641,7 @@ fn layout_column_group(
         (Some(height), Some((_, target))) if target > height + LINE_EPSILON => {
             fragment_height = Some(height);
             measured_beside.fill(false);
+            divided_stream = 0.0;
             None
         }
         (_, measurements) => measurements,
@@ -3767,7 +3815,7 @@ fn layout_column_group(
                 );
                 exhausted |= std::mem::take(&mut tree.fragment_tree.limit_exceeded);
                 if let Some(plan) = moved {
-                    maximum = maximum.max(cursor);
+                    maximum = maximum.max(cursor - trailing);
                     tree.fragment_tree
                         .record_break(crate::fragment::BreakToken {
                             node_id: index,
@@ -3776,6 +3824,7 @@ fn layout_column_group(
                         });
                     column += 1;
                     cursor = 0.0;
+                    trailing = 0.0;
                     continuation = Some(plan);
                 }
             }
@@ -3823,7 +3872,9 @@ fn layout_column_group(
                 && is_floated(tree, child)
                 && let Some(run) = float_run.take_if(|run| run.column == column)
             {
+                let end = (cursor - trailing).max(run.end);
                 cursor = cursor.max(run.bottom);
+                trailing = cursor - end;
                 float_line = Some(run.into_line());
             }
             if let Some(run) = float_run.take() {
@@ -3887,7 +3938,9 @@ fn layout_column_group(
                     }
                 }
                 if kept.is_none() && run.column == column {
+                    let end = (cursor - trailing).max(run.end);
                     cursor = cursor.max(run.bottom);
+                    trailing = cursor - end;
                 }
                 float_run = kept;
             }
@@ -3957,7 +4010,7 @@ fn layout_column_group(
             && !avoid_column_break
             && split_lines_at.is_none()
         {
-            maximum = maximum.max(cursor);
+            maximum = maximum.max(cursor - trailing);
             tree.fragment_tree
                 .record_break(crate::fragment::BreakToken {
                     node_id: index,
@@ -3966,6 +4019,7 @@ fn layout_column_group(
                 });
             column += 1;
             cursor = 0.0;
+            trailing = 0.0;
             beside = None;
         }
         let top = beside_floats.unwrap_or_else(|| beside.map_or(cursor, |spot| spot.top));
@@ -4230,6 +4284,7 @@ fn layout_column_group(
             occupied.extend(column..=column + plan.columns);
             column += plan.columns;
             cursor = plan.end + margin_bottom;
+            trailing = margin_bottom;
             maximum = maximum.max(fragment_height.unwrap_or(0.0));
             if tree.nodes[child].kind() == NodeKind::Element {
                 avoid_column_break_after_previous =
@@ -4294,6 +4349,7 @@ fn layout_column_group(
             maximum = maximum.max(*height);
             column = placement.last_column;
             cursor = placement.last_y + margin_bottom;
+            trailing = margin_bottom;
         } else if let Some(placement) = planned {
             // A sliced box occupies every column a piece of it reaches.
             if placement.sliced {
@@ -4301,6 +4357,7 @@ fn layout_column_group(
             }
             column = placement.last_column;
             cursor = placement.last_y;
+            trailing = 0.0;
             let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
             maximum = maximum.max(group_height);
             // The margin below the last box of balanced columns stays inside
@@ -4318,14 +4375,29 @@ fn layout_column_group(
             maximum = maximum.max(fragment_height.or(break_height).unwrap_or(0.0));
             column = last_column;
             cursor = end + margin_bottom;
+            trailing = margin_bottom;
         } else {
             let bottom = y - content_origin.y + child_output.size.height + margin_bottom;
             // The floats of a line end where the lowest of them does.
+            // A column end truncates the margin below the box, but not
+            // the one below a monolithic float, whose margin box is whole.
+            let truncated = if is_monolithic_float(tree, child) {
+                0.0
+            } else {
+                margin_bottom
+            };
+            let end = bottom - truncated;
+            let end = if beside.is_some() {
+                (cursor - trailing).max(end)
+            } else {
+                end
+            };
             cursor = if beside.is_some() {
                 cursor.max(bottom)
             } else {
                 bottom
             };
+            trailing = cursor - end;
             if let Some(balance) = &paragraph_balance
                 && balance.child == child
             {
@@ -4336,6 +4408,7 @@ fn layout_column_group(
                 let columns = context.column_count.saturating_sub(context.column_index);
                 let divided = (margin_top + balance.stacked + margin_bottom) / columns as f32;
                 cursor = (cursor - margin_bottom).max(divided);
+                trailing = 0.0;
                 // Lines past the last column of a container with a definite
                 // height go on in overflow columns beside it, not below it.
                 cursor = fragment_height.map_or(cursor, |height| cursor.min(height));
@@ -4350,13 +4423,17 @@ fn layout_column_group(
     if let Some(run) = float_run
         && run.column == column
     {
+        let end = (cursor - trailing).max(run.end);
         cursor = cursor.max(run.bottom);
+        trailing = cursor - end;
     }
     // The columns are as tall as the positioned boxes in them need, even
     // where the content in flow ends higher.
     if let Some(height) = out_of_flow_height {
         maximum = maximum.max(height);
+        let end = (cursor - trailing).min(height);
         cursor = cursor.min(height);
+        trailing = cursor - end;
     }
     // Columns that fill in turn with no height to fill are one column that
     // nothing ends, which holds the positioned boxes whole.
@@ -4370,7 +4447,17 @@ fn layout_column_group(
             .map(|&child| Some(tree.nodes[child].layout.location.y - content_origin.y))
             .collect();
         let boxes = out_of_flow_boxes(tree, index, children, &tops);
-        cursor = cursor.max(out_of_flow_floor(tree, &boxes, maximum.max(cursor), 1));
+        let floor = out_of_flow_floor(tree, &boxes, maximum.max(cursor), 1);
+        let end = (cursor - trailing).max(floor);
+        cursor = cursor.max(floor);
+        trailing = cursor - end;
+    }
+    maximum = maximum.max(divided_stream);
+    // Columns filled in turn with no height to fill, as after the last
+    // spanner of a container with `column-fill: auto`, are one column that
+    // nothing ends, so the margin below its last box stays.
+    if context.column_fill == ColumnFillValue::Auto && fragment_height.is_none() {
+        trailing = 0.0;
     }
     // Balanced columns of a container with a definite height are as tall as
     // their content, which the rules between them follow.
@@ -4387,7 +4474,7 @@ fn layout_column_group(
                     origin_y: content_origin.y,
                     ..context
                 },
-                height: maximum.max(cursor),
+                height: maximum.max(cursor - trailing),
                 occupied,
                 slice: None,
                 run_start: children.first().copied(),
@@ -4404,7 +4491,48 @@ fn layout_column_group(
             .map(|height| fallback_height.min(height))
             .unwrap_or(fallback_height)
     };
-    (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
+    (maximum.max(cursor - trailing) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// Whether `child` is a float that a column end never breaks: its margin
+/// box stays whole, the margin below it included.
+fn is_monolithic_float(tree: &LayoutSession<'_>, child: usize) -> bool {
+    is_floated(tree, child)
+        && column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
+}
+
+/// The block size of the measured children of a column container in one
+/// unbroken column, their adjoining margins collapsed (CSS 2, 8.3.1): the
+/// margins between siblings, and the two of a box with no block size. With a
+/// float among them, the stacked size `total` is taken as it is.
+fn collapsed_stream(
+    tree: &LayoutSession<'_>,
+    measurements: &[(usize, LayoutOutput, BoxLayout, f32, f32, f32)],
+    total: f32,
+) -> f32 {
+    use crate::layout::protocol::CollapsibleMarginSet;
+    if measurements
+        .iter()
+        .any(|&(child, ..)| is_floated(tree, child))
+    {
+        return total;
+    }
+    let mut stream = 0.0f32;
+    let mut pending = CollapsibleMarginSet::ZERO;
+    let in_flow = measurements
+        .iter()
+        .filter(|entry| tree.nodes[entry.0].layout_position() != Position::Absolute);
+    for &(_, _, _, margin_top, margin_bottom, needed) in in_flow {
+        pending = pending.collapse_with_margin(margin_top);
+        let content = needed - margin_top - margin_bottom;
+        if content > 0.0 {
+            stream += pending.resolve() + content;
+            pending = CollapsibleMarginSet::from_margin(margin_bottom);
+        } else {
+            pending = pending.collapse_with_margin(margin_bottom);
+        }
+    }
+    stream + pending.resolve()
 }
 
 /// The last column of `child`'s line pieces and the block end of the piece
