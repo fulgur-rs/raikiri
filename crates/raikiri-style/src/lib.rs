@@ -87,7 +87,7 @@ mod grammar;
 mod supports;
 
 pub mod media;
-pub use media::{MediaContext, MediaType};
+pub use media::{MediaContext, MediaType, media_list_matches, source_size};
 
 pub mod page;
 pub use page::{

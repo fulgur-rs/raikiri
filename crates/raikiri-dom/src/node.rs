@@ -202,7 +202,7 @@ pub struct ElementData {
     /// manual construction).
     pub(crate) template_contents: Option<usize>,
     /// Resolved intrinsic size (px) for a replaced element (`<img>` only, in
-    /// this scope), populated by [`crate::image_resolve::resolve_images`]
+    /// this scope), populated by [`crate::image_resolve::resolve_images_in`]
     /// before the taffy compute pass. `None` means
     /// either this element is not a resolvable replaced element, or
     /// resolution was not attempted — a missing/relative `src`, or an inert
@@ -1630,7 +1630,7 @@ impl Node {
     }
 
     /// Resolved intrinsic size (px) for a replaced element, if
-    /// [`crate::image_resolve::resolve_images`] has populated one for this
+    /// [`crate::image_resolve::resolve_images_in`] has populated one for this
     /// node. `None` for non-`<img>` elements, unresolved images, and all
     /// non-element node kinds.
     pub(crate) fn image_intrinsic_size(&self) -> Option<(f32, f32)> {

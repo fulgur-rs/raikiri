@@ -1000,8 +1000,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             )
         } else if let Some(source) = pixel_source
             && let Some(src_url) = img_src_url(document, node_id)
-            && let Some(intrinsic) = source.intrinsic_size(&src_url)
+            && let Some(natural) = source.intrinsic_size(&src_url)
         {
+            let intrinsic = document.resolved_image_natural_size(node_id, natural, cv.object_fit);
             paint_image(
                 image_cache,
                 scene,

@@ -906,7 +906,7 @@ mod rule_index;
 mod selector_match;
 pub(crate) use directionality::*;
 pub use query::{BoundedSelectorMatcher, SelectorMatcher, SelectorQuery, SelectorWorkBudget};
-mod custom_property;
+pub(crate) mod custom_property;
 mod hidden_elements;
 mod html_quirks;
 mod list_hints;

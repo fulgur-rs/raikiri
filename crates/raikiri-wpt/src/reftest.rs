@@ -3186,7 +3186,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
             &first_cascade,
             first_page_box,
             raikiri_dom::PageLayoutOptions {
-                images: Some(raikiri_dom::PageImageOptions { resolver, base_url }),
+                images: Some(raikiri_dom::PageImageOptions {
+                    resolver,
+                    base_url,
+                    media_context: Some(&media_context),
+                }),
                 ..Default::default()
             },
         )
@@ -3292,7 +3296,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 raikiri_dom::PageLayoutOptions {
                     page_steps: &page_steps,
                     page_widths: &page_widths,
-                    images: Some(raikiri_dom::PageImageOptions { resolver, base_url }),
+                    images: Some(raikiri_dom::PageImageOptions {
+                        resolver,
+                        base_url,
+                        media_context: Some(&media_context),
+                    }),
                     ..Default::default()
                 },
             )? // cov:ignore: rustc maps this standalone success/error propagation token only to the unreachable resolver-error edge
@@ -3620,6 +3628,7 @@ fn continue_at_page_widths(
             page_geometries: &page_geometries,
             resolver: context.resolver.unwrap_or(&NoReplacedResolver),
             base_url: context.base_url,
+            media_context: Some(context.media_context),
             max_pages: None,
             abort_check: &|| false,
             skipped: &[],

@@ -280,7 +280,11 @@ impl<'a> Page<'a> {
             return None;
         }
         let content = fragment.content_rect()?;
-        let natural = source.intrinsic_size(&url)?;
+        let natural = self.document.resolved_image_natural_size(
+            node,
+            source.intrinsic_size(&url)?,
+            computed.object_fit,
+        );
         let (x, y, width, height) = raikiri_dom::image_geometry::object_image_rect(
             (
                 content.x as f64,

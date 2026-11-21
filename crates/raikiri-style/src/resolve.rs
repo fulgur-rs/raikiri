@@ -3040,7 +3040,7 @@ fn resolve_relative_calc_with(
 
 /// The length terms of a relative `calc()` summed in CSS px, or `None` when
 /// `lh_term` gives `None` or the sum is not finite.
-fn relative_calc_length_px(
+pub(crate) fn relative_calc_length_px(
     value: RelativeCalcLengthPercentage,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
