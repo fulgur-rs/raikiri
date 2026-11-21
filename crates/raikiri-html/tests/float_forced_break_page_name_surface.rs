@@ -101,6 +101,40 @@ fn a_named_box_after_the_float_names_the_page_the_float_opened() {
 }
 
 #[test]
+fn the_float_own_break_before_is_the_same_break() {
+    expect(
+        &format!(
+            "{T_FOO}<div style='float:left;width:40px;break-before:page'>F</div>\
+             <div style='page:bar'>Z</div>"
+        ),
+        &["120: T@0,0", "140: F@0,0 Z@40,0"],
+    );
+}
+
+#[test]
+fn a_float_on_a_line_keeps_a_named_box_after_it_off_its_page() {
+    // The float stands on a line of the span, which takes the page the
+    // float opened, and the box after the span opens a page of its own.
+    // Text on that line still starts the page beside the float.
+    let float_in_span = format!("<span>{F}</span>");
+    expect(
+        &format!("{T_FOO}{float_in_span}<div style='page:bar'>Z</div>"),
+        &["120: T@0,0", "100: F@0,0", "140: Z@0,0"],
+    );
+    expect(
+        &format!("{T_FOO}{float_in_span}Z"),
+        &["120: T@0,0", "100: F@0,0 Z@40,0"],
+    );
+    expect(
+        &format!(
+            "<div style='page:foo'><span><div style='break-after:page'>T</div>{F}</span></div>\
+             <div style='page:bar'>Z</div>"
+        ),
+        &["120: T@0,0", "120: F@0,0", "140: Z@0,0"],
+    );
+}
+
+#[test]
 fn unnamed_content_after_the_float_names_the_page_auto() {
     expect(
         &format!("{T_FOO}{F}Z"),
