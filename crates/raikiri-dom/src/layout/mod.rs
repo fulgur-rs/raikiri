@@ -150,7 +150,8 @@ pub(crate) use root_box::root_element as canvas_root_element;
 pub use root_box::{RootBox, root_box};
 
 pub(crate) use page_pipeline::{
-    line_center_on_page, page_fragment_events_from_pages, project_slices_with_control,
+    line_center_on_page, page_fragment_events_from_pages, painter_relative_shift_y,
+    project_slices_with_control,
 };
 
 pub(crate) use page_pipeline::column_projection::{

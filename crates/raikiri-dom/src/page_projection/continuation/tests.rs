@@ -158,6 +158,27 @@ fn page_start_skips_a_float_that_comes_first() {
 }
 
 #[test]
+fn page_start_skips_a_box_the_painter_moved_onto_the_page() {
+    let mut blocks = Vec::new();
+    let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        for style in [
+            "display:block;height:15px",
+            "display:table-cell;position:relative;top:20px;height:10px",
+            "display:block;height:5px",
+            "display:block;height:15px",
+        ] {
+            blocks.push(doc.append_element(Some(root), "div", Some(style)));
+        }
+    });
+    let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));
+    assert_eq!(slices.len(), 2);
+    // The cell is printed on the second page, where its offset puts it, but
+    // layout placed it on the first.
+    let start = doc.page_start(&cascade, 1).expect("a page start");
+    assert_eq!(start.token, PageStartToken::Node(blocks[3]));
+}
+
+#[test]
 fn continuation_break_at_the_start_of_a_text_node_breaks_before_it() {
     let mut texts = Vec::new();
     let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {

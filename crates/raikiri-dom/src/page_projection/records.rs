@@ -292,7 +292,9 @@ impl FlowAxis {
     /// goes with the paragraph's content box.
     pub(crate) fn line_extent(self, root: &ProjectedTextRoot, top: f32, bottom: f32) -> (f32, f32) {
         if self == Self::Y {
-            return (top, bottom);
+            // A box the painter moves by its relative offset is cut where it
+            // is painted.
+            return (top + root.painted_shift, bottom + root.painted_shift);
         }
         let (_, start, _, extent) = self.to_flow((root.x, root.y, root.width, 0.0));
         if root.lines_along_x {
@@ -340,6 +342,10 @@ pub(crate) struct ProjectedTextRoot {
     pub(crate) fragment_clip: Option<raikiri_traits::PaintClip>,
     /// Placement-specific overflow ancestors, including this paragraph's local clip.
     pub(crate) overflow_chain: Option<usize>,
+    /// How far down the painter moves the paragraph by the relative offsets
+    /// that layout leaves to it, which decide the pages its lines are drawn
+    /// on.
+    pub(crate) painted_shift: f32,
 }
 
 /// A CSS-px rectangle used by page-fragment metadata and placements.

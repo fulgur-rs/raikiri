@@ -98,7 +98,10 @@ fn tree_positions(document: &Document) -> Vec<u32> {
 }
 
 /// Whether `node` or one of its ancestors is laid out outside the normal
-/// flow, so its start does not mark where the flow of a page begins.
+/// flow, so its start does not mark where the flow of a page begins. A box
+/// the painter moves down by a relative offset layout left to it, such as a
+/// relatively positioned table cell, is printed on the pages its painted
+/// position reaches, away from where layout put it in the flow.
 fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
     document.inclusive_ancestors(node).any(|id| {
         document.nodes[id].kind() == NodeKind::Element
@@ -108,6 +111,7 @@ fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize
                         document.nodes[id].position(),
                         PositionValue::Absolute | PositionValue::Fixed | PositionValue::Running(_)
                     )
+                    || crate::layout::painter_relative_shift_y(document, cascade, id) != 0.0
             })
     })
 }

@@ -669,7 +669,7 @@ fn layout_relative_offset(
             document.nodes[node_id].display(),
             DisplayValue::Contents | DisplayValue::None
         )
-        || relative_offset_is_painted(document, cascade, body_id, node_id)
+        || relative_offset_is_painted(document, cascade, Some(body_id), node_id)
     {
         return (0.0, 0.0);
     }
@@ -731,7 +731,29 @@ fn painted_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    if !relative_offset_is_painted(document, cascade, body_id, node_id) {
+    if !relative_offset_is_painted(document, cascade, Some(body_id), node_id) {
+        return 0.0;
+    }
+    super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
+}
+
+/// How far down the painter moves `node_id` by its own relative or sticky
+/// offset, when layout places the box without it (see
+/// [`relative_offset_is_painted`]): a float, a table part, a sticky box, a box
+/// the columns of a multicol container place. Chromium fragments such a box
+/// where the offset puts it, as it does a relatively positioned box in normal
+/// flow, which layout already places with its offset.
+pub(crate) fn painter_relative_shift_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    let node = &document.nodes[node_id];
+    // A `display: contents` element has no box for the painter to move.
+    if node.kind() != NodeKind::Element
+        || matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
+        || !relative_offset_is_painted(document, cascade, None, node_id)
+    {
         return 0.0;
     }
     super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
@@ -741,7 +763,7 @@ fn painted_relative_offset_y(
 fn relative_offset_is_painted(
     document: &Document,
     cascade: &CascadeResult,
-    body_id: usize,
+    body_id: Option<usize>,
     node_id: usize,
 ) -> bool {
     if !matches!(
@@ -750,12 +772,8 @@ fn relative_offset_is_painted(
     ) {
         return false;
     }
-    super::relative::placed_without_relative_offset_for_layout(
-        document,
-        cascade,
-        Some(body_id),
-        node_id,
-    ) || document.nodes[node_id].needs_relative_block_paint_offset()
+    super::relative::placed_without_relative_offset_for_layout(document, cascade, body_id, node_id)
+        || document.nodes[node_id].needs_relative_block_paint_offset()
 }
 
 /// The block-end edge of the root's border box in page coordinates.
