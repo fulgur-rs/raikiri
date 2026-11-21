@@ -3949,8 +3949,8 @@ fn clear_floats_at_forced_breaks<'name>(
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
             let starts_at_inherited = std::mem::take(&mut page_start_inherited);
-            let beside_page_start_float =
-                std::mem::take(&mut float_after_break) || starts_at_inherited;
+            let float_took_break = std::mem::take(&mut float_after_break);
+            let beside_page_start_float = float_took_break || starts_at_inherited;
             let float_took_own_break = std::mem::take(&mut float_own_break);
             let resumed_float = page_start_float.take();
             last_block = Some(child);
@@ -3978,12 +3978,13 @@ fn clear_floats_at_forced_breaks<'name>(
             let own_break = named_break || breaks_before;
             let forced = after_forced_break || own_break;
             // Floats on either side belong to the earlier page, so a
-            // one-sided clear is widened too. A break before the box
-            // coincides with the break of the box before the float that
-            // started the page, but not with the float's own break.
+            // one-sided clear is widened too. A break before the box, or a
+            // change of page type there, coincides with the break of the box
+            // before the float that started the page, but not with the
+            // float's own break.
             let at_page_start_float = (forced || starts_at_inherited)
                 && beside_page_start_float
-                && !named_break
+                && !(named_break && (float_took_own_break || !float_took_break))
                 && !(breaks_before && float_took_own_break)
                 && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
@@ -5010,6 +5011,9 @@ struct PageNames {
     /// outside a named flex context compares its own against it.
     outer: Option<String>,
     by_page: Vec<Option<String>>,
+    /// A page whose type the box that goes on onto it set, which the
+    /// content placed beside that box on the page does not change.
+    kept: Option<u32>,
 }
 
 impl PageNames {
@@ -5021,6 +5025,7 @@ impl PageNames {
             by_page: vec![first.clone()],
             outer: first.clone(),
             current: first,
+            kept: None,
         }
     }
 
@@ -5030,6 +5035,7 @@ impl PageNames {
             current: None,
             outer: None,
             by_page: Vec::new(),
+            kept: None,
         }
     }
 
@@ -5096,7 +5102,27 @@ impl PageNames {
         if self.by_page.len() <= index {
             self.by_page.resize(index + 1, None);
         }
-        self.by_page[index].clone_from(&self.current);
+        if self.kept != Some(page) {
+            self.by_page[index].clone_from(&self.current);
+        }
+    }
+
+    /// Give `page` the type `name` for good: the content placed on it later
+    /// does not change it.
+    fn keep_page(&mut self, page: u32, name: Option<String>) {
+        let current = std::mem::replace(&mut self.current, name);
+        self.kept = None;
+        self.name_page(page);
+        self.current = current;
+        self.kept = Some(page);
+    }
+
+    /// Give the pages after `page` that earlier content already reached the
+    /// type `name`.
+    fn name_pages_after(&mut self, page: u32, name: &Option<String>) {
+        for slot in self.by_page.iter_mut().skip(page as usize + 1) {
+            slot.clone_from(name);
+        }
     }
 
     /// Name the pages after `from` through `end`, where content on page
@@ -5112,8 +5138,17 @@ impl PageNames {
             self.by_page.resize(end + 1, self.current.clone());
         }
         if overwrite && end > from as usize {
-            for name in &mut self.by_page[from as usize + 1..=end] {
-                name.clone_from(&self.current);
+            let kept = self.kept.map(|page| page as usize);
+            for (index, name) in self
+                .by_page
+                .iter_mut()
+                .enumerate()
+                .take(end + 1)
+                .skip(from as usize + 1)
+            {
+                if kept != Some(index) {
+                    name.clone_from(&self.current);
+                }
             }
         }
     }
