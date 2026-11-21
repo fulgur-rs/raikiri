@@ -68,6 +68,10 @@ pub(crate) struct IfcRoot {
     pub(crate) generated_boxes: Arc<[super::generated_atomics::GeneratedAtomic]>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
+    /// The rendered legend of a fieldset root, the first of its boxes, which
+    /// the line loop lays out over the block-start border of the root (see
+    /// [`super::projection::paragraph_legend`]).
+    pub(crate) legend: Option<usize>,
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
@@ -495,6 +499,7 @@ impl IfcRoot {
             generated_blocks: meta.generated_blocks.into(),
             generated_boxes: meta.generated_boxes.into(),
             rtl: meta.rtl,
+            legend: None,
             offsets: meta.offsets,
             offset_index,
             percent_insets: meta.percent_insets,
@@ -607,6 +612,7 @@ impl IfcRoot {
             generated_blocks: self.generated_blocks.clone(),
             generated_boxes: self.generated_boxes.clone(),
             rtl: self.rtl,
+            legend: self.legend,
             offsets: self.offsets.clone(),
             offset_index: self.offset_index.clone(),
             percent_insets: self.percent_insets.clone(),

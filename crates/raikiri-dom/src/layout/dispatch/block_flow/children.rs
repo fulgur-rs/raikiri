@@ -762,7 +762,18 @@ pub(super) fn layout(
             .position(|&child| child == legend)
             .unwrap_or(0);
         let placed = super::legend::place(
-            tree, node, legend, order, inputs, container, metrics, width, parent,
+            tree,
+            node,
+            legend,
+            order,
+            inputs.run_mode,
+            container,
+            (
+                [metrics.inset.left, metrics.inset.right],
+                metrics.border.top,
+            ),
+            width,
+            parent,
         );
         flow.end += placed.content_offset;
         // The part of the legend below the border takes room off the height

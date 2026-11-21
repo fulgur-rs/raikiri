@@ -1,0 +1,1880 @@
+[
+ {
+  "name": "inline text",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend>aaaa</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline span",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline span before legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><span id=t>aaaa</span><legend id=l>ll</legend></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline text tall legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"font-size:20px;line-height:20px\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline two lines",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa aaaa aaaa aaaa aaaa aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    140,
+    20
+   ]
+  }
+ },
+ {
+  "name": "inline-block content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t style=\"display:inline-block;width:30px;height:15px\"></span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    38.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    38.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    30,
+    15
+   ]
+  }
+ },
+ {
+  "name": "inline-block fieldset text",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"display:inline-block\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    59,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline text rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    148.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align right",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=right>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=center>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "percent width",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"width:50%\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    92.5,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, wide legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>llllllllllllllllllllllll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    263,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    244,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, wide legend ib",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"display:inline-block\"><legend id=l>llllllllll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    123,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    104,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, legend margins",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"margin:5px 3px 4px 6px\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    35.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    35.75
+   ],
+   "l": [
+    17.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    17.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, legend padding",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"padding:3px 2px\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    37.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    37.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    16
+   ],
+   "t": [
+    11.5,
+    19.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, thick border",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"border-top-width:30px\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    51.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    51.75
+   ],
+   "l": [
+    11.5,
+    10,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    33.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, second legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span><legend id=m>mm</legend><span id=u>bb</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    51.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    51.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ],
+   "m": [
+    11.5,
+    23.5,
+    177,
+    10
+   ],
+   "u": [
+    11.5,
+    33.5,
+    20,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, floated legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"float:left\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    23.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    23.75
+   ],
+   "l": [
+    11.5,
+    5.5,
+    24,
+    10
+   ],
+   "t": [
+    35.5,
+    5.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, abs legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"position:absolute\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    23.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    23.75
+   ],
+   "l": [
+    11.5,
+    5.5,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    5.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, float child",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><div id=f style=\"float:left;width:20px;height:20px\"></div><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "f": [
+    11.5,
+    13.5,
+    20,
+    20
+   ],
+   "t": [
+    31.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, br",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend>aa<br><span id=t>bb</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    23.5,
+    20,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, block after",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span><div id=u>bb</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ],
+   "u": [
+    11.5,
+    23.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, block before",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><div id=u>bb</div><span id=t>aaaa</span><legend id=l>ll</legend></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    41.75
+   ],
+   "u": [
+    11.5,
+    13.5,
+    177,
+    10
+   ],
+   "t": [
+    11.5,
+    23.5,
+    40,
+    10
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, sized",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:50px\"><legend id=l style=\"font-size:20px;line-height:20px\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    63.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    63.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    20
+   ],
+   "t": [
+    11.5,
+    23.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, relative legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"position:relative;top:3px;left:4px\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    15.5,
+    3,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, abspos in legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"position:relative\"><legend id=l>ll<span id=a style=\"position:absolute;right:0;top:2px;width:10px;height:10px\"></span></legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    186,
+    4,
+    10,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, auto margins",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"margin-inline:auto\">ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, after fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span></fieldset><div id=n>nn</div></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    41.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ],
+   "n": [
+    0,
+    31.75,
+    200,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, fieldset margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><div id=p>pp</div><fieldset id=c style=\"margin-top:10px\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    51.75
+   ],
+   "p": [
+    0,
+    0,
+    200,
+    10
+   ],
+   "c": [
+    2,
+    20,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    20,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    33.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, flex item",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><div style=\"display:flex\"><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    59,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, before pseudo",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><style>#c::before{content:\"bb\"}</style><fieldset id=c><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    31.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, legend only text inside span",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l><span id=s>ll</span></legend>  <span id=t>aaaa</span>  </fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "s": [
+    13.5,
+    0,
+    20,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, nested fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l>ll</legend><fieldset id=d style=\"display:inline-block\"><legend id=m>mm</legend><span id=t>aaaa</span></fieldset></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    53.5
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    53.5
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "d": [
+    13.5,
+    13.5,
+    59,
+    31.75
+   ],
+   "m": [
+    23,
+    13.5,
+    24,
+    10
+   ],
+   "t": [
+    23,
+    27,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, text-align center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:center\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    80,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta center block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:center\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta right block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:right\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta end rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl style=\"text-align:end\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta left rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl style=\"text-align:left\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta on legend",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"text-align:right\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta center legend margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:center\"><legend id=l style=\"margin-left:10px\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    98,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta center auto margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:center\"><legend id=l style=\"margin-right:auto\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta justify",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:justify\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "ta -webkit-center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:-webkit-center\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align right attr",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=right>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align center attr",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=center>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    88,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align left attr ta right",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:right\"><legend id=l align=left>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align right rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl><legend id=l align=right>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align right margin",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=right style=\"margin-right:10px\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    154.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "justify-self end",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l style=\"justify-self:end\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align right attr",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c><legend id=l align=right>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, ta right",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"text-align:right\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    164.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    148.5,
+    13.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:center\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    54.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content end",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:end\"><legend id=l>ll</legend><span id=t>aaaa</span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    95.5,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "align-content center",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px;align-content:center\"><legend id=l>ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    54.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, percentage height inline-block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><span id=t style=\"display:inline-block;width:10px;height:100%\"></span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    62
+   ]
+  }
+ },
+ {
+  "name": "percentage height block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><div id=t style=\"width:10px;height:100%\"></div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    62
+   ]
+  }
+ },
+ {
+  "name": "inline content, percentage height float",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"height:100px\"><legend id=l style=\"font-size:40px;line-height:40px\">L</legend><div id=t style=\"float:left;width:10px;height:50%\"></div>x</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    44,
+    40
+   ],
+   "t": [
+    11.5,
+    43.5,
+    10,
+    31
+   ]
+  }
+ },
+ {
+  "name": "text-align center rtl",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c dir=rtl style=\"text-align:center\"><legend id=l style=\"margin-right:6px\">ll</legend><div id=t>aaaa</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    31.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    31.75
+   ],
+   "l": [
+    82,
+    0,
+    24,
+    10
+   ],
+   "t": [
+    11.5,
+    13.5,
+    177,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content with absolute boxes",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px\"><fieldset id=c style=\"position:relative;height:100px;align-content:center\"><legend id=l>ll<span id=a style=\"position:absolute;width:10px;height:10px\"></span></legend>aaaa<span id=b style=\"position:absolute;width:10px;height:10px\"></span></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    33.5,
+    0,
+    10,
+    10
+   ],
+   "b": [
+    51.5,
+    54.5,
+    10,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline content, align-content with absolute boxes of an outer containing block",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"height:100px;align-content:center\"><legend id=l>ll<span id=a style=\"position:absolute;width:10px;height:10px\"></span></legend>aaaa<div id=d>bb<span id=b style=\"position:absolute;width:10px;height:10px\"></span></div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    113.75
+   ],
+   "c": [
+    2,
+    0,
+    196,
+    113.75
+   ],
+   "l": [
+    11.5,
+    0,
+    24,
+    10
+   ],
+   "a": [
+    33.5,
+    0,
+    10,
+    10
+   ],
+   "d": [
+    11.5,
+    59.5,
+    177,
+    10
+   ],
+   "b": [
+    31.5,
+    59.5,
+    10,
+    10
+   ]
+  }
+ }
+]

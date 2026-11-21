@@ -428,7 +428,7 @@ pub(crate) fn assign_ifc_roots(
         .unwrap_or_default();
         state.last_build = Some(IfcBuildMode::Retained);
         doc.ifc = Some(state);
-        write_roots(doc, roots);
+        write_roots(doc, cascade, roots);
         return check_text_in_paragraphs(doc);
     }
     state.retained = None;
@@ -471,7 +471,7 @@ pub(crate) fn assign_ifc_roots(
         });
     }
     doc.ifc = Some(state);
-    write_roots(doc, roots?);
+    write_roots(doc, cascade, roots?);
     check_text_in_paragraphs(doc)
 }
 
@@ -826,8 +826,9 @@ fn build_all(
 }
 
 /// Store each shaped paragraph on its root and mark the root's subtree.
-fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
-    for (idx, paragraph) in built {
+fn write_roots(doc: &mut Document, cascade: &CascadeResult, built: Vec<(usize, IfcRoot)>) {
+    for (idx, mut paragraph) in built {
+        paragraph.legend = super::projection::paragraph_legend(cascade, doc, idx);
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree. The parts
         // of an anonymous table are the children of the root that its box
