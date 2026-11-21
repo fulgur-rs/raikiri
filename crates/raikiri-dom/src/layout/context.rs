@@ -48,8 +48,9 @@ pub(crate) struct LayoutContext {
     /// boxes: only floats follow the break inside that box.
     pub(crate) float_break_closers: HashMap<usize, usize>,
     /// The floats of `float_break_closers` whose box the page walk ended on
-    /// the page the break leaves, each with that box.
-    pub(crate) floats_after_closed_edges: Vec<(usize, usize)>,
+    /// the page the break leaves, each with the lowest top it takes, local
+    /// to its parent: where that box ends.
+    pub(crate) floats_after_closed_edges: Vec<(usize, f32)>,
     /// Floats the page walk moved whole to a later page without a forced
     /// break, in the order it moved them.
     pub(crate) pushed_floats: Vec<usize>,

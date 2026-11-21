@@ -227,14 +227,8 @@ impl Plan {
             }
         }
         plan.pushed.extend(kept);
-        // Each top is local to the float's parent, as layout places floats.
-        for &(float, closer) in &document.context.floats_after_closed_edges {
-            let end = current_abs_y(document, closer) + document.nodes[closer].layout.size.height;
-            let parent_top = document
-                .layout_parent_of(float)
-                .map_or(0.0, |parent| current_abs_y(document, parent));
-            plan.closed.insert(float, end - parent_top);
-        }
+        plan.closed
+            .extend(document.context.floats_after_closed_edges.iter().copied());
         plan
     }
 

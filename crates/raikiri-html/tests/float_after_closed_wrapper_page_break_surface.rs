@@ -252,3 +252,46 @@ fn each_wrapper_ends_before_its_own_break() {
         &["T@0:0,0", "F@1:0,0", "S@1:40,0", "G@2:0,0", "Z@2:40,0"],
     );
 }
+
+#[test]
+fn a_float_inside_an_inline_box_takes_the_edges_to_the_next_page() {
+    // The inline box stands on a line after the break, so the wrapper goes
+    // on past it, and its padding sits between the float and Z.
+    expect(
+        &format!(
+            "{}<div>Z</div>",
+            wrapper("padding-bottom:10px", &format!("<span>{F}</span>"))
+        ),
+        &["T@0:0,0", "F@1:0,0", "Z@1:40,10"],
+    );
+    // White space around a float that is a box of the wrapper's own adds no
+    // line.
+    expect(
+        &format!(
+            "{}<div>Z</div>",
+            wrapper("padding-bottom:10px", &format!(" {F} "))
+        ),
+        &["T@0:0,0", "F@1:0,0", "Z@1:40,0"],
+    );
+}
+
+#[test]
+fn a_relatively_positioned_wrapper_still_lays_out() {
+    // The wrapper's offset moves the float away from the flow beside it;
+    // the content after the wrapper still lines up beside the float on the
+    // next page.
+    for offset in ["top:-5px", "top:-1px", "bottom:5px", "top:5px"] {
+        let body = format!(
+            "{}<div>Z</div>",
+            wrapper(
+                &format!("padding-bottom:10px;position:relative;{offset}"),
+                F
+            )
+        );
+        let glyphs = glyphs(&body);
+        assert!(
+            glyphs.iter().any(|glyph| glyph.starts_with("Z@1:40,")),
+            "{body}: {glyphs:?}"
+        );
+    }
+}
