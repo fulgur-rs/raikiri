@@ -3647,33 +3647,52 @@ fn clear_floats_at_forced_breaks<'name>(
     // The float that a forced break at the end of the content of `id` sends
     // to the next page, when only floats follow that break inside it: it
     // starts that page, as a float right after a forced break among the
-    // boxes after `id` would.
-    let trailing_page_start_float = |document: &Document, mut id: usize| {
+    // boxes after `id` would. A float that a break further in sends there
+    // starts the page in its place, and the floats after it line up beside
+    // it. A box that holds its floats, or that ends with generated content,
+    // has none. `memo` keeps each box's result, so nested boxes are each
+    // looked at once.
+    let trailing_page_start_float = |document: &super::context::LayoutSession<'_>,
+                                     memo: &mut HashMap<usize, Option<usize>>,
+                                     mut id: usize| {
+        // The boxes walked into, each with the float after its last block,
+        // if any.
+        let mut chain = Vec::new();
+        let mut found = None;
         for _ in 0..128 {
-            if is_monolithic_for_pagination_with_transposed_axes(
+            if let Some(&known) = memo.get(&id) {
+                found = known;
+                break;
+            }
+            let boxes = (!is_monolithic_for_pagination_with_transposed_axes(
                 document,
                 cascade,
                 id,
                 pagination_on_transposed_axes,
-            ) {
-                return None;
-            }
-            let boxes = child_boxes(document, id, false);
+            ) && !holds_floats_in_preparation(document, cascade, id)
+                && !renders_edge_pseudo(cascade, id, false))
+            .then(|| child_boxes(document, id, false))
+            .unwrap_or_default();
             let last = boxes
                 .iter()
-                .rposition(|item| item.is_none_or(|item| !is_float(document, item)))?;
-            let Some(block) = boxes[last] else {
-                return None;
+                .rposition(|item| item.is_none_or(|item| !is_float(document, item)));
+            let Some(Some(block)) = last.map(|last| boxes[last]) else {
+                memo.insert(id, None);
+                break;
             };
-            match boxes.get(last + 1) {
-                Some(&float) => {
-                    return float
-                        .filter(|_| page_edge_constraint(document, cascade, block, false).0);
-                }
-                None => id = block,
+            let float = last.and_then(|last| boxes.get(last + 1).copied().flatten());
+            if float.is_some() && !page_edge_constraint(document, cascade, block, false).0 {
+                memo.insert(id, None);
+                break;
             }
+            chain.push((id, float));
+            id = block;
         }
-        None
+        for (id, float) in chain.into_iter().rev() {
+            found = found.or(float);
+            memo.insert(id, found);
+        }
+        found
     };
     // The page value a box ends with: that of its last in-flow content, down
     // to the deepest box, or `inherited` without one. A monolithic box does
@@ -3733,6 +3752,7 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
+    let mut trailing_floats = HashMap::new();
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
@@ -3907,7 +3927,11 @@ fn clear_floats_at_forced_breaks<'name>(
             // right after a break among them, and the lines after it start
             // below the floats before that float only.
             block_ends_with_page_start_float = false;
-            if after_forced_break && let Some(float) = trailing_page_start_float(document, child) {
+            if after_forced_break
+                && !document.nodes[parent].used_writing_mode.is_vertical()
+                && let Some(float) =
+                    trailing_page_start_float(document, &mut trailing_floats, child)
+            {
                 float_after_break = true;
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
@@ -21550,6 +21574,35 @@ fn holds_floats(
     node_id: usize,
 ) -> bool {
     holds_floats_by_style(document, cascade, node_id) || is_flex_or_grid_item(document, node_id)
+}
+
+/// [`holds_floats`] from the computed style alone, for the passes that run
+/// before layout may query the style views: a box whose `overflow` is not
+/// `visible` or `clip` counts as a scroll container.
+fn holds_floats_in_preparation(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    use raikiri_style::property::OverflowValue;
+    let computed = &cascade.computed[node_id];
+    document.nodes[node_id].layout_display() == Display::FlowRoot
+        || !matches!(
+            document.nodes[node_id].display(),
+            DisplayValue::Block | DisplayValue::ListItem
+        )
+        || [computed.overflow.x, computed.overflow.y]
+            .into_iter()
+            .any(|value| {
+                matches!(
+                    value,
+                    OverflowValue::Hidden | OverflowValue::Scroll | OverflowValue::Auto
+                )
+            })
+        || document.nodes[node_id].multicol.is_some()
+        || document.nodes[node_id].roots_block_context()
+        || establishes_containment_context(computed)
+        || is_flex_or_grid_item(document, node_id)
 }
 
 /// Whether the style of the box `node_id` alone makes it hold the floats
