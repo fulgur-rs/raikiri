@@ -90,12 +90,13 @@ fn a_container_that_is_not_stretched_keeps_its_content_height() {
     let boxes = "<div style='height:30px'></div><div style='height:30px'></div>";
     let body = stretched(5, "", boxes);
     assert_eq!(rects(&body, "m"), vec![(10.0, 0.0, 100.0, 30.0)]);
-    // So does a grid row that only the container sizes.
+    // A definite line keeps the container at its height even when the
+    // content as one column is just as tall.
     let body = format!(
-        "<div style='display:grid;grid-template-columns:100px'>\
-         <div id=m style='columns:2;column-gap:0'>{four}</div></div>"
+        "<div style='display:flex;height:40px'>\
+         <div id=m style='width:100px;columns:2;column-gap:0'>{four}</div></div>"
     );
-    assert_eq!(rects(&body, "m"), vec![(0.0, 0.0, 100.0, 20.0)]);
+    assert_eq!(rects(&body, "m"), vec![(0.0, 0.0, 100.0, 40.0)]);
 }
 
 #[test]

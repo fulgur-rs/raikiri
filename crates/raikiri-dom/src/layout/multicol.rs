@@ -183,9 +183,11 @@ pub(crate) fn compute_multicol_layout(
     // A row flex container or a grid container stretches an auto-height
     // item to its line or area, a column flex container grows or bases
     // it on its flex properties, and an absolutely positioned box with
-    // both block insets fills its containing block; the columns then
-    // take that height. Other known heights come from the item's own
-    // content and are rebalanced here.
+    // both block insets fills its containing block. A definite height
+    // bounds the columns; under an auto-height flex line the columns
+    // balance and the container takes the stretched height as a minimum.
+    // Other known heights, including a line that only the item's own
+    // content sized, come from that content and are rebalanced here.
     let css = style_of(tree, index);
     let positioned = tree.nodes[index].layout_position() == Position::Absolute;
     let inset = css.inset();
@@ -664,12 +666,13 @@ pub(crate) fn compute_multicol_layout(
     pass.finish(tree, node_id, &inputs, output)
 }
 
-/// Whether the height a flex line or grid area stretched the multicol
-/// container `node_id` to is only the height of its own content. The line or
-/// track measures the container before it balances its columns, as one
-/// column across the whole width, and one that nothing else sizes gives that
-/// height back. Such a container balances its columns as one of auto height
-/// does.
+/// Whether the height an auto-height flex line stretched the multicol
+/// container `node_id` to is only the height of its own content. The line
+/// measures the container before it balances its columns, as one column
+/// across the whole width, and a line that nothing else makes taller gives
+/// that height back. Such a container balances its columns as one of auto
+/// height does. A sibling that makes the line exactly that tall is taken for
+/// the same case.
 fn sized_by_own_content(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -679,8 +682,10 @@ fn sized_by_own_content(
     let Some(stretched) = inputs.known_dimensions.height else {
         return false;
     };
+    // A definite line or grid area bounds the columns instead.
     if inputs.run_mode != RunMode::PerformLayout
         || !matches!(placement, Some(FlowPlacement::Stretched(true)))
+        || (inputs.parent_size.height.is_some() && inputs.known_dimensions_are_definite.height)
     {
         return false;
     }
@@ -689,9 +694,8 @@ fn sized_by_own_content(
     probe.axis = RequestedAxis::Vertical;
     probe.known_dimensions.height = None;
     probe.known_dimensions_are_definite.height = false;
-    let content = crate::layout::dispatch::block_layout(tree, node_id, probe, None)
-        .size
-        .height;
+    // Measured as the parent measured it, through the cache of the box.
+    let content = tree.compute_child_layout(node_id, probe).size.height;
     (stretched - content).abs() <= lineless::EPSILON
 }
 
