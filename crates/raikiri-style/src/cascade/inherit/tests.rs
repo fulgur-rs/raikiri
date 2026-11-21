@@ -14160,3 +14160,95 @@ fn inherited_flow_relative_border_width_marks_its_mapped_side() {
     assert_eq!(result.computed[child].border.right.width, snapped);
     assert_eq!(result.computed[child].border.top.width, snapped);
 }
+
+/// Chromium blockifies every HTML `legend`, as CSS 2.1 §9.7 does a float:
+/// `inline-block` becomes `block`, and `contents` and `none` stay.
+#[test]
+fn a_legend_computes_to_its_block_level_display() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let body = doc.push_element(html, "body", None);
+    let cases = [
+        ("inline", DisplayValue::Block),
+        ("inline-block", DisplayValue::Block),
+        ("inline-flex", DisplayValue::Flex),
+        ("inline-grid", DisplayValue::Grid),
+        ("inline-table", DisplayValue::Table),
+        ("table-cell", DisplayValue::Block),
+        ("ruby", DisplayValue::BlockRuby),
+        ("list-item", DisplayValue::ListItem),
+        ("contents", DisplayValue::Contents),
+        ("none", DisplayValue::None),
+    ];
+    let legends: Vec<usize> = cases
+        .iter()
+        .map(|(display, _)| doc.push_element(body, "legend", Some(&format!("display:{display}"))))
+        .collect();
+    let svg = doc.push_element_with_namespace(body, "svg", "http://www.w3.org/2000/svg", &[]);
+    let svg_legend =
+        doc.push_element_with_namespace(svg, "legend", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    for ((display, expected), legend) in cases.iter().zip(legends) {
+        assert_eq!(
+            result.computed[legend].display, *expected,
+            "display:{display}"
+        );
+    }
+    assert_eq!(result.computed[svg_legend].display, DisplayValue::Inline);
+}
+
+/// A sibling with the same rules shares the values of a `legend` only when
+/// it is a `legend` too, so neither takes the other's display.
+#[test]
+fn a_legend_and_a_sibling_with_the_same_rules_keep_their_own_display() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, ".i { display: inline }");
+    let body = doc.push_element(html, "body", None);
+    let class = [("class", "i")];
+    let first_span = doc.push_element_with_attrs(body, "span", None, &class);
+    let legend = doc.push_element_with_attrs(body, "legend", None, &class);
+    let second_legend = doc.push_element_with_attrs(body, "legend", None, &class);
+    let last_span = doc.push_element_with_attrs(body, "span", None, &class);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(result.computed[first_span].display, DisplayValue::Inline);
+    assert_eq!(result.computed[legend].display, DisplayValue::Block);
+    assert_eq!(result.computed[second_legend].display, DisplayValue::Block);
+    assert_eq!(result.computed[last_span].display, DisplayValue::Inline);
+}
+
+/// A blockified legend is not a ruby annotation, so neither its writing mode
+/// nor the sides its flow-relative margins map onto are forced to
+/// `vertical-rl` in an inter-character ruby.
+#[test]
+fn a_legend_in_an_inter_character_ruby_is_not_an_annotation() {
+    let mut doc = TestDoc::new();
+    let ruby = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character"),
+    );
+    let legend = doc.push_element(
+        ruby,
+        "legend",
+        Some("display: ruby-text; margin-inline-start: 5px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[legend].display, DisplayValue::Block);
+    assert_eq!(
+        r.computed[legend].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        r.computed[legend].margin.left,
+        ComputedLengthPercentageOrAuto::Px(5.0)
+    );
+    assert_eq!(
+        r.computed[legend].margin.top,
+        ComputedLengthPercentageOrAuto::Px(0.0)
+    );
+}
