@@ -3816,6 +3816,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // the page flow, and their insides are not walked.
     let mut cleared = Vec::new();
     document.context.float_resumption_candidates.clear();
+    document.context.float_break_closers.clear();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
@@ -4014,6 +4015,13 @@ fn clear_floats_at_forced_breaks<'name>(
                     .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
+                // The parents are walked outside in, so the first box found
+                // for a float is the outermost one.
+                document
+                    .context
+                    .float_break_closers
+                    .entry(float)
+                    .or_insert(child);
             }
             previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
             // child_boxes represents inline content as None; floats and static-position
@@ -17516,6 +17524,51 @@ impl SiblingMargins {
             self.previous_bottoms.remove(&parent_id);
         }
     }
+}
+
+/// Where `float` starts at the lowest, local to its parent, when the
+/// outermost box around it whose content ends with the forced break after
+/// `source` and the floats after it has block-end edges that reach below
+/// `source` and still fit on the page that break leaves: where that box
+/// ends. Chromium ends the box on that page and starts the next one with
+/// the float beside the flow after the box. Edges that do not fit go to the
+/// next page with the float. Positions are taken where the flow puts the
+/// boxes, without relative offsets.
+fn float_top_after_closed_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    page_origins: &PageOrigins,
+    source: usize,
+    float: usize,
+) -> Option<f32> {
+    let closer = *document.context.float_break_closers.get(&float)?;
+    // A float inside an inline box stands on a line after the break, which
+    // starts the next page inside the box: its edges go there too.
+    if !is_descendant_or_self(document, source, closer)
+        || document.nodes[float]
+            .parent
+            .is_some_and(|parent| document.nodes[parent].display().is_inline_flow())
+    {
+        return None;
+    }
+    let relative = |id: usize| accumulated_relative_offset_y(document, cascade, body_id, id);
+    // A relative offset on the way from the box down to the float moves the
+    // float away from the flow that the page walk lines up beside it; that
+    // case keeps the float where the flow puts it.
+    let outside = document.layout_parent_of(closer).map_or(0.0, relative);
+    if (relative(float) - outside).abs() > 0.001 {
+        return None;
+    }
+    let flow_y = |id: usize| current_abs_y(document, id) - relative(id);
+    let source_end = flow_y(source) + document.nodes[source].layout.size.height;
+    let end = flow_y(closer) + document.nodes[closer].layout.size.height;
+    let page = page_origins.page_index_for_y(source_end - 0.001);
+    if end <= source_end + 0.001 || end > page_origins.page_end(page) + 0.001 {
+        return None;
+    }
+    let parent_top = document.layout_parent_of(float).map_or(0.0, flow_y);
+    Some(end - parent_top)
 }
 
 /// Shifts of the flow that end where a subtree does.

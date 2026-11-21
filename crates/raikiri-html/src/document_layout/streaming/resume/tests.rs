@@ -848,3 +848,41 @@ fn space_above_the_first_box_costs_no_streamed_pages() {
         }
     }
 }
+
+#[test]
+fn a_box_sized_by_its_content_streams_like_batch() {
+    // The 500px box gives the wrapper its width. A layout that left it out
+    // would lay the paragraphs after it out in a narrower wrapper.
+    let wrong: Vec<String> = [
+        "width: fit-content",
+        "width: max-content",
+        "width: min-content",
+        "width: fit-content(600px)",
+        "min-width: max-content; width: 100px",
+        "max-width: min-content",
+    ]
+    .into_iter()
+    .filter_map(|style| {
+        let html = format!(
+            "<div style='{style}'><div style='width:500px;height:20px'>wide</div>{}</div>{}",
+            paragraphs(300, 3),
+            paragraphs(40, 3)
+        );
+        let (expected, _) = batch(&html);
+        let (pages, _, _) = stream(&html, 2048);
+        if pages.len() != expected.len() {
+            return Some(format!(
+                "{style}: {} pages for {}",
+                pages.len(),
+                expected.len()
+            ));
+        }
+        pages
+            .iter()
+            .zip(&expected)
+            .position(|(streamed, batch)| !same(streamed, batch))
+            .map(|page| format!("{style}: page {page} differs"))
+    })
+    .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

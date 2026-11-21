@@ -39,11 +39,25 @@ pub(crate) struct Plan {
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
+    /// Floats after a forced break at the end of the content of a box whose
+    /// block-end edges close on the page the break leaves, each with the
+    /// lowest top it takes: where the box closes, as the flow after the box
+    /// starts the next page beside the float.
+    closed: HashMap<usize, f32>,
 }
 
 impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
-        self.floats.is_empty() && self.pushed.is_empty() && self.margin_flows.is_empty()
+        self.floats.is_empty()
+            && self.pushed.is_empty()
+            && self.margin_flows.is_empty()
+            && self.closed.is_empty()
+    }
+
+    /// The lowest top of a float after a box that closed on the page the
+    /// forced break before the float leaves.
+    pub(crate) fn closed_float_top(&self, node: usize) -> Option<f32> {
+        self.closed.get(&node).copied()
     }
 
     pub(crate) fn float_top(&self, node: usize) -> Option<f32> {
@@ -213,6 +227,8 @@ impl Plan {
             }
         }
         plan.pushed.extend(kept);
+        plan.closed
+            .extend(document.context.floats_after_closed_edges.iter().copied());
         plan
     }
 
