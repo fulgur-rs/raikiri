@@ -490,6 +490,13 @@ pub(crate) fn compute_multicol_layout(
                     + multicol_resolve_inset(tree, border.bottom, basis)
             }
         });
+        // A box stretched to an auto-height flex line or grid area balances
+        // its columns as usual and then takes the size it was stretched to,
+        // like a minimum height: the columns do not fill it.
+        let minimum = match inputs.known_dimensions.height {
+            Some(height) if stretched_height && available_height.is_none() => minimum.max(height),
+            _ => minimum,
+        };
         let lineless_definite = available_height.is_some() || stretched_height;
         // An auto-basis item of a column flex container that does not grow
         // keeps its content height unless flexing shrinks it, so its known
@@ -584,10 +591,14 @@ pub(crate) fn compute_multicol_layout(
             });
         let mut used_height = lay_out_columns(tree, content_origin, block_end_inset, &mut output);
         // Balanced columns size an auto-height container even under a
-        // maximum height, which only bounds the balanced columns.
-        let balances_height = fragmentainer_height.is_none()
-            || bounded_by_maximum
-            || (lineless_children.is_some() && !lineless_definite);
+        // maximum height, which only bounds the balanced columns. Columns
+        // sliced inside a height that layout fixed, such as the size a flex
+        // line stretched the box to, leave the container that height.
+        let balances_height = if lineless_children.is_some() {
+            !lineless_definite
+        } else {
+            fragmentainer_height.is_none() || bounded_by_maximum
+        };
         // Only one row of columns that this layout placed is aligned: a
         // strategy that gave up placed none, and a container broken across
         // outer fragmentainers has a record in each.
