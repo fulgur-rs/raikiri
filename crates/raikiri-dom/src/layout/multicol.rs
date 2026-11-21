@@ -2316,11 +2316,21 @@ fn place_wrapped_boxes(
         let parent_layout = tree.nodes[wrapped.parent_node].layout;
         let mut layout = tree.nodes[wrapped.node].layout;
         // The box stands at the start of the wrapper's content box, which
-        // starts at the left of the wrapper's first column, in its own.
+        // starts at the left of the wrapper's first column, in its own. The
+        // painter adds only the block offset of a box inside a wrapper, so the
+        // box keeps the inline offset of its `position: relative` insets here,
+        // as block flow gives it.
+        let content_width = parent_layout.size.width
+            - parent_layout.border.left
+            - parent_layout.border.right
+            - parent_layout.padding.left
+            - parent_layout.padding.right;
+        let inline_offset = relative_inline_offset(&style_of(tree, wrapped.node), content_width);
         layout.location = Point {
             x: parent_layout.border.left
                 + parent_layout.padding.left
                 + layout.margin.left
+                + inline_offset
                 + context.column_offset_x(placement.first_column)
                 - context.column_offset_x(parent.first_column),
             y: placement.first_y - parent.first_y,
