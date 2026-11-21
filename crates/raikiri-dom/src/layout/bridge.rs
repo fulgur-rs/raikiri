@@ -267,6 +267,17 @@ fn apply_computed_to_style_in_session_inner(
         {
             doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
         }
+        // A block box that spans all columns establishes a new block
+        // formatting context (CSS Multi-column Layout 1, 6.1). Browsers give
+        // it one whether or not a multicol container holds it.
+        if doc.nodes[idx].column_span_all
+            && matches!(
+                doc.nodes[idx].display(),
+                DisplayValue::Block | DisplayValue::ListItem
+            )
+        {
+            doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
+        }
         // Table engine inputs — no taffy::Style counterpart (taffy 0.15
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
