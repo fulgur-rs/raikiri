@@ -588,3 +588,19 @@ fn a_break_forced_inside_a_fixed_box_breaks_no_page() {
         &["T@0:0", "U@0:30", "Z@0:40"],
     );
 }
+
+#[test]
+fn a_float_breaking_before_itself_inside_an_absolute_box_leaves_the_flow_after_it() {
+    // Where the float itself lands is left out: the flow past the absolute
+    // box stays on the page either way.
+    let (_, runs) = lines(&after_spacer(
+        "<div style='position:relative'><div style='position:absolute;width:20px'>\
+         <div style='height:20px'>T</div><div style='float:left;break-before:page'>U</div>\
+         </div></div>",
+    ));
+    let runs: Vec<_> = runs
+        .into_iter()
+        .filter(|run| !run.starts_with('U'))
+        .collect();
+    assert_eq!(runs, ["T@0:40", "Z@0:40"]);
+}
