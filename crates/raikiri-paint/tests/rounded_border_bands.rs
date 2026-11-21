@@ -462,3 +462,45 @@ fn a_wide_side_and_a_large_corner_share_the_top() {
         ],
     );
 }
+
+#[test]
+fn a_double_side_beside_solid_ones_keeps_to_its_part_of_the_corner() {
+    // A 40px box with a 30px solid green border, a red `double` top and 60px
+    // corners: the inner line of the top curves down the corner only as far
+    // as the cut toward the inner corner, and the green left side holds the
+    // rest of the corner below it.
+    let pixels = boxed(
+        "border:30px solid green;border-top:30px double red;border-radius:60px;width:40px;height:40px",
+    );
+    assert_rows(
+        &pixels,
+        10,
+        26,
+        &[
+            "............oo##orrrrrrrrrrooo..........",
+            "...........oo####orrrrrrrroo............",
+            "..........oo######orrrrrooo.............",
+            "..........o########orrroo...............",
+            ".........oo#########oroo................",
+            "........oo###########oo................o",
+            "........o#############o..............ooo",
+            ".......oo##############o...........ooorr",
+            "......oo################o........ooorrrr",
+            "......o##################o......oorrrrrr",
+            ".....oo###################o...ooorrrrrrr",
+            ".....o#####################o.oorrrrrrrrr",
+            "....oo######################oorrrrrrrrrr",
+            "....o########################orrrrrrrrrr",
+            "...oo#########################orrrrrrrrr",
+            "...o###########################orrrrrrrr",
+            "..oo############################orrrrrro",
+            "..o##############################orrrooo",
+            "..o###############################orooo.",
+            "..o################################oo...",
+            ".oo###############################oo....",
+            ".o################################o.....",
+            ".o###############################oo.....",
+            "oo##############################oo......",
+        ],
+    );
+}

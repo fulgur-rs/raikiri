@@ -48,57 +48,55 @@ pub(super) fn paint_rounded_border_bands(
         return true;
     }
     let clips = side_clips(Rect::new(x0, y0, x1, y1), radii, widths);
+    let top_left = |index: usize| matches!(index, TOP | LEFT);
     for ring in 0..2 {
-        let bands = std::array::from_fn::<_, 4, _>(|index| {
-            bands(
-                sides[index].style(),
-                widths[index],
-                matches!(index, TOP | LEFT),
-            )[ring]
-        });
-        if bands.iter().all(|band| band.width <= 0.0) {
-            continue;
-        }
-        let inset = |depth: fn(&super::element_border::Band) -> f64| {
-            let [top, right, bottom, left] = bands.map(|band| depth(&band));
-            rounded_rect_path(
-                x0 + left,
-                y0 + top,
-                x1 - right,
-                y1 - bottom,
-                inset_border_radii(radii, (left, top, right, bottom)),
-            )
-        };
-        let mut band_path = inset(|band| band.offset);
-        band_path.extend(
-            inset(|band| band.offset + band.width)
-                .reverse_subpaths()
-                .iter(),
-        );
-        // The sides with a band in this ring, grouped by the color they paint
-        // it with; a transparent side paints nothing.
-        let mut groups: Vec<(Color, Vec<usize>)> = Vec::new();
+        // The sides with a band in this ring, grouped by their style, which
+        // sets where the band lies, and by the color they paint it with; a
+        // transparent side paints nothing.
+        let mut groups: Vec<(BorderStyle, Color, Vec<usize>)> = Vec::new();
         for index in [TOP, RIGHT, BOTTOM, LEFT] {
-            if bands[index].width <= 0.0 {
+            let style = sides[index].style();
+            if bands(style, widths[index], top_left(index))[ring].width <= 0.0 {
                 continue;
             }
-            let Some(color) = band_color(
-                sides[index],
-                ring,
-                matches!(index, TOP | LEFT),
-                current_color,
-            ) else {
+            let Some(color) = band_color(sides[index], ring, top_left(index), current_color) else {
                 continue;
             };
             let color = Color::from_rgba8(color.r, color.g, color.b, color.a);
-            match groups.iter_mut().find(|(group, _)| *group == color) {
-                Some((_, members)) => members.push(index),
-                None => groups.push((color, vec![index])),
+            match groups
+                .iter_mut()
+                .find(|(other, group, _)| *other == style && *group == color)
+            {
+                Some((_, _, members)) => members.push(index),
+                None => groups.push((style, color, vec![index])),
             }
         }
         let whole = groups.len() == 1
-            && (0..4).all(|index| bands[index].width <= 0.0 || groups[0].1.contains(&index));
-        for (color, members) in groups {
+            && (0..4).all(|index| widths[index] <= 0.0 || groups[0].2.contains(&index));
+        for (style, color, members) in groups {
+            // The band of a side lies where its style puts it in a border of
+            // that style all round, the widths of the other sides and all, so
+            // it meets the other sides along the cut of the corner (as
+            // Chromium draws each side).
+            let bands = std::array::from_fn::<_, 4, _>(|index| {
+                bands(style, widths[index], top_left(index))[ring]
+            });
+            let inset = |depth: fn(&super::element_border::Band) -> f64| {
+                let [top, right, bottom, left] = bands.map(|band| depth(&band));
+                rounded_rect_path(
+                    x0 + left,
+                    y0 + top,
+                    x1 - right,
+                    y1 - bottom,
+                    inset_border_radii(radii, (left, top, right, bottom)),
+                )
+            };
+            let mut band_path = inset(|band| band.offset);
+            band_path.extend(
+                inset(|band| band.offset + band.width)
+                    .reverse_subpaths()
+                    .iter(),
+            );
             if whole {
                 scene.fill(Fill::EvenOdd, Affine::IDENTITY, color, None, &band_path);
                 continue;
