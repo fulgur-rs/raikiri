@@ -2571,7 +2571,7 @@ fn retained_margin_paragraphs_follow_their_opening_page_boundary() {
             lines: &[(1, 0.0, 55.0), (2, 0.0, 5.0)],
         },
         FloatMarginCase {
-            label: "own-float-break-before",
+            label: "own-float-break-before-ignored",
             body: "<div style='height:30px;margin-bottom:30px'>a</div><div style='float:left;break-before:page;width:40px;height:50px'></div><div id=target style='margin-top:50px;'>XX XX XX XX</div>",
             pages: 2,
             lines: &[(1, 40.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)],
