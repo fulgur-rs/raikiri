@@ -44,7 +44,7 @@ pub(super) fn paint_rounded_border_bands(
     }
     let (x0, y0) = (f64::from(abs_x), f64::from(abs_y));
     let (x1, y1) = (f64::from(abs_x + width), f64::from(abs_y + height));
-    if x1 <= x0 || y1 <= y0 {
+    if x1 <= x0 || y1 <= y0 || widths.iter().all(|width| *width <= 0.0) {
         return true;
     }
     let clips = side_clips(Rect::new(x0, y0, x1, y1), radii, widths);
@@ -130,18 +130,27 @@ fn side_clips(edges: Rect, radii: [[f64; 2]; 4], widths: [f64; 4]) -> [BezPath; 
     let [top, right, bottom, left] = widths;
     // The box of each corner, as its size along x and y, top-left first and
     // clockwise.
-    let extent = |radius: [f64; 2], wx: f64, wy: f64| {
-        [
-            radius[0].max(wx).min(w / 2.0),
-            radius[1].max(wy).min(h / 2.0),
-        ]
-    };
-    let boxes = [
-        extent(radii[0], left, top),
-        extent(radii[1], right, top),
-        extent(radii[2], right, bottom),
-        extent(radii[3], left, bottom),
+    let mut boxes = [
+        [radii[0][0].max(left), radii[0][1].max(top)],
+        [radii[1][0].max(right), radii[1][1].max(top)],
+        [radii[2][0].max(right), radii[2][1].max(bottom)],
+        [radii[3][0].max(left), radii[3][1].max(bottom)],
     ];
+    // Two corners on one side of the box may not overlap: where the boxes
+    // of the corners at the ends of a side would, they share the side in
+    // proportion to their sizes.
+    let share = |a: &mut f64, b: &mut f64, length: f64| {
+        let sum = *a + *b;
+        if sum > length {
+            *a *= length / sum;
+            *b *= length / sum;
+        }
+    };
+    let [[tl_w, tl_h], [tr_w, tr_h], [br_w, br_h], [bl_w, bl_h]] = &mut boxes;
+    share(tl_w, tr_w, w);
+    share(bl_w, br_w, w);
+    share(tl_h, bl_h, h);
+    share(tr_h, br_h, h);
     // Where the cut of a corner leaves its box, measured from the outer
     // corner along x and y (both positive), for a cut toward (`wx`, `wy`).
     let exit = |[bx, by]: [f64; 2], wx: f64, wy: f64| -> [f64; 2] {

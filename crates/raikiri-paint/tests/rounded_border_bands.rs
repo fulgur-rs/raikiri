@@ -312,3 +312,49 @@ fn a_box_without_a_top_border_rounds_its_other_sides() {
         ],
     );
 }
+
+#[test]
+fn a_side_wider_than_half_the_box_keeps_its_whole_width() {
+    // A 10px wide box with a 30px green left side, a 5px red top and 10px
+    // corners: the left side reaches past the middle of the border box and
+    // keeps all of its width under the top, cut along the line toward its
+    // inner corner.
+    let pixels = boxed(
+        "width:10px;border-left:30px solid green;border-top:5px solid red;border-radius:10px",
+    );
+    assert_rows(
+        &pixels,
+        10,
+        10,
+        &[
+            ".....ooooorrrrrrrrrrrrrrrrrrrrooooo.....",
+            "....oooooooorrrrrrrrrrrrrrrrrrrrrroo....",
+            "..ooo#######oooooorrrrrrrrrrrrrrrrrooo..",
+            "..o###############oooooorrrrrrrrrrrrro..",
+            ".oo#####################oooooorrrrrrroo.",
+            "oo############################oooooorroo",
+            "o#############################.....oooro",
+            "o#############################.......ooo",
+            "o#############################.........o",
+            "o#############################.........o",
+            "##############################..........",
+            "##############################..........",
+            "##############################..........",
+            "##############################..........",
+        ],
+    );
+}
+
+#[test]
+fn mixed_sides_with_a_dashed_one_stay_inside_the_rounded_outer_edge() {
+    // A 4px dashed green border with an 8px solid red bottom and 12px corners
+    // keeps straight strips, but nothing is painted outside the curve of the
+    // upper-left corner.
+    let pixels = boxed("border:4px dashed green;border-bottom:8px solid red;border-radius:12px");
+    assert_rows(&pixels, 10, 10, &["....", "...", "..", "."]);
+    assert_eq!(
+        mark(&pixels, 60, 68),
+        'r',
+        "the bottom side is still painted"
+    );
+}
