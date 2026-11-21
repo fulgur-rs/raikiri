@@ -33,6 +33,10 @@ pub(super) struct PageFragmentSource {
     pub(super) fragment_clip: Option<PaintClip>,
     pub(super) overflow_chain: Option<usize>,
     pub(super) own_overflow_source: Option<usize>,
+    /// How far down the painter moves the box by the relative offsets that
+    /// layout leaves to it (see [`super::painter_relative_shift_y`]). The
+    /// box is drawn on the pages it reaches where it is painted.
+    pub(super) painted_shift: f32,
 }
 
 impl PageFragmentSource {
@@ -44,6 +48,13 @@ impl PageFragmentSource {
         Self {
             abs_x,
             abs_y,
+            // The painter moves boxes down the page, which is the flow only
+            // when it runs along y.
+            painted_shift: if matches!(axis, FlowAxis::Y) {
+                self.painted_shift
+            } else {
+                0.0
+            },
             width,
             height,
             content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
@@ -122,19 +133,16 @@ impl FlowSlots {
         if source.is_repeat || !self.ordered {
             &self.ranges[..]
         } else if source.height > 0.0 {
-            let bottom = source.abs_y + source.height;
-            let first = self
-                .ranges
-                .partition_point(|&(_, _, end)| end <= source.abs_y);
+            let top = source.abs_y + source.painted_shift;
+            let bottom = top + source.height;
+            let first = self.ranges.partition_point(|&(_, _, end)| end <= top);
             let last =
                 first + self.ranges[first..].partition_point(|&(_, start, _)| start < bottom);
             &self.ranges[first..last]
         } else {
-            let first = self
-                .ranges
-                .partition_point(|&(_, _, end)| end < source.abs_y);
-            let last = first
-                + self.ranges[first..].partition_point(|&(_, start, _)| start <= source.abs_y);
+            let top = source.abs_y + source.painted_shift;
+            let first = self.ranges.partition_point(|&(_, _, end)| end < top);
+            let last = first + self.ranges[first..].partition_point(|&(_, start, _)| start <= top);
             &self.ranges[first..last]
         }
     }
@@ -250,22 +258,27 @@ fn fragment_placements(
             });
             continue;
         }
+        // The box lies where the painter draws it when the page is chosen,
+        // and keeps its layout position on that page: the painter moves it
+        // by `shift` again.
+        let shift = source.painted_shift;
+        let painted_y = source.abs_y + shift;
         let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-            match flow_page_overlap(source.abs_y, source.height, page_start, page_end) {
-                Some((y, height)) => (true, y, height),
+            match flow_page_overlap(painted_y, source.height, page_start, page_end) {
+                Some((y, height)) => (true, y - shift, height),
                 None => (false, 0.0, 0.0),
             }
         } else {
             (
-                source.abs_y >= page_start && source.abs_y <= page_end,
-                (source.abs_y - page_start).max(0.0),
+                painted_y >= page_start && painted_y <= page_end,
+                (painted_y - page_start).max(0.0) - shift,
                 0.0,
             )
         };
         if intersects {
             let line_range = source.line_metrics.as_deref().and_then(|metrics| {
                 line_ranges
-                    .get_or_insert_with(|| LineRanges::new(metrics, source.abs_y))
+                    .get_or_insert_with(|| LineRanges::new(metrics, painted_y))
                     .range(page_start, page_end)
             });
             placements.push(FragmentPlacement {
