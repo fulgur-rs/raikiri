@@ -8137,7 +8137,9 @@ fn avoided_box_holder(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, ancestor, child) {
+        if renders_before_child(document, ancestor, child)
+            && !starts_single_row(document, cascade, ancestor, child)
+        {
             break;
         }
         child = ancestor;
@@ -8145,7 +8147,8 @@ fn avoided_box_holder(
             continue;
         }
         let layout = &document.nodes[ancestor].layout;
-        if !is_plain_block_box(document, ancestor)
+        if !(is_plain_block_box(document, ancestor)
+            || starts_single_row(document, cascade, ancestor, box_child))
             || document.nodes[ancestor].is_multicol_container()
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, box_child)
@@ -8293,15 +8296,22 @@ fn leading_holder_with(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before(document, ancestor, child) {
+        let item = child;
+        // The items of a row sit beside the one that holds the box, not
+        // before it.
+        if renders_before(document, ancestor, child)
+            && !starts_single_row(document, cascade, ancestor, item)
+        {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
-        if !is_plain_block_box(document, ancestor)
-            || document.nodes[ancestor].is_multicol_container()
+        if !(is_plain_block_box(document, ancestor)
+            || starts_single_row(document, cascade, ancestor, item))
+            || (document.nodes[ancestor].is_multicol_container()
+                && !is_single_column(document, ancestor))
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, ancestor)
             || if edges {
@@ -8320,6 +8330,48 @@ fn leading_holder_with(
         0.0
     };
     (holder, lead)
+}
+
+/// Whether the multicol container `id` lays its content out in one column
+/// of its whole width, which follows the page as block flow does.
+fn is_single_column(document: &Document, id: usize) -> bool {
+    document.nodes[id]
+        .multicol
+        .is_some_and(|style| style.count == Some(1) && style.width.is_none())
+}
+
+/// Whether `item` is an item of the flex or grid container `container` at
+/// the top of a single row the container lays out beside it: a row flex
+/// container that does not wrap, or a grid of several columns, with `item`
+/// at the top of its content box. A box that begins such an item begins the
+/// row, and Chromium moves the whole row, and so the container, when the
+/// page cannot break before the box.
+fn starts_single_row(
+    document: &Document,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+) -> bool {
+    let node = &document.nodes[container];
+    let computed = &cascade.computed[container];
+    let row = match node.display() {
+        DisplayValue::Flex => {
+            matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            ) && computed.flex_wrap == FlexWrapValue::NoWrap
+        }
+        DisplayValue::Grid => node.grid_column_count > 1,
+        _ => false,
+    };
+    let layout = &node.layout;
+    row && matches!(
+        node.position(),
+        PositionValue::Static | PositionValue::Relative
+    ) && !node.used_writing_mode.is_vertical()
+        && document.layout_parent_of(item) == Some(container)
+        && (document.nodes[item].layout.location.y - layout.border.top - layout.padding.top).abs()
+            <= 0.01
 }
 
 /// The block size of what a box that begins the blocks from its parent up to

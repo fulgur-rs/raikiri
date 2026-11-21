@@ -2075,7 +2075,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A flex container nested in block flow moves whole when what
                 // follows its items runs past the page end (see
                 // `flex_margins_move`), so it needs a place of its own.
-                let flex_margins_base = nested_candidate_base
+                // Inside the item of a flex row, it moves the row it begins
+                // with it (see `starts_single_row`); the walk over its
+                // ancestors drops it where some other one lays boxes beside it.
+                let flex_margins_base = (nested_candidate_base
+                    || (inside_flex
+                        && participates_in_flow
+                        && !direct_body_child
+                        && !out_of_flow_subtree
+                        && !inside_table))
                     && !inline_level
                     && super::has_flex_trailing_space(document, node_id);
                 let run_break_base = self.finds_nested_runs
@@ -2119,7 +2127,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // with a height of its own does not keep it from
                         // moving. The conditions are those under which
                         // `open_page_for_box` moves the holder.
-                        let holder = (unbreakable_box
+                        let holder = ((unbreakable_box || flex_margins_base || avoids_by_property)
                             && !sets_page_flow
                             && !after_forced_break
                             && !inside_float
@@ -2128,7 +2136,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !flex_item_candidate
                             && !grid_item_candidate)
                             .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
-                            .filter(|&holder| holder != node_id);
+                            .filter(|&holder| holder != node_id)
+                            // A box that only avoids a break inside it splits
+                            // in columns rather than move them on (see
+                            // `avoided_box_holder`).
+                            .filter(|&holder| {
+                                unbreakable_box
+                                    || flex_margins_base
+                                    || !document
+                                        .ancestors(node_id)
+                                        .take_while(|&id| id != holder)
+                                        .chain(std::iter::once(holder))
+                                        .any(|id| document.nodes[id].is_multicol_container())
+                            });
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
                         (false, false)
