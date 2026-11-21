@@ -3841,9 +3841,9 @@ fn clear_floats_at_forced_breaks<'name>(
         // or a change of named page there, and not just the break of the box
         // before it.
         let mut float_own_break = false;
-        // Whether that float stands on a line of an inline box, after which
-        // a box with another page type opens a page of its own.
-        let mut float_on_line = false;
+        // The float that took the forced break, which a box with another
+        // page type after it joins on the page it opened.
+        let mut break_float = None;
         // The last in-flow block among the parent's boxes: when the parent
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
@@ -3944,9 +3944,7 @@ fn clear_floats_at_forced_breaks<'name>(
                     );
                     cleared.push(child);
                     float_after_break = true;
-                    float_on_line = document
-                        .layout_parent_of(child)
-                        .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
+                    break_float = Some(child);
                     if carries_flow_break {
                         page_start_float = Some(child);
                     }
@@ -3958,7 +3956,9 @@ fn clear_floats_at_forced_breaks<'name>(
             let starts_at_inherited = std::mem::take(&mut page_start_inherited);
             let float_took_break = std::mem::take(&mut float_after_break);
             let beside_page_start_float = float_took_break || starts_at_inherited;
-            let float_took_break_off_line = float_took_break && !std::mem::take(&mut float_on_line);
+            let joins_break_float = std::mem::take(&mut break_float).is_some_and(|float| {
+                float_took_break && joins_float_break_page(document, cascade, child, float)
+            });
             let float_took_own_break = std::mem::take(&mut float_own_break);
             let resumed_float = page_start_float.take();
             last_block = Some(child);
@@ -3993,7 +3993,7 @@ fn clear_floats_at_forced_breaks<'name>(
             // the float stands on a line.
             let at_page_start_float = (forced || starts_at_inherited)
                 && beside_page_start_float
-                && (!named_break || float_took_break_off_line)
+                && (!named_break || joins_break_float)
                 && !(breaks_before && float_took_own_break)
                 && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
@@ -4010,9 +4010,7 @@ fn clear_floats_at_forced_breaks<'name>(
                     trailing_page_start_float(document, &mut trailing_floats, child)
             {
                 float_after_break = true;
-                float_on_line = document
-                    .layout_parent_of(float)
-                    .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
+                break_float = Some(float);
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
                 // The parents are walked outside in, so the first box found
@@ -5018,6 +5016,35 @@ struct PageFlowGeometry {
     page_box: PageBox,
     margins: PageMargins,
     insets: PageContentInsets,
+}
+
+/// Whether `node`, which follows the float `float` that took a forced
+/// break, starts the page the float opened beside it, so that a change of
+/// page type at `node` is the same break. A float on a line of an inline
+/// box leaves a box after that box to open its own page, and so does a box
+/// that clears the float.
+pub(super) fn joins_float_break_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: usize,
+    float: usize,
+) -> bool {
+    let on_line = document
+        .layout_parent_of(float)
+        .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
+    !on_line && !clears_float(cascade, node, float)
+}
+
+/// Whether the `clear` value of `node` clears the float `float`. A logical
+/// value is taken to clear it.
+pub(super) fn clears_float(cascade: &CascadeResult, node: usize, float: usize) -> bool {
+    use raikiri_style::property::FloatValue;
+    !matches!(
+        (cascade.computed[node].clear, cascade.computed[float].float),
+        (ClearValue::None, _)
+            | (ClearValue::Left, FloatValue::Right)
+            | (ClearValue::Right, FloatValue::Left)
+    )
 }
 
 /// The page type pagination assigns to each page the flow reaches.

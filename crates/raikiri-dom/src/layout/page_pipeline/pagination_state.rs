@@ -643,7 +643,8 @@ impl PaginationState {
         );
         // Leaving a flex item's internal named flow keeps the last opened
         // physical page until an outer boundary or natural overflow opens one.
-        let comparison_page_name = self.join_float_break(document, candidate, comparison_page_name);
+        let comparison_page_name =
+            self.join_float_break(document, env.cascade, candidate, comparison_page_name);
         let keep_local_page_type = candidate.named_flex_context.is_none()
             && self.page_names.current != comparison_page_name;
         let page_before_candidate = self.current_page;
@@ -678,10 +679,13 @@ impl PaginationState {
     /// page type there as the same break. The page takes the type of that
     /// content, unless a box around the float goes on onto the page before
     /// it; the page then takes the type of that box, which the float has.
-    /// Later pages that only the float reaches take the float's type.
+    /// Later pages that only the float reaches take the float's type. A box
+    /// that clears the float starts below it instead, and compares its type
+    /// against the float's.
     fn join_float_break(
         &mut self,
         document: &LayoutSession<'_>,
+        cascade: &CascadeResult,
         candidate: &PageCandidate,
         comparison_page_name: Option<String>,
     ) -> Option<String> {
@@ -691,10 +695,20 @@ impl PaginationState {
         let Some(float) = self.float_break_page.take() else {
             return comparison_page_name;
         };
-        if float.page != self.current_page
-            || candidate.page_name == comparison_page_name
-            || !float.beside(candidate)
-        {
+        if float.page != self.current_page || !float.beside(candidate) {
+            return comparison_page_name;
+        }
+        if super::clears_float(cascade, candidate.node_id, float.float) {
+            // The candidate starts below the float, and the pages the float
+            // reaches take its type; a change of page type at the candidate
+            // opens the next page after them.
+            self.page_names.current = float.page_name.clone();
+            self.page_names.name_page(float.page);
+            self.page_names
+                .name_pages_from(float.first_page_of_its_own, &float.page_name);
+            return float.page_name;
+        }
+        if candidate.page_name == comparison_page_name {
             return comparison_page_name;
         }
         let continued_box =
@@ -6549,6 +6563,7 @@ fn trailing_line_top(
 /// The page that a float opened by taking a forced break.
 struct FloatBreakPage {
     page: u32,
+    float: usize,
     /// The box the float is laid out in.
     parent: usize,
     /// The float's page type.
@@ -6582,6 +6597,7 @@ impl FloatBreakPage {
             .then(|| candidate.ifc_root.map(|(root, _)| root));
         Some(Self {
             page,
+            float: candidate.node_id,
             parent,
             page_name: candidate.page_name.clone(),
             inline_layout,

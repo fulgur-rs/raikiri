@@ -225,3 +225,58 @@ fn a_float_without_a_forced_break_stays_on_its_page() {
         &["100: F@0,30 T@0,0", "140: Z@0,0"],
     );
 }
+
+#[test]
+fn a_box_that_clears_the_float_starts_below_it_on_the_float_type() {
+    // The pages the float reaches take its type. A box that clears the float
+    // opens the next page when it changes that type, even to the type of the
+    // box before the break, and stays below the float otherwise.
+    let tall = "<div style='float:left;width:40px;height:150px'>F</div>";
+    for (float, after, expected) in [
+        (
+            F,
+            "<div style='page:bar;clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0", "140: Z@0,0"][..],
+        ),
+        (
+            F,
+            "<div style='page:foo;clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0", "120: Z@0,0"][..],
+        ),
+        (
+            F,
+            "<div style='clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0 Z@0,30"][..],
+        ),
+        (
+            tall,
+            "<div style='page:bar;clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0", "100: ", "140: Z@0,0"][..],
+        ),
+        (
+            tall,
+            "<div style='page:foo;clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0", "100: ", "120: Z@0,0"][..],
+        ),
+        (
+            tall,
+            "<div style='clear:left'>Z</div>",
+            &["120: T@0,0", "100: F@0,0", "100: Z@0,50"][..],
+        ),
+    ] {
+        expect(&format!("{T_FOO}{float}{after}"), expected);
+    }
+    // A clear on the other side does not move the box below the float.
+    expect(
+        &format!("{T_FOO}{F}<div style='page:bar;clear:right'>Z</div>"),
+        &["120: T@0,0", "140: F@0,0 Z@40,0"],
+    );
+    // Nor does a box around the float that goes on change that.
+    expect(
+        &format!(
+            "<div style='page:foo'><div style='break-after:page'>T</div>{F}</div>\
+             <div style='page:bar;clear:left'>Z</div>"
+        ),
+        &["120: T@0,0", "120: F@0,0", "140: Z@0,0"],
+    );
+}
