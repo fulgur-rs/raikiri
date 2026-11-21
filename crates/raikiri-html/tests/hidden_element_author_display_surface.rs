@@ -1,9 +1,11 @@
 //! The metadata and raw text elements that HTML hides with a user agent
 //! `display: none` render when author style gives them a display, as in
-//! browsers: the text of a `script`, `style` or `title`, and the box of a
-//! `meta`, `link` or `base`. The contents of a `template` or `noscript` never
-//! render. The page counts and line positions are the ones Chromium prints
-//! for the same documents (`page.pdf` with the page size taken from `@page`).
+//! browsers: the text of a `script`, `style`, `title`, `datalist`,
+//! `noframes` or `rp`, the box of a `meta`, `link` or `base`, and a `head`
+//! with its contents. The contents of a `template`, `noscript` or `noembed`
+//! never render, nor does a `title` inside a hidden `head`. The page counts
+//! and line positions are the ones Chromium prints for the same documents
+//! (`page.pdf` with the page size taken from `@page`).
 
 use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -99,6 +101,33 @@ fn hidden_elements_with_an_author_display_render() {
             1,
             &["Z@0:30"][..],
         ),
+        (
+            "<style>head,title{display:block;font:20px/30px Ahem;margin:0}</style>\
+             <title>x</title><div style='width:20px'>Z</div>",
+            1,
+            &["x@0:0", "Z@0:30"][..],
+        ),
+        (
+            "<style>head{display:block}meta{display:block;height:30px}</style>\
+             <meta name=a><div style='width:20px'>Z</div>",
+            1,
+            &["Z@0:30"][..],
+        ),
+        (
+            "<div style='width:20px'><datalist style='display:block'>x</datalist>Z</div>",
+            1,
+            &["x@0:0", "Z@0:30"][..],
+        ),
+        (
+            "<div style='width:20px'><noframes style='display:block'>x</noframes>Z</div>",
+            1,
+            &["x@0:0", "Z@0:30"][..],
+        ),
+        (
+            "<div style='width:20px'><rp style='display:block'>y</rp>Z</div>",
+            1,
+            &["y@0:0", "Z@0:30"][..],
+        ),
     ] {
         expect(body, pages, runs);
     }
@@ -106,8 +135,8 @@ fn hidden_elements_with_an_author_display_render() {
 
 #[test]
 fn hidden_elements_keep_hidden_without_an_author_display() {
-    // The user agent `display: none` holds, and the contents of a `template`
-    // or `noscript` stay hidden whatever their display.
+    // The user agent `display: none` holds, and the contents of a `template`,
+    // `noscript` or `noembed` stay hidden whatever their display.
     for (body, pages, runs) in [
         (
             "<div style='width:20px'><script>x</script>Z</div>",
@@ -121,6 +150,16 @@ fn hidden_elements_keep_hidden_without_an_author_display() {
         ),
         (
             "<div style='width:20px'><template style='display:block'>x</template>Z</div>",
+            1,
+            &["Z@0:0"][..],
+        ),
+        (
+            "<div style='width:20px'><noembed style='display:block'>x</noembed>Z</div>",
+            1,
+            &["Z@0:0"][..],
+        ),
+        (
+            "<style>title{display:block}</style><title>x</title><div style='width:20px'>Z</div>",
             1,
             &["Z@0:0"][..],
         ),

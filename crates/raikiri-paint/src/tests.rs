@@ -1613,10 +1613,10 @@ fn paint_single_page_skips_noscript_subtree_content() {
 #[test]
 fn paint_single_page_skips_datalist_subtree_content() {
     // <body>before<datalist>hidden</datalist>after</body>
-    // §15.3.1 hides <datalist> with `display: none`. Prevent author CSS
-    // overrides from leaking its content into painted glyphs.
+    // §15.3.1 hides <datalist> with a user agent `display: none`, which the
+    // fixture writes inline as this cascade has no UA sheet.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<datalist>hidden</datalist>after</body></html>",
+        b"<html><head></head><body>before<datalist style=\"display:none\">hidden</datalist>after</body></html>",
         "datalist",
     );
 }
@@ -1635,9 +1635,11 @@ fn paint_single_page_skips_noembed_subtree_content() {
 #[test]
 fn paint_single_page_skips_noframes_subtree_content() {
     // <body>before<noframes>hidden</noframes>after</body>
-    // <noframes> also uses RAWTEXT parsing (§13.2.6.4.7) and §15.3.1 hiding.
+    // <noframes> also uses RAWTEXT parsing (§13.2.6.4.7) and §15.3.1 hiding,
+    // a user agent `display: none` written inline as this cascade has no UA
+    // sheet.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<noframes>hidden</noframes>after</body></html>",
+        b"<html><head></head><body>before<noframes style=\"display:none\">hidden</noframes>after</body></html>",
         "noframes",
     );
 }
@@ -1648,11 +1650,11 @@ fn paint_single_page_skips_rp_subtree_content() {
     // <rp> is fallback parentheses for ruby. "In body" inserts it normally
     // even outside `<ruby>` (§13.2.6.4.7: a current node other than ruby / rtc
     // marks a parse error but preserves the structure).
-    // §15.3.1 hides it via `display: none`; §15.3.4 only styles ruby / rt
-    // and does not make rp visible. This defense-in-depth gate prevents
-    // content leaks even without ruby support.
+    // §15.3.1 hides it via a user agent `display: none`, written inline as
+    // this cascade has no UA sheet; §15.3.4 only styles ruby / rt and does
+    // not make rp visible.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<rp>hidden</rp>after</body></html>",
+        b"<html><head></head><body>before<rp style=\"display:none\">hidden</rp>after</body></html>",
         "rp",
     );
 }
@@ -1660,7 +1662,7 @@ fn paint_single_page_skips_rp_subtree_content() {
 #[test]
 fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
     // <template> is already skipped by the is_in_document() gate. Also pin
-    // that is_non_rendered_html_element() independently skips it.
+    // that is_unrendered_html_element() independently skips it.
     // "before<template>...</template>after" yields two GlyphRuns.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<template><p>secret</p></template>after</body></html>",
@@ -2334,7 +2336,9 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
 fn trace_records_box_clip_opacity_and_text_in_walk_order() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    // The user agent `display: none` of `head`, as this cascade has no UA
+    // sheet.
+    let _head = doc.append_element(Some(html), "head", Some("display:none"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
     let o = doc.append_element(
         Some(body),

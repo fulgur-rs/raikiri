@@ -540,8 +540,8 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// Being rendered here means no inclusive ancestor computes to
-    /// `display: none`, is an HTML element layout never renders, such as
-    /// `script`, whatever its computed display, is hidden by HTML's
+    /// `display: none`, is an HTML element whose contents never render, such
+    /// as `template`, whatever its computed display, is hidden by HTML's
     /// rendering rules for `hidden` (which the bundled UA stylesheet does
     /// not carry), or is an SVG never-rendered element such as `defs`. A
     /// box placed off every page still counts, which the page-scene
@@ -560,7 +560,7 @@ impl DocumentHost for WptDocumentHost {
             if hidden
                 || document
                     .get_node(index)
-                    .is_some_and(|node| node.is_non_rendered_html_element())
+                    .is_some_and(|node| node.hides_contents_whatever_display())
                 || is_never_rendered_svg_element(document, index)
                 || is_hidden_html_element(document, index)
             {

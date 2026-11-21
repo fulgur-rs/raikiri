@@ -1317,7 +1317,7 @@ fn table_pagination_child_order(
     while let Some(child) = pending.pop() {
         let node = &document.nodes[child];
         // Table layout drops these without a box, as it does for any
-        // non-rendered element whatever its `display`.
+        // hidden HTML element that keeps the user agent `display: none`.
         if !node.is_in_document()
             || node.is_unrendered_html_element()
             || boxes.identity(child).display() == DisplayValue::None

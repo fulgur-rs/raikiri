@@ -3237,9 +3237,10 @@ fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize,
             .map_or(1, |v| v.clamp(1, 1000))
     }
     // The children of `parent` that take part in the table, with each
-    // `display: contents` child replaced by its own children. Elements that
-    // are never rendered (`script`, `datalist`, ...) drop out together with
-    // their subtrees, as they do from the table's row projection.
+    // `display: contents` child replaced by its own children. Hidden HTML
+    // elements that stay unrendered (`script` without an author display,
+    // `template`, ...) drop out together with their subtrees, as they do
+    // from the table's row projection.
     // spec: https://www.w3.org/TR/css-display-3/#valdef-display-contents
     fn box_children(doc: &Document, parent: usize, out: &mut Vec<usize>) {
         // An explicit stack keeps deeply nested wrappers off the call stack.

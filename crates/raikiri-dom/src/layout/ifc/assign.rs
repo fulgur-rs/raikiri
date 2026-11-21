@@ -488,7 +488,7 @@ fn check_text_in_paragraphs(doc: &Document) -> Result<(), LayoutError> {
 
 /// The first rendered text node with more than collapsible white space that
 /// no paragraph lays out: it would be neither measured nor drawn. Text of
-/// non-rendered elements (`head`, `script`, `template`, ...), of elements
+/// unrendered hidden elements (`head`, `script`, `template`, ...), of elements
 /// that do not generate boxes (`display: none` on an ancestor), and SVG
 /// content (drawn by the SVG renderer) is not text of the document flow.
 fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
