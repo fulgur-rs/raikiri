@@ -3798,6 +3798,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // the page flow, and their insides are not walked.
     let mut cleared = Vec::new();
     document.context.float_resumption_candidates.clear();
+    document.context.float_break_closers.clear();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
@@ -3984,6 +3985,13 @@ fn clear_floats_at_forced_breaks<'name>(
                 float_after_break = true;
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
+                // The parents are walked outside in, so the first box found
+                // for a float is the outermost one.
+                document
+                    .context
+                    .float_break_closers
+                    .entry(float)
+                    .or_insert(child);
             }
             previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
             // child_boxes represents inline content as None; floats and static-position
@@ -17433,6 +17441,28 @@ impl SiblingMargins {
             self.previous_bottoms.remove(&parent_id);
         }
     }
+}
+
+/// The outermost box around `float` whose content ends with the forced
+/// break after `source` and the floats after it, when its block-end edges
+/// reach below `source` and still fit on the page that break leaves.
+/// Chromium ends the box on that page and starts the next one with the float
+/// beside the flow after the box. Edges that do not fit go to the next page
+/// with the float.
+fn edges_closed_before_float_break(
+    document: &super::context::LayoutSession<'_>,
+    page_origins: &PageOrigins,
+    source: usize,
+    float: usize,
+) -> Option<usize> {
+    let closer = *document.context.float_break_closers.get(&float)?;
+    if !is_descendant_or_self(document, source, closer) {
+        return None;
+    }
+    let source_end = current_abs_y(document, source) + document.nodes[source].layout.size.height;
+    let end = current_abs_y(document, closer) + document.nodes[closer].layout.size.height;
+    let page = page_origins.page_index_for_y(source_end - 0.001);
+    (end > source_end + 0.001 && end <= page_origins.page_end(page) + 0.001).then_some(closer)
 }
 
 /// Shifts of the flow that end where a subtree does.

@@ -964,11 +964,20 @@ pub(super) fn layout(
                         flow.end + pending.resolve()
                     };
                     // A float the page walk moved whole to a later page
-                    // starts there, never above where the flow puts it.
+                    // starts there, never above where the flow puts it. One
+                    // after a box that closed before the break that sends
+                    // the float on starts where that box ends, beside the
+                    // flow after the box.
                     tree.context
                         .float_resumptions
                         .pushed_float_top(usize::from(child))
-                        .map_or(top, |pushed| pushed.max(top))
+                        .into_iter()
+                        .chain(
+                            tree.context
+                                .float_resumptions
+                                .closed_float_top(usize::from(child)),
+                        )
+                        .fold(top, f32::max)
                 },
                 if style.float == Float::Left {
                     FloatDirection::Left
