@@ -125,6 +125,17 @@ fn the_content_after_the_wrapper_sits_beside_the_float() {
         ),
         &["T@0:0,0", "Y@1:60,30", "Z@1:60,0"],
     );
+    // A float that a break inside a wrapper in the wrapper sent to the
+    // next page starts that page, and the float after that wrapper lines up
+    // beside it.
+    for after in ["<div>Z</div>", "Z"] {
+        expect(
+            &format!(
+                "<div><div><div style='break-after:page'>T</div><div style='float:left'>G</div></div>{F}</div>{after}"
+            ),
+            &["F@1:20,0", "G@1:0,0", "T@0:0,0", "Z@1:40,0"],
+        );
+    }
     // A forced break after the wrapper too.
     expect(
         &format!(
