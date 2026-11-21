@@ -425,9 +425,9 @@ pub(super) struct PaginationState {
     pub(super) table_headers: HeaderRepeats,
     /// The table rows the flow is in, and the pages they start and end on.
     cell_rows: super::cell_rows::CellRows,
-    /// The spanner of a multicol container whose children are boxes that
-    /// the flow is in (see [`Self::leave_spanner`]).
-    open_spanner: Option<OpenSpanner>,
+    /// The spanners of multicol containers whose children are boxes that
+    /// the flow is in, outermost first (see [`Self::leave_spanner`]).
+    open_spanners: Vec<OpenSpanner>,
 }
 
 /// A spanner of a multicol container whose children are boxes, as the flow
@@ -507,7 +507,7 @@ impl PaginationState {
             entered_paragraphs: EnteredParagraphs::default(),
             table_headers,
             cell_rows: super::cell_rows::CellRows::default(),
-            open_spanner: None,
+            open_spanners: Vec::new(),
         }
     }
 
@@ -6051,25 +6051,37 @@ impl PaginationState {
     }
 
     /// Notes the spanner of a multicol container whose children are boxes
-    /// that the flow enters at `node_id`, and leaves the one it was in when
-    /// `node_id` lies outside it.
+    /// that the flow enters at `node_id`, and leaves the ones it was in when
+    /// `node_id` lies outside them. A spanner can hold a multicol container
+    /// with spanners of its own, which the flow enters in turn.
     fn track_spanner(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
         node_id: usize,
     ) {
-        if let Some(open) = self.open_spanner
+        while let Some(open) = self.open_spanners.last()
             && !super::is_descendant_or_self(document, node_id, open.spanner)
         {
             self.leave_spanner(document);
         }
-        if self.open_spanner.is_none()
-            && let Some((spanner, container)) =
-                super::enclosing_box_column_spanner(document, env.cascade, node_id)
+        // The flow may reach an inner spanner first: the spanners around it
+        // that are not open yet open with it, outermost first.
+        let mut entered = Vec::new();
+        let mut inside = node_id;
+        while let Some((spanner, container)) =
+            super::enclosing_box_column_spanner(document, env.cascade, inside)
+            && !self
+                .open_spanners
+                .iter()
+                .any(|open| open.spanner == spanner)
         {
+            entered.push((spanner, container));
+            inside = container;
+        }
+        for (spanner, container) in entered.into_iter().rev() {
             let (column_shift, absorbed) = column_moves(document, spanner);
-            self.open_spanner = Some(OpenSpanner {
+            self.open_spanners.push(OpenSpanner {
                 spanner,
                 container,
                 flow_shift: self.flow_shift,
@@ -6080,15 +6092,15 @@ impl PaginationState {
         }
     }
 
-    /// Ends the spanner the flow is in. The breaks inside it that moved the
-    /// flow after them by `flow_shift` alone, such as a moved table row,
-    /// move the columns after the spanner too: they start below it (CSS
+    /// Ends the innermost spanner the flow is in. The breaks inside it that
+    /// moved the flow after them by `flow_shift` alone, such as a moved table
+    /// row, move the columns after the spanner too: they start below it (CSS
     /// Multi-column Layout 1, 6.1), and their boxes are placed from the
     /// records the columns made rather than by the flow. The part of the
     /// move that the spanner took up in the space above the columns moves
     /// neither them nor the flow after the container.
-    pub(super) fn leave_spanner(&mut self, document: &mut LayoutSession<'_>) {
-        let Some(open) = self.open_spanner.take() else {
+    fn leave_spanner(&mut self, document: &mut LayoutSession<'_>) {
+        let Some(open) = self.open_spanners.pop() else {
             return;
         };
         let accrued = self.flow_shift - open.flow_shift;
@@ -6115,6 +6127,13 @@ impl PaginationState {
         }
         let (_, absorbed) = column_moves(document, open.spanner);
         self.flow_shift -= (absorbed - open.absorbed).min(accrued.max(0.0));
+    }
+
+    /// Ends every spanner the flow is in, innermost first.
+    pub(super) fn leave_spanners(&mut self, document: &mut LayoutSession<'_>) {
+        while !self.open_spanners.is_empty() {
+            self.leave_spanner(document);
+        }
     }
 
     /// Settles the shifts that end or begin at `candidate`, before it is

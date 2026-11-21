@@ -520,7 +520,18 @@ fn first_piece_end(
         // An inline box that holds blocks wraps them in the flow, which
         // starts with the first of them.
         let wraps_blocks = node.display() == DisplayValue::Inline && node.ifc.is_none();
-        if !wraps_blocks && !lineless::is_plain_block_holding_lines(tree, current) {
+        // The columns of a multicol container start with its first box, as
+        // a block's flow does, when they flow on with the page rather than
+        // fill a box of a size of its own. An orthogonal flow is monolithic
+        // in the page's block axis.
+        let style = style_of(tree, current);
+        let columns = node.is_multicol_container()
+            && node.ifc.is_none()
+            && !node.used_writing_mode.is_vertical()
+            && !node.size_containment.height
+            && style.size().height.is_auto()
+            && style.max_size().height.is_auto();
+        if !wraps_blocks && !columns && !lineless::is_plain_block_holding_lines(tree, current) {
             // A flex container, a grid or a table breaks between its items
             // or rows as the page walk finds them, below its top edges.
             let breaks_inside = matches!(
