@@ -255,3 +255,104 @@ fn a_block_that_fills_the_page_leaves_the_closing_line_to_the_next() {
         expect(body, pages, runs);
     }
 }
+
+#[test]
+fn boxes_inside_an_empty_box_share_the_break_that_opened_its_page() {
+    // Empty boxes inside an empty box at the top of the page a forced break
+    // opened share that break, and only the box after them breaks again.
+    for (body, pages, runs) in [
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'><div style='break-before:page'></div></div><div>Z</div></div>",
+            2,
+            &["X@0:0", "Z@1:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'><div style='break-before:page'></div></div><div style='break-before:page'>Z</div></div>",
+            3,
+            &["X@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'><div style='break-before:page'><div style='break-before:page'></div></div></div><div>Z</div></div>",
+            2,
+            &["X@0:0", "Z@1:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page'>X</div><div><div style='break-before:page'></div></div><div>Z</div></div>",
+            2,
+            &["X@0:0", "Z@1:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'><div></div></div><div style='break-before:page'>Z</div></div>",
+            3,
+            &["X@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'></div><div style='break-before:page'>Z</div></div>",
+            3,
+            &["X@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div><div style='break-before:page'></div></div><div style='break-before:page'>Z</div></div>",
+            3,
+            &["X@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div>X</div><div style='break-before:page'><div style='break-before:page'></div></div><div style='break-before:page'>Z</div></div>",
+            3,
+            &["X@0:0", "Z@2:0"][..],
+        ),
+    ] {
+        expect(body, pages, runs);
+    }
+}
+
+#[test]
+fn the_closing_line_is_found_through_any_inline_content() {
+    // The closing line follows a block inside a box that generates none, or a
+    // block of the paragraph that inline content follows, and starts a page
+    // even at the end of the document.
+    for (body, pages, runs) in [
+        (
+            "<div style='width:20px'><div><span><div style='height:20px;break-after:page'>T</div></span></div></div>",
+            2,
+            &["T@0:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='padding-bottom:1px'><span><div style='height:20px;break-after:page'>T</div></span></div></div>",
+            2,
+            &["T@0:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page'><div style='display:contents'><span><div style='height:20px;break-after:page'>T</div></span></div></div>Z</div>",
+            3,
+            &["T@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page'><div style='display:contents'><span><div style='height:20px;break-after:page'>T</div></span></div></div><div>Z</div></div>",
+            3,
+            &["T@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page;padding-bottom:1px'><div style='display:contents'><span><div style='height:20px;break-after:page'>T</div></span></div></div>Z</div>",
+            3,
+            &["T@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page'><div style='height:20px;break-after:page'>T</div><span></span></div>Z</div>",
+            3,
+            &["T@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page;padding-bottom:1px'><div style='height:20px;break-after:page'>T</div><span></span></div>Z</div>",
+            3,
+            &["T@0:0", "Z@2:0"][..],
+        ),
+        (
+            "<div style='width:20px'><div style='break-after:page'><div style='height:20px;break-after:page'>T</div><span>U</span></div>Z</div>",
+            3,
+            &["T@0:0", "U@1:0", "Z@2:0"][..],
+        ),
+    ] {
+        expect(body, pages, runs);
+    }
+}

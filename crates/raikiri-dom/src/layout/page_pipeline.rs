@@ -12650,17 +12650,17 @@ fn content_bottom_edges(
     (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
         && node.multicol.is_none()
-        && if edges > 0.0 {
+        // A set height keeps the place of a closing line in the block.
+        && (if edges > 0.0 {
             node.is_ifc_root() || moves_later_siblings(document, node_id)
         } else {
-            // A set height keeps the place of the line in the block.
-            document.block_axis(node_id).height().is_auto()
-                && closes_forced_block_with_line(document, cascade, node_id)
-        }
+            node.display() != DisplayValue::Contents && document.block_axis(node_id).height().is_auto()
+        })
         && (height_follows_content(document, node_id)
             || min_height_left_behind(document, node_id)
             || content_ends_above_edges(document, cascade, body_id, node_id)
-            || ends_with_collapsed_empty_box(document, cascade, node_id)))
+            || ends_with_collapsed_empty_box(document, cascade, node_id))
+        && (edges > 0.0 || closes_forced_block_with_line(document, cascade, node_id)))
     .then_some(edges)
 }
 
@@ -12675,16 +12675,17 @@ fn closes_forced_block_with_line(
     cascade: &CascadeResult,
     root: usize,
 ) -> bool {
-    document.nodes[root]
-        .children
-        .iter()
-        .filter(|&&child| document.nodes[child].display() == DisplayValue::Inline)
-        .any(|&child| {
-            document.preorder(child).skip(1).any(|id| {
-                forces_page_break(document, cascade, id, false)
-                    && line_follows_paragraph_block(document, cascade, root, id)
-            })
-        })
+    // Only an inline box, or inline content after a block, closes it with a
+    // line: a paragraph of blocks alone has none.
+    document.nodes[root].children.iter().any(|&child| {
+        matches!(
+            document.nodes[child].display(),
+            DisplayValue::Inline | DisplayValue::Contents
+        )
+    }) && document.preorder(root).skip(1).any(|id| {
+        forces_page_break(document, cascade, id, false)
+            && line_follows_paragraph_block(document, cascade, root, id)
+    })
 }
 
 /// Whether the flow of the block `node_id`, whose height nothing caps, ends
