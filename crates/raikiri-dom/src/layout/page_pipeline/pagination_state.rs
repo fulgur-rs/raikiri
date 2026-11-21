@@ -358,6 +358,11 @@ pub(super) struct PaginationState {
     /// The last line in the flow that runs past the page it starts on (see
     /// [`Self::note_line_overflow`]).
     line_overflow: Option<LineOverflow>,
+    /// The page that a float opened by taking a forced break, with the
+    /// float, until in-flow content follows the float. That content starts
+    /// the page beside the float, so a change of page type before it is the
+    /// same break (Chromium).
+    float_break_page: Option<FloatBreakPage>,
     /// How far the edges pushed down under each fixed clip have moved the
     /// flow inside it, by the end of the clip (as bits) in the coordinates of
     /// the candidates: the clip stays where it is while they move.
@@ -476,6 +481,7 @@ impl PaginationState {
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
             line_overflow: None,
+            float_break_page: None,
             edge_pushes: HashMap::new(),
             edge_growth: HashMap::new(),
             margin_cuts: HashMap::new(),
@@ -657,6 +663,8 @@ impl PaginationState {
         );
         // Leaving a flex item's internal named flow keeps the last opened
         // physical page until an outer boundary or natural overflow opens one.
+        let comparison_page_name =
+            self.join_float_break(document, env.cascade, candidate, comparison_page_name);
         let keep_local_page_type = candidate.named_flex_context.is_none()
             && self.page_names.current != comparison_page_name;
         let page_before_candidate = self.current_page;
@@ -684,6 +692,61 @@ impl PaginationState {
             participates_in_margin_adjacency,
             uses_positioned_coordinates,
         }))
+    }
+
+    /// The page type that `candidate` compares its own against. In-flow
+    /// content that follows a float which took a forced break starts the
+    /// page the float opened, beside the float: Chromium takes a change of
+    /// page type there as the same break. The page takes the type of that
+    /// content, unless a box around the float goes on onto the page before
+    /// it; the page then takes the type of that box, which the float has.
+    /// Later pages that only the float reaches take the float's type. A box
+    /// that clears the float starts below it instead, and compares its type
+    /// against the float's.
+    fn join_float_break(
+        &mut self,
+        document: &LayoutSession<'_>,
+        cascade: &CascadeResult,
+        candidate: &PageCandidate,
+        comparison_page_name: Option<String>,
+    ) -> Option<String> {
+        if !candidate.context.page_name_in_flow() || candidate.context.is_float_descendant() {
+            return comparison_page_name;
+        }
+        let Some(float) = self.float_break_page.take() else {
+            return comparison_page_name;
+        };
+        if float.page != self.current_page || !float.beside(candidate) {
+            return comparison_page_name;
+        }
+        if super::clears_float(cascade, candidate.node_id, float.float) {
+            // The candidate starts below the float, and the pages the float
+            // reaches take its type; a change of page type at the candidate
+            // opens the next page after them.
+            self.page_names.current = float.page_name.clone();
+            self.page_names.name_page(float.page);
+            self.page_names
+                .name_pages_from(float.first_page_of_its_own, &float.page_name);
+            return float.page_name;
+        }
+        if candidate.page_name == comparison_page_name {
+            return comparison_page_name;
+        }
+        let continued_box =
+            !super::is_descendant_or_self(document, candidate.node_id, float.parent);
+        self.page_names.current = candidate.page_name.clone();
+        if continued_box {
+            self.page_names
+                .keep_page(float.page, float.page_name.clone());
+        } else {
+            self.page_names.name_page(float.page);
+        }
+        // The flow has not reached past the float's page yet; the pages
+        // after it that no earlier content reached hold only the rest of the
+        // float and take its type.
+        self.page_names
+            .name_pages_from(float.first_page_of_its_own, &float.page_name);
+        candidate.page_name.clone()
     }
 
     /// Places the in-flow text `candidate` after its start: moves the
@@ -3377,6 +3440,23 @@ impl PaginationState {
                     .pending_break
                     .source
                     .map(|source| (source, target_page));
+                self.float_break_page =
+                    FloatBreakPage::new(document, candidate, target_page, &self.page_names);
+                if let Some(top) = self.pending_break.source.and_then(|source| {
+                    super::float_top_after_closed_edges(
+                        document,
+                        cascade,
+                        body_id,
+                        page_origins,
+                        source,
+                        node_id,
+                    )
+                }) {
+                    document
+                        .context
+                        .floats_after_closed_edges
+                        .push((node_id, top));
+                }
             }
             self.pending_break.take(document, node_id);
         }
@@ -6580,4 +6660,56 @@ fn column_moves(document: &LayoutSession<'_>, spanner: usize) -> (f32, f32) {
             .unwrap_or(0.0),
         super::absorbed_by_slack(document, spanner),
     )
+}
+
+/// The page that a float opened by taking a forced break.
+struct FloatBreakPage {
+    page: u32,
+    float: usize,
+    /// The box the float is laid out in.
+    parent: usize,
+    /// The float's page type.
+    page_name: Option<String>,
+    /// The inline layout the float stands in, when its box is an inline
+    /// box: the float then stands on a line, and only content on the lines
+    /// of that layout comes after it on the page.
+    inline_layout: Option<Option<usize>>,
+    /// The first page after the float's own page that no earlier content
+    /// reached.
+    first_page_of_its_own: u32,
+}
+
+impl FloatBreakPage {
+    /// The page that the float `candidate` opens on `page`, or `None` when
+    /// the float's box flows along a vertical line, where the boxes after
+    /// the float start below it (see `clear_floats_at_forced_breaks`).
+    fn new(
+        document: &LayoutSession<'_>,
+        candidate: &PageCandidate,
+        page: u32,
+        page_names: &PageNames,
+    ) -> Option<Self> {
+        let parent = document.layout_parent_of(candidate.node_id)?;
+        if document.nodes[parent].used_writing_mode.is_vertical() {
+            return None;
+        }
+        let inline_layout = document.nodes[parent]
+            .display()
+            .is_inline_flow()
+            .then(|| candidate.ifc_root.map(|(root, _)| root));
+        Some(Self {
+            page,
+            float: candidate.node_id,
+            parent,
+            page_name: candidate.page_name.clone(),
+            inline_layout,
+            first_page_of_its_own: page_names.reached().max(page + 1),
+        })
+    }
+
+    /// Whether `candidate` starts the page beside the float.
+    fn beside(&self, candidate: &PageCandidate) -> bool {
+        self.inline_layout
+            .is_none_or(|root| root.is_some() && root == candidate.ifc_root.map(|(root, _)| root))
+    }
 }

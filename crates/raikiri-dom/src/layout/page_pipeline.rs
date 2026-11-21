@@ -3816,6 +3816,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // the page flow, and their insides are not walked.
     let mut cleared = Vec::new();
     document.context.float_resumption_candidates.clear();
+    document.context.float_break_closers.clear();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
@@ -3840,6 +3841,9 @@ fn clear_floats_at_forced_breaks<'name>(
         // or a change of named page there, and not just the break of the box
         // before it.
         let mut float_own_break = false;
+        // The float that took the forced break, which a box with another
+        // page type after it joins on the page it opened.
+        let mut break_float = None;
         // The last in-flow block among the parent's boxes: when the parent
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
@@ -3940,6 +3944,7 @@ fn clear_floats_at_forced_breaks<'name>(
                     );
                     cleared.push(child);
                     float_after_break = true;
+                    break_float = Some(child);
                     if carries_flow_break {
                         page_start_float = Some(child);
                     }
@@ -3949,8 +3954,11 @@ fn clear_floats_at_forced_breaks<'name>(
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
             let starts_at_inherited = std::mem::take(&mut page_start_inherited);
-            let beside_page_start_float =
-                std::mem::take(&mut float_after_break) || starts_at_inherited;
+            let float_took_break = std::mem::take(&mut float_after_break);
+            let beside_page_start_float = float_took_break || starts_at_inherited;
+            let joins_break_float = std::mem::take(&mut break_float).is_some_and(|float| {
+                float_took_break && joins_float_break_page(document, cascade, child, float)
+            });
             let float_took_own_break = std::mem::take(&mut float_own_break);
             let resumed_float = page_start_float.take();
             last_block = Some(child);
@@ -3980,10 +3988,12 @@ fn clear_floats_at_forced_breaks<'name>(
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too. A break before the box
             // coincides with the break of the box before the float that
-            // started the page, but not with the float's own break.
+            // started the page, but not with the float's own break. A change
+            // of page type there coincides with the break the float took, unless
+            // the float stands on a line.
             let at_page_start_float = (forced || starts_at_inherited)
                 && beside_page_start_float
-                && !named_break
+                && (!named_break || joins_break_float)
                 && !(breaks_before && float_took_own_break)
                 && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
@@ -4000,8 +4010,16 @@ fn clear_floats_at_forced_breaks<'name>(
                     trailing_page_start_float(document, &mut trailing_floats, child)
             {
                 float_after_break = true;
+                break_float = Some(float);
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
+                // The parents are walked outside in, so the first box found
+                // for a float is the outermost one.
+                document
+                    .context
+                    .float_break_closers
+                    .entry(float)
+                    .or_insert(child);
             }
             previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
             // child_boxes represents inline content as None; floats and static-position
@@ -5017,6 +5035,35 @@ struct PageFlowGeometry {
     insets: PageContentInsets,
 }
 
+/// Whether `node`, which follows the float `float` that took a forced
+/// break, starts the page the float opened beside it, so that a change of
+/// page type at `node` is the same break. A float on a line of an inline
+/// box leaves a box after that box to open its own page, and so does a box
+/// that clears the float.
+pub(super) fn joins_float_break_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: usize,
+    float: usize,
+) -> bool {
+    let on_line = document
+        .layout_parent_of(float)
+        .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
+    !on_line && !clears_float(cascade, node, float)
+}
+
+/// Whether the `clear` value of `node` clears the float `float`. A logical
+/// value is taken to clear it.
+pub(super) fn clears_float(cascade: &CascadeResult, node: usize, float: usize) -> bool {
+    use raikiri_style::property::FloatValue;
+    !matches!(
+        (cascade.computed[node].clear, cascade.computed[float].float),
+        (ClearValue::None, _)
+            | (ClearValue::Left, FloatValue::Right)
+            | (ClearValue::Right, FloatValue::Left)
+    )
+}
+
 /// The page type pagination assigns to each page the flow reaches.
 struct PageNames {
     /// Whether this cascade can produce a named page during this pagination run.
@@ -5027,6 +5074,9 @@ struct PageNames {
     /// outside a named flex context compares its own against it.
     outer: Option<String>,
     by_page: Vec<Option<String>>,
+    /// A page whose type the box that goes on onto it set, which the
+    /// content placed beside that box on the page does not change.
+    kept: Option<u32>,
 }
 
 impl PageNames {
@@ -5038,6 +5088,7 @@ impl PageNames {
             by_page: vec![first.clone()],
             outer: first.clone(),
             current: first,
+            kept: None,
         }
     }
 
@@ -5047,6 +5098,7 @@ impl PageNames {
             current: None,
             outer: None,
             by_page: Vec::new(),
+            kept: None,
         }
     }
 
@@ -5113,7 +5165,36 @@ impl PageNames {
         if self.by_page.len() <= index {
             self.by_page.resize(index + 1, None);
         }
+        match self.kept {
+            Some(kept) if kept == page => return,
+            // The flow went on past the kept page.
+            Some(kept) if kept < page => self.kept = None,
+            _ => {}
+        }
         self.by_page[index].clone_from(&self.current);
+    }
+
+    /// Give `page` the type `name` for good: the content placed on it later
+    /// does not change it.
+    fn keep_page(&mut self, page: u32, name: Option<String>) {
+        let current = std::mem::replace(&mut self.current, name);
+        self.kept = None;
+        self.name_page(page);
+        self.current = current;
+        self.kept = Some(page);
+    }
+
+    /// The number of pages that have a type so far.
+    fn reached(&self) -> u32 {
+        self.by_page.len() as u32
+    }
+
+    /// Give the pages from `first` on that have a type so far the type
+    /// `name`.
+    fn name_pages_from(&mut self, first: u32, name: &Option<String>) {
+        for slot in self.by_page.iter_mut().skip(first as usize) {
+            slot.clone_from(name);
+        }
     }
 
     /// Name the pages after `from` through `end`, where content on page
@@ -5129,8 +5210,17 @@ impl PageNames {
             self.by_page.resize(end + 1, self.current.clone());
         }
         if overwrite && end > from as usize {
-            for name in &mut self.by_page[from as usize + 1..=end] {
-                name.clone_from(&self.current);
+            let kept = self.kept.map(|page| page as usize);
+            for (index, name) in self
+                .by_page
+                .iter_mut()
+                .enumerate()
+                .take(end + 1)
+                .skip(from as usize + 1)
+            {
+                if kept != Some(index) {
+                    name.clone_from(&self.current);
+                }
             }
         }
     }
@@ -17483,6 +17573,51 @@ impl SiblingMargins {
             self.previous_bottoms.remove(&parent_id);
         }
     }
+}
+
+/// Where `float` starts at the lowest, local to its parent, when the
+/// outermost box around it whose content ends with the forced break after
+/// `source` and the floats after it has block-end edges that reach below
+/// `source` and still fit on the page that break leaves: where that box
+/// ends. Chromium ends the box on that page and starts the next one with
+/// the float beside the flow after the box. Edges that do not fit go to the
+/// next page with the float. Positions are taken where the flow puts the
+/// boxes, without relative offsets.
+fn float_top_after_closed_edges(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    page_origins: &PageOrigins,
+    source: usize,
+    float: usize,
+) -> Option<f32> {
+    let closer = *document.context.float_break_closers.get(&float)?;
+    // A float inside an inline box stands on a line after the break, which
+    // starts the next page inside the box: its edges go there too.
+    if !is_descendant_or_self(document, source, closer)
+        || document.nodes[float]
+            .parent
+            .is_some_and(|parent| document.nodes[parent].display().is_inline_flow())
+    {
+        return None;
+    }
+    let relative = |id: usize| accumulated_relative_offset_y(document, cascade, body_id, id);
+    // A relative offset on the way from the box down to the float moves the
+    // float away from the flow that the page walk lines up beside it; that
+    // case keeps the float where the flow puts it.
+    let outside = document.layout_parent_of(closer).map_or(0.0, relative);
+    if (relative(float) - outside).abs() > 0.001 {
+        return None;
+    }
+    let flow_y = |id: usize| current_abs_y(document, id) - relative(id);
+    let source_end = flow_y(source) + document.nodes[source].layout.size.height;
+    let end = flow_y(closer) + document.nodes[closer].layout.size.height;
+    let page = page_origins.page_index_for_y(source_end - 0.001);
+    if end <= source_end + 0.001 || end > page_origins.page_end(page) + 0.001 {
+        return None;
+    }
+    let parent_top = document.layout_parent_of(float).map_or(0.0, flow_y);
+    Some(end - parent_top)
 }
 
 /// Shifts of the flow that end where a subtree does.
