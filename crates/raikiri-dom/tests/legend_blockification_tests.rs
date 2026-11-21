@@ -51,9 +51,10 @@ fn an_inline_level_legend_lays_out_as_a_block_level_box() {
     // page; `o` is a 200px wrapper, `c` a fieldset, `l` the legend. The
     // cases cover `inline`, `inline-block`, `inline-flex`, `inline-grid`,
     // `inline-table`, `table-cell`, `table-row` and `list-item` legends, as
-    // the rendered legend of a fieldset of block content and outside any
-    // fieldset, with a stated width, margins, a block child, a child margin
-    // that collapses through the legend and a float that it does not hold.
+    // the rendered legend of a fieldset of block or inline content, a second
+    // legend in the content and a legend outside any fieldset, with a stated
+    // width, margins, `text-align`, a block child, a child margin that
+    // collapses through the legend and a float that it does not hold.
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("data/legend-blockification.json")).unwrap();
     for case in cases.as_array().unwrap() {

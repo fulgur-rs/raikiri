@@ -478,5 +478,191 @@
     10
    ]
   }
+ },
+ {
+  "name": "inline legend, inline content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\"><legend id=l style=\"display:inline;padding:0\">ll</legend>aaaa</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "l": [
+    9,
+    0,
+    20,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline-block legend, inline content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\"><legend id=l style=\"display:inline-block;padding:0\">ll</legend>aaaa</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "l": [
+    9,
+    0,
+    20,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline legend after text",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\">aa<legend id=l style=\"display:inline;padding:0\">ll</legend>bb</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "l": [
+    9,
+    0,
+    20,
+    10
+   ]
+  }
+ },
+ {
+  "name": "a second inline legend is a block in the content",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\"><legend id=l style=\"padding:0\">ll</legend>aa<legend id=m style=\"display:inline;padding:0\">mm</legend>bb</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    52
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    52
+   ],
+   "l": [
+    9,
+    0,
+    20,
+    10
+   ],
+   "m": [
+    9,
+    23,
+    182,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline legend centered",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\"><legend id=l style=\"display:inline;padding:0;text-align:center\">ll</legend><div id=d>dd</div></fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "l": [
+    90,
+    0,
+    20,
+    10
+   ],
+   "d": [
+    9,
+    13,
+    182,
+    10
+   ]
+  }
+ },
+ {
+  "name": "inline legend in inline fieldset",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"display:inline-block;border:6px solid;padding:3px;margin:0\"><legend id=l style=\"display:inline;padding:0\">llll</legend>aa</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    32
+   ],
+   "c": [
+    0,
+    0,
+    58,
+    32
+   ],
+   "l": [
+    9,
+    0,
+    40,
+    10
+   ]
+  }
+ },
+ {
+  "name": "rendered inline-block legend margin collapse",
+  "html": "<!doctype html><style>@page{size:800px 600px;margin:0}html,body{margin:0}body{font:10px/10px Ahem}</style><div id=o style=\"width:200px;position:relative\"><fieldset id=c style=\"border:6px solid;padding:3px;margin:0\"><legend id=l style=\"display:inline-block;padding:0\"><div id=d style=\"margin-top:10px\">ll</div></legend>aa</fieldset></div>",
+  "rects": {
+   "o": [
+    0,
+    0,
+    200,
+    42
+   ],
+   "c": [
+    0,
+    0,
+    200,
+    42
+   ],
+   "l": [
+    9,
+    0,
+    20,
+    20
+   ],
+   "d": [
+    9,
+    10,
+    20,
+    10
+   ]
+  }
  }
 ]
