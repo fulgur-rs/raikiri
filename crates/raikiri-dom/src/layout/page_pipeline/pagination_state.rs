@@ -397,6 +397,12 @@ pub(super) struct PaginationState {
     /// (see [`super::unplaced_line_after_block`]), for the break forced at the end of
     /// that child to move the line.
     lines_after_blocks: HashMap<usize, LineAfterBlock>,
+    /// The page that content of no height begins after a forced break, an
+    /// empty box or the empty line that closes a paragraph, and that box or
+    /// paragraph: a break forced before a box after it, at the top of that
+    /// page, still opens another page, as content precedes it there. A box
+    /// inside it shares the break that opened the page (Chromium).
+    empty_content_page: Option<(u32, usize)>,
     /// Footnotes are collected in source order and stacked upward from the
     /// bottom edge of their anchor page. The normal-flow height is removed
     /// from `flow_shift`, leaving the box only in this page-local area.
@@ -461,6 +467,7 @@ impl PaginationState {
             retained_margin_starts: HashMap::new(),
             fragmented_cell_shifts: HashMap::new(),
             lines_after_blocks: HashMap::new(),
+            empty_content_page: None,
             footnote_areas: FootnoteAreas::default(),
             column_contexts,
             preceding_flex_items: PrecedingFlexItems::default(),
@@ -1777,10 +1784,25 @@ impl PaginationState {
         if !self.saw_child {
             return Ok(());
         }
+        let node_id = edges_break.node_id;
+        // A forced break after a block among the lines of a paragraph that a
+        // line closes takes that line, and the edges below it, to the next
+        // page, though they fit.
+        let forced = self.pending_break.source.is_some_and(|source| {
+            source != node_id
+                && super::is_descendant_or_self(document, source, node_id)
+                && super::line_follows_paragraph_block(document, cascade, node_id, source)
+        });
+        // A paragraph without bottom edges ends with the line that closes
+        // such a block, which only a forced break moves. A line with content
+        // of its own takes the break itself (see
+        // `Self::break_before_line_after_forced_break`).
+        if edges_break.edges <= 0.0 && (!forced || self.lines_after_blocks.contains_key(&node_id)) {
+            return Ok(());
+        }
         // The flow has left the content of the block: what its lines and
         // boxes moved is settled before the edges are judged. A paragraph is
         // left from outside it, as the box after it leaves it.
-        let node_id = edges_break.node_id;
         let outside = if document.nodes[node_id].is_ifc_root() {
             document.parent_of(node_id).unwrap_or(node_id)
         } else {
@@ -1828,14 +1850,6 @@ impl PaginationState {
         // negative margin below it pulls the content end back up, takes the
         // edges after it to the next page even where they fit, as in
         // Chromium.
-        // A forced break after a block among the lines of a paragraph that a
-        // line closes takes that line, and the edges below it, to the next
-        // page, though they fit.
-        let forced = self.pending_break.source.is_some_and(|source| {
-            source != node_id
-                && super::is_descendant_or_self(document, source, node_id)
-                && super::line_follows_paragraph_block(document, cascade, node_id, source)
-        });
         if !(end > page_origins.origin(page) + 0.001
             && gap > 0.001
             && (forced
@@ -1844,11 +1858,18 @@ impl PaginationState {
         {
             // Content that ends at the page end leaves the edges to start the
             // next page, which takes the break as well.
-            if forced
-                && edges_break.edges > 0.001
-                && (gap <= 0.001 || end <= page_origins.origin(page) + 0.001)
-            {
-                self.pending_break.take_by_closing_line(document, node_id);
+            if forced && (gap <= 0.001 || end <= page_origins.origin(page) + 0.001) {
+                if edges_break.edges > 0.001 {
+                    self.pending_break.take_by_closing_line(document, node_id);
+                } else {
+                    // The line alone starts the page the content ends at the
+                    // top of.
+                    let line_page = page_origins.page_index_in_flow(end).unwrap_or(page);
+                    reach_page(control, line_page)?;
+                    self.pending_break.take_by_closing_line(document, node_id);
+                    self.current_page = self.current_page.max(line_page);
+                    self.empty_content_page = Some((line_page, node_id));
+                }
             }
             // The pages of a block leave out the margins in it that a page
             // edge may truncate, so edges that stay where they are reach
@@ -1960,6 +1981,10 @@ impl PaginationState {
         self.current_page = self.current_page.max(next_page);
         if visible > 0.001 {
             self.record_pages(control, page_origins.end_page(page_end, visible), true)?;
+        } else if forced && edges_break.edges <= 0.0 {
+            // The closing line alone starts the page.
+            self.record_pages(control, Some(next_page), true)?;
+            self.empty_content_page = Some((next_page, node_id));
         }
         Ok(())
     }
@@ -2730,6 +2755,9 @@ impl PaginationState {
         // the first page, so a forced break after it opens the next page, as
         // Chromium breaks there.
         let forced_break_at_page_start = forced_before
+            && !self.empty_content_page.is_some_and(|(page, empty)| {
+                page == self.current_page && !document.is_ancestor_or_self(empty, node_id)
+            })
             && !self.follows_content_at_flow_start(
                 document,
                 env,
@@ -3196,6 +3224,9 @@ impl PaginationState {
         }
         self.current_page = target_page;
         if forced_transition {
+            if margins_collapse_through {
+                self.empty_content_page = Some((target_page, node_id));
+            }
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
             self.sibling_margins.forced_page_top = Some(page_origins.origin(target_page));
 
