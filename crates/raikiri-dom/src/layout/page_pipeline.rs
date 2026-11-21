@@ -3837,6 +3837,9 @@ fn clear_floats_at_forced_breaks<'name>(
         let mut page_start_inherited = at_page_start_float && !generated_prefix;
         let mut float_after_break = false;
         let mut page_start_float = None;
+        // The float that took the forced break, which a box with another
+        // page type after it joins on the page it opened.
+        let mut break_float = None;
         // The last in-flow block among the parent's boxes: when the parent
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
@@ -3921,6 +3924,7 @@ fn clear_floats_at_forced_breaks<'name>(
                     );
                     cleared.push(child);
                     float_after_break = true;
+                    break_float = Some(child);
                     if carries_flow_break {
                         page_start_float = Some(child);
                     }
@@ -3930,8 +3934,11 @@ fn clear_floats_at_forced_breaks<'name>(
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
             let starts_at_inherited = std::mem::take(&mut page_start_inherited);
-            let beside_page_start_float =
-                std::mem::take(&mut float_after_break) || starts_at_inherited;
+            let float_took_break = std::mem::take(&mut float_after_break);
+            let beside_page_start_float = float_took_break || starts_at_inherited;
+            let joins_break_float = std::mem::take(&mut break_float).is_some_and(|float| {
+                float_took_break && joins_float_break_page(document, cascade, child, float)
+            });
             let resumed_float = page_start_float.take();
             last_block = Some(child);
             let start_page_name = if has_named_pages {
@@ -3960,10 +3967,11 @@ fn clear_floats_at_forced_breaks<'name>(
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too. A break before the box
             // coincides with the break of the box before the float that
-            // started the page.
+            // started the page. A change of page type there coincides with
+            // the break the float took, unless the float stands on a line.
             let at_page_start_float = (forced || starts_at_inherited)
                 && beside_page_start_float
-                && !named_break
+                && (!named_break || joins_break_float)
                 && !document.nodes[parent].used_writing_mode.is_vertical();
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
@@ -3979,6 +3987,7 @@ fn clear_floats_at_forced_breaks<'name>(
                     trailing_page_start_float(document, &mut trailing_floats, child)
             {
                 float_after_break = true;
+                break_float = Some(float);
                 page_start_float = Some(float);
                 block_ends_with_page_start_float = true;
                 // The parents are walked outside in, so the first box found
@@ -4973,6 +4982,35 @@ struct PageFlowGeometry {
     insets: PageContentInsets,
 }
 
+/// Whether `node`, which follows the float `float` that took a forced
+/// break, starts the page the float opened beside it, so that a change of
+/// page type at `node` is the same break. A float on a line of an inline
+/// box leaves a box after that box to open its own page, and so does a box
+/// that clears the float.
+pub(super) fn joins_float_break_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: usize,
+    float: usize,
+) -> bool {
+    let on_line = document
+        .layout_parent_of(float)
+        .is_some_and(|parent| document.nodes[parent].display().is_inline_flow());
+    !on_line && !clears_float(cascade, node, float)
+}
+
+/// Whether the `clear` value of `node` clears the float `float`. A logical
+/// value is taken to clear it.
+pub(super) fn clears_float(cascade: &CascadeResult, node: usize, float: usize) -> bool {
+    use raikiri_style::property::FloatValue;
+    !matches!(
+        (cascade.computed[node].clear, cascade.computed[float].float),
+        (ClearValue::None, _)
+            | (ClearValue::Left, FloatValue::Right)
+            | (ClearValue::Right, FloatValue::Left)
+    )
+}
+
 /// The page type pagination assigns to each page the flow reaches.
 struct PageNames {
     /// Whether this cascade can produce a named page during this pagination run.
@@ -4983,6 +5021,9 @@ struct PageNames {
     /// outside a named flex context compares its own against it.
     outer: Option<String>,
     by_page: Vec<Option<String>>,
+    /// A page whose type the box that goes on onto it set, which the
+    /// content placed beside that box on the page does not change.
+    kept: Option<u32>,
 }
 
 impl PageNames {
@@ -4994,6 +5035,7 @@ impl PageNames {
             by_page: vec![first.clone()],
             outer: first.clone(),
             current: first,
+            kept: None,
         }
     }
 
@@ -5003,6 +5045,7 @@ impl PageNames {
             current: None,
             outer: None,
             by_page: Vec::new(),
+            kept: None,
         }
     }
 
@@ -5069,7 +5112,36 @@ impl PageNames {
         if self.by_page.len() <= index {
             self.by_page.resize(index + 1, None);
         }
+        match self.kept {
+            Some(kept) if kept == page => return,
+            // The flow went on past the kept page.
+            Some(kept) if kept < page => self.kept = None,
+            _ => {}
+        }
         self.by_page[index].clone_from(&self.current);
+    }
+
+    /// Give `page` the type `name` for good: the content placed on it later
+    /// does not change it.
+    fn keep_page(&mut self, page: u32, name: Option<String>) {
+        let current = std::mem::replace(&mut self.current, name);
+        self.kept = None;
+        self.name_page(page);
+        self.current = current;
+        self.kept = Some(page);
+    }
+
+    /// The number of pages that have a type so far.
+    fn reached(&self) -> u32 {
+        self.by_page.len() as u32
+    }
+
+    /// Give the pages from `first` on that have a type so far the type
+    /// `name`.
+    fn name_pages_from(&mut self, first: u32, name: &Option<String>) {
+        for slot in self.by_page.iter_mut().skip(first as usize) {
+            slot.clone_from(name);
+        }
     }
 
     /// Name the pages after `from` through `end`, where content on page
@@ -5085,8 +5157,17 @@ impl PageNames {
             self.by_page.resize(end + 1, self.current.clone());
         }
         if overwrite && end > from as usize {
-            for name in &mut self.by_page[from as usize + 1..=end] {
-                name.clone_from(&self.current);
+            let kept = self.kept.map(|page| page as usize);
+            for (index, name) in self
+                .by_page
+                .iter_mut()
+                .enumerate()
+                .take(end + 1)
+                .skip(from as usize + 1)
+            {
+                if kept != Some(index) {
+                    name.clone_from(&self.current);
+                }
             }
         }
     }
