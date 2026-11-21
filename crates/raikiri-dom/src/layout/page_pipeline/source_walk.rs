@@ -255,7 +255,7 @@ impl<'a> SourceWalk<'a> {
             work.charge(1)?;
         }
         let Some(node) = document.get_node(node_id).filter(|node| {
-            node.is_in_document() && !node.is_non_rendered_html_element() && !node.is_display_none()
+            node.is_in_document() && !node.is_unrendered_html_element() && !node.is_display_none()
         }) else {
             return Ok(());
         };

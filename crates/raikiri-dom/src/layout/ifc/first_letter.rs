@@ -254,7 +254,7 @@ impl FirstLetter {
                         ),
                         NodeKind::Element => {
                             if node.display() == DisplayValue::None
-                                || node.is_non_rendered_html_element()
+                                || node.is_unrendered_html_element()
                             {
                                 continue;
                             }
@@ -804,7 +804,7 @@ impl PredecessorCache {
                 })
             };
             contributes[id] = if properties.display() == DisplayValue::None
-                || node.is_non_rendered_html_element()
+                || node.is_unrendered_html_element()
             {
                 false
             } else if properties.display() == DisplayValue::Contents {

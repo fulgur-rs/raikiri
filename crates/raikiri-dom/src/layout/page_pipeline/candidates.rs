@@ -546,7 +546,7 @@ fn can_descend_for_named_page(
 ) -> bool {
     document.get_node(node_id).is_some_and(|node| {
         node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && document.nodes[node_id].display() != DisplayValue::None
             && !matches!(
                 document.nodes[node_id].position(),
@@ -1229,7 +1229,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         let Some(node) = document.get_node(node_id) else {
             return Ok(()); // cov:ignore: traversal IDs come from this document's valid child graph.
         };
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
             return Ok(());
         }
         match node.kind() {
@@ -1598,7 +1598,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !node.children.iter().any(|&child| {
                         let child_node = &document.nodes[child];
                         if child_node.is_display_none()
-                            || child_node.is_non_rendered_html_element()
+                            || child_node.is_unrendered_html_element()
                             || matches!(
                                 document.nodes[child].position(),
                                 PositionValue::Absolute | PositionValue::Fixed

@@ -3246,7 +3246,7 @@ fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize,
         let mut pending: Vec<usize> = doc.nodes[parent].children.iter().rev().copied().collect();
         while let Some(child_id) = pending.pop() {
             if !doc.nodes[child_id].is_in_document()
-                || doc.nodes[child_id].is_non_rendered_html_element()
+                || doc.nodes[child_id].is_unrendered_html_element()
             {
                 continue;
             }

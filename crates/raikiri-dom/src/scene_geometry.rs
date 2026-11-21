@@ -133,7 +133,7 @@ impl Document {
 }
 fn is_skipped_by_paint(node: &Node) -> bool {
     !node.is_in_document()
-        || node.is_non_rendered_html_element()
+        || node.is_unrendered_html_element()
         || node.is_display_none()
         || node.is_hidden_by_text_overflow()
 }

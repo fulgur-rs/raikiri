@@ -1776,6 +1776,24 @@ impl Node {
         )
     }
 
+    /// Whether layout and paint skip this element and its subtree: a hidden
+    /// HTML element (see [`Self::is_non_rendered_html_element`]) that keeps
+    /// the user agent `display: none`, or whose contents never render. An
+    /// author `display` on `script`, `style`, `title`, `meta`, `link` or
+    /// `base` renders the element and its text, as browsers do (HTML LS
+    /// §15.3.1 hides them with a user agent rule, which author style
+    /// overrides). The contents of `head`, `noscript`, `template` and the
+    /// fallback elements stay hidden.
+    #[inline]
+    pub fn is_unrendered_html_element(&self) -> bool {
+        self.is_non_rendered_html_element()
+            && !(self.display() != DisplayValue::None
+                && matches!(
+                    self.tag_name(),
+                    Some("script" | "style" | "title" | "meta" | "link" | "base")
+                ))
+    }
+
     /// Explicitly overwrite the [`NodeFlags::IS_IN_DOCUMENT`] bit (crate-private).
     ///
     /// Used by `Document::mark_in_document_flags`, the single-pass DFS called
