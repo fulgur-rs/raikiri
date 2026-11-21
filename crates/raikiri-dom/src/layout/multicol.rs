@@ -85,14 +85,21 @@ fn is_floated(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// sticky box without an offset. This is the left-to-right offset that block
 /// flow gives a child.
 fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
+    relative_offset_in(style, width, false)
+}
+
+/// The inline offset of a `position: relative` box whose containing block is
+/// `width` wide: `left` wins over `right`, unless the containing block is
+/// right-to-left (CSS 2, 9.4.3).
+fn relative_offset_in(style: &LayoutStyleView<'_>, width: f32, rtl: bool) -> f32 {
     if style.position() != Position::Relative {
         return 0.0;
     }
     let inset = style.inset();
     let resolve = |value: LengthPercentageAuto| value.maybe_resolve(Some(width));
-    resolve(inset.left)
-        .or(resolve(inset.right).map(|right| -right))
-        .unwrap_or(0.0)
+    let left = resolve(inset.left);
+    let right = resolve(inset.right).map(|right| -right);
+    if rtl { right.or(left) } else { left.or(right) }.unwrap_or(0.0)
 }
 
 /// Give a multicol container whose `width` is `min-content`, `max-content` or
@@ -2316,11 +2323,25 @@ fn place_wrapped_boxes(
         let parent_layout = tree.nodes[wrapped.parent_node].layout;
         let mut layout = tree.nodes[wrapped.node].layout;
         // The box stands at the start of the wrapper's content box, which
-        // starts at the left of the wrapper's first column, in its own.
+        // starts at the left of the wrapper's first column, in its own. The
+        // painter adds only the block offset of a box inside a wrapper, so the
+        // box keeps the inline offset of its `position: relative` insets here,
+        // as block flow gives it.
+        let content_width = parent_layout.size.width
+            - parent_layout.border.left
+            - parent_layout.border.right
+            - parent_layout.padding.left
+            - parent_layout.padding.right;
+        let inline_offset = relative_offset_in(
+            &style_of(tree, wrapped.node),
+            content_width,
+            style_of(tree, wrapped.parent_node).direction() == TaffyDirection::Rtl,
+        );
         layout.location = Point {
             x: parent_layout.border.left
                 + parent_layout.padding.left
                 + layout.margin.left
+                + inline_offset
                 + context.column_offset_x(placement.first_column)
                 - context.column_offset_x(parent.first_column),
             y: placement.first_y - parent.first_y,

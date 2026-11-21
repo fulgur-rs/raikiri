@@ -370,7 +370,10 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
     if node.kind() != NodeKind::Element
         || node.ifc.is_some()
         || node.formatting_context != FormattingContext::Block
-        || node.layout_position() != Position::Static
+        || !matches!(
+            node.layout_position(),
+            Position::Static | Position::Relative
+        )
         || node.paints_whole_box_effects
         || node.paints_background_color
         || node.column_span_all
