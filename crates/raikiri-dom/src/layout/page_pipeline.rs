@@ -16876,6 +16876,17 @@ impl SiblingMargins {
         let margin_node = run_end.map_or(node_id, |end| end.node_id);
         let page_top = page_origins.origin(natural_page);
         let previous_bottom = effective_y - gap;
+        // A margin that ends right at a page edge holds no break there; the
+        // first edge it crosses is one page up, when it reaches that far.
+        let edge_page = if natural_page > 1
+            && (effective_y - page_top).abs() <= 0.001
+            && previous_bottom <= page_origins.origin(natural_page - 1) + 0.001
+        {
+            natural_page - 1
+        } else {
+            natural_page
+        };
+        let edge_top = page_origins.origin(edge_page);
         // The float landed where the margin it was placed after collapsed
         // to, so the box after it may already sit at the top of the page,
         // above the margin that the break keeps. Moving the box down moves
@@ -16896,8 +16907,8 @@ impl SiblingMargins {
             );
         if !(lands_at_page_top
             || page_edge_falls_in_margin(
-                natural_page,
-                page_top,
+                edge_page,
+                edge_top,
                 previous_bottom,
                 effective_y,
                 follows_forced_break,
@@ -16909,7 +16920,7 @@ impl SiblingMargins {
             return None;
         }
         let mut target_y = page_origins.truncated_margin_target(
-            float_break_page.unwrap_or(natural_page),
+            float_break_page.unwrap_or(edge_page),
             forced_before,
             at.margin_top,
             || {
@@ -16942,10 +16953,10 @@ impl SiblingMargins {
                     - accumulated_relative_offset_y(document, cascade, at.body_id, id)
             };
             let split_y = effective_y - (flow_abs_y(margin_node) - flow_abs_y(split));
-            if split_y >= page_top - 0.001 {
+            if split_y >= edge_top - 0.001 {
                 let (positive, negative) =
                     adjoining_margin_extremes(document, cascade, margin_node, true, None);
-                target_y = target_y.max(page_top + below.0.max(positive) + below.1.min(negative));
+                target_y = target_y.max(edge_top + below.0.max(positive) + below.1.min(negative));
             }
         }
         if let Some(page) = float_break_page {

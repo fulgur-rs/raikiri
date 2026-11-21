@@ -196,6 +196,9 @@ pub(super) struct BoxBreak {
     pub(super) collapses_with_previous_block: bool,
     /// Whether a break pending after the previous box applies to the box.
     pub(super) pending_break_applies: bool,
+    /// Whether a box that this one begins has a forced break before it that
+    /// this one holds, so the break sits before this box too.
+    pub(super) holds_forced_break: bool,
     /// Whether a relayout starts the box on a page after a break that an
     /// earlier layout made forced: the margin above the box is kept, as at a
     /// forced break.
@@ -1421,12 +1424,14 @@ impl PaginationState {
         let page_origins = env.page_origins;
         let page = page_origins.page_index_for_y(flow_top + 0.001);
         let page_start = page_origins.origin(page);
-        let truncates = page > 0
-            && flow_top > page_start + 0.001
-            && margin_above_line(document, env.cascade, env.body_id, node_id, owner.line)
-                .is_some_and(|gap| flow_top - gap <= page_start + 0.001);
-        let (shift, target) = if truncates {
-            (page_start - flow_top, page)
+        // The first page edge in the margin cuts it, however many pages the
+        // rest of it would fill.
+        let truncated_page =
+            margin_above_line(document, env.cascade, env.body_id, node_id, owner.line).and_then(
+                |gap| first_edge_in_margin_above(page_origins, flow_top - gap, flow_top, page),
+            );
+        let (shift, target) = if let Some(edge) = truncated_page {
+            (page_origins.origin(edge) - flow_top, edge)
         } else {
             let next = page.saturating_add(1);
             let height = document.nodes[node_id].layout.size.height;
@@ -2420,6 +2425,24 @@ impl PaginationState {
             break_margins(document, cascade, node_id, content_width);
         let collapses_with_previous_block =
             collapses_with_previous_block(document, candidate, participates_in_margin_adjacency);
+        // A forced break before a box that this one begins sits before this
+        // one too: it cuts the margin above the box as its own would, and
+        // keeps the box's margin.
+        let holds_forced_break = !forced_before
+            && collapses_with_previous_block
+            && is_block_flow_box(document, cascade, candidate)
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant()
+            && self
+                .child_positions
+                .held_forced_child_break(document, cascade, body_id, node_id)
+                .is_some_and(|child| {
+                    // A clip that holds the break back keeps it from the
+                    // child, and so from this box.
+                    let child_y = effective_y + current_abs_y(document, child)
+                        - current_abs_y(document, node_id);
+                    !super::clip_holds_breaks(document, env, child, true, child_y)
+                });
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
@@ -2452,6 +2475,7 @@ impl PaginationState {
         // box in a relayout, which stands in for the break of an earlier
         // layout without a forced break of its own.
         let keeps_margin_at_break = forced_before
+            || holds_forced_break
             || pending_break_applies
             || named_page_change
             || self.sibling_margins.forced_break_reaches(
@@ -2825,6 +2849,7 @@ impl PaginationState {
             margins_collapse_through,
             collapses_with_previous_block,
             pending_break_applies,
+            holds_forced_break,
             keeps_margin_at_break,
             keeps_continuation_margin: continuation_offset
                 .is_some_and(|offset| (offset - margin_top).abs() <= CONTINUATION_MARGIN_TOLERANCE),
@@ -3273,6 +3298,7 @@ impl PaginationState {
             margins_collapse_through,
             collapses_with_previous_block,
             keeps_continuation_margin,
+            holds_forced_break,
             ..
         } = *page_break;
         let node_id = candidate.node_id;
@@ -3302,7 +3328,7 @@ impl PaginationState {
             raw_y: flow_raw_y(document, cascade, body_id, candidate),
             effective_y: flow_y,
             natural_page,
-            forced_before,
+            forced_before: forced_before || holds_forced_break,
             margin_top,
             collapses_with_previous_block,
             run_end: avoided_breaks.margin_run_end(node_id),
@@ -4331,13 +4357,11 @@ impl PaginationState {
         // reached; the lines still start on the page they are on.
         let mut page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
         // A page edge in the margin between the block before the run and its
-        // first line truncates that margin: the line starts the page.
+        // first line truncates that margin: the line starts the page. The
+        // first edge cuts it, however many pages the rest would fill.
         let run_top = text.effective_y + metrics[0].0;
-        let page_start = page_origins.origin(page);
-        if page > 0
-            && run_top > page_start + 0.001
-            && margin_above_line(document, cascade, body_id, root, run.start)
-                .is_some_and(|gap| run_top - gap <= page_start + 0.001)
+        if let Some(edge) = margin_above_line(document, cascade, body_id, root, run.start)
+            .and_then(|gap| first_edge_in_margin_above(page_origins, run_top - gap, run_top, page))
         {
             self.move_run_lines(
                 document,
@@ -4346,9 +4370,10 @@ impl PaginationState {
                 entry,
                 text,
                 (root, first_owned_line),
-                (run.start, page_start - run_top, page),
+                (run.start, page_origins.origin(edge) - run_top, edge),
                 false,
             );
+            page = edge;
             if let Some(next) = run_metrics(document, text.effective_y) {
                 (metrics, widows) = next;
             }
@@ -6196,4 +6221,19 @@ fn starts_page_after_break(
             && content_top <= page_start + 0.5
             && !follows_box_on_page(document, env.cascade, env.body_id, root, page_start)
     })
+}
+
+/// The page whose top is the first page edge in the margin that runs from
+/// `margin_start` down to a line at `line_top` on `page`, or `None` when no
+/// page edge falls in it. That edge truncates the margin (CSS Fragmentation
+/// 3, 5.2), however many pages the rest of it would fill.
+fn first_edge_in_margin_above(
+    page_origins: &PageOrigins,
+    margin_start: f32,
+    line_top: f32,
+    page: u32,
+) -> Option<u32> {
+    let edge = page_origins.first_edge_in_margin(margin_start, false, page);
+    let top = page_origins.origin(edge);
+    (edge > 0 && top >= margin_start - 0.001 && top < line_top - 0.001).then_some(edge)
 }

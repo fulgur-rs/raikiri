@@ -216,3 +216,131 @@ fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
         "{generated}"
     );
 }
+
+#[test]
+fn a_forced_break_at_the_start_of_a_wrapper_cuts_the_margin_before_the_wrapper() {
+    // The break before the first box of a block sits before the block too,
+    // and keeps the margins of the block and of the boxes it begins.
+    let cases = [
+        (
+            "<div><div style='break-before:page'>S</div></div>",
+            "S@1:0,0",
+        ),
+        (
+            "<div><div><div style='break-before:page'>S</div></div></div>",
+            "S@1:0,0",
+        ),
+        (
+            "<div style='margin-top:20px'><div style='break-before:page'>S</div></div>",
+            "S@1:0,20",
+        ),
+        (
+            "<div><div style='break-before:page;margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+        (
+            "<div style='margin-top:10px'><div style='break-before:page;margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+        (
+            "<div style='padding-top:5px'><div style='break-before:page'>S</div></div>",
+            "S@1:0,5",
+        ),
+        (
+            "<div style='break-before:page'><div style='margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+    ];
+    for margin_bottom in [160, 250] {
+        for (after, expected) in cases {
+            let words = words(&format!(
+                "<div style='height:50px;margin-bottom:{margin_bottom}px'>A</div>{after}"
+            ));
+            assert_eq!(
+                words,
+                format!("A@0:0,0 {expected}"),
+                "{margin_bottom} {after}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_margin_over_several_pages_is_cut_at_its_first_page_edge() {
+    // Without any forced break, the first page edge in the margin breaks the
+    // page, even where the rest of the margin would end right at a later
+    // edge, and the box after it starts the next page.
+    for (height, margin_bottom) in [(50, 150), (50, 250), (100, 100), (100, 200), (30, 170)] {
+        for after in [
+            "<div>S</div>",
+            "<div style='margin-top:20px'>S</div>",
+            "<div><div>S</div></div>",
+            "<div style='break-inside:avoid;height:30px'>S</div>",
+        ] {
+            let words = words(&format!(
+                "<div style='height:{height}px;margin-bottom:{margin_bottom}px'>A</div>{after}"
+            ));
+            assert_eq!(words, "A@0:0,0 S@1:0,0", "{height} {margin_bottom} {after}");
+        }
+    }
+    // The margin of a nested block, and one cut before the lines of a
+    // paragraph, a single line of an inline-block among them.
+    for (body, expected) in [
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div><div>S</div>",
+            "A@0:0,0 S@1:0,0",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:160px'>A</div>S<br>T</div>",
+            "A@0:0,0 S@1:0,0 T@1:0,10",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div>S</div>",
+            "A@0:0,0 S@1:0,0",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:160px'>A</div>\
+             <span style='display:inline-block;width:10px;height:10px'></span></div><div>X</div>",
+            "A@0:0,0 X@1:0,12",
+        ),
+    ] {
+        assert_eq!(words(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_margin_inside_its_page_keeps_the_lines_below_it() {
+    // On a later page, the lines after a block whose margin ends on that
+    // page stay below the margin; one that reaches the next page is cut.
+    for (body, expected) in [
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@1:0,70 T@1:0,80",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>\
+             <span style='display:inline-block;width:10px;height:10px'></span></div><div>X</div>",
+            "Z@0:0,0 A@1:0,50 X@1:0,82",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:160px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@2:0,0 T@2:0,10",
+        ),
+    ] {
+        let mut words = words(body)
+            .split(' ')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        words.sort_by_key(|word| {
+            let (page, y) = word.split_once('@').unwrap().1.split_once(':').unwrap();
+            (
+                page.to_owned(),
+                y.split(',').nth(1).unwrap().parse::<i32>().unwrap(),
+            )
+        });
+        assert_eq!(words.join(" "), expected, "{body}");
+    }
+}
