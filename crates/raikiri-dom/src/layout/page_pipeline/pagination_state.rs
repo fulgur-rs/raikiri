@@ -3356,6 +3356,21 @@ impl PaginationState {
                     .pending_break
                     .source
                     .map(|source| (source, target_page));
+                if let Some(top) = self.pending_break.source.and_then(|source| {
+                    super::float_top_after_closed_edges(
+                        document,
+                        cascade,
+                        body_id,
+                        page_origins,
+                        source,
+                        node_id,
+                    )
+                }) {
+                    document
+                        .context
+                        .floats_after_closed_edges
+                        .push((node_id, top));
+                }
             }
             self.pending_break.take(document, node_id);
         }
