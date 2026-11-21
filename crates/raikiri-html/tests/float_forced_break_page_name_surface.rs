@@ -182,6 +182,17 @@ fn a_box_around_the_float_that_goes_on_names_the_page() {
         &format!("<div style='page:foo'><div style='page:bar;break-after:page'>T</div>{F}</div>Z"),
         &["140: T@0,0", "120: F@0,0 Z@40,0"],
     );
+    // The pages after it take the types of their own content.
+    let kept =
+        format!("<div style='page:foo'><div style='page:bar;break-after:page'>T</div>{F}</div>Z");
+    expect(
+        &format!("{kept}<div style='break-before:page'>Y</div>"),
+        &["140: T@0,0", "120: F@0,0 Z@40,0", "100: Y@0,0"],
+    );
+    expect(
+        &format!("<div style='page:foo'>{inner}</div>Z<div style='page:bar'>Y</div>"),
+        &["120: T@0,0", "120: F@0,0 Z@40,0", "140: Y@0,0"],
+    );
 }
 
 #[test]
