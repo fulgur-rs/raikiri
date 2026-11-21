@@ -8275,17 +8275,20 @@ fn leading_holder(
         cascade,
         body_id,
         node_id,
-        edges,
+        (edges, true),
         renders_before_child,
     )
 }
 
+/// The walk of [`leading_holder`]. With `through_rows` false it stops below
+/// every container that lays boxes beside one another, as for a break forced
+/// inside such a row, which waits for the row rather than moving it.
 fn leading_holder_with(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-    edges: bool,
+    (edges, through_rows): (bool, bool),
     mut renders_before: impl FnMut(&Document, usize, usize) -> bool,
 ) -> (usize, f32) {
     if has_unusual_coordinates(document, node_id) {
@@ -8303,7 +8306,7 @@ fn leading_holder_with(
     {
         // The items of a row sit beside the one that holds the box, not
         // before it.
-        let starts_row = starts_single_row(document, cascade, ancestor, box_child);
+        let starts_row = through_rows && starts_single_row(document, cascade, ancestor, box_child);
         if renders_before(document, ancestor, child) && !starts_row {
             break;
         }
@@ -8314,7 +8317,7 @@ fn leading_holder_with(
         box_child = ancestor;
         if !(is_plain_block_box(document, ancestor) || starts_row)
             || (document.nodes[ancestor].is_multicol_container()
-                && !is_single_column(document, ancestor))
+                && !(through_rows && is_single_column(document, ancestor)))
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, ancestor)
             || if edges {
