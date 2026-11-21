@@ -108,6 +108,21 @@ fn a_relative_paragraph_keeps_its_offset_in_every_column() {
             "<div><div style='position:relative;top:5px'><div style='position:relative;top:3px'>S<br>T<br>U<br>V</div></div></div>",
             "S@0:0,8 T@0:0,18 U@0:40,8 V@0:40,18",
         ),
+        // A wrapper with a background has a box in each column.
+        (
+            "<div style='background:red'><div style='position:relative;top:5px'>S<br>T<br>U<br>V</div></div>",
+            "S@0:0,5 T@0:0,15 U@0:40,5 V@0:40,15",
+        ),
+        // A sticky wrapper is placed without an offset of its own.
+        (
+            "<div style='position:sticky;top:0'><div style='position:relative;top:5px'>S<br>T<br>U<br>V</div></div>",
+            "S@0:0,5 T@0:0,15 U@0:40,5 V@0:40,15",
+        ),
+        // `top` wins over `bottom`.
+        (
+            "<div><div style='position:relative;top:5px;bottom:20px'>S<br>T<br>U<br>V</div></div>",
+            "S@0:0,5 T@0:0,15 U@0:40,5 V@0:40,15",
+        ),
     ];
     for (wrapper, expected) in cases {
         assert_eq!(in_columns(wrapper), expected, "{wrapper}");

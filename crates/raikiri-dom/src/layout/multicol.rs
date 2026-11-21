@@ -5392,14 +5392,12 @@ fn record_nested_ifc_box_fragments(
             // in a later column keeps those offsets below the column top.
             let relative_offset_y = path
                 .iter()
-                .filter(|&&ancestor| !is_floated(tree, ancestor))
                 .map(|&ancestor| {
-                    crate::layout::used_relative_offset_for_layout(
+                    crate::layout::block_flow_relative_offset_y(
                         tree.document,
                         tree.style_views.cascade(),
                         ancestor,
                     )
-                    .1
                 })
                 .sum::<f32>();
 
@@ -5486,7 +5484,7 @@ fn record_nested_ifc_box_fragments(
                 // the offset of its first line.
                 let tail_shift = line_range
                     .filter(|_| line_shift.is_some())
-                    .map_or(0.0, |range| node_offset_y + range.y);
+                    .map_or(0.0, |range| node_offset_y + range.y - relative_offset_y);
                 let tail_line_bottom = lines
                     .as_ref()
                     .filter(|lines| lines.unfragmented_tail_column == Some(column))
@@ -5565,7 +5563,8 @@ fn record_nested_ifc_box_fragments(
                                     line_end: None,
                                 })?;
                         parent = fragment_id;
-                        wrapper_fragment = Some((fragment_id, node_offset_y + range.y));
+                        wrapper_fragment =
+                            Some((fragment_id, node_offset_y + range.y - relative_offset_y));
                     }
                 }
                 // `edges_sliced` tells that the planner placed the lines of the
