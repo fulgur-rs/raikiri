@@ -136,7 +136,7 @@ fn children(
         };
         let node = doc.ifc_layout_node(id).unwrap();
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.display() == DisplayValue::None
             || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         {
@@ -503,7 +503,7 @@ fn blocks_beside_parts_hold_no_lines(
         .collect();
     while let Some(id) = pending.pop() {
         let node = doc.ifc_layout_node(id).unwrap();
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
             continue;
         }
         if node.kind() == NodeKind::Text {
@@ -541,7 +541,7 @@ fn ends_run(doc: &Document, cascade: &CascadeResult, child: usize) -> bool {
         }
         NodeKind::Element => {
             node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && node.display() != DisplayValue::None
         }
         // Comments and the like are not in the document.

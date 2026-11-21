@@ -145,21 +145,22 @@ fn lines_of_atomic_inlines_in_a_contents_wrapper_before_text_keep_their_place() 
 }
 
 #[test]
-fn an_element_never_rendered_before_the_atomic_inlines_is_not_their_text() {
-    // A known difference from Chromium, not a Chromium value: raikiri never
-    // lays out the content of a script, whatever its display, while Chromium
-    // prints the text of `<script style="display:inline">`. Line layout and
-    // the page candidates both skip the script here, so the paragraph must
-    // lay out exactly as one without it: the inline-blocks come before the
-    // text and keep their place, as in the test above.
-    let paragraph = |script: &str| {
-        glyphs(&format!(
-            r#"<div style="height:40px"></div><div style="width:20px">{script}<i>B</i><i>B</i> T T</div><div>Z</div>"#
-        ))
-    };
+fn a_script_with_an_author_display_before_the_atomic_inlines_is_their_text() {
+    // Chromium prints the text of `<script style="display:inline">`: it
+    // shares the first line with the inline-blocks, which then follow it
+    // down the page.
     assert_eq!(
-        paragraph(r#"<script style="display:inline">x</script>"#),
-        paragraph("")
+        glyphs(
+            r#"<div style="height:40px"></div><div style="width:20px"><script style="display:inline">x</script><i>B</i><i>B</i> T T</div><div>Z</div>"#
+        ),
+        [
+            (0, 'B', 0, 75),
+            (0, 'x', 0, 45),
+            (1, 'B', 0, 5),
+            (1, 'T', 0, 35),
+            (1, 'T', 0, 65),
+            (2, 'Z', 0, 5),
+        ]
     );
 }
 

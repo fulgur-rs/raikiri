@@ -122,6 +122,7 @@ pub(super) fn layout(
                 },
                 0.0,
                 true,
+                false,
             );
         }
         if let Some(child) = spanner {

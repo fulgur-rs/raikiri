@@ -602,7 +602,7 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
 
     assert_eq!(
         with_bridged_session(&mut doc, |session| multicol_max_fragmentainer_height(
-            session, node, 120.0, None, None
+            session, node, 120.0, true, None, None
         )),
         Some(100.0),
     );

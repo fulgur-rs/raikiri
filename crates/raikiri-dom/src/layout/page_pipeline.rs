@@ -226,7 +226,7 @@ fn content_overflow(
         let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.kind() != NodeKind::Element
         {
             continue;
@@ -564,7 +564,7 @@ fn ordered_edge_child(
     let is_item = |&child: &usize| {
         let node = &document.nodes[child];
         node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && node.display() != DisplayValue::None
             && !matches!(
                 node.position(),
@@ -669,7 +669,7 @@ fn layout_relative_offset(
             document.nodes[node_id].display(),
             DisplayValue::Contents | DisplayValue::None
         )
-        || relative_offset_is_painted(document, cascade, body_id, node_id)
+        || relative_offset_is_painted(document, cascade, Some(body_id), node_id)
     {
         return (0.0, 0.0);
     }
@@ -731,7 +731,29 @@ fn painted_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    if !relative_offset_is_painted(document, cascade, body_id, node_id) {
+    if !relative_offset_is_painted(document, cascade, Some(body_id), node_id) {
+        return 0.0;
+    }
+    super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
+}
+
+/// How far down the painter moves `node_id` by its own relative or sticky
+/// offset, when layout places the box without it (see
+/// [`relative_offset_is_painted`]): a float, a table part, a sticky box, a box
+/// the columns of a multicol container place. Chromium fragments such a box
+/// where the offset puts it, as it does a relatively positioned box in normal
+/// flow, which layout already places with its offset.
+pub(crate) fn painter_relative_shift_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    let node = &document.nodes[node_id];
+    // A `display: contents` element has no box for the painter to move.
+    if node.kind() != NodeKind::Element
+        || matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
+        || !relative_offset_is_painted(document, cascade, None, node_id)
+    {
         return 0.0;
     }
     super::relative::used_relative_offset_for_layout(document, cascade, node_id).1
@@ -741,7 +763,7 @@ fn painted_relative_offset_y(
 fn relative_offset_is_painted(
     document: &Document,
     cascade: &CascadeResult,
-    body_id: usize,
+    body_id: Option<usize>,
     node_id: usize,
 ) -> bool {
     if !matches!(
@@ -750,12 +772,8 @@ fn relative_offset_is_painted(
     ) {
         return false;
     }
-    super::relative::placed_without_relative_offset_for_layout(
-        document,
-        cascade,
-        Some(body_id),
-        node_id,
-    ) || document.nodes[node_id].needs_relative_block_paint_offset()
+    super::relative::placed_without_relative_offset_for_layout(document, cascade, body_id, node_id)
+        || document.nodes[node_id].needs_relative_block_paint_offset()
 }
 
 /// The block-end edge of the root's border box in page coordinates.
@@ -3445,11 +3463,12 @@ pub(crate) fn project_slices_with_control(
 
     let WalkedSources {
         mut nodes,
-        text_roots,
+        mut text_roots,
         placement_overflow_clips,
         paragraph_cache,
         repeated_placement_nodes,
     } = walk_sources(document, cascade, body_id, &mut work)?;
+    keep_painted_shifts_after_flow_start(&pages, flow_axis, &mut nodes, &mut text_roots);
     restore_crossing_tops(document, &mut nodes, &pages);
 
     place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
@@ -3467,6 +3486,33 @@ pub(crate) fn project_slices_with_control(
         paragraph_cache,
         work.remaining(),
     ))
+}
+
+/// Limits the painted shifts of `nodes` and `text_roots` so that a box the
+/// painter moves up stops at the start of the flow. Nothing comes before the
+/// first page, so a box moved above it stays on that page, as layout placed
+/// it, and overflows its top.
+fn keep_painted_shifts_after_flow_start(
+    pages: &[PageFragment],
+    flow_axis: FlowAxis,
+    nodes: &mut [PageFragmentSource],
+    text_roots: &mut [ProjectedTextRoot],
+) {
+    let Some(start) = pages
+        .iter()
+        .filter_map(|page| page.flow_range.map(|(start, _)| start))
+        .reduce(f32::min)
+        .filter(|_| flow_axis == FlowAxis::Y)
+    else {
+        return;
+    };
+    let limit = |shift: f32, y: f32| shift.max(start.min(y) - y);
+    for node in nodes {
+        node.painted_shift = limit(node.painted_shift, node.abs_y);
+    }
+    for root in text_roots {
+        root.painted_shift = limit(root.painted_shift, root.y);
+    }
 }
 
 /// Group page snapshots into a deterministic NodeId-ordered geometry table.
@@ -3559,7 +3605,7 @@ fn clear_floats_at_forced_breaks<'name>(
         let node = &document.nodes[id];
         node.kind() == NodeKind::Element
             && node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && !matches!(
                 document.nodes[id].display(),
                 DisplayValue::None | DisplayValue::Contents
@@ -3603,7 +3649,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
             } else if node.kind() == NodeKind::Element
                 && node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && (document.nodes[child].display() == DisplayValue::Contents
                     || document.nodes[child].display().is_inline_flow()
                         && in_flow(document, child)
@@ -3633,7 +3679,7 @@ fn clear_floats_at_forced_breaks<'name>(
             } else if static_absolute
                 && node.kind() == NodeKind::Element
                 && node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && document.nodes[child].display() != DisplayValue::None
                 && is_static_position_absolute(document, cascade, child)
             {
@@ -4325,7 +4371,7 @@ fn page_edge_child(
         }];
         let node = &document.nodes[child];
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || document.nodes[child].display() == DisplayValue::None
             || matches!(
                 document.nodes[child].position(),
@@ -4439,7 +4485,7 @@ fn makes_inline_content(
     let node = &document.nodes[id];
     if depth >= 128
         || !node.is_in_document()
-        || node.is_non_rendered_html_element()
+        || node.is_unrendered_html_element()
         || node.display() == DisplayValue::None
         || matches!(
             node.position(),
@@ -7426,7 +7472,7 @@ fn forced_break_inside(
             continue;
         }
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.kind() != NodeKind::Element
             || node.display() == DisplayValue::None
             || matches!(
@@ -8010,7 +8056,7 @@ fn sibling_renders(document: &Document, sibling: usize) -> bool {
     match node.kind() {
         NodeKind::Element => {
             node.is_in_document()
-                && !node.is_non_rendered_html_element()
+                && !node.is_unrendered_html_element()
                 && node.display() != DisplayValue::None
         }
         _ => node
@@ -8144,7 +8190,8 @@ fn avoided_box_holder(
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before_child(document, ancestor, child) {
+        let starts_row = starts_single_row(document, cascade, ancestor, box_child);
+        if renders_before_child(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
@@ -8152,7 +8199,7 @@ fn avoided_box_holder(
             continue;
         }
         let layout = &document.nodes[ancestor].layout;
-        if !is_plain_block_box(document, ancestor)
+        if !(is_plain_block_box(document, ancestor) || starts_row)
             || document.nodes[ancestor].is_multicol_container()
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, box_child)
@@ -8248,9 +8295,13 @@ fn contained_cloned_leading_holder(
 /// (CSS Break 3 §4.1), so the ancestor starts the next page with the child
 /// rather than leaving its start, and a fixed height, a background, a padding
 /// or a border, behind on this one. An ancestor that is not a plain block of
-/// the normal flow, that lays its children out in columns, or that is placed
-/// by an inline formatting context or out of flow, is left to the box alone;
-/// the walk stops below it.
+/// the normal flow, that lays its children out in several columns, or that is
+/// placed by an inline formatting context or out of flow, is left to the box
+/// alone; the walk stops below it. Two exceptions move with the box: a flex
+/// or grid container that lays out a single row the box begins (see
+/// [`starts_single_row`]), whose whole row Chromium moves when the page
+/// cannot break before the box, and a multicol container of a single column,
+/// which follows the page as block flow does.
 ///
 /// With `edges` false the walk stops below the first ancestor that keeps
 /// something above the box, so the holder starts where the box does and the
@@ -8262,9 +8313,9 @@ fn contained_cloned_leading_holder(
 /// box moves. Whether a holder that already starts its page is worth moving is
 /// for the caller to judge from its top.
 ///
-/// Every ancestor the walk passes is a plain block of the normal flow that is
-/// not a multicol container, so none of them lays its children out side by
-/// side.
+/// Every other ancestor the walk passes is a plain block of the normal flow
+/// that is not a multicol container, so the only boxes beside the box that
+/// move with it are the other items of such a row.
 fn leading_holder(
     document: &Document,
     cascade: &CascadeResult,
@@ -8277,17 +8328,20 @@ fn leading_holder(
         cascade,
         body_id,
         node_id,
-        edges,
+        (edges, true),
         renders_before_child,
     )
 }
 
+/// The walk of [`leading_holder`]. With `through_rows` false it stops below
+/// every container that lays boxes beside one another, as for a break forced
+/// inside such a row, which waits for the row rather than moving it.
 fn leading_holder_with(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
-    edges: bool,
+    (edges, through_rows): (bool, bool),
     mut renders_before: impl FnMut(&Document, usize, usize) -> bool,
 ) -> (usize, f32) {
     if has_unusual_coordinates(document, node_id) {
@@ -8296,19 +8350,27 @@ fn leading_holder_with(
     let top = current_abs_y(document, node_id);
     let mut holder = node_id;
     let mut child = node_id;
+    // The nearest box at or below `child`: a `display: contents` element has
+    // no box of its own.
+    let mut box_child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_before(document, ancestor, child) {
+        // The items of a row sit beside the one that holds the box, not
+        // before it.
+        let starts_row = through_rows && starts_single_row(document, cascade, ancestor, box_child);
+        if renders_before(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
-        if !is_plain_block_box(document, ancestor)
-            || document.nodes[ancestor].is_multicol_container()
+        box_child = ancestor;
+        if !(is_plain_block_box(document, ancestor) || starts_row)
+            || (document.nodes[ancestor].is_multicol_container()
+                && !(through_rows && is_single_column(document, ancestor)))
             || is_floating_box_for_pagination(document, cascade, ancestor)
             || has_unusual_coordinates(document, ancestor)
             || if edges {
@@ -8327,6 +8389,48 @@ fn leading_holder_with(
         0.0
     };
     (holder, lead)
+}
+
+/// Whether the multicol container `id` lays its content out in one column
+/// of its whole width, which follows the page as block flow does.
+fn is_single_column(document: &Document, id: usize) -> bool {
+    document.nodes[id]
+        .multicol
+        .is_some_and(|style| style.count == Some(1) && style.width.is_none())
+}
+
+/// Whether `item` is an item of the flex or grid container `container` at
+/// the top of a single row the container lays out beside it: a row flex
+/// container that does not wrap, or a grid of several columns, with `item`
+/// at the top of its content box. A box that begins such an item begins the
+/// row, and Chromium moves the whole row, and so the container, when the
+/// page cannot break before the box.
+fn starts_single_row(
+    document: &Document,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+) -> bool {
+    let node = &document.nodes[container];
+    let computed = &cascade.computed[container];
+    let row = match node.display() {
+        DisplayValue::Flex => {
+            matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            ) && computed.flex_wrap == FlexWrapValue::NoWrap
+        }
+        DisplayValue::Grid => node.grid_column_count > 1,
+        _ => false,
+    };
+    let layout = &node.layout;
+    row && matches!(
+        node.position(),
+        PositionValue::Static | PositionValue::Relative
+    ) && !node.used_writing_mode.is_vertical()
+        && document.layout_parent_of(item) == Some(container)
+        && (document.nodes[item].layout.location.y - layout.border.top - layout.padding.top).abs()
+            <= 0.01
 }
 
 /// The block size of what a box that begins the blocks from its parent up to
@@ -12820,16 +12924,45 @@ fn content_bottom_edges(
 ) -> Option<f32> {
     let node = &document.nodes[node_id];
     let edges = node.layout.padding.bottom + node.layout.border.bottom;
-    (edges > 0.0
-        && node.kind() == NodeKind::Element
+    (node.kind() == NodeKind::Element
         && !node.used_writing_mode.is_vertical()
         && node.multicol.is_none()
-        && (node.is_ifc_root() || moves_later_siblings(document, node_id))
+        // A set height keeps the place of a closing line in the block.
+        && (if edges > 0.0 {
+            node.is_ifc_root() || moves_later_siblings(document, node_id)
+        } else {
+            node.display() != DisplayValue::Contents && document.block_axis(node_id).height().is_auto()
+        })
         && (height_follows_content(document, node_id)
             || min_height_left_behind(document, node_id)
             || content_ends_above_edges(document, cascade, body_id, node_id)
-            || ends_with_collapsed_empty_box(document, cascade, node_id)))
+            || ends_with_collapsed_empty_box(document, cascade, node_id))
+        && (edges > 0.0 || closes_forced_block_with_line(document, cascade, node_id)))
     .then_some(edges)
+}
+
+/// Whether the paragraph `root` closes a block among its lines that forces a
+/// page break after itself with a line of its own (see
+/// [`line_follows_paragraph_block`]). That line starts the page the break
+/// opens, empty as it may be, so the paragraph ends there like one whose
+/// bottom padding and border the break carries over: a break forced after
+/// the paragraph or before the box after it opens one more page (Chromium).
+fn closes_forced_block_with_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> bool {
+    // Only an inline box, or inline content after a block, closes it with a
+    // line: a paragraph of blocks alone has none.
+    document.nodes[root].children.iter().any(|&child| {
+        matches!(
+            document.nodes[child].display(),
+            DisplayValue::Inline | DisplayValue::Contents
+        )
+    }) && document.preorder(root).skip(1).any(|id| {
+        forces_page_break(document, cascade, id, false)
+            && line_follows_paragraph_block(document, cascade, root, id)
+    })
 }
 
 /// Whether the flow of the block `node_id`, whose height nothing caps, ends
@@ -14069,7 +14202,7 @@ fn has_mandatory_break_inside(
         // Text and elements that generate no box break nothing.
         if node.kind() != NodeKind::Element
             || !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || node.display() == DisplayValue::None
             // A positioned box keeps the breaks inside it to itself.
             || is_out_of_flow_positioned(document, id)
@@ -15888,7 +16021,7 @@ fn atomics_follow_text(
             // its display, lays out nothing.
             crate::node::NodeData::Element(_)
                 if !document.nodes[node].is_display_none()
-                    && !document.nodes[node].is_non_rendered_html_element() =>
+                    && !document.nodes[node].is_unrendered_html_element() =>
             {
                 stack.extend(children(node));
             }
@@ -16796,6 +16929,17 @@ impl SiblingMargins {
         let margin_node = run_end.map_or(node_id, |end| end.node_id);
         let page_top = page_origins.origin(natural_page);
         let previous_bottom = effective_y - gap;
+        // A margin that ends right at a page edge holds no break there; the
+        // first edge it crosses is one page up, when it reaches that far.
+        let edge_page = if natural_page > 1
+            && (effective_y - page_top).abs() <= 0.001
+            && previous_bottom <= page_origins.origin(natural_page - 1) + 0.001
+        {
+            natural_page - 1
+        } else {
+            natural_page
+        };
+        let edge_top = page_origins.origin(edge_page);
         // The float landed where the margin it was placed after collapsed
         // to, so the box after it may already sit at the top of the page,
         // above the margin that the break keeps. Moving the box down moves
@@ -16816,8 +16960,8 @@ impl SiblingMargins {
             );
         if !(lands_at_page_top
             || page_edge_falls_in_margin(
-                natural_page,
-                page_top,
+                edge_page,
+                edge_top,
                 previous_bottom,
                 effective_y,
                 follows_forced_break,
@@ -16829,7 +16973,7 @@ impl SiblingMargins {
             return None;
         }
         let mut target_y = page_origins.truncated_margin_target(
-            float_break_page.unwrap_or(natural_page),
+            float_break_page.unwrap_or(edge_page),
             forced_before,
             at.margin_top,
             || {
@@ -16862,10 +17006,10 @@ impl SiblingMargins {
                     - accumulated_relative_offset_y(document, cascade, at.body_id, id)
             };
             let split_y = effective_y - (flow_abs_y(margin_node) - flow_abs_y(split));
-            if split_y >= page_top - 0.001 {
+            if split_y >= edge_top - 0.001 {
                 let (positive, negative) =
                     adjoining_margin_extremes(document, cascade, margin_node, true, None);
-                target_y = target_y.max(page_top + below.0.max(positive) + below.1.min(negative));
+                target_y = target_y.max(edge_top + below.0.max(positive) + below.1.min(negative));
             }
         }
         if let Some(page) = float_break_page {

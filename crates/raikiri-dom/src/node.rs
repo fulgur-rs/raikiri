@@ -1699,8 +1699,9 @@ impl Node {
     }
 
     /// Identify "non-rendered" elements in the HTML namespace (metadata
-    /// content, raw text containers, and ruby parenthesis fallbacks). Paint
-    /// uses this gate to skip their entire subtrees.
+    /// content, raw text containers, and ruby parenthesis fallbacks), which
+    /// HTML hides whatever their content. Layout and paint skip them through
+    /// [`Self::is_unrendered_html_element`], which also reads their display.
     ///
     /// Covered elements (HTML LS §15.3.1 "Hidden elements",
     /// <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>):
@@ -1724,14 +1725,11 @@ impl Node {
     /// `<basefont>` is obsolete-void, and `<param>` acts like an attribute inside
     /// an object), so they offer no content leak path and are omitted here.
     ///
-    /// # Motivation
-    ///
     /// Author or user CSS can override hiding by UA CSS
-    /// (`style { display: none }`, etc.; HTML LS §15.3.1). Attacker-controlled
-    /// HTML plus overriding CSS could therefore expose text from `<style>` or
-    /// `<script>` in rendered output. A cascade-independent paint gate provides
-    /// defense in depth (datalist, noembed, noframes, and rp were added later
-    /// to complete §15.3.1 coverage).
+    /// (`style { display: none }`, etc.; HTML LS §15.3.1), and browsers then
+    /// render the element and its text. Callers that ask whether an element
+    /// renders use [`Self::is_unrendered_html_element`] or
+    /// [`Self::hides_contents_whatever_display`] instead.
     ///
     /// # Non-goals
     ///
@@ -1774,6 +1772,36 @@ impl Node {
                 | "noframes"
                 | "rp"
         )
+    }
+
+    /// Whether layout and paint skip this element and its subtree: a hidden
+    /// HTML element (see [`Self::is_non_rendered_html_element`]) that keeps
+    /// the user agent `display: none`, or whose contents never render.
+    ///
+    /// HTML LS §15.3.1 hides most of these elements with a user agent rule,
+    /// which author style overrides: an author `display` on `head`, `title`,
+    /// `meta`, `link`, `base`, `script`, `style`, `datalist`, `noframes` or
+    /// `rp` renders the element and its contents, as browsers do. The
+    /// contents of `template`, of `noscript` (scripting counts as enabled)
+    /// and of `noembed` (plugin content counts as supported) never render.
+    ///
+    /// The display read here is the one the style bridge copied from the
+    /// cascade onto the node, so callers ask after the cascade ran.
+    #[inline]
+    pub fn is_unrendered_html_element(&self) -> bool {
+        (self.is_non_rendered_html_element() && self.display() == DisplayValue::None)
+            || self.hides_contents_whatever_display()
+    }
+
+    /// Whether this is a hidden HTML element whose contents never render,
+    /// whatever its display: `template`, `noscript` (scripting counts as
+    /// enabled) and `noembed` (plugin content counts as supported). See
+    /// [`Self::is_unrendered_html_element`] for the hidden elements that an
+    /// author `display` renders.
+    #[inline]
+    pub fn hides_contents_whatever_display(&self) -> bool {
+        self.is_non_rendered_html_element()
+            && matches!(self.tag_name(), Some("template" | "noscript" | "noembed"))
     }
 
     /// Explicitly overwrite the [`NodeFlags::IS_IN_DOCUMENT`] bit (crate-private).

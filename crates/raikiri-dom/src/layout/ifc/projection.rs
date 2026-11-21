@@ -1589,7 +1589,7 @@ fn project_children_builder_as(
                 if matches!(
                     node.display(),
                     DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) || node.is_non_rendered_html_element()
+                ) || node.is_unrendered_html_element()
                 {
                     continue;
                 }

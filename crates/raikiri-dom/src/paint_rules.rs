@@ -156,7 +156,7 @@ pub(crate) fn clips_element_overflow(
         return false;
     };
     if !node.is_in_document()
-        || node.is_non_rendered_html_element()
+        || node.is_unrendered_html_element()
         || node.kind() != NodeKind::Element
         || !clips_overflow(cv)
         || matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
@@ -2484,7 +2484,7 @@ fn lacks_visible_table_cell_content(
         let node = &document.nodes[id];
         let cv = &cascade.computed[id];
         if !node.is_in_document()
-            || node.is_non_rendered_html_element()
+            || node.is_unrendered_html_element()
             || cv.display == DisplayValue::None
             || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         {

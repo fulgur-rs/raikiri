@@ -161,9 +161,23 @@ pub(crate) fn compute_multicol_layout(
     let Some(style) = tree.nodes[index].multicol else {
         return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
+    let inputs = with_keyword_width(tree, node_id, inputs);
+    // The height of an auto-height container is that of its balanced
+    // columns, which a flex line or a grid row measures it by. Only a layout
+    // balances them, so a measure of that height lays the columns out. The
+    // layout that places the container afterwards retires the fragments this
+    // one recorded, as it does those of any earlier layout of the container.
+    if inputs.run_mode == RunMode::ComputeSize
+        && inputs.axis == RequestedAxis::Vertical
+        && inputs.known_dimensions.height.is_none()
+        && !style.height_definite
+    {
+        let mut layout = inputs;
+        layout.run_mode = RunMode::PerformLayout;
+        return compute_multicol_layout(tree, node_id, layout, block_ctx);
+    }
     #[cfg(test)]
     crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(count.get() + 1));
-    let inputs = with_keyword_width(tree, node_id, inputs);
 
     // Taffy supplies the used border-box width to a block child. Do not fall
     // back to the page width when a nested box is measured: that would make a
@@ -183,9 +197,11 @@ pub(crate) fn compute_multicol_layout(
     // A row flex container or a grid container stretches an auto-height
     // item to its line or area, a column flex container grows or bases
     // it on its flex properties, and an absolutely positioned box with
-    // both block insets fills its containing block; the columns then
-    // take that height. Other known heights come from the item's own
-    // content and are rebalanced here.
+    // both block insets fills its containing block. A definite height
+    // bounds the columns; under an auto-height flex line the columns
+    // balance and the container takes the stretched height as a minimum.
+    // Other known heights come from the item's own content and are
+    // rebalanced here.
     let css = style_of(tree, index);
     let positioned = tree.nodes[index].layout_position() == Position::Absolute;
     let inset = css.inset();
@@ -386,15 +402,26 @@ pub(crate) fn compute_multicol_layout(
                 && outer_height.is_some_and(|outer| output.size.height <= outer + lineless::EPSILON)
     });
     custom_scope |= definite_paragraphs && lineless_children.is_none();
+    // Balanced columns that only a maximum height bounds balance as those of
+    // an auto height do, up to that height. Columns stretched to a size their
+    // parent gives, and columns nested in others, keep to the height of the
+    // content laid out across the container instead.
+    let bounded_by_maximum = available_height.is_none()
+        && style.column_fill != ColumnFillValue::Auto
+        && !stretched_height
+        && stack_depth == 0
+        && !multicol_has_nested_descendant(tree, index);
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
             index,
             output.size.height,
+            !bounded_by_maximum,
             inputs.parent_size.height,
             parent_width,
         )
     });
+    let bounded_by_maximum = bounded_by_maximum && fragmentainer_height.is_some();
     // Children that hold no lines are sliced below instead, minimum and all,
     // unless the slicing fails.
     if lineless_children.is_none() {
@@ -479,6 +506,13 @@ pub(crate) fn compute_multicol_layout(
                     + multicol_resolve_inset(tree, border.bottom, basis)
             }
         });
+        // A box stretched to an auto-height flex line or grid area balances
+        // its columns as usual and then takes the size it was stretched to,
+        // like a minimum height: the columns do not fill it.
+        let minimum = match inputs.known_dimensions.height {
+            Some(height) if stretched_height && available_height.is_none() => minimum.max(height),
+            _ => minimum,
+        };
         let lineless_definite = available_height.is_some() || stretched_height;
         // An auto-basis item of a column flex container that does not grow
         // keeps its content height unless flexing shrinks it, so its known
@@ -524,6 +558,7 @@ pub(crate) fn compute_multicol_layout(
                             resolved,
                             block_size,
                             fragmentainer_height.is_some(),
+                            bounded_by_maximum,
                             content_origin,
                             block_end_inset,
                         );
@@ -549,6 +584,7 @@ pub(crate) fn compute_multicol_layout(
                     resolved,
                     block_size,
                     fragmentainer_height.is_some(),
+                    bounded_by_maximum,
                     content_origin,
                     block_end_inset,
                 )
@@ -571,9 +607,14 @@ pub(crate) fn compute_multicol_layout(
             });
         let mut used_height = lay_out_columns(tree, content_origin, block_end_inset, &mut output);
         // Balanced columns size an auto-height container even under a
-        // maximum height, which only bounds the balanced columns.
-        let balances_height =
-            fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite);
+        // maximum height, which only bounds the balanced columns. Columns
+        // sliced inside a height that layout fixed, such as the size a flex
+        // line stretched the box to, leave the container that height.
+        let balances_height = if lineless_children.is_some() {
+            !lineless_definite
+        } else {
+            fragmentainer_height.is_none() || bounded_by_maximum
+        };
         // Only one row of columns that this layout placed is aligned: a
         // strategy that gave up placed none, and a container broken across
         // outer fragmentainers has a record in each.
@@ -614,7 +655,13 @@ pub(crate) fn compute_multicol_layout(
             }
         }
         if balances_height {
-            output.size.height = used_height.max(minimum);
+            // A maximum height only bounds the balanced columns.
+            let maximum = fragmentainer_height
+                .filter(|_| bounded_by_maximum)
+                .map_or(f32::INFINITY, |height| {
+                    height + content_origin.y + block_end_inset
+                });
+            output.size.height = used_height.min(maximum).max(minimum);
         }
         // The principal fragment paints the same border box that the parent
         // receives, even when the balanced column content is shorter.
@@ -1171,16 +1218,25 @@ enum FlowPlacement {
     ColumnFlex { flexed: bool },
 }
 
+/// The content height that the maximum height of `node_id` leaves its
+/// columns, no more than the content height of its border box of
+/// `border_box_height` with `within_border_box`.
 fn multicol_max_fragmentainer_height(
     tree: &LayoutSession<'_>,
     node_id: usize,
     border_box_height: f32,
+    within_border_box: bool,
     parent_height: Option<f32>,
     parent_width: Option<f32>,
 ) -> Option<f32> {
     let style = style_of(tree, node_id);
-    let max_height =
-        multicol_definite_dimension(tree, style.max_size().height.into(), parent_height)?;
+    let max_size: Dimension = style.max_size().height.into();
+    // A percentage of an indefinite height leaves the height unbounded (CSS
+    // Sizing 3 §5.2.1), where it would bound the columns at no height.
+    if parent_height.is_none() && !matches!(max_size.expand(), ExpandedDimension::Length(_)) {
+        return None;
+    }
+    let max_height = multicol_definite_dimension(tree, max_size, parent_height)?;
     let basis = parent_width.unwrap_or(border_box_height).max(0.0);
     let (padding, border) = (style.padding(), style.border());
     let insets = multicol_resolve_inset(tree, padding.top, basis)
@@ -1192,6 +1248,9 @@ fn multicol_max_fragmentainer_height(
     } else {
         max_height
     };
+    if !within_border_box {
+        return Some(max_content_height);
+    }
     let used_content_height = (border_box_height - insets).max(0.0);
     Some(used_content_height.min(max_content_height))
 }
@@ -2150,12 +2209,14 @@ fn painted_wrapper_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<usize>
     Some(leaf)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn relayout_nested_multicol_children(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     context: FragmentationContext,
     border_box_size: Size<f32>,
     has_fragmentainer_height_constraint: bool,
+    bounded_by_maximum: bool,
     content_origin: Point<f32>,
     block_end_inset: f32,
 ) -> f32 {
@@ -2220,6 +2281,7 @@ fn relayout_nested_multicol_children(
             tree.context.fragmentation_stack.len() <= 1
                 && context.available_height.is_none()
                 && !tree.context.unpaged_plain_columns,
+            bounded_by_maximum,
         )
     };
     let fragment_height = if tree.nodes[index]
@@ -3451,6 +3513,7 @@ fn layout_column_group(
     content_origin: Point<f32>,
     block_end_inset: f32,
     retain_group: bool,
+    bounded_by_maximum: bool,
 ) -> f32 {
     let fallback_height = border_box_size.height;
     // Definite-height columns place block children sequentially. For
@@ -3458,12 +3521,13 @@ fn layout_column_group(
     let mut fragment_height = context.available_height;
     // Balanced columns are as tall as their content needs, up to the
     // container's height (CSS Multi-column 1, 8.1). Columns with floats
-    // among their children are measured as if the container's height were
-    // auto, and fill the container's height only when that is not enough.
+    // among their children, and columns that only a maximum height bounds,
+    // are measured as if the container's height were auto, and fill the
+    // container's height only when that is not enough.
     let definite_balance = fragment_height.filter(|_| {
         context.column_fill != ColumnFillValue::Auto
             && tree.context.fragmentation_stack.len() <= 1
-            && children.iter().any(|&child| is_floated(tree, child))
+            && (bounded_by_maximum || children.iter().any(|&child| is_floated(tree, child)))
             && !multicol_has_nested_descendant(tree, index)
     });
     if definite_balance.is_some() {
@@ -3644,9 +3708,9 @@ fn layout_column_group(
         // Balanced columns also hold the positioned boxes whose containing
         // block they hold, which can make them taller than the content in
         // flow needs, its paragraphs broken between their lines.
-        let boxes = if retain_group
+        let boxes = if (retain_group || bounded_by_maximum)
             && fragment_height.is_none()
-            && definite_balance.is_none()
+            && (definite_balance.is_none() || bounded_by_maximum)
             && !spanned
         {
             out_of_flow_boxes(tree, index, children, &tops)
@@ -3690,7 +3754,8 @@ fn layout_column_group(
             })
             .flatten();
         if let Some(floor) = floor {
-            out_of_flow_height = Some(floor);
+            // Under a maximum height, they are no taller than it allows.
+            out_of_flow_height = Some(definite_balance.map_or(floor, |height| floor.min(height)));
         }
         Some((measurements, target))
     } else {
@@ -4564,7 +4629,7 @@ fn layout_column_group(
     }
     let minimum_height = if auto_measurements.is_some()
         && fragment_height.is_none()
-        && definite_balance.is_none()
+        && (definite_balance.is_none() || bounded_by_maximum)
         && !multicol_has_nested_descendant(tree, index)
     {
         0.0

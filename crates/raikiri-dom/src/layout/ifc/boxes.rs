@@ -5652,8 +5652,7 @@ fn boxes_before_floats_after_a_block(
             NodeKind::Element if kind == Some(IfcBoxKind::OutOfFlow) => waiting
                 .extend((after_block.is_some() && child.display().is_inline_level()).then_some(id)),
             NodeKind::Element
-                if child.display() == DisplayValue::None
-                    || child.is_non_rendered_html_element() => {}
+                if child.display() == DisplayValue::None || child.is_unrendered_html_element() => {}
             NodeKind::Element if kind == Some(IfcBoxKind::Float) => {
                 if !waiting.is_empty()
                     && let Some(block) = &mut after_block
@@ -5815,7 +5814,7 @@ fn paragraph_children(
             Step::Enter(id)
                 if tree.nodes[id].kind() == NodeKind::Element
                     && tree.nodes[id].display() == DisplayValue::Contents
-                    && !tree.nodes[id].is_non_rendered_html_element() =>
+                    && !tree.nodes[id].is_unrendered_html_element() =>
             {
                 stack.push(Step::Generated(id, PseudoElem::After));
                 stack.extend(
@@ -5907,7 +5906,7 @@ fn boxes_in_anonymous_line_blocks(tree: &LayoutSession<'_>, idx: usize) -> HashS
                     NodeKind::Text => super::assign::text_makes_a_line(tree, cascade, id),
                     NodeKind::Element
                         if node.display() != DisplayValue::None
-                            && !node.is_non_rendered_html_element() =>
+                            && !node.is_unrendered_html_element() =>
                     {
                         match super::projection::box_kind(cascade, tree, id) {
                             Some(IfcBoxKind::OutOfFlow) if started => {

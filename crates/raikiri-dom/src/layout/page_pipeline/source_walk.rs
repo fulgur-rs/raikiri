@@ -84,6 +84,10 @@ struct ProjectionVisit {
     overflow_chain: Option<usize>,
     /// The paragraph root and column that list the node among their children.
     paragraph_column: Option<(usize, usize)>,
+    /// How far down the painter moves the node by the relative offsets that
+    /// layout leaves to it, on the node's ancestors and, once the visit
+    /// reaches the node, on the node itself.
+    painted_shift: f32,
 }
 
 impl ProjectionVisit {
@@ -99,6 +103,7 @@ impl ProjectionVisit {
             fragment_clip: None,
             overflow_chain: None,
             paragraph_column: None,
+            painted_shift: 0.0,
         }
     }
 }
@@ -255,7 +260,7 @@ impl<'a> SourceWalk<'a> {
             work.charge(1)?;
         }
         let Some(node) = document.get_node(node_id).filter(|node| {
-            node.is_in_document() && !node.is_non_rendered_html_element() && !node.is_display_none()
+            node.is_in_document() && !node.is_unrendered_html_element() && !node.is_display_none()
         }) else {
             return Ok(());
         };
@@ -274,6 +279,7 @@ impl<'a> SourceWalk<'a> {
         if self.enter_fragments(&visit, node_id, (layout.location.x, layout.location.y)) {
             return Ok(());
         }
+        visit.painted_shift += super::painter_relative_shift_y(document, cascade, node_id);
         let own_fragment = visit
             .fragment
             .filter(|_| visit.is_fragment_visit)
@@ -347,6 +353,7 @@ impl<'a> SourceWalk<'a> {
                 fragment_clip: fragment_clip(fragment, origin, visit.fragment_clip),
                 overflow_chain: visit.overflow_chain,
                 paragraph_column: visit.paragraph_column,
+                painted_shift: visit.painted_shift,
             });
         }
         !indices.is_empty() || (!visit.is_fragment_visit && self.fragments.nodes.contains(&node_id))
@@ -412,6 +419,7 @@ impl<'a> SourceWalk<'a> {
             fragmentainer: None,
             fragment_clip: visit.fragment_clip,
             overflow_chain: visit.overflow_chain,
+            painted_shift: visit.painted_shift,
         })
     }
 
@@ -453,6 +461,7 @@ impl<'a> SourceWalk<'a> {
                     fragmentainer: column,
                     fragment_clip: visit.fragment_clip,
                     overflow_chain,
+                    painted_shift: visit.painted_shift,
                 });
             }
             self.paragraphs.take_column(
@@ -551,6 +560,7 @@ impl<'a> SourceWalk<'a> {
             fragment_clip: visit.fragment_clip,
             overflow_chain: visit.overflow_chain,
             own_overflow_source,
+            painted_shift: visit.painted_shift,
         }
     }
 
@@ -607,6 +617,7 @@ impl<'a> SourceWalk<'a> {
                 fragment_clip: visit.fragment_clip,
                 overflow_chain,
                 paragraph_column,
+                painted_shift: visit.painted_shift,
             });
         }
     }
