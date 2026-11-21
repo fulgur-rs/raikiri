@@ -88,32 +88,33 @@ impl ChildPositions {
         })
     }
 
-    /// Whether a box that `node_id` begins has a forced break before it that
-    /// `node_id` holds (see [`Self::forced_holder`]): the break then sits
-    /// before `node_id` too, between it and the box before it.
-    pub(super) fn holds_forced_child_break(
+    /// The box that `node_id` begins and that has a forced break before it
+    /// which `node_id` holds (see [`Self::forced_holder`]): the break then
+    /// sits before `node_id` too, between it and the box before it.
+    pub(super) fn held_forced_child_break(
         &mut self,
         document: &Document,
         cascade: &CascadeResult,
         body_id: usize,
         node_id: usize,
-    ) -> bool {
+    ) -> Option<usize> {
         let mut parent = node_id;
         while let Some(child) = self.first_forced_child(document, cascade, parent) {
             if super::forces_page_break(document, cascade, child, true) {
                 return self
                     .forced_holder(document, cascade, body_id, child)
-                    .is_some_and(|(holder, _)| holder == node_id);
+                    .filter(|&(holder, _)| holder == node_id)
+                    .map(|_| child);
             }
             if document.nodes[child].kind() != NodeKind::Element
                 || !(is_plain_block_box(document, child)
                     || document.nodes[child].display() == DisplayValue::Contents)
             {
-                return false;
+                return None;
             }
             parent = child;
         }
-        false
+        None
     }
 
     /// Whether the page that starts at `page_start` holds nothing above

@@ -1427,9 +1427,9 @@ impl PaginationState {
         // The first page edge in the margin cuts it, however many pages the
         // rest of it would fill.
         let truncated_page =
-            margin_above_line(document, env.cascade, env.body_id, node_id, owner.line)
-                .map(|gap| page_origins.first_edge_in_margin(flow_top - gap, false, page))
-                .filter(|&edge| edge > 0 && page_origins.origin(edge) < flow_top - 0.001);
+            margin_above_line(document, env.cascade, env.body_id, node_id, owner.line).and_then(
+                |gap| first_edge_in_margin_above(page_origins, flow_top - gap, flow_top, page),
+            );
         let (shift, target) = if let Some(edge) = truncated_page {
             (page_origins.origin(edge) - flow_top, edge)
         } else {
@@ -2435,7 +2435,14 @@ impl PaginationState {
             && !candidate.context.is_out_of_flow_descendant()
             && self
                 .child_positions
-                .holds_forced_child_break(document, cascade, body_id, node_id);
+                .held_forced_child_break(document, cascade, body_id, node_id)
+                .is_some_and(|child| {
+                    // A clip that holds the break back keeps it from the
+                    // child, and so from this box.
+                    let child_y = effective_y + current_abs_y(document, child)
+                        - current_abs_y(document, node_id);
+                    !super::clip_holds_breaks(document, env, child, true, child_y)
+                });
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
@@ -4354,8 +4361,7 @@ impl PaginationState {
         // first edge cuts it, however many pages the rest would fill.
         let run_top = text.effective_y + metrics[0].0;
         if let Some(edge) = margin_above_line(document, cascade, body_id, root, run.start)
-            .map(|gap| page_origins.first_edge_in_margin(run_top - gap, false, page))
-            .filter(|&edge| edge > 0 && page_origins.origin(edge) < run_top - 0.001)
+            .and_then(|gap| first_edge_in_margin_above(page_origins, run_top - gap, run_top, page))
         {
             self.move_run_lines(
                 document,
@@ -6215,4 +6221,19 @@ fn starts_page_after_break(
             && content_top <= page_start + 0.5
             && !follows_box_on_page(document, env.cascade, env.body_id, root, page_start)
     })
+}
+
+/// The page whose top is the first page edge in the margin that runs from
+/// `margin_start` down to a line at `line_top` on `page`, or `None` when no
+/// page edge falls in it. That edge truncates the margin (CSS Fragmentation
+/// 3, 5.2), however many pages the rest of it would fill.
+fn first_edge_in_margin_above(
+    page_origins: &PageOrigins,
+    margin_start: f32,
+    line_top: f32,
+    page: u32,
+) -> Option<u32> {
+    let edge = page_origins.first_edge_in_margin(margin_start, false, page);
+    let top = page_origins.origin(edge);
+    (edge > 0 && top >= margin_start - 0.001 && top < line_top - 0.001).then_some(edge)
 }

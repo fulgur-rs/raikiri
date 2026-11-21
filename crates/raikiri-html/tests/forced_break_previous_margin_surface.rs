@@ -307,3 +307,40 @@ fn a_margin_over_several_pages_is_cut_at_its_first_page_edge() {
         assert_eq!(words(body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_margin_inside_its_page_keeps_the_lines_below_it() {
+    // On a later page, the lines after a block whose margin ends on that
+    // page stay below the margin; one that reaches the next page is cut.
+    for (body, expected) in [
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@1:0,70 T@1:0,80",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>\
+             <span style='display:inline-block;width:10px;height:10px'></span></div><div>X</div>",
+            "Z@0:0,0 A@1:0,50 X@1:0,82",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:160px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@2:0,0 T@2:0,10",
+        ),
+    ] {
+        let mut words = words(body)
+            .split(' ')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        words.sort_by_key(|word| {
+            let (page, y) = word.split_once('@').unwrap().1.split_once(':').unwrap();
+            (
+                page.to_owned(),
+                y.split(',').nth(1).unwrap().parse::<i32>().unwrap(),
+            )
+        });
+        assert_eq!(words.join(" "), expected, "{body}");
+    }
+}
