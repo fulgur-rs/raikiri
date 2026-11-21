@@ -3169,6 +3169,16 @@ impl PaginationState {
             // after a box it pulls back over the break follows the box, as
             // in Chromium.
             self.flow_shift += landing.node_delta;
+            // A float that a break forced inside an absolutely positioned box
+            // moves takes nothing outside that box along: the flow past the
+            // box gives the move back.
+            if lands_after_forced_break
+                && is_floating_box_for_pagination(document, cascade, node_id)
+                && let Some(scope) = super::break_scope(document, node_id)
+            {
+                self.subtree_shifts
+                    .bound(scope, landing.node_delta, entry.page_before_candidate);
+            }
             if lands_after_forced_break && margins_collapse_through {
                 let kept = self.sibling_margins.forced_empty_box_shift(
                     document,
@@ -5558,7 +5568,11 @@ impl PaginationState {
             &entry.comparison_page_name,
         );
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
-        let consumes_pending_break = pending_break_applies && name_participates_in_flow;
+        // A break forced inside an absolutely positioned box falls before
+        // the text after it inside that box, which is out of the flow.
+        let scope = self.pending_break.scope.filter(|_| pending_break_applies);
+        let consumes_pending_break =
+            pending_break_applies && (name_participates_in_flow || scope.is_some());
         if self.saw_child {
             if consumes_pending_break || named_page_change {
                 // The break before the first text of a flex line moves the
@@ -5644,9 +5658,16 @@ impl PaginationState {
                     }
                     self.flow_shift += delta;
                     text.effective_y += delta;
+                    // The flow past the positioned box gives the move back.
+                    if let Some(scope) = scope {
+                        self.subtree_shifts
+                            .bound(scope, delta, entry.page_before_candidate);
+                    }
                 }
                 self.current_page = target_page;
-                self.page_names.current = candidate.page_name.clone();
+                if name_participates_in_flow || named_page_change {
+                    self.page_names.current = candidate.page_name.clone();
+                }
             } else if let Some(natural_page) =
                 page_origins.page_index_in_flow(text.effective_y - relative_offset)
                 // Text that a clip hides whole starts no page.

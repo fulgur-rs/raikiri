@@ -17506,6 +17506,11 @@ impl SubtreeShifts {
     /// How much of the shift of the flow inside the block `node_id` the
     /// block holds: its height kept it from growing that far, so the flow
     /// after it gives that much back once it leaves the block.
+    /// Bound a shift of the flow inside `node_id`, which the flow past it
+    /// gives back, returning to `flow_page`.
+    pub(super) fn bound(&mut self, node_id: usize, delta: f32, flow_page: u32) {
+        self.bounded.push((node_id, delta, flow_page));
+    }
     fn held_by(&self, node_id: usize) -> f32 {
         self.bounded
             .iter()
@@ -21882,6 +21887,14 @@ fn shift_flow_after(
     let mut child_total = None;
     let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
     while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        // An absolutely positioned box is out of the flow: a break inside it
+        // moves what follows inside it, and the flow past it gives the shift
+        // back (Chromium).
+        if child != node_id && is_out_of_flow_positioned(document, child) {
+            shifts.bounded.push((child, flow_delta, flow_page));
+            bounded = true;
+            break;
+        }
         walk.advance(document);
         // The columns after a spanner, in a container whose children are
         // boxes, follow it down.

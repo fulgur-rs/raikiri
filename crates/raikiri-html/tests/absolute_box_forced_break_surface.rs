@@ -1,7 +1,8 @@
 //! Break properties apply to boxes in the flow. An absolutely or fixed
 //! positioned box breaks no page before or after itself, and a break forced
 //! inside one never reaches the flow outside it: the boxes after it stay on
-//! the page. The page counts and line positions are the ones Chromium prints
+//! the page. The content after the break inside the absolute box starts the
+//! next page. The page counts and line positions are the ones Chromium prints
 //! for the same documents (`page.pdf` with the page size taken from `@page`).
 
 use raikiri_html::{
@@ -422,4 +423,93 @@ fn the_whole_absolute_box_starts_the_next_page() {
     ] {
         assert_eq!(box_tops(&body), vec![(1, 0)], "{body}");
     }
+}
+
+#[test]
+fn a_break_forced_inside_an_absolute_box_moves_what_follows_inside_it() {
+    let tail = "<div style='height:20px;break-after:page'>T</div>";
+    let relative = |inner: &str| {
+        after_spacer(&format!(
+            "<div style='position:relative'><div style='position:absolute;width:20px'>{inner}</div></div>"
+        ))
+    };
+    // A break after the first box or before the second, a line in an
+    // anonymous box, and a border on the box that moves.
+    for inner in [
+        format!("{tail}<div>U</div>"),
+        "<div style='height:20px'>T</div><div style='break-before:page'>U</div>".to_string(),
+        format!("{tail}U"),
+    ] {
+        expect(&relative(&inner), 2, &["T@0:40", "U@1:0", "Z@0:40"]);
+    }
+    expect(
+        &relative(&format!("{tail}<div style='border-top:5px solid'>U</div>")),
+        2,
+        &["T@0:40", "U@1:5", "Z@0:40"],
+    );
+    // Two breaks.
+    expect(
+        &relative(
+            "<div style='break-after:page'>T</div><div style='break-after:page'>U</div><div>V</div>",
+        ),
+        3,
+        &["T@0:40", "U@1:0", "V@2:0", "Z@0:40"],
+    );
+    // An absolute box inside the one that breaks, with a break of its own.
+    expect(
+        &relative(
+            "<div>T</div><div style='position:absolute;top:30px;width:20px'>\
+             <div style='break-after:page'>V</div><div>W</div></div>\
+             <div style='break-before:page'>U</div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "V@0:70", "W@1:0", "Z@0:40"],
+    );
+    // An inset absolute box beside the flow inside its container.
+    expect(
+        &after_spacer(
+            "<div style='position:relative'><div style='position:absolute;top:0;width:20px'>\
+             <div style='height:20px'>T</div><div style='break-before:page'>U</div></div>Y</div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "Y@0:40", "Z@0:70"],
+    );
+    // Beside the flow after it inside its container.
+    expect(
+        &after_spacer(
+            "<div style='position:relative'><div style='position:absolute;width:20px'>\
+             <div style='break-after:page'>T</div><div>U</div></div>Y</div>",
+        ),
+        2,
+        &["T@0:40", "U@1:0", "Y@0:40", "Z@0:70"],
+    );
+    // The flow after it runs on to the next page under its own breaks.
+    expect(
+        &format!(
+            "<div style='width:20px'><div style='height:40px'></div><div style='position:relative'>\
+             <div style='position:absolute;width:20px'><div style='break-after:page'>T</div>\
+             <div>U</div></div></div>Z<div>A</div><div>B</div><div>C</div></div>"
+        ),
+        2,
+        &["A@0:70", "B@1:0", "C@1:30", "T@0:40", "U@1:0", "Z@0:40"],
+    );
+    // On a later page.
+    expect(
+        &format!(
+            "<div style='width:20px'><div style='height:130px'></div><div style='position:relative'>\
+             <div style='position:absolute;width:20px'>{tail}<div>U</div></div></div>Z</div>"
+        ),
+        3,
+        &["T@1:30", "U@2:0", "Z@1:30"],
+    );
+    // Inside an inline box.
+    expect(
+        &format!(
+            "<div style='width:20px'><div style='height:40px'></div><span style='position:relative'>X\
+             <span style='position:absolute;width:20px;display:block'>\
+             <span style='display:block;break-after:page'>T</span>U</span></span><div>Z</div></div>"
+        ),
+        2,
+        &["T@0:70", "U@1:0", "X@0:40", "Z@0:70"],
+    );
 }
