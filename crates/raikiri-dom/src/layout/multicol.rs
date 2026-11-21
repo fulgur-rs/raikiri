@@ -216,7 +216,8 @@ pub(crate) fn compute_multicol_layout(
             || matches!(
                 placement,
                 Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
-            ));
+            ))
+        && !sized_by_own_content(tree, node_id, &inputs, placement);
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -661,6 +662,37 @@ pub(crate) fn compute_multicol_layout(
     // future child strategy starts pushing a nested context of its own.
     tree.context.fragmentation_stack.truncate(stack_depth);
     pass.finish(tree, node_id, &inputs, output)
+}
+
+/// Whether the height a flex line or grid area stretched the multicol
+/// container `node_id` to is only the height of its own content. The line or
+/// track measures the container before it balances its columns, as one
+/// column across the whole width, and one that nothing else sizes gives that
+/// height back. Such a container balances its columns as one of auto height
+/// does.
+fn sized_by_own_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+    placement: Option<FlowPlacement>,
+) -> bool {
+    let Some(stretched) = inputs.known_dimensions.height else {
+        return false;
+    };
+    if inputs.run_mode != RunMode::PerformLayout
+        || !matches!(placement, Some(FlowPlacement::Stretched(true)))
+    {
+        return false;
+    }
+    let mut probe = *inputs;
+    probe.run_mode = RunMode::ComputeSize;
+    probe.axis = RequestedAxis::Vertical;
+    probe.known_dimensions.height = None;
+    probe.known_dimensions_are_definite.height = false;
+    let content = crate::layout::dispatch::block_layout(tree, node_id, probe, None)
+        .size
+        .height;
+    (stretched - content).abs() <= lineless::EPSILON
 }
 
 /// How far the pass across the whole width of the multicol container `index`

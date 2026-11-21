@@ -80,9 +80,22 @@ fn a_container_that_is_not_stretched_keeps_its_content_height() {
          <div id=m style='width:100px;columns:2;column-gap:0'><div>a</div></div></div>"
     );
     assert_eq!(rects(&body, "m"), vec![(10.0, 0.0, 100.0, 10.0)]);
-    // A line its own content makes taller than the sibling.
-    let body = stretched(20, "", "<div id=a>a b c d e f g h</div>");
+    // A line its own content makes taller than the sibling measures the
+    // container as one column across its whole width; the container still
+    // balances its columns and takes their height.
+    let four = "<div>a</div><div>b</div><div>c</div><div id=d>d</div>";
+    let body = stretched(5, "", four);
     assert_eq!(rects(&body, "m"), vec![(10.0, 0.0, 100.0, 20.0)]);
+    assert_eq!(rects(&body, "d"), vec![(60.0, 10.0, 50.0, 10.0)]);
+    let boxes = "<div style='height:30px'></div><div style='height:30px'></div>";
+    let body = stretched(5, "", boxes);
+    assert_eq!(rects(&body, "m"), vec![(10.0, 0.0, 100.0, 30.0)]);
+    // So does a grid row that only the container sizes.
+    let body = format!(
+        "<div style='display:grid;grid-template-columns:100px'>\
+         <div id=m style='columns:2;column-gap:0'>{four}</div></div>"
+    );
+    assert_eq!(rects(&body, "m"), vec![(0.0, 0.0, 100.0, 20.0)]);
 }
 
 #[test]
