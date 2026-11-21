@@ -384,12 +384,14 @@ fn a_spanner_that_runs_into_a_short_tail_is_cut_on_every_page_it_crosses() {
 fn a_spanner_over_a_short_tail_reports_the_page_limit_of_a_strict_control() {
     let control = PageLayoutControl::new(Some(3));
     let (result, ..) = paginate_spanner_over_a_short_tail(&control);
+    // The page walk cuts the spanner as it cuts any block, and counts all
+    // the pages it runs over.
     assert!(
         matches!(
             result,
             Err(LayoutError::PageLimitExceeded {
                 limit: 3,
-                actual: 4
+                actual: 9
             })
         ),
         "{result:?}"
