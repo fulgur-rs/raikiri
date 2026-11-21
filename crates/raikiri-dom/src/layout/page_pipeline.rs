@@ -3456,11 +3456,12 @@ pub(crate) fn project_slices_with_control(
 
     let WalkedSources {
         mut nodes,
-        text_roots,
+        mut text_roots,
         placement_overflow_clips,
         paragraph_cache,
         repeated_placement_nodes,
     } = walk_sources(document, cascade, body_id, &mut work)?;
+    keep_painted_shifts_after_flow_start(&pages, flow_axis, &mut nodes, &mut text_roots);
     restore_crossing_tops(document, &mut nodes, &pages);
 
     place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
@@ -3478,6 +3479,33 @@ pub(crate) fn project_slices_with_control(
         paragraph_cache,
         work.remaining(),
     ))
+}
+
+/// Limits the painted shifts of `nodes` and `text_roots` so that a box the
+/// painter moves up stops at the start of the flow. Nothing comes before the
+/// first page, so a box moved above it stays on that page, as layout placed
+/// it, and overflows its top.
+fn keep_painted_shifts_after_flow_start(
+    pages: &[PageFragment],
+    flow_axis: FlowAxis,
+    nodes: &mut [PageFragmentSource],
+    text_roots: &mut [ProjectedTextRoot],
+) {
+    let Some(start) = pages
+        .iter()
+        .filter_map(|page| page.flow_range.map(|(start, _)| start))
+        .reduce(f32::min)
+        .filter(|_| flow_axis == FlowAxis::Y)
+    else {
+        return;
+    };
+    let limit = |shift: f32, y: f32| shift.max(start.min(y) - y);
+    for node in nodes {
+        node.painted_shift = limit(node.painted_shift, node.abs_y);
+    }
+    for root in text_roots {
+        root.painted_shift = limit(root.painted_shift, root.y);
+    }
 }
 
 /// Group page snapshots into a deterministic NodeId-ordered geometry table.
