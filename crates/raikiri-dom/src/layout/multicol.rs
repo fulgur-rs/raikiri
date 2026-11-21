@@ -5386,6 +5386,22 @@ fn record_nested_ifc_box_fragments(
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].layout.location.y)
                 .sum::<f32>();
+            // Block flow placed the boxes of the path with the block offsets
+            // of their `position: relative` insets. A relative offset moves a
+            // box after the columns break it (CSS Position 3, 3.4), so a slice
+            // in a later column keeps those offsets below the column top.
+            let relative_offset_y = path
+                .iter()
+                .filter(|&&ancestor| !is_floated(tree, ancestor))
+                .map(|&ancestor| {
+                    crate::layout::used_relative_offset_for_layout(
+                        tree.document,
+                        tree.style_views.cascade(),
+                        ancestor,
+                    )
+                    .1
+                })
+                .sum::<f32>();
 
             // An atomic inline sits on a line, so it belongs to the column of
             // that line: it gets a fragment in the paragraph's fragment of
@@ -5459,6 +5475,7 @@ fn record_nested_ifc_box_fragments(
                         tree.nodes[subtree_root].layout.location.y - context.origin_y
                             + node_offset_y
                             + range.y
+                            - relative_offset_y
                     });
                 let column_delta = match line_range {
                     Some(_) if !nested_row_flex_scope => line_shift.unwrap_or(0.0),
