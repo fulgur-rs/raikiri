@@ -161,9 +161,23 @@ pub(crate) fn compute_multicol_layout(
     let Some(style) = tree.nodes[index].multicol else {
         return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
+    let inputs = with_keyword_width(tree, node_id, inputs);
+    // The height of an auto-height container is that of its balanced
+    // columns, which a flex line or a grid row measures it by. Only a layout
+    // balances them, so a measure of that height lays the columns out. The
+    // layout that places the container afterwards retires the fragments this
+    // one recorded, as it does those of any earlier layout of the container.
+    if inputs.run_mode == RunMode::ComputeSize
+        && inputs.axis == RequestedAxis::Vertical
+        && inputs.known_dimensions.height.is_none()
+        && !style.height_definite
+    {
+        let mut layout = inputs;
+        layout.run_mode = RunMode::PerformLayout;
+        return compute_multicol_layout(tree, node_id, layout, block_ctx);
+    }
     #[cfg(test)]
     crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(count.get() + 1));
-    let inputs = with_keyword_width(tree, node_id, inputs);
 
     // Taffy supplies the used border-box width to a block child. Do not fall
     // back to the page width when a nested box is measured: that would make a
@@ -186,8 +200,8 @@ pub(crate) fn compute_multicol_layout(
     // both block insets fills its containing block. A definite height
     // bounds the columns; under an auto-height flex line the columns
     // balance and the container takes the stretched height as a minimum.
-    // Other known heights, including a line that only the item's own
-    // content sized, come from that content and are rebalanced here.
+    // Other known heights come from the item's own content and are
+    // rebalanced here.
     let css = style_of(tree, index);
     let positioned = tree.nodes[index].layout_position() == Position::Absolute;
     let inset = css.inset();
@@ -213,15 +227,12 @@ pub(crate) fn compute_multicol_layout(
             _ => FlowPlacement::Stretched(false),
         }
     });
-    let stretched_height = inputs.known_dimensions.height.is_some_and(|height| {
-        (inset_height
+    let stretched_height = inputs.known_dimensions.height.is_some()
+        && (inset_height
             || matches!(
                 placement,
                 Some(FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true })
-            ))
-            && (style.height_definite
-                || !sized_by_own_content(tree, node_id, &inputs, placement, height))
-    });
+            ));
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
@@ -666,38 +677,6 @@ pub(crate) fn compute_multicol_layout(
     // future child strategy starts pushing a nested context of its own.
     tree.context.fragmentation_stack.truncate(stack_depth);
     pass.finish(tree, node_id, &inputs, output)
-}
-
-/// Whether the height `stretched` an auto-height flex line stretched the
-/// multicol container `node_id` to is only the height of its own content. The line
-/// measures the container before it balances its columns, as one column
-/// across the whole width, and a line that nothing else makes taller gives
-/// that height back. Such a container balances its columns as one of auto
-/// height does. A line that a sibling makes exactly that tall, or one that a
-/// maximum height clamps to it, is taken for the same case, as the line has
-/// no balanced measure of the container to tell them apart.
-fn sized_by_own_content(
-    tree: &mut LayoutSession<'_>,
-    node_id: NodeId,
-    inputs: &LayoutInput,
-    placement: Option<FlowPlacement>,
-    stretched: f32,
-) -> bool {
-    // A definite line or grid area bounds the columns instead.
-    if inputs.run_mode != RunMode::PerformLayout
-        || !matches!(placement, Some(FlowPlacement::Stretched(true)))
-        || (inputs.parent_size.height.is_some() && inputs.known_dimensions_are_definite.height)
-    {
-        return false;
-    }
-    let mut probe = *inputs;
-    probe.run_mode = RunMode::ComputeSize;
-    probe.axis = RequestedAxis::Vertical;
-    probe.known_dimensions.height = None;
-    probe.known_dimensions_are_definite.height = false;
-    // Measured as the parent measured it, through the cache of the box.
-    let content = tree.compute_child_layout(node_id, probe).size.height;
-    (stretched - content).abs() <= lineless::EPSILON
 }
 
 /// How far the pass across the whole width of the multicol container `index`
