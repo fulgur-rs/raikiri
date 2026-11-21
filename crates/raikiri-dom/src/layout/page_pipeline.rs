@@ -651,7 +651,18 @@ fn layout_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    layout_relative_offset(document, cascade, body_id, node_id).1
+    layout_relative_offset(document, cascade, Some(body_id), node_id).1
+}
+
+/// The block offset that block flow applied to `node_id` for its
+/// `position: relative` insets, as [`layout_relative_offset_y`] takes it:
+/// none for a box whose offset the painter adds.
+pub(crate) fn block_flow_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> f32 {
+    layout_relative_offset(document, cascade, None, node_id).1
 }
 
 /// The inline and block offsets that layout applied to a relatively
@@ -659,7 +670,7 @@ fn layout_relative_offset_y(
 fn layout_relative_offset(
     document: &Document,
     cascade: &CascadeResult,
-    body_id: usize,
+    body_id: Option<usize>,
     node_id: usize,
 ) -> (f32, f32) {
     // A `display: contents` element generates no box to offset.
@@ -669,7 +680,7 @@ fn layout_relative_offset(
             document.nodes[node_id].display(),
             DisplayValue::Contents | DisplayValue::None
         )
-        || relative_offset_is_painted(document, cascade, Some(body_id), node_id)
+        || relative_offset_is_painted(document, cascade, body_id, node_id)
     {
         return (0.0, 0.0);
     }
@@ -12037,7 +12048,8 @@ fn flex_margins_move(
         let item_layout = &document.nodes[item].layout;
         let top = flow_y + item_layout.location.y
             - layout_relative_offset_y(document, cascade, body_id, item);
-        let x = item_layout.location.x - layout_relative_offset(document, cascade, body_id, item).0;
+        let x = item_layout.location.x
+            - layout_relative_offset(document, cascade, Some(body_id), item).0;
         let span = (
             x - item_layout.margin.left,
             x + item_layout.size.width + item_layout.margin.right,
@@ -18092,7 +18104,7 @@ fn flex_line_of(
         == (computed.direction == raikiri_style::property::Direction::Ltr);
     let span = |id: usize| {
         let layout = &document.nodes[id].layout;
-        let x = layout.location.x - layout_relative_offset(document, cascade, body_id, id).0;
+        let x = layout.location.x - layout_relative_offset(document, cascade, Some(body_id), id).0;
         (
             x - layout.margin.left,
             x + layout.size.width + layout.margin.right,

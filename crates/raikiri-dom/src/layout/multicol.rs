@@ -5407,6 +5407,20 @@ fn record_nested_ifc_box_fragments(
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].layout.location.y)
                 .sum::<f32>();
+            // Block flow placed the boxes of the path with the block offsets
+            // of their `position: relative` insets. A relative offset moves a
+            // box after the columns break it (CSS Position 3, 3.4), so a slice
+            // in a later column keeps those offsets below the column top.
+            let relative_offset_y = path
+                .iter()
+                .map(|&ancestor| {
+                    crate::layout::block_flow_relative_offset_y(
+                        tree.document,
+                        tree.style_views.cascade(),
+                        ancestor,
+                    )
+                })
+                .sum::<f32>();
 
             // An atomic inline sits on a line, so it belongs to the column of
             // that line: it gets a fragment in the paragraph's fragment of
@@ -5480,6 +5494,7 @@ fn record_nested_ifc_box_fragments(
                         tree.nodes[subtree_root].layout.location.y - context.origin_y
                             + node_offset_y
                             + range.y
+                            - relative_offset_y
                     });
                 let column_delta = match line_range {
                     Some(_) if !nested_row_flex_scope => line_shift.unwrap_or(0.0),
@@ -5490,7 +5505,7 @@ fn record_nested_ifc_box_fragments(
                 // the offset of its first line.
                 let tail_shift = line_range
                     .filter(|_| line_shift.is_some())
-                    .map_or(0.0, |range| node_offset_y + range.y);
+                    .map_or(0.0, |range| node_offset_y + range.y - relative_offset_y);
                 let tail_line_bottom = lines
                     .as_ref()
                     .filter(|lines| lines.unfragmented_tail_column == Some(column))
@@ -5569,7 +5584,8 @@ fn record_nested_ifc_box_fragments(
                                     line_end: None,
                                 })?;
                         parent = fragment_id;
-                        wrapper_fragment = Some((fragment_id, node_offset_y + range.y));
+                        wrapper_fragment =
+                            Some((fragment_id, node_offset_y + range.y - relative_offset_y));
                     }
                 }
                 // `edges_sliced` tells that the planner placed the lines of the
