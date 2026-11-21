@@ -355,6 +355,9 @@ pub(super) struct PaginationState {
     next_candidate_rank: usize,
     pub(super) float_shifts: FloatShifts,
     pub(super) reach: PageReach,
+    /// The last line in the flow that runs past the page it starts on (see
+    /// [`Self::note_line_overflow`]).
+    line_overflow: Option<LineOverflow>,
     /// How far the edges pushed down under each fixed clip have moved the
     /// flow inside it, by the end of the clip (as bits) in the coordinates of
     /// the candidates: the clip stays where it is while they move.
@@ -453,6 +456,7 @@ impl PaginationState {
             next_candidate_rank: 0,
             float_shifts: FloatShifts::default(),
             reach: PageReach::default(),
+            line_overflow: None,
             edge_pushes: HashMap::new(),
             edge_growth: HashMap::new(),
             margin_cuts: HashMap::new(),
@@ -801,6 +805,20 @@ impl PaginationState {
         }
         let end_page = page_origins.end_page(text.effective_y, reach_height);
         let in_flow = !candidate.context.is_out_of_flow_descendant();
+        // The last line of the text, where the flow puts it.
+        let bottom = text.effective_y - relative_offset + text.height;
+        let last_line = text_lines
+            .get(node_id)
+            .and_then(|lines| lines.lines.last())
+            .filter(|_| reach_height >= text.height)
+            .map(|line| (bottom - (line.bottom - line.top), bottom));
+        self.note_line_overflow(
+            document,
+            candidate,
+            text.effective_y - relative_offset,
+            last_line,
+            page_origins,
+        );
         self.record_pages(control, end_page, in_flow)?;
         if step.consumes_pending_break {
             self.pending_break.take(document, node_id);
@@ -1162,6 +1180,15 @@ impl PaginationState {
                 );
             }
         }
+        // The line starts the page it moved to, its leading included.
+        let line_top = (flow_top + shift).max(env.page_origins.origin(target));
+        self.note_line_overflow(
+            document,
+            candidate,
+            line_top,
+            Some((line_top, flow_top + shift + height)),
+            env.page_origins,
+        );
         self.record_pages(
             env.control,
             Some(env.page_origins.page_index_for_end(top + shift + height)),
@@ -1563,6 +1590,22 @@ impl PaginationState {
             .end_page(effective_y, reach_height)
             .filter(|_| !monolithic_paper_fit());
         let in_flow = !candidate.context.is_out_of_flow_descendant();
+        // The line the box ends with, where the flow puts it: an atomic
+        // inline sits on its line whole.
+        let flow_y =
+            effective_y - accumulated_relative_offset_y(document, cascade, env.body_id, node_id);
+        let bottom = flow_y + height;
+        let last_line = (reach_height >= height)
+            .then(|| {
+                if document.nodes[node_id].display().is_atomic_inline_level() {
+                    Some(flow_y)
+                } else {
+                    trailing_line_top(document, cascade, env.body_id, node_id, bottom)
+                }
+            })
+            .flatten()
+            .map(|top| (top, bottom));
+        self.note_line_overflow(document, candidate, flow_y, last_line, page_origins);
         self.record_pages(control, end_page, in_flow)?;
 
         if box_occupies_column(
@@ -3030,8 +3073,21 @@ impl PaginationState {
         let restarts_on_flow_page = overflow.table_row
             && !forced_transition
             && position.effective_y - relative_offset < page_origins.origin(fit_page) - 0.001;
+        // A box out of the flow takes its break apart from the flow, and an
+        // empty box that margins collapse through opens the page after the
+        // overflow, as in Chromium.
+        let below_line_overflow = (forced_transition
+            && !margins_collapse_through
+            && !candidate.context.is_out_of_flow_descendant()
+            && !candidate.context.is_float_descendant())
+        .then(|| {
+            self.break_below_line_overflow(document, node_id, natural_y - break_lead, page_origins)
+        })
+        .flatten();
         let mut target_page = if restarts_on_flow_page {
             fit_page
+        } else if let Some((page, _)) = below_line_overflow {
+            page.max(self.current_page)
         } else {
             forced_target_page(self.current_page, natural_page)
         };
@@ -3045,7 +3101,17 @@ impl PaginationState {
         // goes through puts the box below the top of its page, so it moves on
         // to the next page when it would cross the edge of this one. That
         // break is not forced, and cuts the margin.
-        let landing_top = page_origins.origin(target_page)
+        // Overflow of a line before the box that runs onto the page the
+        // break opens stays above the box there: the box keeps its place in
+        // the flow below it (Chromium).
+        let page_top = |target_page: u32| {
+            below_line_overflow
+                .filter(|&(_, bottom)| page_origins.page_index_in_flow(bottom) == Some(target_page))
+                .map_or(page_origins.origin(target_page), |(_, bottom)| {
+                    page_origins.origin(target_page).max(bottom)
+                })
+        };
+        let landing_top = page_top(target_page)
             + margin_top
             + if forced_holder.is_some() {
                 holder_lead
@@ -3055,7 +3121,7 @@ impl PaginationState {
         // A margin that runs past the end of that page on its own is cut at
         // that end too, and the box starts the next page (Chromium).
         let margin_pushes_box_on = forced_transition
-            && margin_top > 0.0
+            && (margin_top > 0.0 || below_line_overflow.is_some())
             && is_block_flow_box(document, cascade, candidate)
             && (landing_top >= page_origins.page_end(target_page) - 0.001
                 || candidate.context.is_unbreakable()
@@ -3075,7 +3141,7 @@ impl PaginationState {
                 document.context.float_resumption_boundaries.insert(
                     node_id,
                     super::float_resumption::Boundary {
-                        page_origin: page_origins.origin(target_page),
+                        page_origin: page_top(target_page),
                         relative_offset,
                     },
                 );
@@ -3124,7 +3190,7 @@ impl PaginationState {
             .filter(|_| lands_after_forced_break)
             .map_or(0.0, |line| line.offset);
         let landing = TransitionLanding::new(
-            page_origins.origin(target_page) + line_offset,
+            page_top(target_page) + line_offset,
             landing_y,
             margin_top,
             landing_relative,
@@ -3227,7 +3293,7 @@ impl PaginationState {
                     flow_raw_y(document, cascade, body_id, candidate),
                     landing.target_y - landing_relative,
                     (
-                        page_origins.origin(target_page),
+                        page_top(target_page),
                         page_origins.origin(target_page.saturating_add(1)),
                     ),
                 );
@@ -3278,7 +3344,7 @@ impl PaginationState {
                 self.empty_content_page = Some((target_page, node_id));
             }
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
-            self.sibling_margins.forced_page_top = Some(page_origins.origin(target_page));
+            self.sibling_margins.forced_page_top = Some(page_top(target_page));
 
             position.starts_after_forced_break = true;
         }
@@ -5780,6 +5846,91 @@ impl PaginationState {
         Ok(())
     }
 
+    /// Notes the line that ends the content of `candidate`, placed at `top`
+    /// in the flow, from the top to the bottom in `last_line`: no page break goes
+    /// through a line, so what runs past the page it starts on is overflow,
+    /// which a forced break right after it leaves above the box it moves (see
+    /// [`Self::break_below_line_overflow`]). Other content placed below the
+    /// line takes that place.
+    fn note_line_overflow(
+        &mut self,
+        document: &LayoutSession<'_>,
+        candidate: &PageCandidate,
+        top: f32,
+        last_line: Option<(f32, f32)>,
+        page_origins: &PageOrigins,
+    ) {
+        if candidate.context.is_out_of_flow_descendant() || candidate.context.is_float_descendant()
+        {
+            return;
+        }
+        let overflow = last_line.and_then(|(top, bottom)| {
+            let page = page_origins.page_index_in_flow(top)?;
+            (bottom > page_origins.page_end(page) + 0.001).then_some(LineOverflow {
+                top,
+                bottom,
+                page,
+                followers: Vec::new(),
+            })
+        });
+        if let Some(overflow) = overflow {
+            // A box on the noted line, as an atomic inline, keeps the line.
+            if self.line_overflow.as_ref().is_none_or(|noted| {
+                overflow.top < noted.top - 0.01 || overflow.bottom > noted.bottom + 0.01
+            }) {
+                self.line_overflow = Some(overflow);
+            }
+            return;
+        }
+        let Some(noted) = &mut self.line_overflow else {
+            return;
+        };
+        if top < noted.bottom - 0.01 {
+            return;
+        }
+        // Boxes that hold the one that takes the break may start below the
+        // line too, each inside the one before; any other box below it means
+        // the flow went on.
+        if noted
+            .followers
+            .last()
+            .is_none_or(|&last| document.is_ancestor_or_self(last, candidate.node_id))
+        {
+            noted.followers.push(candidate.node_id);
+        } else {
+            self.line_overflow = None;
+        }
+    }
+
+    /// The page that a forced break opens before `node_id`, at `break_y` in
+    /// the flow, when nothing but the overflow of the noted line (see
+    /// [`Self::note_line_overflow`]) and boxes holding `node_id` lies between
+    /// the two: the page after the line's, or the one the overflow ends on,
+    /// with the bottom of the overflow, below which the box keeps its place
+    /// in the flow (Chromium). The break takes the noted line.
+    fn break_below_line_overflow(
+        &mut self,
+        document: &LayoutSession<'_>,
+        node_id: usize,
+        break_y: f32,
+        page_origins: &PageOrigins,
+    ) -> Option<(u32, f32)> {
+        let noted = self.line_overflow.take()?;
+        if (noted.bottom - break_y).abs() > 0.01
+            || !noted
+                .followers
+                .iter()
+                .all(|&follower| document.is_ancestor_or_self(follower, node_id))
+        {
+            return None;
+        }
+        let page = noted
+            .page
+            .saturating_add(1)
+            .max(page_origins.page_index_in_flow(noted.bottom).unwrap_or(0));
+        Some((page, noted.bottom))
+    }
+
     /// Records the pages the candidate placed on the current page occupies,
     /// through `end_page` when it runs on.
     fn record_pages(
@@ -6274,4 +6425,57 @@ fn first_edge_in_margin_above(
     let edge = page_origins.first_edge_in_margin(margin_start, false, page);
     let top = page_origins.origin(edge);
     (edge > 0 && top >= margin_start - 0.001 && top < line_top - 0.001).then_some(edge)
+}
+
+/// A line in the flow that runs past the page it starts on.
+struct LineOverflow {
+    /// The top of the line in the flow.
+    top: f32,
+    /// The bottom of the line in the flow.
+    bottom: f32,
+    /// The page the line starts on.
+    page: u32,
+    /// The boxes placed below the line since.
+    followers: Vec<usize>,
+}
+
+/// The top of the line that ends the box `node`, whose block-end edge is at
+/// `end` in the flow: the last line of the box, or of the last box in it that
+/// ends where it does, with no padding or border below the line.
+fn trailing_line_top(
+    document: &crate::Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node: usize,
+    end: f32,
+) -> Option<f32> {
+    let mut current = node;
+    loop {
+        let layout = &document.nodes[current].layout;
+        if layout.padding.bottom > 0.0 || layout.border.bottom > 0.0 {
+            return None;
+        }
+        if let Some(lines) = document
+            .ifc_layout_node(current)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+        {
+            // The last line ends the content box, which no set height or
+            // float below it extends.
+            let last = lines.lines.len().checked_sub(1)?;
+            let height = lines.lines[last].block_size();
+            let content_height = layout.size.height - layout.border.top - layout.padding.top;
+            return ((lines.line_top(last) + height - content_height).abs() <= 0.01)
+                .then_some(end - height);
+        }
+        let &last = document.nodes[current].layout_children().last()?;
+        // Measured where the flow puts it, as `end` is.
+        let last_end = current_abs_y(document, last)
+            - accumulated_relative_offset_y(document, cascade, body_id, last)
+            + document.nodes[last].layout.size.height;
+        if (last_end - end).abs() > 0.01 {
+            return None;
+        }
+        current = last;
+    }
 }
