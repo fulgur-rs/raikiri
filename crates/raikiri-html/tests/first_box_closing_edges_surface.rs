@@ -167,3 +167,26 @@ fn what_follows_the_first_box_stays_behind_it() {
         assert_eq!(marker(&body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_block_that_avoids_breaks_inside_keeps_the_edges_after_it() {
+    for (body, expected) in [
+        // The block moves with the padding of its parent, which does not fit
+        // after it.
+        (
+            "<div style='height:50px'></div><div style='padding-bottom:40px'><div style='break-inside:avoid'><div style='height:10px;border-bottom:10px solid'></div><div style='height:20px'></div></div></div><p style='margin:0'>K</p>",
+            (1, 0, 80, 2),
+        ),
+        (
+            "<div style='height:50px'></div><div style='padding-bottom:40px'><div style='break-inside:avoid'><div style='height:10px;border-bottom:10px solid'></div><div style='height:20px'></div></div></div><div style='height:5px'></div><p style='margin:0'>K</p>",
+            (1, 0, 85, 2),
+        ),
+        // Without the property, the page breaks after its first box.
+        (
+            "<div style='height:50px'></div><div style='padding-bottom:40px'><div><div style='height:10px;border-bottom:10px solid'></div><div style='height:20px'></div></div></div><p style='margin:0'>K</p>",
+            (1, 0, 60, 2),
+        ),
+    ] {
+        assert_eq!(marker(body), expected, "{body}");
+    }
+}

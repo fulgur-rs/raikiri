@@ -13913,14 +13913,22 @@ fn lone_box_with_floats(
         // there.
         let node_end =
             current_abs_y(document, node_id) + document.nodes[node_id].layout.size.height;
-        let mut followed = boxes.len() > 1;
+        let starts_below_node = |float: usize| {
+            let offset_below = accumulated_relative_offset_y(document, cascade, body_id, float)
+                - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+            float_extent(document, float).0 - offset_below >= node_end - 0.001
+        };
+        let followed = boxes.len() > 1
+            || (!edges_follow
+                && floats
+                    .iter()
+                    .any(|&(float, after_box)| after_box && starts_below_node(float)));
         for &(float, after_box) in &floats {
-            if after_box
-                && (followed
-                    || (!edges_follow && float_extent(document, float).0 >= node_end - 0.001))
-            {
-                followed = true;
-            } else if !accept_float(float, &mut float_bottom) {
+            // The floats after a followed box stay behind it.
+            if after_box && followed {
+                continue;
+            }
+            if !accept_float(float, &mut float_bottom) {
                 return None;
             }
         }
