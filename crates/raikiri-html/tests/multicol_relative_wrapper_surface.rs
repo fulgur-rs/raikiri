@@ -112,6 +112,12 @@ fn a_relative_wrapper_breaks_between_the_columns() {
             "<div><div style='position:relative;left:50%'>S</div><div>T</div><div>U</div><div>V</div></div>",
             "S@0:20,0 T@0:0,10 U@0:0,20 V@0:40,0",
         ),
+        // In a right-to-left wrapper `right` wins over `left`.
+        (
+            "<div style='direction:rtl'><div style='position:relative;left:10px;right:5px'>S</div>\
+             <div>T</div><div>U</div><div>V</div></div>",
+            "S@0:25,0 T@0:30,10 U@0:30,20 V@0:70,0",
+        ),
     ];
     for (wrapper, expected) in cases {
         assert_eq!(in_columns(wrapper), expected, "{wrapper}");
