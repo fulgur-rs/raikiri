@@ -37,7 +37,7 @@ use super::{
     text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How far, in px, the margin that an earlier layout kept above a box may
 /// differ from the one a relayout computes for it. A page start closer to the
@@ -375,6 +375,10 @@ pub(super) struct PaginationState {
     pub(super) margin_rooms: HashMap<usize, f32>,
     pub(super) page_names: PageNames,
     pub(super) pending_break: PendingBreak,
+    /// The absolutely positioned boxes left at their static position that a
+    /// pending break moved to the page it opens (see
+    /// [`Self::break_before_static_positioned_box`]).
+    moved_static_boxes: HashSet<usize>,
     pub(super) sibling_margins: SiblingMargins,
     child_positions: ChildPositions,
     pub(super) last_named: LastNamedBox,
@@ -453,6 +457,7 @@ impl PaginationState {
             margin_rooms: HashMap::new(),
             page_names,
             pending_break: PendingBreak::default(),
+            moved_static_boxes: HashSet::new(),
             sibling_margins: SiblingMargins::default(),
             child_positions: ChildPositions::default(),
             last_named: LastNamedBox::default(),
@@ -842,18 +847,8 @@ impl PaginationState {
             return Ok(false);
         }
         let page_origins = env.page_origins;
-        // The break opens the page after the one the block ends on; the
-        // margin after the block is truncated at the break.
-        let block_end = self.pending_break.source_end;
-        let end_page = page_origins
-            .page_index_in_flow(block_end)
-            .unwrap_or(self.current_page);
-        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
-            end_page.saturating_add(1)
-        } else {
-            end_page
-        };
-        let target_page = super::forced_target_page(self.current_page, past_block);
+        // The margin after the block is truncated at the break.
+        let target_page = self.forced_break_page(page_origins);
         reach_page(env.control, target_page)?;
         let delta = page_origins.origin(target_page) - text.effective_y;
         self.flow_shift += delta;
@@ -1606,7 +1601,7 @@ impl PaginationState {
     /// A paragraph that keeps its height holds the moved line as overflow:
     /// the break is left for the flow after it, which Chromium moves to the
     /// next page too. `next` is `None` at the end of the flow.
-    pub(super) fn break_before_line_after_forced_break(
+    fn break_before_line_after_forced_break(
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
@@ -1638,17 +1633,7 @@ impl PaginationState {
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
         let flow_top = top - relative;
         let page_origins = env.page_origins;
-        // The break opens the page after the one the box ends on.
-        let block_end = self.pending_break.source_end;
-        let end_page = page_origins
-            .page_index_in_flow(block_end)
-            .unwrap_or(self.current_page);
-        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
-            end_page.saturating_add(1)
-        } else {
-            end_page
-        };
-        let target = forced_target_page(self.current_page, past_block);
+        let target = self.forced_break_page(page_origins);
         reach_page(env.control, target)?;
         let shift = (page_origins.origin(target) - flow_top).max(0.0);
         let follows =
@@ -1666,6 +1651,108 @@ impl PaginationState {
         self.page_names.current = paragraph.page_name;
         self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
         Ok(())
+    }
+
+    /// Takes the pending break before what follows a forced break ahead of
+    /// `next` (the end of the flow when `None`): a line laid out after the
+    /// block that forced it, and absolutely positioned boxes left at their
+    /// static position after it.
+    pub(super) fn break_before_content_after_forced_break(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        next: Option<&PageCandidate>,
+    ) -> Result<(), Halt> {
+        self.break_before_line_after_forced_break(document, env, next.map(|next| next.node_id))?;
+        self.break_before_static_positioned_box(document, env, next)
+    }
+
+    /// The page that the pending break opens: the one after the page the
+    /// box that forced it ends on.
+    fn forced_break_page(&self, page_origins: &PageOrigins) -> u32 {
+        let block_end = self.pending_break.source_end;
+        let end_page = page_origins
+            .page_index_in_flow(block_end)
+            .unwrap_or(self.current_page);
+        let past_block = if block_end > page_origins.origin(end_page) + 0.001 {
+            end_page.saturating_add(1)
+        } else {
+            end_page
+        };
+        forced_target_page(self.current_page, past_block)
+    }
+
+    /// Moves an absolutely positioned box left at its static position after
+    /// the pending break to the top of the page the break opens, when `next`
+    /// is the first of its content: the box sits where the flow puts it,
+    /// after the break, so it starts that page whole, and its content and
+    /// the flow after it follow (Chromium). Such a box with no content of its
+    /// own between the break and `next` (the end of the flow when `None`)
+    /// moves there too. The break itself is left to the content in the flow
+    /// that follows. A box among the lines of a paragraph already goes with
+    /// them.
+    fn break_before_static_positioned_box(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        next: Option<&PageCandidate>,
+    ) -> Result<(), Halt> {
+        let Some(source) = self.pending_break.source.filter(|_| {
+            self.pending_break.scope.is_none()
+                && next.is_none_or(|next| self.pending_break.applies_to(document, next.node_id))
+        }) else {
+            return Ok(());
+        };
+        let first_content = next.filter(|next| {
+            next.context.is_out_of_flow_descendant() && !next.context.is_float_descendant()
+        });
+        if let Some(next) = first_content {
+            if let Some(positioned) =
+                super::static_positioned_root(document, env.cascade, next.node_id)
+                    .filter(|&positioned| self.pending_break.applies_to(document, positioned))
+                    .filter(|&positioned| !self.moved_static_boxes.contains(&positioned))
+            {
+                // Where the flow puts the box now: its content `next` is
+                // placed by the flow, the same distance below the box.
+                let flow_top = next.raw_y + self.flow_shift
+                    - (current_abs_y(document, next.node_id) - current_abs_y(document, positioned));
+                let top = self.move_to_forced_page(document, env, positioned)?;
+                // Its content follows it down, as the flow after it does.
+                self.flow_shift += (top - flow_top).max(0.0);
+                self.moved_static_boxes.insert(positioned);
+            }
+            return Ok(());
+        }
+        for positioned in
+            super::positioned_boxes_after(document, source, next.map(|next| next.node_id))
+        {
+            if super::static_positioned_root(document, env.cascade, positioned) == Some(positioned)
+                && self.pending_break.applies_to(document, positioned)
+                && self.moved_static_boxes.insert(positioned)
+            {
+                self.move_to_forced_page(document, env, positioned)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Moves `positioned` so that its static position, the top of its margin
+    /// box, is the top of the page that the pending break opens: no box in
+    /// the flow lies between the break and it, or that box would take the
+    /// break. Returns the new top of its border box.
+    fn move_to_forced_page(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        positioned: usize,
+    ) -> Result<f32, Halt> {
+        let target = self.forced_break_page(env.page_origins);
+        reach_page(env.control, target)?;
+        let top = env.page_origins.origin(target)
+            + document.nodes[positioned].layout.margin.top
+            + accumulated_relative_offset_y(document, env.cascade, env.body_id, positioned);
+        materialize_y(document, positioned, top);
+        Ok(top)
     }
 
     pub(super) fn track_outer_owners(&mut self, owners: &HashMap<usize, f32>) {
@@ -4515,6 +4602,10 @@ impl PaginationState {
         let mut pending: Vec<usize> = opening.iter().map(|&(block, _, _)| block).collect();
         let mut forced = false;
         while let Some(id) = pending.pop() {
+            // A positioned box keeps the breaks inside it to itself.
+            if super::is_out_of_flow_positioned(document, id) {
+                continue;
+            }
             let computed = &env.cascade.computed[id];
             forced |= super::page_break_is_forced(document, env.cascade, id, computed.break_before)
                 || super::page_break_after_is_forced(

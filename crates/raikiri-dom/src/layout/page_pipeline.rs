@@ -4221,8 +4221,11 @@ fn forces_page_break(
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
-    own && !at_table_cell_edge(document, cascade, node_id, before)
-        || row_takes_cell_break(document, cascade, node_id, before)
+    // Break properties apply to boxes in the flow: an absolutely or fixed
+    // positioned box breaks no page before or after itself (Chromium).
+    (own && !at_table_cell_edge(document, cascade, node_id, before)
+        || row_takes_cell_break(document, cascade, node_id, before))
+        && !is_out_of_flow_positioned(document, node_id)
 }
 
 /// Whether `node_id` is a multicol container whose first box is a spanner
@@ -5363,12 +5366,15 @@ fn paginate_flow(
         while let Some(mut candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
+            state
+                .pending_break
+                .leave_scopes(document, candidate.node_id);
             if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
                 halted = true;
                 break;
             }
             if let Err(halt) =
-                state.break_before_line_after_forced_break(document, &env, Some(candidate.node_id))
+                state.break_before_content_after_forced_break(document, &env, Some(&candidate))
             {
                 halt.finish()?;
                 halted = true;
@@ -5392,7 +5398,7 @@ fn paginate_flow(
         }
         if !halted {
             break_before_edges(&mut state, document, &env, &mut edges_breaks, done)?;
-            if let Err(halt) = state.break_before_line_after_forced_break(document, &env, None) {
+            if let Err(halt) = state.break_before_content_after_forced_break(document, &env, None) {
                 halt.finish()?;
             }
         }
@@ -7323,6 +7329,10 @@ fn no_forced_break_inside_or_after(
 ) -> bool {
     let mut pending = vec![node_id];
     while let Some(id) = pending.pop() {
+        // A positioned box keeps the breaks inside it to itself.
+        if is_out_of_flow_positioned(document, id) {
+            continue;
+        }
         if !matches!(
             cascade.computed[id].break_after,
             BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::AvoidPage
@@ -10294,6 +10304,14 @@ struct PendingBreak {
     /// Each still falls after its own box once the break inside it has been
     /// taken.
     enclosing: Vec<EnclosingBreak>,
+    /// The nearest absolutely positioned box around the source, if any: a
+    /// break forced inside one falls before the next box inside it only and
+    /// never reaches the flow outside (Chromium).
+    scope: Option<usize>,
+    /// The breaks still pending when a break was forced inside a positioned
+    /// box that does not hold their sources, each with that box: they fall
+    /// after it once the flow leaves it.
+    suspended: Vec<(usize, PendingBreak)>,
 }
 
 /// A pending break forced after a box that holds the source of a later one
@@ -10303,6 +10321,7 @@ struct EnclosingBreak {
     line_peers: Vec<usize>,
     source_end: f32,
     ends_enclosing: bool,
+    scope: Option<usize>,
 }
 
 impl PendingBreak {
@@ -10315,7 +10334,8 @@ impl PendingBreak {
     /// it.
     fn applies_to(&self, document: &Document, node_id: usize) -> bool {
         self.source.is_some_and(|source| {
-            !is_descendant_or_self(document, node_id, source)
+            in_break_scope(document, self.scope, node_id)
+                && !is_descendant_or_self(document, node_id, source)
                 && !self
                     .line_peers
                     .iter()
@@ -10337,13 +10357,54 @@ impl PendingBreak {
         let mut same_break = self.ends_enclosing;
         while let Some(outer) = self.enclosing.pop() {
             if !same_break && is_descendant_or_self(document, node_id, outer.source) {
-                self.source = Some(outer.source);
-                self.line_peers = outer.line_peers;
-                self.source_end = outer.source_end;
-                self.ends_enclosing = outer.ends_enclosing;
+                self.restore(outer);
                 break;
             }
             same_break = outer.ends_enclosing;
+        }
+    }
+
+    fn restore(&mut self, outer: EnclosingBreak) {
+        self.source = Some(outer.source);
+        self.line_peers = outer.line_peers;
+        self.source_end = outer.source_end;
+        self.ends_enclosing = outer.ends_enclosing;
+        self.scope = outer.scope;
+    }
+
+    /// Drop the breaks forced inside an absolutely positioned box that
+    /// `node_id` lies outside of: they break nothing after that box. The
+    /// break forced after a box around that one, or one that was pending
+    /// before the flow entered that box, is pending again.
+    fn leave_scopes(&mut self, document: &Document, node_id: usize) {
+        loop {
+            if self.source.is_some() && !in_break_scope(document, self.scope, node_id) {
+                self.source = None;
+                self.line_peers.clear();
+                while let Some(outer) = self.enclosing.pop() {
+                    if in_break_scope(document, outer.scope, node_id) {
+                        self.restore(outer);
+                        break;
+                    }
+                }
+            }
+            if self
+                .suspended
+                .last()
+                .is_none_or(|&(scope, _)| in_break_scope(document, Some(scope), node_id))
+            {
+                return;
+            }
+            // A break restored here may lie in a positioned box that the
+            // node is outside of too: the next round drops it and restores
+            // the one before it.
+            if let Some((_, outer)) = self.suspended.pop()
+                && self.source.is_none()
+            {
+                let suspended = std::mem::take(&mut self.suspended);
+                *self = outer;
+                self.suspended = suspended;
+            }
         }
     }
 
@@ -10357,10 +10418,7 @@ impl PendingBreak {
         self.line_peers.clear();
         while let Some(outer) = self.enclosing.pop() {
             if is_descendant_or_self(document, node_id, outer.source) {
-                self.source = Some(outer.source);
-                self.line_peers = outer.line_peers;
-                self.source_end = outer.source_end;
-                self.ends_enclosing = outer.ends_enclosing;
+                self.restore(outer);
                 break;
             }
         }
@@ -10396,7 +10454,17 @@ impl PendingBreak {
                 line_peers: std::mem::take(&mut self.line_peers),
                 source_end: self.source_end,
                 ends_enclosing: self.ends_enclosing,
+                scope: self.scope,
             });
+        } else if let Some(scope) = break_scope(document, node_id)
+            .filter(|&scope| self.source.is_some() && self.scope != Some(scope))
+        {
+            // A break that has not fallen yet, outside the positioned box
+            // around the node, falls after that box.
+            let suspended = std::mem::take(&mut self.suspended);
+            let outer = std::mem::take(self);
+            self.suspended = suspended;
+            self.suspended.push((scope, outer));
         } else {
             // A source that does not hold the node is replaced, as are the
             // boxes around it that end before the node.
@@ -10412,7 +10480,105 @@ impl PendingBreak {
             .is_some_and(|outer| at_block_edge(document, cascade, node_id, outer.source, false));
         self.source = Some(node_id);
         self.line_peers = later_line_peers(document, cascade, body_id, node_id);
+        self.scope = break_scope(document, node_id);
     }
+}
+
+/// The nearest absolutely or fixed positioned box around `node_id`, which
+/// keeps the breaks forced inside it to itself.
+fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
+    document
+        .layout_ancestors(node_id)
+        .find(|&id| is_out_of_flow_positioned(document, id))
+}
+
+/// Whether a break forced inside `scope` (the flow outside every positioned
+/// box when `None`) may fall before `node_id`.
+fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
+    scope.is_none_or(|scope| node_id != scope && is_descendant_or_self(document, node_id, scope))
+}
+
+/// The outermost absolutely positioned box around `node_id`, or `node_id`
+/// itself, when the flow puts it: it is left at its static position in block
+/// flow, with no positioned box around it placed by an inset or fixed, and
+/// no paragraph lays it out among its lines (a box there goes with them).
+/// A flex or grid container, or a table part, places its positioned
+/// children itself.
+fn static_positioned_root(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let positioned = std::iter::once(node_id)
+        .chain(document.layout_ancestors(node_id))
+        .filter(|&id| is_out_of_flow_positioned(document, id))
+        .last()?;
+    let parent = document.layout_parent_of(positioned)?;
+    let in_lines = document
+        .ifc_layout_node(parent)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| !lines.lines.is_empty());
+    (document.nodes[positioned].position() == &PositionValue::Absolute
+        && !in_inset_out_of_flow_subtree(document, cascade, node_id)
+        && !in_lines
+        && !is_flex_grid_or_table_display(document.nodes[parent].display())
+        && !moves_reach_cell_row(document, positioned))
+    .then_some(positioned)
+}
+
+/// The positioned boxes after the box `source` in document order and before
+/// `next` (up to the end of the document when `None`), outside both: the
+/// boxes around `next` are passed through, and the boxes inside a positioned
+/// box or one that generates no box are left out. None when `next` does not
+/// come after `source`, as a flex item that `order` moves may not.
+fn positioned_boxes_after(document: &Document, source: usize, next: Option<usize>) -> Vec<usize> {
+    let after_subtree = |mut id: usize| loop {
+        let parent = document.parent_of(id)?;
+        let siblings = &document.nodes[parent].children;
+        // Searched from the end: the boxes after a break are near it.
+        if let Some(&sibling) = siblings
+            .iter()
+            .rposition(|&child| child == id)
+            .and_then(|index| siblings.get(index + 1))
+        {
+            return Some(sibling);
+        }
+        id = parent;
+    };
+    let mut found = Vec::new();
+    let mut current = after_subtree(source);
+    while let Some(id) = current {
+        if Some(id) == next {
+            return found;
+        }
+        current = if next.is_some_and(|next| document.is_ancestor_or_self(id, next)) {
+            document.nodes[id].children.first().copied()
+        } else if is_out_of_flow_positioned(document, id) {
+            found.push(id);
+            after_subtree(id)
+        } else if document.nodes[id].display() == DisplayValue::None {
+            after_subtree(id)
+        } else {
+            document.nodes[id]
+                .children
+                .first()
+                .copied()
+                .or_else(|| after_subtree(id))
+        };
+    }
+    if next.is_some() { Vec::new() } else { found }
+}
+
+/// Whether `node_id` generates an absolutely or fixed positioned box. An
+/// element with `display: contents` generates no box, so its children stay
+/// in the flow around it.
+pub(super) fn is_out_of_flow_positioned(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    matches!(
+        node.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    ) && !matches!(node.display(), DisplayValue::Contents | DisplayValue::None)
 }
 
 /// The last flex item placed in each named flex context, keyed by context:
@@ -13927,6 +14093,8 @@ fn has_mandatory_break_inside(
             || !node.is_in_document()
             || node.is_non_rendered_html_element()
             || node.display() == DisplayValue::None
+            // A positioned box keeps the breaks inside it to itself.
+            || is_out_of_flow_positioned(document, id)
         {
             continue;
         }
