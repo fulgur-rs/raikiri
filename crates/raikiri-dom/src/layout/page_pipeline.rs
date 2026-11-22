@@ -4830,7 +4830,9 @@ fn layout_pages_core(
     // comes before it.
     let mut attempts = 0;
     // Floats moved whole to a later page take one more attempt to lay the
-    // content beside them out without them.
+    // content beside them out without them, and each block moved whole to a
+    // later page away from the floats beside its lines one more to break its
+    // lines where it lands.
     while attempts
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
@@ -19333,8 +19335,9 @@ fn move_line_block(
     if delta > 0.0 {
         // Lines broken beside floats that the block leaves behind lay out
         // again where it lands (see `float_resumption`).
-        note_lines_left_beside_floats(document, cascade, moved, block_id, delta);
-        let moved_y = current_abs_y(document, moved) + delta;
+        let from = current_abs_y(document, moved);
+        note_lines_left_beside_floats(document, cascade, moved, block_id, delta, from);
+        let moved_y = from + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
         grow_ancestors_for_line_move(
@@ -19355,27 +19358,28 @@ fn move_line_block(
 /// down to a later page with the block `block_id` it holds, when the lines of
 /// `block_id` were broken beside floats: moved away from them, its lines keep
 /// the wrong room, and Chromium breaks them afresh where the block lands (see
-/// `float_resumption`). The block is noted with `delta`: the flow above it
-/// takes the same shifts in the next walk.
+/// `float_resumption`). The block is noted with `delta` and its top `from` in
+/// the page flow before the move: the flow above it takes the same shifts in
+/// the next walk, which `from` checks.
 fn note_lines_left_beside_floats(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     moved: usize,
     block_id: usize,
     delta: f32,
+    from: f32,
 ) {
     // Only block flow lays its children out at a planned top; a block in a
     // table cell, a flex or grid item, or an inline block is placed by
     // other layout.
     let plain = |id: usize| {
         let node = &document.nodes[id];
-        matches!(
-            node.display(),
-            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
-        ) && matches!(
-            node.position(),
-            PositionValue::Static | PositionValue::Relative
-        ) && cascade.computed[id].float == FloatValue::None
+        matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+            && matches!(
+                node.position(),
+                PositionValue::Static | PositionValue::Relative
+            )
+            && cascade.computed[id].float == FloatValue::None
             && !node.used_writing_mode.is_vertical()
             && node.multicol.is_none()
     };
@@ -19393,7 +19397,7 @@ fn note_lines_left_beside_floats(
         // them.
         && own_floats(document, cascade, moved).is_empty();
     if noted {
-        document.context.pushed_flows.push((moved, delta));
+        document.context.pushed_flows.push((moved, delta, from));
     }
 }
 

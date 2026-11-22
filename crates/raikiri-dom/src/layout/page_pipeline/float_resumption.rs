@@ -38,10 +38,10 @@ pub(crate) struct Plan {
     flows: HashMap<usize, f32>,
     /// Blocks the page walk moved whole to a later page, away from the
     /// floats their lines were broken beside, each with how far it moved
-    /// them: layout places them as far below their place in the flow, so
-    /// that their lines are broken against the floats that are there, as
-    /// Chromium lays them out.
-    pushed_flows: HashMap<usize, f32>,
+    /// them and where their top was in the page flow before: layout places
+    /// them as far below their place in the flow, so that their lines are
+    /// broken against the floats that are there, as Chromium lays them out.
+    pushed_flows: HashMap<usize, (f32, f32)>,
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
@@ -95,7 +95,7 @@ impl Plan {
     /// How far below its place in the flow a block that the page walk moved
     /// whole to a later page, away from the floats beside its lines, goes.
     pub(crate) fn pushed_flow_delta(&self, node: usize) -> Option<f32> {
-        self.pushed_flows.get(&node).copied()
+        self.pushed_flows.get(&node).map(|&(delta, _)| delta)
     }
 
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
@@ -249,20 +249,29 @@ impl Plan {
         plan.pushed.extend(kept);
         // A block the walk moved whole to a later page, away from the floats
         // its lines were broken beside, goes as far down again, so that its
-        // lines take the room the floats leave there (Chromium). One that
-        // layout placed so keeps that move: the walk no longer makes it.
-        plan.pushed_flows.extend(
-            document
-                .context
-                .float_resumptions
-                .pushed_flows
-                .iter()
-                .filter(|(flow, _)| document.context.held_flows.contains(flow))
-                .map(|(&flow, &delta)| (flow, delta)),
-        );
-        // A kept block that the walk still moves goes that much further.
-        for &(flow, delta) in &document.context.pushed_flows {
-            *plan.pushed_flows.entry(flow).or_insert(0.0) += delta;
+        // lines take the room the floats leave there (Chromium).
+        let previous = &document.context.float_resumptions.pushed_flows;
+        for &(flow, delta, from) in &document.context.pushed_flows {
+            // One that the walk moves further from where the planned move
+            // put it goes that much further still.
+            let entry = match previous.get(&flow) {
+                Some(&(planned, start)) if (start + planned - from).abs() <= 0.01 => {
+                    (planned + delta, start)
+                }
+                _ => (delta, from),
+            };
+            plan.pushed_flows.insert(flow, entry);
+        }
+        // One that the walk no longer moves keeps its move while the flow
+        // above it still puts it where it started: then the move is still
+        // what takes it to the later page. Otherwise the next walk judges
+        // it afresh.
+        for (&flow, &(delta, from)) in previous {
+            if !plan.pushed_flows.contains_key(&flow)
+                && (current_abs_y(document, flow) - delta - from).abs() <= 0.01
+            {
+                plan.pushed_flows.insert(flow, (delta, from));
+            }
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());

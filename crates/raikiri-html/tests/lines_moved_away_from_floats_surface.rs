@@ -97,6 +97,18 @@ fn lines_moved_away_from_the_floats_beside_them_take_the_whole_width() {
             "<div style='height:100px'></div><div style='height:40px;break-inside:avoid'><div style='height:40px'></div></div><div style='height:70px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C K</p>",
             (2, 120, 0),
         ),
+        // The paragraph moved earlier takes one line less once its lines
+        // fill the next page, so the later paragraph no longer moves: it
+        // stays beside its float.
+        (
+            "<div style='height:100px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C D E</p><div style='height:70px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C K</p>",
+            (1, 160, 90),
+        ),
+        // With less room after it, the later paragraph moves on as well.
+        (
+            "<div style='height:100px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C D E</p><div style='height:90px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C K</p>",
+            (2, 120, 0),
+        ),
         // Only the first line was beside the float; the rest wrap anew.
         (
             "<div style='height:100px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C D E F G H I J K</p>",

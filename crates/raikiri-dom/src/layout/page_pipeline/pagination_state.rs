@@ -3333,6 +3333,7 @@ impl PaginationState {
                     holder,
                     node_id,
                     holder_delta,
+                    holder_before,
                 );
             }
             // Forced breaks and closing-tail breaks belong to the whole

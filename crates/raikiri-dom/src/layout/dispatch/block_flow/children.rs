@@ -1414,13 +1414,6 @@ pub(super) fn layout(
         } else {
             0.0
         };
-        // A block the page walk moved to a later page, away from the floats
-        // beside its lines, that sits at the top planned for it there.
-        if inputs.run_mode == RunMode::PerformLayout
-            && pushed_floor.is_some_and(|planned| (top - planned).abs() <= 0.01)
-        {
-            tree.context.held_flows.insert(usize::from(child));
-        }
         let top = top + marker_gap;
         if held_margins {
             tree.context.held_margins.pop();
