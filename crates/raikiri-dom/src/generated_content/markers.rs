@@ -413,12 +413,15 @@ pub(super) fn marker_render_info_impl<'a>(
         0
     };
     let marker_ordinal = list_item_counter_value(&counters, ordinal);
+    // `quotes` is not among the properties that apply to `::marker`
+    // (CSS Lists 3, section 3.1.1), so a value set on the marker is ignored
+    // and its quotes are the ones its list item inherits from.
     let content = marker_computed
         .and_then(|marker| {
             marker_content_text(
                 &marker.content,
-                &marker.quotes,
-                marker.quotes_auto,
+                &computed.quotes,
+                computed.quotes_auto,
                 ordinal,
                 &counters,
                 &cascade.counter_styles,

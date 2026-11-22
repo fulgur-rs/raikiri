@@ -2418,13 +2418,10 @@ css/css-flexbox/flexbox-baseline-multi-line-horiz-003.html
 css/css-flexbox/flexbox-baseline-multi-line-horiz-004.html
 css/css-flexbox/flexbox-baseline-single-item-001a.html
 css/css-flexbox/flexbox-basic-img-horiz-001.xhtml
-css/css-flexbox/flexbox-break-request-horiz-001a.html
 css/css-flexbox/flexbox-break-request-horiz-001b.html
 css/css-flexbox/flexbox-break-request-horiz-002a.html
 css/css-flexbox/flexbox-break-request-horiz-002b.html
-css/css-flexbox/flexbox-break-request-vert-001a.html
 css/css-flexbox/flexbox-break-request-vert-001b.html
-css/css-flexbox/flexbox-break-request-vert-002a.html
 css/css-flexbox/flexbox-break-request-vert-002b.html
 css/css-flexbox/flexbox-column-row-gap-001.html
 css/css-flexbox/flexbox-column-row-gap-003.html

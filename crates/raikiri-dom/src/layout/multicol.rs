@@ -2421,6 +2421,7 @@ fn record_wrapped_fragments(
         let sliced_leaf =
             lines.is_none() && wrapped.placement.sliced && wrapped.placement.fragments.len() > 1;
         if lines.is_none() && !sliced_leaf {
+            let placement = &wrapped.placement;
             let fragment = tree
                 .fragment_tree
                 .try_push(crate::fragment::LayoutFragment {
@@ -2440,6 +2441,18 @@ fn record_wrapped_fragments(
                     line_end: None,
                 })?;
             fragments.insert(wrapped.node, fragment);
+            let pieces = wrapped.end.map_or(Some(()), |end| {
+                push_wrapper_pieces(
+                    tree,
+                    wrapped.node,
+                    fragment,
+                    (placement.first_column, placement.first_y),
+                    end,
+                    group.height,
+                    context,
+                )
+            });
+            pieces?;
             continue;
         }
         let extents: Vec<(f32, f32)> = lines.map_or_else(Vec::new, |lines| {
@@ -2537,6 +2550,90 @@ fn record_wrapped_fragments(
                 })?;
             taken += height;
         }
+    }
+    Some(())
+}
+
+/// Give `wrapper`, a wrapper whose boxes joined the flow, a piece in each
+/// column its border box reaches, from `start`, the column and block offset
+/// where it starts, to `end`, where it ends, in columns `column_height` tall:
+/// its first piece `first_fragment`, which holds its boxes, and one more for
+/// each column after it, which paint its background and borders there. A
+/// wrapper that paints neither keeps its one piece. A wrapper that slices
+/// its block-axis border and padding paints whole in each piece, moved up by
+/// what the earlier pieces took, and the column clips it. `None` when the
+/// fragments run out.
+fn push_wrapper_pieces(
+    tree: &mut LayoutSession<'_>,
+    wrapper: usize,
+    first_fragment: usize,
+    start: (usize, f32),
+    end: (usize, f32),
+    column_height: f32,
+    context: FragmentationContext,
+) -> Option<()> {
+    if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
+        return Some(());
+    }
+    let first = tree.fragment_tree.fragments[first_fragment];
+    let column_top = first.rect.y - start.1;
+    let count = end.0 - start.0 + 1;
+    let heights: Vec<f32> = (start.0..=end.0)
+        .map(|column| {
+            let top = if column == start.0 { start.1 } else { 0.0 };
+            let bottom = if column == end.0 {
+                end.1
+            } else {
+                column_height
+            };
+            (bottom - top).max(0.0)
+        })
+        .collect();
+    let total: f32 = heights.iter().sum();
+    let sliced = lineless::slices_decorations(tree, wrapper);
+    let mut taken = 0.0f32;
+    for (index, height) in heights.into_iter().enumerate() {
+        let column = start.0 + index;
+        let top = if index == 0 { start.1 } else { 0.0 };
+        let rect = crate::fragment::FragmentRect {
+            x: first.rect.x + context.column_offset_x(column) - context.column_offset_x(start.0),
+            y: column_top + top,
+            height,
+            ..first.rect
+        };
+        // The clip cuts the piece where the wrapper breaks, and leaves the
+        // edges where it begins and ends open, as a paragraph's are, so the
+        // ink of what it holds may overflow there.
+        let above = if index == 0 {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
+        let below = if index + 1 == count {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
+        let fragment = crate::fragment::LayoutFragment {
+            fragmentainer: first.fragmentainer + index,
+            rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
+            fragmentainer_clip: Some(paragraph_group::inline_open_clip(
+                crate::fragment::FragmentRect {
+                    y: column_top - above,
+                    height: column_height + above + below,
+                    ..rect
+                },
+            )),
+            fragment_index: index,
+            fragment_count: count,
+            ..first
+        };
+        if index == 0 {
+            tree.fragment_tree.fragments[first_fragment] = fragment;
+        } else {
+            tree.fragment_tree.try_push(fragment)?;
+        }
+        taken += height;
     }
     Some(())
 }
@@ -4486,6 +4583,21 @@ fn layout_column_group(
             Some(group) if planned.is_some() && group.wraps(local_order) => {
                 if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
                     .is_none()
+                    || group
+                        .placement_of(local_order)
+                        .zip(group.wrapper_end(local_order))
+                        .is_some_and(|(placement, end)| {
+                            push_wrapper_pieces(
+                                tree,
+                                child,
+                                child_fragment,
+                                (placement.first_column, placement.first_y),
+                                end,
+                                group.height,
+                                context,
+                            )
+                            .is_none()
+                        })
                 {
                     return fallback_height;
                 }

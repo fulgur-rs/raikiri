@@ -2548,7 +2548,7 @@ impl PaginationState {
         // container, as the box does before it moves to `effective_y`.
         let line_y = current_abs_y(document, node_id);
         materialize_y(document, node_id, effective_y);
-        let forced_before = super::forces_page_break(document, cascade, node_id, true)
+        let forced_before = super::takes_forced_break(document, cascade, body_id, node_id, true)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
@@ -2905,8 +2905,17 @@ impl PaginationState {
                 && !stays_empty();
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
+        // A break forced in the block flow of a float moves the boxes that
+        // start with the box there along with it, as in the page flow, but
+        // never the float itself.
+        let float_scope = candidate
+            .context
+            .is_float_descendant()
+            .then(|| super::break_scope(document, cascade, node_id))
+            .flatten()
+            .filter(|&scope| super::is_side_float(document, cascade, scope));
         let potential_forced_holder = (forced_before
-            && !candidate.context.is_float_descendant()
+            && (!candidate.context.is_float_descendant() || float_scope.is_some())
             && !candidate.context.is_out_of_flow_descendant()
             && is_block_flow_box(document, cascade, candidate))
         .then(|| {
@@ -2914,6 +2923,11 @@ impl PaginationState {
                 .forced_holder(document, cascade, body_id, node_id)
         })
         .flatten()
+        .filter(|&(node, _)| {
+            float_scope.is_none_or(|scope| {
+                node != scope && document.layout_ancestors(node).any(|id| id == scope)
+            })
+        })
         .map(|(node, lead)| {
             let margin_top = break_margins(document, cascade, node, content_width).0
                 + collapsed_start_margin_gain(
@@ -2938,6 +2952,12 @@ impl PaginationState {
         // content or the phantom line of an empty inline element, stays on
         // the first page, so a forced break after it opens the next page, as
         // Chromium breaks there.
+        // A forced break that a flex item holds, at the start of its first
+        // box, moves the item's line as a break before the item does.
+        let holder_line = potential_forced_holder.and_then(|owner| {
+            let y = current_abs_y(document, owner.node);
+            super::row_flex_line(document, cascade, body_id, owner.node, y)
+        });
         let forced_break_at_page_start = forced_before
             && !self.empty_content_page.is_some_and(|(page, empty)| {
                 page == self.current_page && !document.is_ancestor_or_self(empty, node_id)
@@ -2957,11 +2977,15 @@ impl PaginationState {
             && if let Some(owner) = potential_forced_holder {
                 let owner_margin_box_y = current_abs_y(document, owner.node)
                     - accumulated_relative_offset_y(document, cascade, body_id, owner.node)
-                    - owner.margin_top;
+                    - owner.margin_top
+                    - holder_line.as_ref().map_or(0.0, |line| line.offset);
+                // The items beside the holder on its line lie beside the
+                // box, not above it.
                 owner_margin_box_y <= page_start + 0.001
-                    && self.child_positions.begins_page_below_leading_edges(
-                        document, cascade, body_id, node_id, page_start,
-                    )
+                    && (holder_line.is_some()
+                        || self.child_positions.begins_page_below_leading_edges(
+                            document, cascade, body_id, node_id, page_start,
+                        ))
             } else {
                 // The break sits at the top of the margin box. A negative
                 // margin pulls the border box above that point, over content
@@ -2999,6 +3023,12 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let forced_holder = potential_forced_holder.filter(|_| !forced_break_at_page_start);
+        // The line of the item that holds the break moves rather than one
+        // inside it.
+        let flex_line = match forced_holder {
+            Some(_) => holder_line.or(flex_line),
+            None => flex_line,
+        };
         let page_break = BoxBreak {
             margin_top,
             relative_offset,
@@ -3468,8 +3498,23 @@ impl PaginationState {
             let forced_scope = if pending_break_applies {
                 self.pending_break.scope
             } else {
-                super::break_scope(document, node_id).filter(|_| page_break.forced_before)
+                super::break_scope(document, cascade, node_id).filter(|_| page_break.forced_before)
             };
+            // A float that a break forced inside it grew keeps the boxes that
+            // clear it below its new end, as when a page end moves its lines.
+            if lands_after_forced_break
+                && super::break_scope(document, cascade, node_id)
+                    .is_some_and(|scope| super::is_side_float(document, cascade, scope))
+            {
+                self.float_shifts.record_grown_floats(
+                    document,
+                    cascade,
+                    body_id,
+                    candidate,
+                    holder,
+                    landing.node_delta,
+                );
+            }
             if lands_after_forced_break
                 && let Some(scope) = forced_scope
                 && super::splits_at_forced_breaks(document, scope)
@@ -5991,8 +6036,34 @@ impl PaginationState {
                     }
                     self.flow_shift += delta;
                     text.effective_y += delta;
-                    // The flow past the positioned box gives the move back.
-                    if let Some(scope) = scope {
+                    if let Some(scope) = scope
+                        && super::is_side_float(document, env.cascade, scope)
+                    {
+                        // A float grows to hold the text that the break
+                        // forced inside it moves, as for a box there (see
+                        // `move_box_for_transition`); the flow past it gives
+                        // the move back, and the boxes that clear it follow.
+                        let moved = moved_root.unwrap_or(node_id);
+                        super::grow_ancestors_for_line_move(
+                            document,
+                            env.cascade,
+                            moved,
+                            delta,
+                            env.body_id,
+                            &mut self.subtree_shifts,
+                            entry.page_before_candidate,
+                            &super::IfcBoxShifts::default(),
+                        );
+                        self.float_shifts.record_grown_floats(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            candidate,
+                            moved,
+                            delta,
+                        );
+                    } else if let Some(scope) = scope {
+                        // The flow past the positioned box gives the move back.
                         self.subtree_shifts
                             .bound(scope, delta, entry.page_before_candidate);
                     }
