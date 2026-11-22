@@ -19342,14 +19342,13 @@ fn move_line_block(
     let delta = Some(target_y - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
-    // Where the block sits before any part of the move changes the layout.
-    let from = current_abs_y(document, moved);
     let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
     if delta > 0.0 {
         // Lines broken beside floats that the block leaves behind lay out
         // again where it lands (see `float_resumption`).
+        let from = current_abs_y(document, moved);
         note_lines_left_beside_floats(document, cascade, moved, block_id, delta, from);
-        let moved_y = current_abs_y(document, moved) + delta;
+        let moved_y = from + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
         grow_ancestors_for_line_move(

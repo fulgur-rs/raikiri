@@ -58,8 +58,8 @@ pub(crate) struct LayoutContext {
     /// break, away from the floats their lines were broken beside, each with
     /// how far it moved them and where its top was in the page flow before.
     pub(crate) pushed_flows: Vec<(usize, f32, f32)>,
-    /// Blocks the page walk moved whole to a later page for any other
-    /// reason.
+    /// Blocks the page walk moved whole to a later page with their lines,
+    /// but not away from floats beside them.
     pub(crate) flows_moved_otherwise: Vec<usize>,
     /// Page origins chosen when a float takes a pending forced break.
     pub(crate) float_resumption_boundaries:

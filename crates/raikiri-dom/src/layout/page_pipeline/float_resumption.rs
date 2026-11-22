@@ -269,14 +269,14 @@ impl Plan {
         // One that the walk no longer moves keeps its move while the flow
         // above it still puts it where it started: then the move is still
         // what takes it to the later page. Otherwise, or when the walk moves
-        // it for another reason, the next walk judges it afresh.
+        // it on with its lines for another reason, the next walk judges it
+        // afresh.
+        let moved: HashSet<usize> = (document.context.pushed_flows.iter())
+            .map(|&(moved, ..)| moved)
+            .chain(document.context.flows_moved_otherwise.iter().copied())
+            .collect();
         for (&flow, &(delta, from)) in previous {
-            let moved = document
-                .context
-                .pushed_flows
-                .iter()
-                .any(|&(moved, ..)| moved == flow)
-                || document.context.flows_moved_otherwise.contains(&flow);
+            let moved = moved.contains(&flow);
             // Far down a long flow, f32 keeps fewer fractions of a pixel.
             let tolerance = 0.01_f32.max(from.abs() * 1e-6);
             if !moved && (current_abs_y(document, flow) - delta - from).abs() <= tolerance {
