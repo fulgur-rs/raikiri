@@ -115,6 +115,23 @@ fn an_empty_marker_moves_nothing() {
         ),
         "ab@40,0 Z@0,10"
     );
+    // So does a quote that inserts nothing.
+    for content in ["no-open-quote", "open-quote;quotes:none"] {
+        assert_eq!(
+            words(
+                &format!("li::marker{{font-size:30px;content:{content}}}"),
+                "<ul><li>ab</li></ul><div>Z</div>"
+            ),
+            "ab@40,0 Z@0,10"
+        );
+    }
+    assert_eq!(
+        words(
+            "li::marker{font-size:30px;content:open-quote}",
+            "<ul><li>ab</li></ul><div>Z</div>"
+        ),
+        "ab@40,6 Z@0,16"
+    );
     // A counter after an empty string still shows text.
     assert_eq!(
         words(

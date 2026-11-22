@@ -1,7 +1,7 @@
 //! Additional leading contributed by an outside marker.
 
 use crate::Document;
-use raikiri_style::property::{ContentComponent, ListStyleType};
+use raikiri_style::property::ContentComponent;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
@@ -44,7 +44,7 @@ pub(crate) fn height_in(
             &fallback
         }
     };
-    let sample = sample_text(marker)?;
+    let sample = marker_text(doc, cascade, owner, marker)?;
     let (fonts, limits) = shaping?;
     let inline = super::style::inline_style(marker, owner, fonts).ok()?;
     super::standalone::line_ascent(fonts, limits, &sample, &inline)
@@ -62,46 +62,29 @@ fn takes_part(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
             .is_none_or(|node| node.multicol.is_none())
 }
 
-/// Text that stands for what the marker with the values `marker` shows, so
-/// that its glyphs pick the fonts that set the marker's line: its literal
-/// strings, its bullet, or a digit for a counter. `None` when it shows
-/// nothing, as an empty string or `list-style-type: none` do, since an empty
-/// line takes no room.
-fn sample_text(marker: &ComputedValues) -> Option<String> {
-    let sample: String = if marker.content.is_empty() {
-        match &marker.list_style_type {
-            ListStyleType::None => String::new(),
-            ListStyleType::String(text) => text.to_string(),
-            other => {
-                // `disc`, the initial value, is the only keyword not kept as
-                // a name.
-                let name = match other {
-                    ListStyleType::Named(name) => name.to_ascii_lowercase(),
-                    _ => "disc".to_owned(),
-                };
-                match name.as_str() {
-                    "disc" => "\u{2022}",
-                    "circle" => "\u{25E6}",
-                    "square" => "\u{25AA}",
-                    _ => "0",
-                }
-                .to_owned()
-            }
-        }
-    } else {
-        marker
-            .content
-            .iter()
-            .map(|part| match part {
-                ContentComponent::Literal(text) => text.as_str(),
-                // An image alone still gives the marker a line, and its
-                // strut, in the marker's font.
-                ContentComponent::Image { .. } => " ",
-                _ => "0",
-            })
-            .collect()
-    };
-    (!sample.is_empty()).then_some(sample)
+/// The text the marker of `owner`, whose values are `marker`, shows, so that
+/// its glyphs pick the fonts that set the marker's line. `None` when it
+/// shows nothing, as an empty string, a quote that inserts nothing or
+/// `list-style-type: none` do, since an empty line takes no room. An image
+/// alone still gives the marker a line, and its strut, in the marker's font.
+fn marker_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    marker: &ComputedValues,
+) -> Option<String> {
+    let snapshots = doc.shared_compact_counter_snapshots(cascade).ok()?;
+    let (_, text) = crate::generated_content::markers::marker_render_info_with_compact_snapshots(
+        doc, cascade, owner, &snapshots,
+    )?;
+    if !text.is_empty() {
+        return Some(text);
+    }
+    marker
+        .content
+        .iter()
+        .any(|part| matches!(part, ContentComponent::Image { .. }))
+        .then(|| " ".to_owned())
 }
 
 /// Chromium places extra leading before the first line or baseline-bearing
