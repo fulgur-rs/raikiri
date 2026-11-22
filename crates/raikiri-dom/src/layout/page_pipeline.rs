@@ -4835,7 +4835,7 @@ fn layout_pages_core(
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
-            + usize::from(resumptions.has_pushed_flows())
+            + resumptions.pushed_flow_count()
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -19388,7 +19388,10 @@ fn note_lines_left_beside_floats(
             .ifc_layout_node(block_id)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| lines.beside_floats);
+            .is_some_and(|lines| lines.beside_floats)
+        // Floats inside the block move with it, and its lines stay beside
+        // them.
+        && own_floats(document, cascade, moved).is_empty();
     if noted {
         document.context.pushed_flows.push((moved, delta));
     }

@@ -85,10 +85,11 @@ impl Plan {
         !self.pushed.is_empty()
     }
 
-    /// Whether the page walk moved a block whole to a later page away from
-    /// the floats beside its lines.
-    pub(crate) fn has_pushed_flows(&self) -> bool {
-        !self.pushed_flows.is_empty()
+    /// How many blocks the page walk moved whole to a later page away from
+    /// the floats beside their lines: laid out again, each can move the
+    /// content after it.
+    pub(crate) fn pushed_flow_count(&self) -> usize {
+        self.pushed_flows.len()
     }
 
     /// How far below its place in the flow a block that the page walk moved
@@ -259,8 +260,9 @@ impl Plan {
                 .filter(|(flow, _)| document.context.held_flows.contains(flow))
                 .map(|(&flow, &delta)| (flow, delta)),
         );
+        // A kept block that the walk still moves goes that much further.
         for &(flow, delta) in &document.context.pushed_flows {
-            plan.pushed_flows.entry(flow).or_insert(delta);
+            *plan.pushed_flows.entry(flow).or_insert(0.0) += delta;
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
