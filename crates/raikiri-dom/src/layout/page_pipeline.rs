@@ -14004,7 +14004,7 @@ fn lone_box_with_floats(
         let room = height - follow_end;
         // Room that ends right where `node_id` does still cuts the edges of
         // the blocks around `node_id` off from the box; a hair of it keeps
-        // [`closing_edges_move`] from counting them. Boxes after the box cut
+        // `closing_edges_move` from counting them. Boxes after the box cut
         // them off whatever the room (see `LoneBox::cut`).
         if !cut_by_boxes && room.abs() <= 0.001 {
             0.001
