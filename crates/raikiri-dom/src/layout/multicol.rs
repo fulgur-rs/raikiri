@@ -2441,7 +2441,7 @@ fn record_wrapped_fragments(
                     line_end: None,
                 })?;
             fragments.insert(wrapped.node, fragment);
-            if let Some(end) = wrapped.end {
+            let pieces = wrapped.end.map_or(Some(()), |end| {
                 push_wrapper_pieces(
                     tree,
                     wrapped.node,
@@ -2450,8 +2450,9 @@ fn record_wrapped_fragments(
                     end,
                     group.height,
                     context,
-                )?;
-            }
+                )
+            });
+            pieces?;
             continue;
         }
         let extents: Vec<(f32, f32)> = lines.map_or_else(Vec::new, |lines| {
@@ -2571,10 +2572,7 @@ fn push_wrapper_pieces(
     column_height: f32,
     context: FragmentationContext,
 ) -> Option<()> {
-    let style = style_of(tree, wrapper);
-    let paints = tree.nodes[wrapper].paints_background_color
-        || style.border() != Edges::splat(LengthPercentage::ZERO);
-    if !paints || end.0 <= start.0 {
+    if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
         return Some(());
     }
     let first = tree.fragment_tree.fragments[first_fragment];

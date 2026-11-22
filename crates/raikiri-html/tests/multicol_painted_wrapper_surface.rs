@@ -51,8 +51,14 @@ fn lay_out(body: &str) -> DocumentLayout {
 /// `(x,y,width,height)` cut by the clips around them, in paint order.
 fn layout_of(body: &str) -> String {
     let result = lay_out(body);
-    let page = result.page(0).expect("one page");
     assert!(result.page(1).is_none(), "the content fits one page");
+    page_of(&result, 0)
+}
+
+/// The words and the pieces of the boxes on the `index`th page of `result`,
+/// as [`layout_of`] lists them.
+fn page_of(result: &DocumentLayout, index: u32) -> String {
+    let page = result.page(index).expect("the page");
     let mut words = Vec::new();
     for run in page.text_runs() {
         let mut x = run.origin.0;
@@ -181,5 +187,28 @@ fn a_painted_block_breaks_between_columns_of_a_set_height() {
              <div>A</div><div>B</div><div>C</div></div></div>"
         ),
         "A@0,0 B@0,10 C@50,0 | (0,0,50,20)(50,0,50,10)"
+    );
+}
+
+#[test]
+fn a_painted_block_breaks_between_the_columns_of_each_page() {
+    let lines = "<div>L</div>".repeat(24);
+    let result = lay_out(&format!(
+        "<div class=m><div style=background:red>{lines}</div>\
+         <div style=column-span:all>S</div></div>"
+    ));
+    let full: Vec<String> = (0..10).map(|row| format!("L@0,{}", row * 10)).collect();
+    let second: Vec<String> = (0..10).map(|row| format!("L@50,{}", row * 10)).collect();
+    assert_eq!(
+        page_of(&result, 0),
+        format!(
+            "{} {} | (0,0,50,100)(50,0,50,100)",
+            full.join(" "),
+            second.join(" ")
+        )
+    );
+    assert_eq!(
+        page_of(&result, 1),
+        "L@0,0 L@0,10 L@50,0 L@50,10 S@0,20 | (0,0,50,20)(50,0,50,20)"
     );
 }

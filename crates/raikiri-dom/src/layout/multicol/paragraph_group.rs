@@ -183,11 +183,11 @@ pub(super) enum Role {
     /// whole.
     Box,
     /// The start of a wrapper whose boxes join the flow, with the margin above
-    /// it and the padding above its first box. Its value is the index of the
+    /// it and the padding and border above its first box. Its value is the index of the
     /// entry that ends the wrapper.
     Open(usize),
-    /// The end of a wrapper, with the padding below its last box and the
-    /// margin below it.
+    /// The end of a wrapper, with the padding and border below its last box
+    /// and the margin below it.
     Close,
 }
 
@@ -195,11 +195,12 @@ pub(super) enum Role {
 /// the order the columns take them.
 ///
 /// A wrapper is a block that holds only blocks and leaves nothing of its own
-/// to break or paint (see [`is_flow_wrapper`]), so its boxes break between
-/// the columns as the container's own do. Its start and end stand in the flow
-/// as boxes that take only the padding above its first box and below its last,
-/// which a column end cuts; where it has none, its margins adjoin those of
-/// those boxes and collapse through them.
+/// to break but its edges (see [`is_flow_wrapper`]), so its boxes break
+/// between the columns as the container's own do, and it has a piece in each
+/// column it reaches. Its start and end stand in the flow as boxes that take
+/// only the padding and border above its first box and below its last, which
+/// a column end cuts; where it has none, its margins adjoin those of those
+/// boxes and collapse through them.
 pub(super) struct Flow {
     entries: Vec<Measurement>,
     roles: Vec<Role>,
@@ -234,8 +235,10 @@ impl Flow {
     }
 
     /// The flow of `entries`, or `None` when no wrapper joins it, or when one
-    /// nests too deep.
-    fn of(tree: &LayoutSession<'_>, entries: &[Measurement]) -> Option<Self> {
+    /// nests too deep. Without `pieces`, a wrapper that paints (see
+    /// [`paints_pieces`]) stays a box, for a caller that records one piece
+    /// for each wrapper.
+    fn of(tree: &LayoutSession<'_>, entries: &[Measurement], pieces: bool) -> Option<Self> {
         let mut flow = Self {
             entries: Vec::with_capacity(entries.len()),
             roles: Vec::with_capacity(entries.len()),
@@ -245,7 +248,7 @@ impl Flow {
         };
         for entry in entries {
             flow.direct.push(flow.entries.len());
-            flow.push(tree, entry.clone(), None, 0.0, 0)?;
+            flow.push(tree, entry.clone(), None, 0.0, 0, pieces)?;
         }
         flow.roles
             .iter()
@@ -260,6 +263,7 @@ impl Flow {
         parent: Option<usize>,
         inset: f32,
         depth: usize,
+        pieces: bool,
     ) -> Option<()> {
         let id = entry.0;
         // A `flow-root` box of the container's own that holds one row of
@@ -268,6 +272,7 @@ impl Flow {
         // out at the column width, as the entries are. Inside a wrapper, its
         // one row goes to one column as a wrapper.
         if !is_flow_wrapper(tree, id)
+            || !pieces && paints_pieces(tree, id)
             || parent.is_none()
                 && layout_node(tree, id).display() == DisplayValue::FlowRoot
                 && holds_one_row_of_lines(tree, id)
@@ -310,7 +315,14 @@ impl Flow {
                 layout.margin.bottom,
                 layout.margin.top + layout.size.height + layout.margin.bottom,
             );
-            self.push(tree, measurement, Some(open), content_inset, depth + 1)?;
+            self.push(
+                tree,
+                measurement,
+                Some(open),
+                content_inset,
+                depth + 1,
+                pieces,
+            )?;
         }
         let close = self.entries.len();
         self.roles[open] = Role::Open(close);
@@ -335,7 +347,7 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
     let mut pending = vec![(id, 0usize)];
     let mut paragraphs = 0;
     // The room besides the paragraphs: sized boxes with no lines, and the
-    // padding above or below the boxes of a wrapper, which the columns place
+    // padding or border above or below the boxes of a wrapper, which the columns place
     // as they place a box.
     let mut room = 0;
     while let Some((wrapper, depth)) = pending.pop() {
@@ -470,6 +482,13 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         && lineless::rendered_elements(tree, id).next().is_some()
 }
 
+/// Whether the wrapper `id` paints a background or borders, which a piece of
+/// it in each column it reaches shows.
+pub(super) fn paints_pieces(tree: &LayoutSession<'_>, id: usize) -> bool {
+    layout_node(tree, id).paints_background_color
+        || style_of(tree, id).border() != Edges::splat(LengthPercentage::ZERO)
+}
+
 /// The least room a column needs to take a piece of a sliced box, and the
 /// least of the box a piece leaves for the next column: one layout unit
 /// (1/64px), the precision browsers lay boxes out at.
@@ -567,7 +586,7 @@ pub(super) fn balance(
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let flow = Flow::of(tree, entries).unwrap_or_else(|| Flow::plain(entries));
+    let flow = Flow::of(tree, entries, true).unwrap_or_else(|| Flow::plain(entries));
     let Collected {
         paragraphs,
         paragraph_count,
@@ -679,7 +698,7 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let flow = Flow::of(tree, entries).unwrap_or_else(|| Flow::plain(entries));
+    let flow = Flow::of(tree, entries, true).unwrap_or_else(|| Flow::plain(entries));
     let Collected {
         mut paragraphs,
         paragraph_count,
@@ -817,7 +836,7 @@ fn collect(
         let role = flow.roles[index];
         if role != Role::Box {
             // The start and the end of a wrapper take no room but its padding
-            // above its first box, or below its last, which a column end
+            // and border above its first box, or below its last, which a column end
             // slices as it does a box with no lines. The margins count,
             // collapsing through them with the ones around them where no such
             // padding keeps them apart. The edges of a `flow-root` box keep
@@ -1996,7 +2015,9 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let flow = Flow::of(tree, entries).unwrap_or_else(|| Flow::plain(entries));
+    // A page of these columns records one piece for each wrapper, so a
+    // wrapper that paints stays a box here.
+    let flow = Flow::of(tree, entries, false).unwrap_or_else(|| Flow::plain(entries));
     // The lines of the paragraphs inside wrappers are charged here, as those
     // of the container's own are above.
     let wrapped_lines = flow
