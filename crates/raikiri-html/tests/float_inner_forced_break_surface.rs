@@ -449,7 +449,25 @@ fn a_break_at_the_edge_of_a_flex_or_grid_item_goes_to_its_line() {
     // line leaves the float whole, and one on a later line or row, or at a
     // line that is not at the float's edge, splits it.
     let float = "<div style='float:left;width:100px'>";
-    let cases: [(&str, &[&str]); 9] = [
+    let cases: [(&str, &[&str]); 13] = [
+        // Text before the item is an item of its own, and a column that runs
+        // in reverse ends with its first item.
+        (
+            "<div style='display:flex;flex-direction:column'>txt<div><div style='break-before:page'>B</div></div></div>",
+            &["t@0,0 t@40,0 x@20,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column'>txt<div style='break-before:page'>B</div></div>",
+            &["t@0,0 t@40,0 x@20,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column-reverse'><div><div style='break-before:page'>B</div></div><div>A</div></div>",
+            &["A@0,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column-reverse'><div style='break-before:page'>B</div><div>A</div></div>",
+            &["A@0,0", "B@0,0"],
+        ),
         (
             "<div style='display:flex'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
             &["A@0,0 B@20,0"],

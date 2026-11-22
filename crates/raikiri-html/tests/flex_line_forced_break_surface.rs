@@ -315,6 +315,12 @@ fn a_break_at_the_start_of_an_item_moves_its_line() {
             "<div>X</div><div style='display:flex'><div>A<br>D</div><div><div style='break-before:page'>B</div></div></div>",
             &[(0, 'X', 5), (1, 'A', 5), (1, 'B', 5), (1, 'D', 35)],
         ),
+        // A line that already starts the page keeps it, though alignment
+        // puts the item below the top of the line.
+        (
+            "<div style='display:flex;align-items:flex-end'><div style='height:100px'>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &[(0, 'A', 5), (0, 'B', 75)],
+        ),
         // Only the line of the item moves.
         (
             "<div>X</div><div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:60px'>A</div><div style='width:60px'>C</div><div style='width:30px'><div style='break-before:page'>B</div></div></div>",

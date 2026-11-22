@@ -10682,18 +10682,27 @@ pub(super) fn line_break_edge(
         return None;
     }
     // The items in the order the container lays them out, through the
-    // elements that generate no box.
-    let mut items: Vec<usize> = document
-        .children_through_contents(container)
+    // elements that generate no box, with the anonymous items of text.
+    let children = document.children_through_contents(container);
+    let is_text_item = |id: usize| {
+        let node = &document.nodes[id];
+        node.kind() == NodeKind::Text
+            && node
+                .text_content()
+                .is_some_and(|text| !text.trim_ascii().is_empty())
+    };
+    let anonymous = children.iter().any(|&id| is_text_item(id));
+    let mut items: Vec<usize> = children
         .into_iter()
         .filter(|&id| {
             let node = &document.nodes[id];
-            node.kind() == NodeKind::Element
+            (node.kind() == NodeKind::Element
                 && node.display() != DisplayValue::None
                 && !matches!(
                     node.position(),
                     PositionValue::Absolute | PositionValue::Fixed
-                )
+                ))
+                || is_text_item(id)
         })
         .collect();
     items.sort_by_key(|&id| {
@@ -10703,24 +10712,39 @@ pub(super) fn line_break_edge(
             .map_or(0, |computed| computed.order)
     });
     items.iter().position(|&id| id == item)?;
-    let edge_item = if before {
-        items[0]
-    } else {
-        items[items.len() - 1]
-    };
+    // Generated content on that side is an item before or after the others.
+    let generated = super::generated_on_side(cascade, container, before);
     if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
         let computed = &cascade.computed[container];
-        if !matches!(
+        let row = matches!(
             computed.flex_direction,
             FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-        ) {
-            return Some(edge_item == item);
-        }
-        if computed.flex_wrap != FlexWrapValue::Wrap {
+        );
+        if row && computed.flex_wrap != FlexWrapValue::Wrap {
             return Some(true);
+        }
+        // A column that runs in reverse puts its first item at its end.
+        let first = before != (computed.flex_direction == FlexDirectionValue::ColumnReverse);
+        let edge_item = if first {
+            items[0]
+        } else {
+            items[items.len() - 1]
+        };
+        if !row {
+            return Some(!generated && edge_item == item);
+        }
+        // The lines of text items are not measured; such a container is
+        // judged as a block.
+        if generated || anonymous {
+            return None;
         }
         let line = flex_line_of(document, cascade, body_id, container, items.clone(), item);
         return Some(line.contains(&edge_item));
+    }
+    // The rows of text items are not recorded; such a grid is judged as a
+    // block.
+    if generated || anonymous {
+        return None;
     }
     let rows = &document.nodes[container].grid_item_rows;
     // An item the grid placed no row for is judged as a block.

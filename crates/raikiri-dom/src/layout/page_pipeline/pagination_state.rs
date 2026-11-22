@@ -2919,6 +2919,12 @@ impl PaginationState {
         // content or the phantom line of an empty inline element, stays on
         // the first page, so a forced break after it opens the next page, as
         // Chromium breaks there.
+        // A forced break that a flex item holds, at the start of its first
+        // box, moves the item's line as a break before the item does.
+        let holder_line = potential_forced_holder.and_then(|owner| {
+            let y = current_abs_y(document, owner.node);
+            super::row_flex_line(document, cascade, body_id, owner.node, y)
+        });
         let forced_break_at_page_start = forced_before
             && !self.empty_content_page.is_some_and(|(page, empty)| {
                 page == self.current_page && !document.is_ancestor_or_self(empty, node_id)
@@ -2938,11 +2944,15 @@ impl PaginationState {
             && if let Some(owner) = potential_forced_holder {
                 let owner_margin_box_y = current_abs_y(document, owner.node)
                     - accumulated_relative_offset_y(document, cascade, body_id, owner.node)
-                    - owner.margin_top;
+                    - owner.margin_top
+                    - holder_line.as_ref().map_or(0.0, |line| line.offset);
+                // The items beside the holder on its line lie beside the
+                // box, not above it.
                 owner_margin_box_y <= page_start + 0.001
-                    && self.child_positions.begins_page_below_leading_edges(
-                        document, cascade, body_id, node_id, page_start,
-                    )
+                    && (holder_line.is_some()
+                        || self.child_positions.begins_page_below_leading_edges(
+                            document, cascade, body_id, node_id, page_start,
+                        ))
             } else {
                 // The break sits at the top of the margin box. A negative
                 // margin pulls the border box above that point, over content
@@ -2980,14 +2990,12 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let forced_holder = potential_forced_holder.filter(|_| !forced_break_at_page_start);
-        // A forced break that a flex item holds, at the start of its first
-        // box, moves the item's line as a break before the item does.
-        let flex_line = flex_line.or_else(|| {
-            forced_holder.and_then(|owner| {
-                let y = current_abs_y(document, owner.node);
-                super::row_flex_line(document, cascade, body_id, owner.node, y)
-            })
-        });
+        // The line of the item that holds the break moves rather than one
+        // inside it.
+        let flex_line = match forced_holder {
+            Some(_) => holder_line.or(flex_line),
+            None => flex_line,
+        };
         let page_break = BoxBreak {
             margin_top,
             relative_offset,
