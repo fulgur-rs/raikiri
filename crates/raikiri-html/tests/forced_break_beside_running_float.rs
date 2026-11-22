@@ -205,3 +205,18 @@ fn a_block_after_the_break_inside_an_inline_formatting_context_settles() {
     );
     assert_eq!(laid_out[0], "E@60,30 T@0,30 x@0,0");
 }
+
+#[test]
+fn a_float_that_ends_before_the_new_page_is_left_behind() {
+    // Only the earlier float that runs on onto the page the break opens
+    // keeps its place there; a short one beside it ends on the page the
+    // break leaves.
+    expect(
+        "<div style='break-after:page'><div style='float:left;width:40px;height:20px'>S</div><div style='float:right;width:40px;height:250px'>E</div>T</div><div>Z</div>",
+        &["E@60,0 S@0,0 T@40,0", "Z@0,0", ""],
+    );
+    expect(
+        "<div style='break-after:page'><div style='float:left;width:40px;height:20px'>S</div><div style='float:right;width:40px;height:250px'>E</div>T</div><div style='float:left;width:40px'>F</div>Z",
+        &["E@60,0 S@0,0 T@40,0", "F@0,0 Z@40,0", ""],
+    );
+}
