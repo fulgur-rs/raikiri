@@ -22121,17 +22121,6 @@ fn holds_floats_by_style(
         || document.nodes[node_id].multicol.is_some()
         || document.nodes[node_id].roots_block_context()
         || establishes_containment_context(computed)
-        || is_column_spanner(document, cascade, node_id)
-}
-
-/// Whether `node_id` is a spanner of the multicol container around it,
-/// which establishes a block formatting context of its own (CSS Multi-column
-/// Layout 1, 6.1).
-fn is_column_spanner(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
-    super::is_spanner_in(document, cascade, node_id)
-        && document
-            .parent_of(node_id)
-            .is_some_and(|parent| lays_out_in_columns(document, parent))
 }
 
 /// Whether the box `node_id` is an item of a flex or grid container.
