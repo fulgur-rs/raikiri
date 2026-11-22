@@ -385,12 +385,8 @@ fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
         return false;
     }
     let mut current = tree.parent_of(id);
-    while let Some(ancestor) = current {
-        let node = &tree.nodes[ancestor];
-        if node.multicol.is_some() {
-            return true;
-        }
-        if starts_formatting_context(node) {
+    while let Some(ancestor) = current.filter(|&ancestor| tree.nodes[ancestor].multicol.is_none()) {
+        if starts_formatting_context(&tree.nodes[ancestor]) {
             return false;
         }
         current = tree.parent_of(ancestor);
