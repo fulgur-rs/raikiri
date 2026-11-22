@@ -1076,7 +1076,8 @@ fn run_boxes_segment(
                     && !withdrawn.contains(&node)
                 {
                     for float in tentative.drain(..).chain(std::iter::once(float)) {
-                        ceiling = ceiling.max(commit_fragmented_float(
+                        let node = float.node;
+                        let top = commit_fragmented_float(
                             tree,
                             ctx,
                             float,
@@ -1091,7 +1092,18 @@ fn run_boxes_segment(
                                 oof_candidates: &mut oof_candidates,
                                 float_views: &mut float_views,
                             },
-                        ));
+                        );
+                        ceiling = ceiling.max(top);
+                        // A float that goes on to the page the text after it
+                        // opens starts that page, and the lines come after
+                        // it: none goes above it beside the floats left on
+                        // the earlier page.
+                        if top > line_y && tree.named_break_floats.binary_search(&node).is_ok() {
+                            y = top;
+                            pending = CollapsibleMarginSet::ZERO;
+                            assumed_height = 0.0;
+                            retries = 0;
+                        }
                     }
                     continue;
                 }

@@ -1753,11 +1753,13 @@ fn layout_single_page_with_table_projection(
                 || !document.forced_break_line_clearance.is_empty()
                 || !document.forced_break_float_floor.is_empty()
                 || !document.forced_break_line_float_floor.is_empty()
+                || !document.named_break_floats.is_empty()
             {
                 document.forced_break_clearance.clear();
                 document.forced_break_line_clearance.clear();
                 document.forced_break_float_floor.clear();
                 document.forced_break_line_float_floor.clear();
+                document.named_break_floats.clear();
                 document.layout_dirty = true;
             }
             document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -3820,6 +3822,7 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
+    let mut named_break_floats = Vec::new();
     let mut trailing_floats = HashMap::new();
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
@@ -3852,7 +3855,8 @@ fn clear_floats_at_forced_breaks<'name>(
         // at its end and started the new page.
         let mut block_ends_with_page_start_float = false;
         let mut previous_page_name = generated_prefix.then_some(inherited);
-        for item in child_boxes(document, parent, true) {
+        let items = child_boxes(document, parent, true);
+        for (index, &item) in items.iter().enumerate() {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
                 // Its lines have no element to give clearance to, so the
@@ -3923,12 +3927,24 @@ fn clear_floats_at_forced_breaks<'name>(
                 // page and is not the page before the box after it, which is
                 // compared with the box before the float, or names the first
                 // page when there is none.
-                if page_break_is_forced(
-                    document,
-                    cascade,
-                    child,
-                    cascade.computed[child].break_before,
-                ) {
+                // The float right before text whose page type differs from
+                // the box before the float goes on to the new page with that
+                // text, which lines up beside it (Chromium).
+                let before_named_text = !after_forced_break
+                    && !document.nodes[parent].used_writing_mode.is_vertical()
+                    && matches!(items.get(index + 1), Some(None))
+                    && changes_page(&previous_page_name, &inherited);
+                if before_named_text {
+                    named_break_floats.push(child);
+                }
+                if before_named_text
+                    || page_break_is_forced(
+                        document,
+                        cascade,
+                        child,
+                        cascade.computed[child].break_before,
+                    )
+                {
                     after_forced_break = true;
                     float_after_break = false;
                     float_own_break = true;
@@ -4072,15 +4088,18 @@ fn clear_floats_at_forced_breaks<'name>(
     cleared_lines.sort_unstable();
     cleared_to_float_floor.sort_unstable();
     cleared_lines_to_float_floor.sort_unstable();
+    named_break_floats.sort_unstable();
     if cleared != document.forced_break_clearance
         || cleared_lines != document.forced_break_line_clearance
         || cleared_to_float_floor != document.forced_break_float_floor
         || cleared_lines_to_float_floor != document.forced_break_line_float_floor
+        || named_break_floats != document.named_break_floats
     {
         document.forced_break_clearance = cleared;
         document.forced_break_line_clearance = cleared_lines;
         document.forced_break_float_floor = cleared_to_float_floor;
         document.forced_break_line_float_floor = cleared_lines_to_float_floor;
+        document.named_break_floats = named_break_floats;
         document.layout_dirty = true;
     }
 }
@@ -4386,6 +4405,7 @@ fn forces_page_break(
     let own = if before {
         page_break_is_forced(document, cascade, node_id, computed.break_before)
             || starts_with_forced_spanner(document, cascade, node_id)
+            || document.named_break_floats.binary_search(&node_id).is_ok()
     } else {
         box_forces_break_after(document, cascade, node_id, computed.break_after)
     };
