@@ -56,10 +56,10 @@ fn takes_part(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
     crate::generated_content::marker_is_enabled(cascade, owner)
         && !crate::generated_content::inside_marker_in_flow(cascade, owner)
         && !cascade.computed[owner].writing_mode.is_vertical()
-        && !doc
+        && doc
             .nodes
             .get(owner)
-            .is_some_and(|node| node.multicol.is_some())
+            .is_none_or(|node| node.multicol.is_none())
 }
 
 /// Text that stands for what the marker with the values `marker` shows, so
@@ -72,15 +72,21 @@ fn sample_text(marker: &ComputedValues) -> Option<String> {
         match &marker.list_style_type {
             ListStyleType::None => String::new(),
             ListStyleType::String(text) => text.to_string(),
-            ListStyleType::Disc => "\u{2022}".to_owned(),
-            ListStyleType::Named(name) => match name.to_ascii_lowercase().as_str() {
-                "disc" => "\u{2022}",
-                "circle" => "\u{25E6}",
-                "square" => "\u{25AA}",
-                _ => "0",
+            other => {
+                // `disc`, the initial value, is the only keyword not kept as
+                // a name.
+                let name = match other {
+                    ListStyleType::Named(name) => name.to_ascii_lowercase(),
+                    _ => "disc".to_owned(),
+                };
+                match name.as_str() {
+                    "disc" => "\u{2022}",
+                    "circle" => "\u{25E6}",
+                    "square" => "\u{25AA}",
+                    _ => "0",
+                }
+                .to_owned()
             }
-            .to_owned(),
-            _ => "0".to_owned(),
         }
     } else {
         marker
