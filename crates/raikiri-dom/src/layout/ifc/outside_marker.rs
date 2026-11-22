@@ -1,21 +1,82 @@
-//! Additional leading contributed by an outside image marker.
+//! Additional leading contributed by an outside marker.
 
 use crate::Document;
-use raikiri_style::CascadeResult;
+use raikiri_style::property::ListStyleType;
+use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
+use shodo::font::FontCollection;
 
-/// The replaced marker's ascent, when it participates in horizontal flow.
+/// How far the outside marker of `owner` reaches above the baseline of the
+/// first line, when it participates in horizontal flow: the ascent of an
+/// image, or the room the marker's text takes above its baseline with the
+/// marker's own font and `line-height`. The fonts are the document's.
 pub(crate) fn height(doc: &Document, cascade: &CascadeResult, owner: usize) -> Option<f32> {
-    if !crate::generated_content::marker_is_enabled(cascade, owner)
-        || crate::generated_content::inside_marker_in_flow(cascade, owner)
-        || cascade.computed[owner].writing_mode.is_vertical()
-        || doc
+    height_in(
+        doc,
+        cascade,
+        doc.ifc.as_ref().map(|state| &state.fonts),
+        owner,
+    )
+}
+
+/// Whether the outside marker of `owner` may reach above the first line, so
+/// that the first baseline of the box matters to its layout. This is
+/// [`height`] without measuring the marker.
+pub(crate) fn has_height(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
+    takes_part(doc, cascade, owner)
+        && (doc.list_marker_image_size(owner).is_some() || has_text(cascade, owner))
+}
+
+/// [`height`] with the marker's text measured in `fonts`.
+pub(crate) fn height_in(
+    doc: &Document,
+    cascade: &CascadeResult,
+    fonts: Option<&FontCollection>,
+    owner: usize,
+) -> Option<f32> {
+    if !takes_part(doc, cascade, owner) {
+        return None;
+    }
+    if let Some(size) = doc.list_marker_image_size(owner) {
+        return Some(size.height);
+    }
+    if !has_text(cascade, owner) {
+        return None;
+    }
+    let fallback;
+    let marker = match cascade
+        .pseudo
+        .get(&(StyleNodeId::new(owner as u64), PseudoElem::Marker))
+    {
+        Some(marker) => &**marker,
+        None => {
+            fallback = ComputedValues::inherit_marker_from(&cascade.computed[owner]);
+            &fallback
+        }
+    };
+    let inline = super::style::inline_style(marker, owner, fonts?).ok()?;
+    super::standalone::line_ascent(fonts?, &inline)
+}
+
+/// Whether `owner` has an outside marker in horizontal flow whose leading
+/// this module places.
+fn takes_part(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
+    crate::generated_content::marker_is_enabled(cascade, owner)
+        && !crate::generated_content::inside_marker_in_flow(cascade, owner)
+        && !cascade.computed[owner].writing_mode.is_vertical()
+        && !doc
             .nodes
             .get(owner)
             .is_some_and(|node| node.multicol.is_some())
-    {
-        return None;
-    }
-    doc.list_marker_image_size(owner).map(|size| size.height)
+}
+
+/// Whether the marker of `owner` is text: `::marker` content, or a
+/// `list-style-type` other than `none`.
+fn has_text(cascade: &CascadeResult, owner: usize) -> bool {
+    cascade
+        .pseudo
+        .get(&(StyleNodeId::new(owner as u64), PseudoElem::Marker))
+        .is_some_and(|marker| !marker.content.is_empty())
+        || !matches!(cascade.computed[owner].list_style_type, ListStyleType::None)
 }
 
 /// Chromium places extra leading before the first line or baseline-bearing

@@ -566,6 +566,27 @@ pub(crate) fn measure_run(
     ))
 }
 
+/// How far above its baseline a line made of text in `inline` alone reaches,
+/// with the style's own `line-height`: the room an inline box of that text
+/// takes above the baseline of a line (CSS 2, 10.8.1). The first available
+/// font sets it, as for a line's strut. `None` when nothing lays out.
+pub(crate) fn line_ascent(fonts: &FontCollection, inline: &InlineStyle) -> Option<f32> {
+    let inline = InlineStyle {
+        white_space_collapse: WhiteSpaceCollapse::Preserve,
+        ..inline.clone()
+    };
+    let paragraph_style = ParagraphStyle {
+        root: inline.clone(),
+        writing_mode: WritingMode::HorizontalTb,
+        direction: inline.direction,
+        ..ParagraphStyle::default()
+    };
+    let mut shaped = Shaped::from_run(fonts, &Limits::default(), " ", &inline, &paragraph_style)?;
+    let lines = shaped.lines(None, StandaloneAlign::Start);
+    let line = lines.first()?;
+    Some(line.baseline(shodo::geometry::BaselineKind::Alphabetic) - line.block_start_leading())
+}
+
 /// The advance of `line` with its trailing blanks, whether shodo keeps them
 /// in the line or lets them hang.
 fn advance_of(line: &Line) -> f32 {

@@ -60,12 +60,11 @@ fn measure_in_flow_child(
     };
     if inputs.run_mode == RunMode::ComputeSize
         && (tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
-            || crate::layout::ifc::outside_marker::height(
+            || crate::layout::ifc::outside_marker::has_height(
                 tree,
                 tree.style_views.cascade(),
                 usize::from(parent),
-            )
-            .is_some())
+            ))
     {
         // Block flow collects its baseline from an in-flow child's output,
         // just as native flex/grid do through their placement callbacks.

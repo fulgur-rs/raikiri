@@ -1854,7 +1854,12 @@ fn project_children_builder_as(
                 indent,
                 boxes,
                 marker_atomic,
-                outside_marker_height: super::outside_marker::height(doc, cascade, root),
+                outside_marker_height: super::outside_marker::height_in(
+                    doc,
+                    cascade,
+                    Some(fonts),
+                    root,
+                ),
                 generated_atomics: generated_images.atomics,
                 generated_blocks: generated_images.blocks,
                 generated_boxes: generated_images.boxes,
