@@ -441,3 +441,53 @@ fn edge_and_line_breaks_look_through_wrappers_and_order() {
         &["A@0,0 B@20,0 T@60,0 Z@80,0"],
     );
 }
+
+#[test]
+fn a_break_at_the_edge_of_a_flex_or_grid_item_goes_to_its_line() {
+    // A break at the first or last box inside a flex or grid item passes to
+    // the item, and from there to its line or row: one inside a single flex
+    // line leaves the float whole, and one on a later line or row, or at a
+    // line that is not at the float's edge, splits it.
+    let float = "<div style='float:left;width:100px'>";
+    let cases: [(&str, &[&str]); 9] = [
+        (
+            "<div style='display:flex'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0 B@20,0"],
+        ),
+        (
+            "<div style='display:flex'><div>A</div><div style='break-before:page'>B</div></div>",
+            &["A@0,0 B@20,0"],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap'><div style='width:60px'>A</div><div style='width:60px'><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:grid;grid-template-columns:50px 50px'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0 B@50,0"],
+        ),
+        (
+            "<div style='display:grid;grid-template-columns:50px'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex'><div><div style='break-after:page'>A</div></div><div>B</div></div>",
+            &["A@0,0 B@20,0"],
+        ),
+        (
+            "<div style='display:flex;flex-direction:column'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex'><div>A</div><div><div>C</div><div style='break-before:page'>B</div></div></div>",
+            &["A@0,0 C@20,0", "B@20,0"],
+        ),
+        (
+            "<div>X</div><div style='display:flex'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &["X@0,0", "A@0,0 B@20,0"],
+        ),
+    ];
+    for (inner, expected) in cases {
+        expect(&format!("{float}{inner}</div>"), expected);
+    }
+}

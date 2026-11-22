@@ -2980,6 +2980,14 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let forced_holder = potential_forced_holder.filter(|_| !forced_break_at_page_start);
+        // A forced break that a flex item holds, at the start of its first
+        // box, moves the item's line as a break before the item does.
+        let flex_line = flex_line.or_else(|| {
+            forced_holder.and_then(|owner| {
+                let y = current_abs_y(document, owner.node);
+                super::row_flex_line(document, cascade, body_id, owner.node, y)
+            })
+        });
         let page_break = BoxBreak {
             margin_top,
             relative_offset,

@@ -297,3 +297,28 @@ fn a_break_after_a_line_moves_the_top_of_the_next_line_to_the_page_top() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_at_the_start_of_an_item_moves_its_line() {
+    // A break before the first box inside a flex item, however deep, is a
+    // break before the item, and the whole line goes on to the next page.
+    assert_rows(&[
+        (
+            "<div>X</div><div style='display:flex'><div>A</div><div><div style='break-before:page'>B</div></div></div>",
+            &[(0, 'X', 5), (1, 'A', 5), (1, 'B', 5)],
+        ),
+        (
+            "<div>X</div><div style='display:flex'><div>A</div><div><div><div style='break-before:page'>B</div></div></div></div>",
+            &[(0, 'X', 5), (1, 'A', 5), (1, 'B', 5)],
+        ),
+        (
+            "<div>X</div><div style='display:flex'><div>A<br>D</div><div><div style='break-before:page'>B</div></div></div>",
+            &[(0, 'X', 5), (1, 'A', 5), (1, 'B', 5), (1, 'D', 35)],
+        ),
+        // Only the line of the item moves.
+        (
+            "<div>X</div><div style='display:flex;flex-wrap:wrap;width:100px'><div style='width:60px'>A</div><div style='width:60px'>C</div><div style='width:30px'><div style='break-before:page'>B</div></div></div>",
+            &[(0, 'A', 35), (0, 'X', 5), (1, 'B', 5), (1, 'C', 5)],
+        ),
+    ]);
+}

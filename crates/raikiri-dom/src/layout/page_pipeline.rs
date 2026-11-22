@@ -10606,33 +10606,46 @@ fn break_flex_line_peers(
 /// Whether a forced break at the start (`before`) or the end of `node_id`
 /// reaches the edge of the float around it: `node_id` and every box between
 /// it and the float are the first, or the last, boxes of their parents'
-/// flow, with no generated content on that side. The break passes to the
-/// float, which is no part of the page flow, and Chromium does not take it.
-pub(super) fn break_reaches_float_edge(
+/// flow, with no generated content on that side, or flex or grid items whose
+/// line or row is the first, or the last, of their container. The break
+/// passes to the float, which is no part of the page flow, and Chromium does
+/// not take it.
+fn break_reaches_float_edge(
     document: &Document,
     cascade: &CascadeResult,
+    body_id: usize,
     node_id: usize,
     before: bool,
 ) -> bool {
     document
         .ancestors(node_id)
         .find_map(|parent| {
-            // The edge child looks through boxes that generate none and plain
-            // inline boxes, so it may lie inside the child of `parent` on the
-            // way to `node_id`.
-            let at_edge = page_edge_child(document, cascade, parent, before, 0)
-                .ok()
-                .flatten()
-                .is_some_and(|edge| {
-                    document
-                        .inclusive_ancestors(node_id)
-                        .take_while(|&ancestor| ancestor != parent)
-                        .any(|ancestor| ancestor == edge)
-                });
-            if !at_edge || generated_on_side(cascade, parent, before) {
-                Some(false)
-            } else {
+            // A break at a flex or grid item is taken at the edge of its
+            // line or row.
+            let line_edge = document
+                .inclusive_ancestors(node_id)
+                .take_while(|&ancestor| ancestor != parent)
+                .find(|&ancestor| document.layout_parent_of(ancestor) == Some(parent))
+                .and_then(|item| line_break_edge(document, cascade, body_id, item, before));
+            let at_edge = line_edge.unwrap_or_else(|| {
+                // The edge child looks through boxes that generate none and
+                // plain inline boxes, so it may lie inside the child of
+                // `parent` on the way to `node_id`.
+                !generated_on_side(cascade, parent, before)
+                    && page_edge_child(document, cascade, parent, before, 0)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|edge| {
+                            document
+                                .inclusive_ancestors(node_id)
+                                .take_while(|&ancestor| ancestor != parent)
+                                .any(|ancestor| ancestor == edge)
+                        })
+            });
+            if at_edge {
                 is_side_float(document, cascade, parent).then_some(true)
+            } else {
+                Some(false)
             }
         })
         .unwrap_or(false)
@@ -10724,7 +10737,7 @@ pub(super) fn line_break_edge(
 /// the float's flow, rather than at the float's own edge, where it passes
 /// to the float, which is no part of the page flow (Chromium). A break at
 /// an item that shares its flex line or grid row falls at the edge of that
-/// line or row.
+/// line or row, and one at the edge of an item at the edge of that item.
 pub(super) fn splits_float_flow(
     document: &Document,
     cascade: &CascadeResult,
@@ -10732,14 +10745,7 @@ pub(super) fn splits_float_flow(
     node_id: usize,
     before: bool,
 ) -> bool {
-    match line_break_edge(document, cascade, body_id, node_id, before) {
-        Some(false) => true,
-        Some(true) => document.layout_parent_of(node_id).is_none_or(|container| {
-            !is_side_float(document, cascade, container)
-                && !break_reaches_float_edge(document, cascade, container, before)
-        }),
-        None => !break_reaches_float_edge(document, cascade, node_id, before),
-    }
+    !break_reaches_float_edge(document, cascade, body_id, node_id, before)
 }
 
 /// Push the later items of the grid `container` that start within the rows
