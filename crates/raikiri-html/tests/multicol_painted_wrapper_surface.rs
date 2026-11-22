@@ -106,6 +106,44 @@ fn page_of(result: &DocumentLayout, index: u32) -> String {
     format!("{} | {}", words.join(" "), pieces.join(" "))
 }
 
+/// Every word of `body` that the clips in effect leave visible, as
+/// `word@x,y`, the left and top of its glyphs, sorted.
+fn visible_words(body: &str) -> String {
+    let result = lay_out(body);
+    let page = result.page(0).expect("the page");
+    let runs = page.text_runs();
+    let mut clips = Vec::new();
+    let mut words = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        let line = match event {
+            PaintEvent::PushClip(clip, _) => {
+                clips.push(clip);
+                continue;
+            }
+            PaintEvent::PopClip => {
+                clips.pop();
+                continue;
+            }
+            PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => line,
+            _ => continue,
+        };
+        for run in runs.iter().filter(|run| run.line == line) {
+            let x = run.origin.0;
+            let y = (run.origin.1 - ASCENT).round();
+            let visible = clips.iter().all(|clip| {
+                let rect = clip.rect;
+                (!clip.clip_x || (rect.x..rect.x + rect.width).contains(&x))
+                    && (!clip.clip_y || (rect.y..rect.y + rect.height).contains(&y))
+            });
+            if visible && !run.text.trim().is_empty() {
+                words.push(format!("{}@{},{}", run.text.trim(), x.round(), y));
+            }
+        }
+    }
+    words.sort();
+    words.join(" ")
+}
+
 #[test]
 fn a_block_with_a_background_breaks_between_the_columns() {
     assert_eq!(
@@ -210,5 +248,20 @@ fn a_painted_block_breaks_between_the_columns_of_each_page() {
     assert_eq!(
         page_of(&result, 1),
         "L@0,0 L@0,10 L@50,0 L@50,10 S@0,20 | (0,0,50,20)(50,0,50,20)"
+    );
+}
+
+#[test]
+fn what_a_painted_block_holds_overflows_where_it_begins_and_ends() {
+    // A box moved above the first piece or below the last still shows, as
+    // the block has no edge there that cuts it.
+    assert_eq!(
+        visible_words(
+            "<div style=padding-top:20px><div class=m style=height:20px;column-fill:auto>\
+             <div style=background:red><div style=position:relative;top:-5px>A</div>\
+             <div>B</div><div>C</div><div style=position:relative;top:5px>D</div>\
+             </div></div></div>"
+        ),
+        "A@0,15 B@0,30 C@50,20 D@50,35"
     );
 }

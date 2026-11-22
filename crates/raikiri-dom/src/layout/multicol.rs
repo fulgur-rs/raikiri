@@ -2601,13 +2601,26 @@ fn push_wrapper_pieces(
             height,
             ..first.rect
         };
+        // The clip cuts the piece where the wrapper breaks, and leaves the
+        // edges where it begins and ends open, as a paragraph's are, so the
+        // ink of what it holds may overflow there.
+        let above = if index == 0 {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
+        let below = if index + 1 == count {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
         let fragment = crate::fragment::LayoutFragment {
             fragmentainer: first.fragmentainer + index,
             rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
             fragmentainer_clip: Some(paragraph_group::inline_open_clip(
                 crate::fragment::FragmentRect {
-                    y: column_top,
-                    height: column_height,
+                    y: column_top - above,
+                    height: column_height + above + below,
                     ..rect
                 },
             )),
