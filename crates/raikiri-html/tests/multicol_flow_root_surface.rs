@@ -194,3 +194,53 @@ fn a_column_spanning_box_inside_a_flow_root_box_spans_nothing() {
         "0:X@0,0 0:S@0,10 0:B@0,20 0:C@50,20"
     );
 }
+
+#[test]
+fn a_flow_root_box_of_one_line_inside_a_wrapper_goes_to_one_column() {
+    assert_eq!(
+        words(
+            "<div class=m><div><div class=f><div>A</div></div><div>B</div><div>C</div></div></div>"
+        ),
+        "0:A@0,0 0:B@0,10 0:C@50,0"
+    );
+}
+
+#[test]
+fn the_last_line_of_a_flow_root_box_goes_with_the_padding_below_it() {
+    assert_eq!(
+        words(
+            "<div class=m><div style='padding-bottom:10px'><div class=f><div>A</div>\
+             <div>B</div><div>C</div></div></div></div>"
+        ),
+        "0:A@0,0 0:B@0,10 0:C@50,0"
+    );
+    assert_eq!(
+        words(
+            "<div class=m><div style='padding-bottom:20px'><div class=f><div>A</div>\
+             <div>B</div><div>C</div><div>D</div></div></div></div>"
+        ),
+        "0:A@0,0 0:B@0,10 0:C@0,20 0:D@50,0"
+    );
+}
+
+#[test]
+fn a_box_that_starts_a_formatting_context_keeps_the_margins_inside_apart() {
+    // A size container starts one too.
+    assert_eq!(
+        words(
+            "<div class=m><div style='container-type:inline-size'>\
+             <div style='margin-top:10px'>A</div><div>B</div><div>C</div></div></div>"
+        ),
+        "0:A@0,10 0:B@50,0 0:C@50,10"
+    );
+    // A box whose first lines the next column takes keeps the margin above
+    // them.
+    assert_eq!(
+        words(
+            "<div class=m><div>X</div><div>Y</div><div>W</div>\
+             <div class=f style='margin-top:5px'><div style='margin-top:10px;orphans:3'>\
+             A<br>B<br>C</div></div></div>"
+        ),
+        "0:X@0,0 0:Y@0,10 0:W@0,20 0:A@50,10 0:B@50,20 0:C@50,30"
+    );
+}

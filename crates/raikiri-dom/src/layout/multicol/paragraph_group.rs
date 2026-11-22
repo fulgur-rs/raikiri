@@ -238,12 +238,14 @@ impl Flow {
         depth: usize,
     ) -> Option<()> {
         let id = entry.0;
-        // A `flow-root` box that holds one row of lines has nowhere to break,
-        // so it goes whole to a column (see `holds_one_row_of_lines`). Its
-        // lines are known only once it is laid out at the column width, as
-        // the entries are.
+        // A `flow-root` box of the container's own that holds one row of
+        // lines has nowhere to break, so it goes whole to a column (see
+        // `holds_one_row_of_lines`). Its lines are known only once it is laid
+        // out at the column width, as the entries are. Inside a wrapper, its
+        // one row goes to one column as a wrapper.
         if !is_flow_wrapper(tree, id)
-            || layout_node(tree, id).display() == DisplayValue::FlowRoot
+            || parent.is_none()
+                && layout_node(tree, id).display() == DisplayValue::FlowRoot
                 && holds_one_row_of_lines(tree, id)
         {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
@@ -367,6 +369,7 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
     }
     node.ifc.is_some()
         && node.ifc_boxes().is_empty()
+        && !style_of(tree, id).float().is_floated()
         && !spans_the_columns(tree, id)
         && !lineless::has_block_edge_decorations(&style_of(tree, id))
         && (!is_sized_paragraph(tree, id) || insets_are_a_relative_offset(tree, id))
@@ -387,7 +390,7 @@ fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
         if node.multicol.is_some() {
             return true;
         }
-        if node.display() == DisplayValue::FlowRoot {
+        if starts_formatting_context(node) {
             return false;
         }
         current = tree.parent_of(ancestor);
@@ -395,12 +398,20 @@ fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
     true
 }
 
+/// Whether `node`, a block, starts a block formatting context of its own,
+/// as a `flow-root` box does. Margins do not collapse through its edges
+/// (CSS 2, 8.3.1), and a `column-span: all` box inside it spans nothing.
+fn starts_formatting_context(node: &crate::node::Node) -> bool {
+    node.display() == DisplayValue::FlowRoot || node.roots_block_context()
+}
+
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
-/// block or `flow-root` box that holds only blocks, has no border, takes the width of the column
-/// and paints nothing, so that cutting it between the columns where its boxes
-/// break leaves nothing of it to show. Its margins adjoin those of its first
-/// and last boxes, as it starts no formatting context, unless padding above or
-/// below them keeps them apart: that padding is room in the flow, which a
+/// block that holds only blocks, has no border, takes the width of the
+/// column and paints nothing, so that cutting it between the columns where
+/// its boxes break leaves nothing of it to show. Its margins adjoin those of
+/// its first and last boxes, unless it starts a formatting context of its
+/// own, as a `flow-root` box does (see [`starts_formatting_context`]), or
+/// padding above or below them keeps them apart: that padding is room in the flow, which a
 /// column end cuts, unless `box-decoration-break: clone` repeats it in every
 /// column, which the flow does not model. Padding at its sides narrows its
 /// boxes, which are laid out in it.
@@ -495,6 +506,13 @@ struct Paragraph {
 }
 
 impl Paragraph {
+    /// Whether this is the start or the end of a wrapper with no padding,
+    /// which takes no room in the flow and only keeps the margins on either
+    /// side of it apart.
+    fn is_edge(&self) -> bool {
+        matches!(self.extents.as_slice(), [(top, bottom)] if bottom <= top)
+    }
+
     /// A box the columns hold whole: its block size is the one extent of a
     /// paragraph of one line, so no break falls inside it, unless `sliced` is
     /// then set. `lines` is the number of lines it holds, if any.
@@ -797,8 +815,7 @@ fn collect(
             (margin_top.is_finite() && margin_bottom.is_finite() && edge.is_finite())
                 .then_some(())?;
             high += edge + margin_top.abs() + margin_bottom.abs();
-            let separates =
-                edge > 0.0 || layout_node(tree, child).display() == DisplayValue::FlowRoot;
+            let separates = edge > 0.0 || starts_formatting_context(layout_node(tree, child));
             paragraphs.push(Some(Paragraph {
                 opens: match role {
                     Role::Open(close) if separates => Some(close),
@@ -1189,6 +1206,11 @@ fn closing_room(paragraphs: &[Option<Paragraph>], index: usize, last: &Paragraph
             room += margins.with(paragraph.margin_top).value() + paragraph.extents[0].1
                 - paragraph.extents[0].0;
             margins = Margins::default().with(paragraph.margin_bottom);
+        } else if paragraph.sliced && paragraph.opens.is_none() && paragraph.is_edge() {
+            // The end of a box that starts a formatting context takes no
+            // room, and the margins inside it, which a column end would cut,
+            // stay apart from the ones after it.
+            margins = Margins::default().with(paragraph.margin_bottom);
         } else if paragraph.extents.is_empty() && paragraph.opens.is_none() {
             margins = margins
                 .with(paragraph.margin_top)
@@ -1360,12 +1382,14 @@ fn fill_chunk_with(
                 }
             }
         }
-        if paragraph.sliced && paragraph.extents[0].1 <= paragraph.extents[0].0 {
+        if paragraph.sliced && paragraph.is_edge() {
             // An edge with no height, which only keeps the margins on either
             // side of it apart, stays where the margins above put it. Past the
             // end of a column that holds content, it is an unforced break, as
             // an empty box is: the edge starts the next column, and the
-            // margins that adjoin it there are cut.
+            // margins after the end of a box that adjoin it there are cut. The
+            // first box after the start of one keeps its margin, which the
+            // edge keeps apart from the break.
             if top > height + f32::EPSILON && column_has_content {
                 maximum = maximum.max(cursor);
                 column = column.checked_add(1)?;
@@ -1380,7 +1404,7 @@ fn fill_chunk_with(
                 }
                 top = 0.0;
                 column_has_content = false;
-                cut_margins = true;
+                cut_margins = paragraph.opens.is_none();
             }
             cursor = top;
             pending_margin = if cut_margins {
