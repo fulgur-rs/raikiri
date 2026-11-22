@@ -1558,8 +1558,9 @@ impl Node {
     }
 
     /// Whether this box roots a block formatting context, as a block-level
-    /// HTML `fieldset` (HTML Standard §15.5.12) or a size query container:
-    /// it keeps clear of floats, holds its floats and does not collapse its
+    /// HTML `fieldset` (HTML Standard §15.5.12), a size query container or a
+    /// block box with `column-span: all` (CSS Multi-column Layout 1, 6.1): it
+    /// keeps clear of floats, holds its floats and does not collapse its
     /// margins with those of its children.
     #[inline]
     pub(crate) fn roots_block_context(&self) -> bool {

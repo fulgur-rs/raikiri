@@ -1847,7 +1847,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 })
                 .flatten()
                 .filter(|lone| {
-                    lone.tail + frame.closing_edges - lone.gap.min(0.0) > 0.001
+                    let edges = if lone.cut { 0.0 } else { frame.closing_edges };
+                    lone.tail + edges - lone.gap.min(0.0) > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -2219,6 +2220,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
                     .map(|lone| lone.inside());
+                // A block whose first box moves with the edges that close it
+                // breaks away from the edges after the block, and from the
+                // blocks of set size around it (see `LoneBox::cut`).
+                let lone_cut = lone_tail
+                    .filter(|_| can_move_nested)
+                    .is_some_and(|lone| lone.cut);
                 // How far the floats beside the box of such a block, and those
                 // of the blocks it ends, reach below the box. Both ends are
                 // measured at their normal-flow positions, as the page fit is.
@@ -2383,15 +2390,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 avoided_break_before: avoided_break_passed_on,
-                                closing_edges: if closing_edges_candidate
-                                    || lone_box_candidate.is_some()
-                                {
+                                closing_edges: if lone_cut {
+                                    0.0
+                                } else if closing_edges_candidate || lone_box_candidate.is_some() {
                                     frame.closing_edges
                                 } else {
                                     0.0
                                 },
                                 capped_edges_block: frame.capped_edges_block.filter(|_| {
-                                    closing_edges_candidate || lone_box_candidate.is_some()
+                                    !lone_cut
+                                        && (closing_edges_candidate || lone_box_candidate.is_some())
                                 }),
                                 closing_edges_inside: lone_box_candidate.unwrap_or(0.0),
                                 closing_edges_span: match frame.tie {

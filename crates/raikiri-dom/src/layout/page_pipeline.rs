@@ -12023,7 +12023,9 @@ fn unbreakable_box_moves(
 /// A block that holds one box has the edges at its own end: its last
 /// `closing_edges_inside` of block size follow that box, and the page breaks
 /// before the block rather than between the box and them (see
-/// [`lone_box_tail`]).
+/// [`lone_box_tail`]). Part of that block size may not follow the box: the
+/// room at the end of a block of set size, or the boxes after the first box
+/// of a block, which `closing_edges_gap` leaves out (see [`LoneBox`]).
 ///
 /// The first box of a run of boxes tied by avoided breaks that ends its block
 /// moves with the `closing_edges_span` of block size that the rest of the run
@@ -13761,7 +13763,9 @@ fn lone_box_tail(
     .map(|lone| lone.tail)
 }
 
-/// A block that holds one box (see [`lone_box_tail`]).
+/// A block that holds one box (see [`lone_box_tail`]), or holds it first
+/// among others or in a block of set size, which only
+/// [`closing_edges_move`] weighs.
 #[derive(Clone, Copy)]
 struct LoneBox {
     /// The block size at the end of the block that follows its box.
@@ -13769,16 +13773,23 @@ struct LoneBox {
     /// How far below the box the floats beside it reach, or zero.
     float_reach: f32,
     /// When positive, the room at the end of a block of set size in the
-    /// chain that its content does not reach, and all that follows it in the
-    /// block (see [`sized_block_ends_below_content`]): the part of `tail`
-    /// that does not follow the box, which moves for the rest of `tail` only.
+    /// chain that its content does not reach (see
+    /// [`sized_block_ends_below_content`]), or the boxes and floats after the
+    /// first box of a block, with all that follows them in `node_id`: the
+    /// part of `tail` that does not follow the box, which moves for the rest
+    /// of `tail` only.
     /// When negative, how far the edges that follow the box run past the end
     /// of the block, out of a block of set size too short for its content.
     gap: f32,
     /// Whether a block of set size that its content does not fill, or runs
-    /// past, holds the box in the chain: only [`closing_edges_move`] weighs
-    /// `gap`, and the other callers leave such a block alone.
+    /// past, or a block whose first box is followed by others, holds the box
+    /// in the chain: only [`closing_edges_move`] weighs `gap`, and the other
+    /// callers leave such a block alone.
     sized: bool,
+    /// Whether boxes after the box in a block of the chain stand between the
+    /// box and the edges of the blocks around `node_id`, which then do not
+    /// follow the box.
+    cut: bool,
 }
 
 impl LoneBox {
@@ -13818,8 +13829,24 @@ fn lone_box_with_floats(
     // the edges that follow the box. From the top of `node_id`.
     let mut follow_end = f32::NEG_INFINITY;
     let mut room_found = false;
+    // Whether boxes after the box in a block of the chain cut it off from
+    // the edges outside that block.
+    let mut cut_by_boxes = false;
     let mut sized = false;
     let mut edges_follow = ancestor_edges_follow;
+    // A float beside the box moves along with the block. The blocks between
+    // the one that holds the box and the float may be offset, while
+    // `content_end` is at normal-flow positions.
+    let accept_float = |float: usize, float_bottom: &mut f32| {
+        let accepted = float_within_box(document, node_id, float)
+            || (floats_may_reach && float_starts_within_box(document, node_id, float));
+        if accepted {
+            let offset_below = accumulated_relative_offset_y(document, cascade, body_id, float)
+                - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+            *float_bottom = float_bottom.max(float_extent(document, float).1 - offset_below);
+        }
+        accepted
+    };
     loop {
         let node = &document.nodes[current];
         // Generated boxes are not among the children, and the columns of a
@@ -13860,26 +13887,54 @@ fn lone_box_with_floats(
             break;
         }
         let mut boxes = Vec::new();
+        let mut first_box = None;
+        // The floats, each with whether it comes after the first box: those
+        // are judged once it is known whether other boxes follow that box.
+        let mut floats = Vec::new();
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
-                // A float beside the box moves along with the block.
-                let accepted = float_within_box(document, node_id, child)
-                    || (floats_may_reach && float_starts_within_box(document, node_id, child));
-                if !accepted {
-                    return None;
-                }
-                // The blocks between the one that holds the box and the float
-                // may be offset, while `content_end` is at normal-flow
-                // positions.
-                let offset_below = accumulated_relative_offset_y(document, cascade, body_id, child)
-                    - accumulated_relative_offset_y(document, cascade, body_id, node_id);
-                float_bottom = float_bottom.max(float_extent(document, child).1 - offset_below);
+                floats.push((child, !boxes.is_empty()));
                 continue;
             }
+            let before = boxes.len();
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
-            if boxes.len() > 1 {
+            // The boxes of one child come last first.
+            if before == 0 && boxes.len() > before {
+                first_box = boxes.last().copied();
+            }
+        }
+        // A block whose first box is followed by others holds that box at
+        // its start: when the box moves with the edges that close it, the
+        // page breaks before the block, which moves whole, as in Chromium.
+        // The boxes and floats after the first box, and the block's own
+        // edges, stay behind the box, as the room at the end of a block of
+        // set size does. So does a float after the box that starts below the
+        // end of `node_id`, with no edges around `node_id` to follow the box
+        // there.
+        let node_end =
+            current_abs_y(document, node_id) + document.nodes[node_id].layout.size.height;
+        let starts_below_node = |float: usize| {
+            let offset_below = accumulated_relative_offset_y(document, cascade, body_id, float)
+                - accumulated_relative_offset_y(document, cascade, body_id, node_id);
+            float_extent(document, float).0 - offset_below >= node_end - 0.001
+        };
+        let followed = boxes.len() > 1
+            || (!edges_follow
+                && floats
+                    .iter()
+                    .any(|&(float, after_box)| after_box && starts_below_node(float)));
+        for &(float, after_box) in &floats {
+            // The floats after a followed box stay behind it.
+            if after_box && followed {
+                continue;
+            }
+            if !accept_float(float, &mut float_bottom) {
                 return None;
             }
+        }
+        if followed {
+            boxes.clear();
+            boxes.extend(first_box);
         }
         // A block of set size that its content does not fill holds its box
         // all the same: when the box moves with the edges that close it, the
@@ -13888,8 +13943,16 @@ fn lone_box_with_floats(
         let sized_room = block_flow_closing_edges(document, cascade, body_id, current)
             .is_none()
             .then(|| sized_block_ends_below_content(document, cascade, body_id, current));
+        // A block that clips what runs past its end, or whose size ignores
+        // its content, holds no box whose edges follow it.
         let holds_box = sized_room.is_none_or(|room| room.is_some());
-        if !boxes.is_empty() {
+        if followed {
+            sized = true;
+            room_found = true;
+            cut_by_boxes = true;
+            edges_follow = false;
+            follow_end = f32::NEG_INFINITY;
+        } else if !boxes.is_empty() {
             let end = content_end + node.layout.size.height;
             if let Some(Some(room)) = sized_room {
                 sized = true;
@@ -13933,11 +13996,21 @@ fn lone_box_with_floats(
     // room, and all that comes after it in `node_id`, stays behind when the
     // box moves. Without such room, or with room that itself runs past the
     // end of `node_id`, the edges that a block of set size lets run past
-    // that end follow the box as well. A box that runs past the end of `node_id` out of a block of set
-    // size keeps its negative `tail`, so that the caller sees where it ends.
+    // that end follow the box as well. A box that runs past the end of
+    // `node_id` out of a block of set size keeps its negative `tail`, so that
+    // the caller sees where it ends.
     let follow_end = follow_end.max(content_end);
     let gap = if room_found {
-        height - follow_end
+        let room = height - follow_end;
+        // Room that ends right where `node_id` does still cuts the edges of
+        // the blocks around `node_id` off from the box; a hair of it keeps
+        // `closing_edges_move` from counting them. Boxes after the box cut
+        // them off whatever the room (see `LoneBox::cut`).
+        if !cut_by_boxes && room.abs() <= 0.001 {
+            0.001
+        } else {
+            room
+        }
     } else if sized {
         -(follow_end - height).max(0.0)
     } else {
@@ -13954,6 +14027,7 @@ fn lone_box_with_floats(
         float_reach: (float_bottom - (current_abs_y(document, node_id) + content_end)).max(0.0),
         gap,
         sized,
+        cut: cut_by_boxes,
     })
 }
 
@@ -22121,17 +22195,6 @@ fn holds_floats_by_style(
         || document.nodes[node_id].multicol.is_some()
         || document.nodes[node_id].roots_block_context()
         || establishes_containment_context(computed)
-        || is_column_spanner(document, cascade, node_id)
-}
-
-/// Whether `node_id` is a spanner of the multicol container around it,
-/// which establishes a block formatting context of its own (CSS Multi-column
-/// Layout 1, 6.1).
-fn is_column_spanner(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
-    super::is_spanner_in(document, cascade, node_id)
-        && document
-            .parent_of(node_id)
-            .is_some_and(|parent| lays_out_in_columns(document, parent))
 }
 
 /// Whether the box `node_id` is an item of a flex or grid container.
