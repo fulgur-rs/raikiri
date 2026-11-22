@@ -3023,6 +3023,18 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let forced_holder = potential_forced_holder.filter(|_| !forced_break_at_page_start);
+        // A box that the clearance at its own break has already moved to the
+        // top of a later page opens no page here, and is planned as one that
+        // the break moves would be.
+        if forced_break_at_page_start && potential_forced_holder.is_none() {
+            self.plan_break_top(
+                document,
+                env,
+                node_id,
+                effective_y - relative_offset - margin_top,
+                margin_top,
+            );
+        }
         // The line of the item that holds the break moves rather than one
         // inside it.
         let flex_line = match forced_holder {
@@ -3114,6 +3126,72 @@ impl PaginationState {
     /// that it avoids. The box moves to the top of that page, and the flow
     /// after it, its floats and the siblings of a wrapped flex line move with
     /// it.
+    /// Plans the box `node_id` after a forced break, whose margin box
+    /// starts at `flow_top`, at the top of the page the break opens when
+    /// only the clearance at the break kept it below that top and an earlier
+    /// float of its formatting context runs on past it. A float that runs on
+    /// onto that page takes its place there beside the content that starts
+    /// the page (Chromium), so the next layout starts the box at that top
+    /// and leaves the float beside it. A box planned before keeps its plan
+    /// (see `begin_box`).
+    fn plan_break_top(
+        &self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        flow_top: f32,
+        margin_top: f32,
+    ) {
+        let cascade = env.cascade;
+        let node = &document.nodes[node_id];
+        if matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || node.used_writing_mode.is_vertical()
+            || document
+                .context
+                .float_resumptions
+                .break_top(node_id)
+                .is_some()
+            || document
+                .forced_break_clearance
+                .binary_search(&node_id)
+                .is_err()
+        {
+            return;
+        }
+        // The page the break opens follows the flow's page, and any page an
+        // earlier forced break opened.
+        let opened = env.page_origins.origin(
+            self.current_page
+                .max(self.last_forced_page.unwrap_or(0))
+                .saturating_add(1),
+        );
+        let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+        // A float before a block that takes the break with it is left below
+        // the earlier floats, and so is a block that an inline formatting
+        // context lays out, which places it after its lines.
+        let in_ifc = document
+            .layout_parent_of(node_id)
+            .is_some_and(|parent| document.nodes[parent].is_ifc_root());
+        if is_float == in_ifc
+            && flow_top > opened + 0.5
+            && float_runs_past(
+                document,
+                cascade,
+                super::float_context_root(document, cascade, node_id, env.body_id),
+                node_id,
+                opened,
+            )
+        {
+            let lead = if is_float { 0.0 } else { margin_top };
+            document
+                .context
+                .forced_break_tops
+                .push((node_id, opened + lead));
+        }
+    }
+
     pub(super) fn open_page_for_box(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -3288,55 +3366,14 @@ impl PaginationState {
         // opens takes its place there beside the content that starts that
         // page (Chromium), so the next layout starts the box at that page's
         // top instead and leaves the float beside it.
-        if lands_after_forced_break
-            && forced_holder.is_none()
-            && !matches!(
-                document.nodes[node_id].position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-            && !document.nodes[node_id].used_writing_mode.is_vertical()
-        {
-            // The page the break opens follows the flow's page, and any page
-            // an earlier forced break opened.
-            let opened = page_origins.origin(
-                self.current_page
-                    .max(self.last_forced_page.unwrap_or(0))
-                    .saturating_add(1),
+        if lands_after_forced_break && forced_holder.is_none() {
+            self.plan_break_top(
+                document,
+                env,
+                node_id,
+                position.effective_y - relative_offset - margin_top,
+                margin_top,
             );
-            let is_float = is_floating_box_for_pagination(document, cascade, node_id);
-            let lead = if is_float { 0.0 } else { margin_top };
-            // A float before a block that takes the break with it is left
-            // below the earlier floats, and so is a block that an inline
-            // formatting context lays out, which places it after its lines.
-            let in_ifc = document
-                .layout_parent_of(node_id)
-                .is_some_and(|parent| document.nodes[parent].is_ifc_root());
-            let cleared_past = is_float == in_ifc
-                && document
-                    .forced_break_clearance
-                    .binary_search(&node_id)
-                    .is_ok()
-                && position.effective_y - relative_offset - margin_top > opened + 0.5
-                && float_runs_past(
-                    document,
-                    cascade,
-                    super::float_context_root(document, cascade, node_id, env.body_id),
-                    node_id,
-                    opened,
-                );
-            // A box planned there before keeps its plan (see `begin_box`).
-            if cleared_past
-                && document
-                    .context
-                    .float_resumptions
-                    .break_top(node_id)
-                    .is_none()
-            {
-                document
-                    .context
-                    .forced_break_tops
-                    .push((node_id, opened + lead));
-            }
         }
         // Only a break the flow takes opens a page for it: one inside a float,
         // or inside a box positioned away from its static position, does not.

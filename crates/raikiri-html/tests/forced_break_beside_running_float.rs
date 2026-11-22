@@ -220,3 +220,22 @@ fn a_float_that_ends_before_the_new_page_is_left_behind() {
         &["E@60,0 S@0,0 T@40,0", "F@0,0 Z@40,0", ""],
     );
 }
+
+#[test]
+fn a_box_with_a_break_before_it_starts_the_page_beside_a_float_in_its_flow() {
+    // A box beside a float of its own flow that runs on onto later pages
+    // starts the page its break opens, beside the float, and the flow after
+    // the float stays below it.
+    expect(
+        "<div style='display:flow-root'><div style='float:left;width:10px;height:300px'></div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div></div><div>X</div>",
+        &["A@10,0", "B@10,0", "", "X@0,0"],
+    );
+    expect(
+        "<div style='display:flow-root;min-height:120px'><div style='float:left;width:10px;height:140px'></div><div style='height:30px'>A</div><div style='height:70px;break-before:page'>B</div></div><div>X</div>",
+        &["A@10,0", "B@10,0 X@0,70"],
+    );
+    expect(
+        "<div><div style='float:left;width:10px;height:300px'></div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div></div><div>X</div>",
+        &["A@10,0", "B@10,0 X@10,30", ""],
+    );
+}
