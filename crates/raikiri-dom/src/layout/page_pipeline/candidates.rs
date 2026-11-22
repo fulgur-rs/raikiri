@@ -1748,7 +1748,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let in_float_flow = inside_float
                     && !inline_level
                     && !is_float
-                    && super::in_float_block_flow(document, cascade, node_id);
+                    && super::in_float_block_flow(
+                        document,
+                        cascade,
+                        node_id,
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let after_forced_break = self.forces_break_after
                     && (in_any_flow || in_static_positioned_flow || in_float_flow)
                     && is_plain_block_box(document, node_id)

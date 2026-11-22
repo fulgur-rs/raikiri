@@ -10822,39 +10822,66 @@ impl PendingBreak {
 /// The nearest absolutely or fixed positioned box or float around
 /// `node_id`, which keeps the breaks forced inside it to itself: Chromium
 /// splits that box at the break and leaves the flow outside it in place.
+/// A footnote is no float of the flow: its body goes to the footnote area.
 fn break_scope(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
-    document.layout_ancestors(node_id).find(|&id| {
-        is_out_of_flow_positioned(document, id)
-            || is_floating_box_for_pagination(document, cascade, id)
-    })
+    document
+        .layout_ancestors(node_id)
+        .find(|&id| is_out_of_flow_positioned(document, id) || is_side_float(document, cascade, id))
+}
+
+/// Whether `id` floats to a side in the flow, which a break forced inside
+/// it splits: a footnote is placed in the footnote area instead.
+fn is_side_float(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    matches!(
+        cascade.computed[id].float,
+        FloatValue::Left | FloatValue::Right
+    ) && is_floating_box_for_pagination(document, cascade, id)
 }
 
 /// Whether `node_id` lies in the flow of a float that pagination breaks
 /// through: each box between the two stacks its children in block flow or
-/// lays them out as flex or grid items, and none of them is monolithic. A
-/// break forced there splits the float, and what follows the break inside
-/// it goes on to the next page, while the flow beside and after the float
-/// stays where it is (Chromium). An absolutely positioned box on the way
-/// keeps the break to itself, as in any flow.
-fn in_float_block_flow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+/// lays them out as flex or grid items, none of them is monolithic, and no
+/// monolithic box holds the float. A break forced there splits the float,
+/// and what follows the break inside it goes on to the next page, while the
+/// flow beside and after the float stays where it is (Chromium). An
+/// absolutely positioned box on the way keeps the break to itself, as in
+/// any flow.
+fn in_float_block_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    transposed: bool,
+) -> bool {
     let stacks_boxes = |id: usize| {
         breaks_through_block_flow(document, cascade, id)
             || (matches!(
                 document.nodes[id].display(),
                 DisplayValue::Flex | DisplayValue::Grid
             ) && !is_monolithic_for_pagination_with_transposed_axes(
-                document, cascade, id, false,
+                document, cascade, id, transposed,
             ))
     };
-    document
+    let Some(scope) = document
         .layout_ancestors(node_id)
         .filter(|&id| document.nodes[id].display() != DisplayValue::Contents)
         .find(|&id| {
             !stacks_boxes(id)
                 || is_out_of_flow_positioned(document, id)
-                || is_floating_box_for_pagination(document, cascade, id)
+                || is_side_float(document, cascade, id)
         })
-        .is_some_and(|id| stacks_boxes(id) && splits_at_forced_breaks(document, id))
+        .filter(|&id| stacks_boxes(id) && splits_at_forced_breaks(document, id))
+    else {
+        return false;
+    };
+    // The float lies in the flow of its parent: a monolithic box around it,
+    // up to an absolutely positioned box, keeps it whole.
+    !is_side_float(document, cascade, scope)
+        || !document
+            .layout_ancestors(scope)
+            .take_while(|&id| !is_out_of_flow_positioned(document, id))
+            .any(|id| {
+                is_monolithic_for_pagination_with_transposed_axes(document, cascade, id, transposed)
+            })
 }
 
 /// Whether a break forced inside the positioned box `scope` splits it: a
@@ -19626,7 +19653,7 @@ fn move_box_for_transition(
     } else if forced_transition
         && nested_block
         && break_scope(document, cascade, node_id)
-            .is_some_and(|scope| is_floating_box_for_pagination(document, cascade, scope))
+            .is_some_and(|scope| is_side_float(document, cascade, scope))
     {
         // A break forced inside a float moves what follows it inside the
         // float, which grows to hold it, as for its lines that a page end
@@ -20106,8 +20133,8 @@ fn grow_ancestors_walk(
                 .push((parent, flow_delta - flow_passed, flow_page));
         } else if flow_passed > flow_delta + 0.001 && !is_out_of_flow_positioned(document, parent) {
             // A box holding its floats grew around a float that moved with
-            // the content it overflowed: the flow after the box follows. An
-            // absolutely positioned box is out of the flow, which stays.
+            // the content it overflowed: the flow after the box follows. The
+            // flow around an absolutely positioned box stays.
             shifts.growth.push((parent, flow_passed - flow_delta));
         }
         float_delta = if owns_floats {
@@ -20125,6 +20152,11 @@ fn grow_ancestors_walk(
         size_delta = size_absorbed;
         child = parent;
         if parent == body_id {
+            break;
+        }
+        // An absolutely positioned box grows, and neither its parent nor
+        // the flow after it follows.
+        if is_out_of_flow_positioned(document, parent) {
             break;
         }
     }

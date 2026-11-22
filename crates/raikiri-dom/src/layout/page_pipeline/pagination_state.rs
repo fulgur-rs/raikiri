@@ -3374,8 +3374,8 @@ impl PaginationState {
             // A float that a break forced inside it grew keeps the boxes that
             // clear it below its new end, as when a page end moves its lines.
             if lands_after_forced_break
-                && forced_scope
-                    .is_some_and(|scope| is_floating_box_for_pagination(document, cascade, scope))
+                && super::break_scope(document, cascade, node_id)
+                    .is_some_and(|scope| super::is_side_float(document, cascade, scope))
             {
                 self.float_shifts.record_grown_floats(
                     document,
@@ -5896,8 +5896,34 @@ impl PaginationState {
                     }
                     self.flow_shift += delta;
                     text.effective_y += delta;
-                    // The flow past the positioned box gives the move back.
-                    if let Some(scope) = scope {
+                    if let Some(scope) = scope
+                        && super::is_side_float(document, env.cascade, scope)
+                    {
+                        // A float grows to hold the text that the break
+                        // forced inside it moves, as for a box there (see
+                        // `move_box_for_transition`); the flow past it gives
+                        // the move back, and the boxes that clear it follow.
+                        let moved = moved_root.unwrap_or(node_id);
+                        super::grow_ancestors_for_line_move(
+                            document,
+                            env.cascade,
+                            moved,
+                            delta,
+                            env.body_id,
+                            &mut self.subtree_shifts,
+                            entry.page_before_candidate,
+                            &super::IfcBoxShifts::default(),
+                        );
+                        self.float_shifts.record_grown_floats(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            candidate,
+                            moved,
+                            delta,
+                        );
+                    } else if let Some(scope) = scope {
+                        // The flow past the positioned box gives the move back.
                         self.subtree_shifts
                             .bound(scope, delta, entry.page_before_candidate);
                     }

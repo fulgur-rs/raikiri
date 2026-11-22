@@ -122,6 +122,10 @@ fn a_break_before_a_box_inside_a_float_splits_the_float() {
 fn a_break_after_a_box_inside_a_float_splits_the_float() {
     // A break after the last box of the float falls nowhere.
     expect(
+        "<div style='float:left;width:40px;background:red'>F<div style='break-after:page'>H</div>G</div>Z",
+        &["F@0,0 H@0,30 Z@40,0", "G@0,0"],
+    );
+    expect(
         "<div>T</div><div style='float:left;width:40px'><div style='break-after:page'>F</div>H</div>Z",
         &["F@0,30 T@0,0 Z@40,30", "H@0,0"],
     );
@@ -186,6 +190,14 @@ fn the_flow_after_the_float_stays_and_boxes_that_clear_it_follow_it() {
     // In-flow content after the float stays beside it; a box that clears it
     // starts below its part on the next page.
     expect(
+        "<div style='float:left;width:40px'>F<div style='break-after:page'>H</div>G</div><div style='clear:both'>C</div>",
+        &["F@0,0 H@0,30", "C@0,30 G@0,0"],
+    );
+    expect(
+        "<div style='float:left;width:40px'>F<div style='break-after:page'>H</div>G G</div>Z<div style='clear:both'>C</div>",
+        &["F@0,0 H@0,30 Z@40,0", "C@0,60 G@0,0 G@0,30"],
+    );
+    expect(
         "<div>T</div><div style='float:left;width:40px'>F<div style='break-before:page'>H</div></div><div>Z</div><div>Y</div>",
         &["F@0,30 T@0,0 Y@40,60 Z@40,30", "H@0,0"],
     );
@@ -222,7 +234,21 @@ fn the_flow_after_the_float_stays_and_boxes_that_clear_it_follow_it() {
 #[test]
 fn a_break_inside_a_flex_grid_or_nested_box_of_a_float_splits_it() {
     // A flex or grid container, a nested float, a table cell around the float
-    // and an absolutely positioned box inside or around it.
+    // and an absolutely positioned box inside or around it. An absolutely
+    // positioned box splits too inside a monolithic box, which does not hold
+    // it, and its parent and the flow after it stay.
+    expect(
+        "<div><div style='position:absolute;width:40px'><div style='float:left'>A<div style='break-before:page'>H</div></div></div><div>Z</div></div><div>Y</div>",
+        &["A@0,0 Y@0,30 Z@0,0", "H@0,0"],
+    );
+    expect(
+        "<div style='overflow:hidden;height:80px'><div style='position:absolute;width:40px'>F<div style='break-before:page'>H</div></div></div>Z",
+        &["F@0,0", "H@0,0 Z@0,0"],
+    );
+    expect(
+        "<span style='display:inline-block;width:60px'><div style='position:absolute;width:40px'>F<div style='break-before:page'>H</div></div></span>Z",
+        &["F@0,21 Z@60,0", "H@0,0"],
+    );
     expect(
         "<div style='float:left;width:40px;display:flex;flex-direction:column'><div>F</div><div style='break-before:page'>H</div></div>Z",
         &["F@0,0 Z@40,0", "H@0,0"],
@@ -272,7 +298,15 @@ fn a_break_inside_a_flex_grid_or_nested_box_of_a_float_splits_it() {
 #[test]
 fn breaks_that_do_not_split_the_float() {
     // A column break outside columns, an avoid value, an inline-level box and
-    // a scroll container, which is monolithic.
+    // a monolithic box inside the float or around it.
+    expect(
+        "<span style='display:inline-block;width:60px'><div style='float:left;width:40px'>F<div style='break-before:page'>H</div></div></span>",
+        &["F@0,0 H@0,30"],
+    );
+    expect(
+        "<div style='overflow:hidden;height:80px'><div style='float:left;width:40px'>F<div style='break-before:page'>H</div></div>Z</div>",
+        &["F@0,0 H@0,30 Z@40,0"],
+    );
     expect(
         "<div style='float:left;width:40px'>F<div style='overflow:auto;height:50px'>G<div style='break-before:page'>H</div></div></div>Z",
         &["F@0,0 G@0,30 H@0,60 Z@40,0"],
