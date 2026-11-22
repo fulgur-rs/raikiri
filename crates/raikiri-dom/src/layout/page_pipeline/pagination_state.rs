@@ -3369,8 +3369,23 @@ impl PaginationState {
             let forced_scope = if pending_break_applies {
                 self.pending_break.scope
             } else {
-                super::break_scope(document, node_id).filter(|_| page_break.forced_before)
+                super::break_scope(document, cascade, node_id).filter(|_| page_break.forced_before)
             };
+            // A float that a break forced inside it grew keeps the boxes that
+            // clear it below its new end, as when a page end moves its lines.
+            if lands_after_forced_break
+                && forced_scope
+                    .is_some_and(|scope| is_floating_box_for_pagination(document, cascade, scope))
+            {
+                self.float_shifts.record_grown_floats(
+                    document,
+                    cascade,
+                    body_id,
+                    candidate,
+                    holder,
+                    landing.node_delta,
+                );
+            }
             if lands_after_forced_break
                 && let Some(scope) = forced_scope
                 && super::splits_at_forced_breaks(document, scope)
