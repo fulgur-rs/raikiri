@@ -1857,7 +1857,7 @@ fn project_children_builder_as(
                 outside_marker_height: super::outside_marker::height_in(
                     doc,
                     cascade,
-                    Some(fonts),
+                    Some((fonts, limits)),
                     root,
                 ),
                 generated_atomics: generated_images.atomics,

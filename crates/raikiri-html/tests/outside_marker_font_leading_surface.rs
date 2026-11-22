@@ -99,6 +99,59 @@ fn a_larger_marker_moves_the_first_line_down() {
 }
 
 #[test]
+fn an_empty_marker_moves_nothing() {
+    // An empty string gives the marker an empty line, which takes no room.
+    assert_eq!(
+        words(
+            "li::marker{font-size:30px;content:''}",
+            "<ul><li>ab</li></ul><div>Z</div>"
+        ),
+        "ab@40,0 Z@0,10"
+    );
+    assert_eq!(
+        words(
+            "li{list-style-type:''}li::marker{font-size:30px}",
+            "<ul><li>ab</li></ul><div>Z</div>"
+        ),
+        "ab@40,0 Z@0,10"
+    );
+    // A counter after an empty string still shows text.
+    assert_eq!(
+        words(
+            "li::marker{font-size:30px;content:'' counter(list-item)}",
+            "<ol><li>ab</li></ol><div>Z</div>"
+        ),
+        "ab@40,6 Z@0,16"
+    );
+}
+
+#[test]
+fn an_image_marker_has_the_line_of_its_font() {
+    // A small image alone still sits on a line whose strut has the marker's
+    // font.
+    assert_eq!(
+        words(
+            "li::marker{font-size:30px;content:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'/%3E\")}",
+            "<ul><li>ab</li></ul><div>Z</div>"
+        ),
+        "ab@40,6 Z@0,16"
+    );
+}
+
+#[test]
+fn the_first_box_with_a_baseline_moves() {
+    // Boxes with no line come before the first line, which moves down.
+    assert_eq!(
+        words(
+            BIG,
+            "<ul><li><div></div><div style=height:5px></div><p style=margin:0>ab</p>\
+             <p style=margin:0>cd</p></li></ul><div>Z</div>"
+        ),
+        "ab@40,11 cd@40,21 Z@0,31"
+    );
+}
+
+#[test]
 fn the_marker_line_height_sets_how_far_it_reaches() {
     assert_eq!(
         words(

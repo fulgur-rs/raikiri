@@ -1,9 +1,10 @@
 //! Additional leading contributed by an outside marker.
 
 use crate::Document;
-use raikiri_style::property::ListStyleType;
+use raikiri_style::property::{ContentComponent, ListStyleType};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use shodo::font::FontCollection;
+use shodo::limits::Limits;
 
 /// How far the outside marker of `owner` reaches above the baseline of the
 /// first line, when it participates in horizontal flow: the ascent of an
@@ -13,24 +14,17 @@ pub(crate) fn height(doc: &Document, cascade: &CascadeResult, owner: usize) -> O
     height_in(
         doc,
         cascade,
-        doc.ifc.as_ref().map(|state| &state.fonts),
+        doc.ifc.as_ref().map(|state| (&state.fonts, &state.limits)),
         owner,
     )
 }
 
-/// Whether the outside marker of `owner` may reach above the first line, so
-/// that the first baseline of the box matters to its layout. This is
-/// [`height`] without measuring the marker.
-pub(crate) fn has_height(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
-    takes_part(doc, cascade, owner)
-        && (doc.list_marker_image_size(owner).is_some() || has_text(cascade, owner))
-}
-
-/// [`height`] with the marker's text measured in `fonts`.
+/// [`height`] with the marker's text measured in `shaping`, the fonts and
+/// limits of the document.
 pub(crate) fn height_in(
     doc: &Document,
     cascade: &CascadeResult,
-    fonts: Option<&FontCollection>,
+    shaping: Option<(&FontCollection, &Limits)>,
     owner: usize,
 ) -> Option<f32> {
     if !takes_part(doc, cascade, owner) {
@@ -38,9 +32,6 @@ pub(crate) fn height_in(
     }
     if let Some(size) = doc.list_marker_image_size(owner) {
         return Some(size.height);
-    }
-    if !has_text(cascade, owner) {
-        return None;
     }
     let fallback;
     let marker = match cascade
@@ -53,8 +44,10 @@ pub(crate) fn height_in(
             &fallback
         }
     };
-    let inline = super::style::inline_style(marker, owner, fonts?).ok()?;
-    super::standalone::line_ascent(fonts?, &inline)
+    let sample = sample_text(marker)?;
+    let (fonts, limits) = shaping?;
+    let inline = super::style::inline_style(marker, owner, fonts).ok()?;
+    super::standalone::line_ascent(fonts, limits, &sample, &inline)
 }
 
 /// Whether `owner` has an outside marker in horizontal flow whose leading
@@ -69,14 +62,40 @@ fn takes_part(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
             .is_some_and(|node| node.multicol.is_some())
 }
 
-/// Whether the marker of `owner` is text: `::marker` content, or a
-/// `list-style-type` other than `none`.
-fn has_text(cascade: &CascadeResult, owner: usize) -> bool {
-    cascade
-        .pseudo
-        .get(&(StyleNodeId::new(owner as u64), PseudoElem::Marker))
-        .is_some_and(|marker| !marker.content.is_empty())
-        || !matches!(cascade.computed[owner].list_style_type, ListStyleType::None)
+/// Text that stands for what the marker with the values `marker` shows, so
+/// that its glyphs pick the fonts that set the marker's line: its literal
+/// strings, its bullet, or a digit for a counter. `None` when it shows
+/// nothing, as an empty string or `list-style-type: none` do, since an empty
+/// line takes no room.
+fn sample_text(marker: &ComputedValues) -> Option<String> {
+    let sample: String = if marker.content.is_empty() {
+        match &marker.list_style_type {
+            ListStyleType::None => String::new(),
+            ListStyleType::String(text) => text.to_string(),
+            ListStyleType::Disc => "\u{2022}".to_owned(),
+            ListStyleType::Named(name) => match name.to_ascii_lowercase().as_str() {
+                "disc" => "\u{2022}",
+                "circle" => "\u{25E6}",
+                "square" => "\u{25AA}",
+                _ => "0",
+            }
+            .to_owned(),
+            _ => "0".to_owned(),
+        }
+    } else {
+        marker
+            .content
+            .iter()
+            .map(|part| match part {
+                ContentComponent::Literal(text) => text.as_str(),
+                // An image alone still gives the marker a line, and its
+                // strut, in the marker's font.
+                ContentComponent::Image { .. } => " ",
+                _ => "0",
+            })
+            .collect()
+    };
+    (!sample.is_empty()).then_some(sample)
 }
 
 /// Chromium places extra leading before the first line or baseline-bearing
