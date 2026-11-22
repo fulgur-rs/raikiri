@@ -2166,8 +2166,10 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         if clips
             || painted
             // The paragraph at the end may be a list item, whose marker sits on
-            // its first line.
-            || !(node.display() == DisplayValue::Block
+            // its first line. A `flow-root` box of the chain starts a
+            // formatting context, which changes nothing here: no box of the
+            // chain has a margin to collapse or a float to hold.
+            || !(matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
                 || node.ifc.is_some() && node.display() == DisplayValue::ListItem)
             || style.float().is_floated()
             || margin.top != zero_margin
@@ -4481,11 +4483,7 @@ fn layout_column_group(
         // The boxes inside a wrapper whose boxes joined the flow have their
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
-            Some(group)
-                if group.flow.is_some()
-                    && planned.is_some()
-                    && paragraph_group::is_flow_wrapper(tree, child) =>
-            {
+            Some(group) if planned.is_some() && group.wraps(local_order) => {
                 if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
                     .is_none()
                 {

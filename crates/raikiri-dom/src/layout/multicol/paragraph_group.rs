@@ -41,6 +41,16 @@ impl Group {
         }
     }
 
+    /// Whether the `entry`th of the entries the group was planned from is a
+    /// wrapper whose boxes joined the flow.
+    pub(super) fn wraps(&self, entry: usize) -> bool {
+        self.flow.as_ref().is_some_and(|flow| {
+            flow.direct
+                .get(entry)
+                .is_some_and(|&index| matches!(flow.roles[index], Role::Open(_)))
+        })
+    }
+
     fn flow_placement(&self, flow: &Flow, index: usize) -> Option<Placement> {
         let Role::Open(close) = flow.roles[index] else {
             return self.placements.get(index)?.clone();
@@ -228,7 +238,16 @@ impl Flow {
         depth: usize,
     ) -> Option<()> {
         let id = entry.0;
-        if !is_flow_wrapper(tree, id) {
+        // A `flow-root` box of the container's own that holds one row of
+        // lines has nowhere to break, so it goes whole to a column (see
+        // `holds_one_row_of_lines`). Its lines are known only once it is laid
+        // out at the column width, as the entries are. Inside a wrapper, its
+        // one row goes to one column as a wrapper.
+        if !is_flow_wrapper(tree, id)
+            || parent.is_none()
+                && layout_node(tree, id).display() == DisplayValue::FlowRoot
+                && holds_one_row_of_lines(tree, id)
+        {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
             // nothing but lines, between no padding or border, sized boxes
             // with no lines, and white space; the pieces are recorded without
@@ -350,17 +369,45 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
     }
     node.ifc.is_some()
         && node.ifc_boxes().is_empty()
-        && !node.column_span_all
+        && !style_of(tree, id).float().is_floated()
+        && !spans_the_columns(tree, id)
         && !lineless::has_block_edge_decorations(&style_of(tree, id))
         && (!is_sized_paragraph(tree, id) || insets_are_a_relative_offset(tree, id))
 }
 
+/// Whether `id` is a `column-span: all` box that spans the columns of the
+/// multicol container it sits in. One inside a `flow-root` box between them
+/// spans nothing: a spanner must be in the same block formatting context as
+/// its container (CSS Multi-column Layout 1, 6.1), so it is an ordinary block
+/// in the flow of the columns.
+fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
+    if !tree.nodes[id].column_span_all {
+        return false;
+    }
+    let mut current = tree.parent_of(id);
+    while let Some(ancestor) = current.filter(|&ancestor| tree.nodes[ancestor].multicol.is_none()) {
+        if starts_formatting_context(&tree.nodes[ancestor]) {
+            return false;
+        }
+        current = tree.parent_of(ancestor);
+    }
+    true
+}
+
+/// Whether `node`, a block, starts a block formatting context of its own,
+/// as a `flow-root` box does. Margins do not collapse through its edges
+/// (CSS 2, 8.3.1), and a `column-span: all` box inside it spans nothing.
+fn starts_formatting_context(node: &crate::node::Node) -> bool {
+    node.display() == DisplayValue::FlowRoot || node.roots_block_context()
+}
+
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
-/// block that holds only blocks, has no border, takes the width of the column
-/// and paints nothing, so that cutting it between the columns where its boxes
-/// break leaves nothing of it to show. Its margins adjoin those of its first
-/// and last boxes, as it starts no formatting context, unless padding above or
-/// below them keeps them apart: that padding is room in the flow, which a
+/// block that holds only blocks, has no border, takes the width of the
+/// column and paints nothing, so that cutting it between the columns where
+/// its boxes break leaves nothing of it to show. Its margins adjoin those of
+/// its first and last boxes, unless it starts a formatting context of its
+/// own, as a `flow-root` box does (see [`starts_formatting_context`]), or
+/// padding above or below them keeps them apart: that padding is room in the flow, which a
 /// column end cuts, unless `box-decoration-break: clone` repeats it in every
 /// column, which the flow does not model. Padding at its sides narrows its
 /// boxes, which are laid out in it.
@@ -375,10 +422,13 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         )
         || node.paints_whole_box_effects
         || node.paints_background_color
-        || node.column_span_all
+        || spans_the_columns(tree, id)
         || node.break_inside != raikiri_style::property::BreakInside::Auto
         || (node.clones_box_decorations && has_block_padding(tree, id))
-        || !matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        || !matches!(
+            node.display(),
+            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
+        )
         || !lineless::is_plain_box_apart_from_display(tree, id, false)
     {
         return false;
@@ -452,6 +502,13 @@ struct Paragraph {
 }
 
 impl Paragraph {
+    /// Whether this is the start or the end of a wrapper with no padding,
+    /// which takes no room in the flow and only keeps the margins on either
+    /// side of it apart.
+    fn is_edge(&self) -> bool {
+        matches!(self.extents.as_slice(), [(top, bottom)] if bottom <= top)
+    }
+
     /// A box the columns hold whole: its block size is the one extent of a
     /// paragraph of one line, so no break falls inside it, unless `sliced` is
     /// then set. `lines` is the number of lines it holds, if any.
@@ -740,7 +797,10 @@ fn collect(
             // above its first box, or below its last, which a column end
             // slices as it does a box with no lines. The margins count,
             // collapsing through them with the ones around them where no such
-            // padding keeps them apart.
+            // padding keeps them apart. The edges of a `flow-root` box keep
+            // them apart too, as it starts a formatting context of its own
+            // (CSS 2, 8.3.1): such an edge stands in the flow as a piece with
+            // no height.
             room |= has_block_padding(tree, child);
             let (before, after) = block_edges(&layout);
             let edge = if matches!(role, Role::Open(_)) {
@@ -751,14 +811,15 @@ fn collect(
             (margin_top.is_finite() && margin_bottom.is_finite() && edge.is_finite())
                 .then_some(())?;
             high += edge + margin_top.abs() + margin_bottom.abs();
+            let separates = edge > 0.0 || starts_formatting_context(layout_node(tree, child));
             paragraphs.push(Some(Paragraph {
                 opens: match role {
-                    Role::Open(close) if edge > 0.0 => Some(close),
+                    Role::Open(close) if separates => Some(close),
                     _ => None,
                 },
                 closes: role == Role::Close && edge > 0.0,
                 sized_leaf: false,
-                extents: if edge > 0.0 {
+                extents: if separates {
                     vec![(0.0, edge)]
                 } else {
                     Vec::new()
@@ -773,7 +834,7 @@ fn collect(
                 held_lines: None,
                 held_reach: 0.0,
                 overflows: false,
-                sliced: edge > 0.0,
+                sliced: separates,
             }));
             continue;
         }
@@ -1141,6 +1202,11 @@ fn closing_room(paragraphs: &[Option<Paragraph>], index: usize, last: &Paragraph
             room += margins.with(paragraph.margin_top).value() + paragraph.extents[0].1
                 - paragraph.extents[0].0;
             margins = Margins::default().with(paragraph.margin_bottom);
+        } else if paragraph.sliced && paragraph.opens.is_none() && paragraph.is_edge() {
+            // The end of a box that starts a formatting context takes no
+            // room, and the margins inside it, which a column end would cut,
+            // stay apart from the ones after it.
+            margins = Margins::default().with(paragraph.margin_bottom);
         } else if paragraph.extents.is_empty() && paragraph.opens.is_none() {
             margins = margins
                 .with(paragraph.margin_top)
@@ -1311,6 +1377,55 @@ fn fill_chunk_with(
                     return None;
                 }
             }
+        }
+        if paragraph.sliced && paragraph.is_edge() {
+            // An edge with no height, which only keeps the margins on either
+            // side of it apart, stays where the margins above put it. Past the
+            // end of a column that holds content, it is an unforced break, as
+            // an empty box is: the edge starts the next column, and the
+            // margins after the end of a box that adjoin it there are cut. The
+            // first box after the start of one keeps its margin, which the
+            // edge keeps apart from the break.
+            if top > height + f32::EPSILON && column_has_content {
+                maximum = maximum.max(cursor);
+                column = column.checked_add(1)?;
+                if column >= context.column_count {
+                    return Some(Chunk {
+                        group: finish_group(placements, height),
+                        next: Some(FlowCursor {
+                            paragraph: paragraph_index,
+                            line: 0,
+                        }),
+                    });
+                }
+                top = 0.0;
+                column_has_content = false;
+                cut_margins = paragraph.opens.is_none();
+            }
+            cursor = top;
+            pending_margin = if cut_margins {
+                Margins::default()
+            } else {
+                Margins::default().with(paragraph.margin_bottom)
+            };
+            placements[slot] = Some(Placement {
+                first_column: column,
+                first_y: top,
+                first_height: 0.0,
+                last_column: column,
+                last_y: cursor + pending_margin.value(),
+                fragments: vec![MulticolTextFragment {
+                    line_start: 0,
+                    line_end: 1,
+                    fragmentainer: column,
+                    x: 0.0,
+                    y: 0.0,
+                }],
+                entry_column,
+                entry_y,
+                sliced: true,
+            });
+            continue;
         }
         if paragraph.sliced {
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
