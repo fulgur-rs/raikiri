@@ -255,3 +255,87 @@ fn a_box_with_a_break_before_it_starts_the_page_beside_a_float_in_its_flow() {
         &["A@10,0", "G@10,0 Z@40,0", "", "X@0,0"],
     );
 }
+
+#[test]
+fn a_chain_of_forced_breaks_beside_a_float_starts_each_page_beside_it() {
+    // Each box finds its own page only once the box before it moves to the
+    // top of the page its break opens, so the chain settles one box at a
+    // time.
+    expect(
+        "<div style='float:right;width:40px;height:1000px'>R</div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div><div style='height:30px;break-before:page'>C</div><div style='height:30px;break-before:page'>D</div>",
+        &[
+            "A@0,0 R@60,0",
+            "B@0,0",
+            "C@0,0",
+            "D@0,0",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ],
+    );
+    expect(
+        "<div style='float:right;width:40px;height:1000px'>R</div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div><div style='height:30px;break-before:page'>C</div><div style='height:30px;break-before:page'>D</div><div style='height:30px;break-before:page'>E</div><div style='height:30px;break-before:page'>G</div>",
+        &[
+            "A@0,0 R@60,0",
+            "B@0,0",
+            "C@0,0",
+            "D@0,0",
+            "E@0,0",
+            "G@0,0",
+            "",
+            "",
+            "",
+            "",
+        ],
+    );
+    expect(
+        "<div style='display:flow-root'><div style='float:left;width:10px;height:1000px'></div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div><div style='height:30px;break-before:page'>C</div><div style='height:30px;break-before:page'>D</div></div><div>X</div>",
+        &[
+            "A@10,0", "B@10,0", "C@10,0", "D@10,0", "", "", "", "", "", "", "X@0,0",
+        ],
+    );
+}
+
+#[test]
+fn a_long_chain_of_forced_breaks_beside_a_float_still_lays_out() {
+    // The chain settles one box per layout of the document, so the boxes
+    // past a bounded number of them keep the clearance the break gives them
+    // instead of laying the document out once for each box. Every box is
+    // still laid out, and the first ones start their pages beside the float
+    // as in Chromium.
+    let mut body = String::from(
+        "<div style='float:right;width:40px;height:2000px'>R</div><div style='height:30px'>A</div>",
+    );
+    for glyph in ["B", "C", "D", "E", "G", "H", "I", "J", "K", "L", "M", "N"] {
+        body.push_str(&format!(
+            "<div style='height:30px;break-before:page'>{glyph}</div>"
+        ));
+    }
+    let laid_out = pages(&body);
+    assert_eq!(
+        laid_out[..8],
+        [
+            "A@0,0 R@60,0",
+            "B@0,0",
+            "C@0,0",
+            "D@0,0",
+            "E@0,0",
+            "G@0,0",
+            "H@0,0",
+            "I@0,0"
+        ],
+    );
+    // The rest each start a page of their own, in order.
+    let mut after = 8;
+    for glyph in ["J", "K", "L", "M", "N"] {
+        let label = format!("{glyph}@0,0");
+        let page = laid_out[after..]
+            .iter()
+            .position(|page| *page == label)
+            .unwrap_or_else(|| panic!("{label} after page {after}: {laid_out:?}"));
+        after += page + 1;
+    }
+}

@@ -4873,6 +4873,11 @@ fn resolve_document_images(
     .map_err(LayoutError::Resolver)
 }
 
+/// How many more page attempts the boxes after forced breaks beside a float
+/// that runs on past them take at most, so that a long chain of such breaks
+/// does not lay the document out once for each box.
+const MAX_BREAK_TOP_ATTEMPTS: usize = 6;
+
 fn layout_pages_core(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -4902,11 +4907,20 @@ fn layout_pages_core(
     // Floats moved whole to a later page take one more attempt to lay the
     // content beside them out without them, and each block moved whole to a
     // later page away from the floats beside its lines one more to break its
-    // lines where it lands.
+    // lines where it lands. Each attempt that finds another box to place at
+    // the top of the page a forced break opens, beside a float that runs on
+    // onto it, gives one more, up to a bound: the forced breaks after it only find their own page once it
+    // moves. Once those are spent, the pages laid out stand, though the
+    // later boxes of a long chain of such breaks keep the clearance the
+    // break gives them.
+    let mut break_top_nodes = HashSet::new();
+    let mut break_top_growths = 0;
+    let mut break_top_settled = None;
     while attempts
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
+            + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
     {
         attempts += 1;
@@ -4931,19 +4945,37 @@ fn layout_pages_core(
             && next.page_filled_origins == page_filled_origins
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
+        let known_break_tops = break_top_nodes.len();
+        break_top_nodes.extend(next.resumptions.break_top_nodes());
+        let break_tops_grew = break_top_nodes.len() > known_break_tops;
+        break_top_growths += usize::from(break_tops_grew);
         if settled_apart_from_flows
             && (next.resumptions == resumptions || flow_retries >= 2 * pushed_flows.len())
         {
             return Ok(next.slices);
         }
+        // Only a chain that still finds a new box to move stands once the
+        // attempts are spent; any other plan that keeps changing fails.
+        let settled_apart_from_break_tops = break_tops_grew
+            && !next.moved_columns
+            && next
+                .resumptions
+                .same_apart_from_flows_and_break_tops(&resumptions)
+            && next.spanning_origins == spanning_origins
+            && next.page_filled_origins == page_filled_origins
+            && next.spanner_growth == spanner_growth;
         flow_retries += usize::from(settled_apart_from_flows);
         unpaged_plain_columns |= next.moved_columns;
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
         page_filled_origins = next.page_filled_origins;
         spanner_growth = next.spanner_growth;
+        break_top_settled = settled_apart_from_break_tops.then_some(next.slices);
     }
-    // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination instead of returning unstable slices.
+    if let Some(slices) = break_top_settled {
+        return Ok(slices);
+    }
+    // cov:ignore: defensive retry-budget exhaustion rejects non-converging pagination, apart from a chain of forced breaks still settling, instead of returning unstable slices.
     Err(LayoutError::Internal {
         message: "page float resumption did not stabilize".to_string(),
     })

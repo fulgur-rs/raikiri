@@ -74,6 +74,22 @@ impl Plan {
         self.break_tops.get(&node).copied()
     }
 
+    /// The boxes after a forced break that the plan starts beside an earlier
+    /// float that runs on onto the page the break opens.
+    pub(crate) fn break_top_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.break_tops.keys().copied()
+    }
+
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines and the boxes started beside an
+    /// earlier float after a forced break.
+    pub(crate) fn same_apart_from_flows_and_break_tops(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this.break_tops.clone_from(&other.break_tops);
+        this == *other
+    }
+
     /// The lowest top of a float after a box that closed on the page the
     /// forced break before the float leaves.
     pub(crate) fn closed_float_top(&self, node: usize) -> Option<f32> {
