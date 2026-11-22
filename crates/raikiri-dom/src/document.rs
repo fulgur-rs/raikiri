@@ -324,6 +324,11 @@ pub struct Document {
     /// layout started below the floats before that float, but not below the
     /// float itself. Sorted, and dirties the layout cache the same way.
     pub(crate) forced_break_line_float_floor: Vec<usize>,
+    /// The floats right before text whose page type differs from the box
+    /// before them, which the last paged layout took to break the page
+    /// before them, as the text after them does. Sorted, and dirties the
+    /// layout cache the same way.
+    pub(crate) named_break_floats: Vec<usize>,
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
@@ -625,6 +630,7 @@ impl Document {
             forced_break_line_clearance: Vec::new(),
             forced_break_float_floor: Vec::new(),
             forced_break_line_float_floor: Vec::new(),
+            named_break_floats: Vec::new(),
             clearance_breaks: None,
             ifc: None,
             normal_line_height: None,
@@ -2121,6 +2127,7 @@ impl Document {
             forced_break_line_clearance: _,
             forced_break_float_floor: _,
             forced_break_line_float_floor: _,
+            named_break_floats: _,
             clearance_breaks: _,
             ifc,
             normal_line_height,

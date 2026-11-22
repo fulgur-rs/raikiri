@@ -3459,6 +3459,11 @@ impl PaginationState {
                 }
             }
             self.pending_break.take(document, node_id);
+        } else if document.named_break_floats.binary_search(&node_id).is_ok() {
+            // A float that goes on to the new page with the text after it
+            // opens that page for the text, whose page type it takes.
+            self.float_break_page =
+                FloatBreakPage::new(document, candidate, target_page, &self.page_names);
         }
         Ok(())
     }
