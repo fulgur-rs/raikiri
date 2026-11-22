@@ -350,9 +350,32 @@ fn is_wrapped_box(tree: &LayoutSession<'_>, id: usize) -> bool {
     }
     node.ifc.is_some()
         && node.ifc_boxes().is_empty()
-        && !node.column_span_all
+        && !spans_the_columns(tree, id)
         && !lineless::has_block_edge_decorations(&style_of(tree, id))
         && (!is_sized_paragraph(tree, id) || insets_are_a_relative_offset(tree, id))
+}
+
+/// Whether `id` is a `column-span: all` box that spans the columns of the
+/// multicol container it sits in. One inside a `flow-root` box between them
+/// spans nothing: a spanner must be in the same block formatting context as
+/// its container (CSS Multi-column Layout 1, 6.1), so it is an ordinary block
+/// in the flow of the columns.
+fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
+    if !tree.nodes[id].column_span_all {
+        return false;
+    }
+    let mut current = tree.parent_of(id);
+    while let Some(ancestor) = current {
+        let node = &tree.nodes[ancestor];
+        if node.multicol.is_some() {
+            return true;
+        }
+        if node.display() == DisplayValue::FlowRoot {
+            return false;
+        }
+        current = tree.parent_of(ancestor);
+    }
+    true
 }
 
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
@@ -375,10 +398,13 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         )
         || node.paints_whole_box_effects
         || node.paints_background_color
-        || node.column_span_all
+        || spans_the_columns(tree, id)
         || node.break_inside != raikiri_style::property::BreakInside::Auto
         || (node.clones_box_decorations && has_block_padding(tree, id))
-        || !matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        || !matches!(
+            node.display(),
+            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
+        )
         || !lineless::is_plain_box_apart_from_display(tree, id, false)
     {
         return false;
@@ -740,7 +766,10 @@ fn collect(
             // above its first box, or below its last, which a column end
             // slices as it does a box with no lines. The margins count,
             // collapsing through them with the ones around them where no such
-            // padding keeps them apart.
+            // padding keeps them apart. The edges of a `flow-root` box keep
+            // them apart too, as it starts a formatting context of its own
+            // (CSS 2, 8.3.1): such an edge stands in the flow as a piece with
+            // no height.
             room |= has_block_padding(tree, child);
             let (before, after) = block_edges(&layout);
             let edge = if matches!(role, Role::Open(_)) {
@@ -751,14 +780,16 @@ fn collect(
             (margin_top.is_finite() && margin_bottom.is_finite() && edge.is_finite())
                 .then_some(())?;
             high += edge + margin_top.abs() + margin_bottom.abs();
+            let separates =
+                edge > 0.0 || layout_node(tree, child).display() == DisplayValue::FlowRoot;
             paragraphs.push(Some(Paragraph {
                 opens: match role {
-                    Role::Open(close) if edge > 0.0 => Some(close),
+                    Role::Open(close) if separates => Some(close),
                     _ => None,
                 },
                 closes: role == Role::Close && edge > 0.0,
                 sized_leaf: false,
-                extents: if edge > 0.0 {
+                extents: if separates {
                     vec![(0.0, edge)]
                 } else {
                     Vec::new()
@@ -773,7 +804,7 @@ fn collect(
                 held_lines: None,
                 held_reach: 0.0,
                 overflows: false,
-                sliced: edge > 0.0,
+                sliced: separates,
             }));
             continue;
         }
@@ -1311,6 +1342,53 @@ fn fill_chunk_with(
                     return None;
                 }
             }
+        }
+        if paragraph.sliced && paragraph.extents[0].1 <= paragraph.extents[0].0 {
+            // An edge with no height, which only keeps the margins on either
+            // side of it apart, stays where the margins above put it. Past the
+            // end of a column that holds content, it is an unforced break, as
+            // an empty box is: the edge starts the next column, and the
+            // margins that adjoin it there are cut.
+            if top > height + f32::EPSILON && column_has_content {
+                maximum = maximum.max(cursor);
+                column = column.checked_add(1)?;
+                if column >= context.column_count {
+                    return Some(Chunk {
+                        group: finish_group(placements, height),
+                        next: Some(FlowCursor {
+                            paragraph: paragraph_index,
+                            line: 0,
+                        }),
+                    });
+                }
+                top = 0.0;
+                column_has_content = false;
+                cut_margins = true;
+            }
+            cursor = top;
+            pending_margin = if cut_margins {
+                Margins::default()
+            } else {
+                Margins::default().with(paragraph.margin_bottom)
+            };
+            placements[slot] = Some(Placement {
+                first_column: column,
+                first_y: top,
+                first_height: 0.0,
+                last_column: column,
+                last_y: cursor + pending_margin.value(),
+                fragments: vec![MulticolTextFragment {
+                    line_start: 0,
+                    line_end: 1,
+                    fragmentainer: column,
+                    x: 0.0,
+                    y: 0.0,
+                }],
+                entry_column,
+                entry_y,
+                sliced: true,
+            });
+            continue;
         }
         if paragraph.sliced {
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;

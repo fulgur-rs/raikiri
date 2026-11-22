@@ -2166,8 +2166,10 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         if clips
             || painted
             // The paragraph at the end may be a list item, whose marker sits on
-            // its first line.
-            || !(node.display() == DisplayValue::Block
+            // its first line. A `flow-root` box of the chain starts a
+            // formatting context, which changes nothing here: no box of the
+            // chain has a margin to collapse or a float to hold.
+            || !(matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
                 || node.ifc.is_some() && node.display() == DisplayValue::ListItem)
             || style.float().is_floated()
             || margin.top != zero_margin
