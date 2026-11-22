@@ -4829,6 +4829,9 @@ fn layout_pages_core(
     // after it below the growth, and one more when that plan moves what
     // comes before it.
     let mut attempts = 0;
+    // Every block ever moved away from the floats beside its lines, laid
+    // out again, can move the content after it: each takes one more attempt.
+    let mut pushed_flows = HashSet::new();
     // Floats moved whole to a later page take one more attempt to lay the
     // content beside them out without them, and each block moved whole to a
     // later page away from the floats beside its lines one more to break its
@@ -4837,7 +4840,7 @@ fn layout_pages_core(
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
-            + resumptions.pushed_flow_count()
+            + pushed_flows.len()
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -4864,6 +4867,7 @@ fn layout_pages_core(
             return Ok(next.slices);
         }
         unpaged_plain_columns |= next.moved_columns;
+        pushed_flows.extend(next.resumptions.pushed_flows());
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
         page_filled_origins = next.page_filled_origins;
@@ -19394,8 +19398,18 @@ fn note_lines_left_beside_floats(
             .and_then(|ifc| ifc.lines.as_ref())
             .is_some_and(|lines| lines.beside_floats)
         // Floats inside the block move with it, and its lines stay beside
-        // them.
-        && own_floats(document, cascade, moved).is_empty();
+        // them. A box that holds its own floats keeps them out of view of
+        // that search, and its lines beside only them.
+        && own_floats(document, cascade, moved).is_empty()
+        && !std::iter::once(block_id)
+            .chain(
+                document
+                    .layout_ancestors(block_id)
+                    .take_while(|_| moved != block_id)
+                    .take_while(|&id| id != moved),
+            )
+            .chain((moved != block_id).then_some(moved))
+            .any(|id| holds_floats(document, cascade, id));
     if noted {
         document.context.pushed_flows.push((moved, delta, from));
     }

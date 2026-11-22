@@ -85,11 +85,10 @@ impl Plan {
         !self.pushed.is_empty()
     }
 
-    /// How many blocks the page walk moved whole to a later page away from
-    /// the floats beside their lines: laid out again, each can move the
-    /// content after it.
-    pub(crate) fn pushed_flow_count(&self) -> usize {
-        self.pushed_flows.len()
+    /// The blocks the page walk moved whole to a later page away from the
+    /// floats beside their lines.
+    pub(crate) fn pushed_flows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pushed_flows.keys().copied()
     }
 
     /// How far below its place in the flow a block that the page walk moved
@@ -252,13 +251,12 @@ impl Plan {
         // lines take the room the floats leave there (Chromium).
         let previous = &document.context.float_resumptions.pushed_flows;
         for &(flow, delta, from) in &document.context.pushed_flows {
-            // One that the walk moves further from where the planned move
-            // put it goes that much further still.
-            let entry = match previous.get(&flow) {
-                Some(&(planned, start)) if (start + planned - from).abs() <= 0.01 => {
-                    (planned + delta, start)
-                }
-                _ => (delta, from),
+            // One that the walk moves again in the same walk, or that it
+            // moves further than the planned move took it, goes that much
+            // further still: the planned move is part of where it was.
+            let entry = match plan.pushed_flows.get(&flow).or_else(|| previous.get(&flow)) {
+                Some(&(planned, _)) => (planned + delta, from - planned),
+                None => (delta, from),
             };
             plan.pushed_flows.insert(flow, entry);
         }
