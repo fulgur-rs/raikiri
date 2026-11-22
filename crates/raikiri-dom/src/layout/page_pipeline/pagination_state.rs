@@ -3276,11 +3276,12 @@ impl PaginationState {
             let is_float = is_floating_box_for_pagination(document, cascade, node_id);
             let lead = if is_float { 0.0 } else { margin_top };
             // A float before a block that takes the break with it is left
-            // below the earlier floats.
-            let cleared_past = (!is_float
-                || document
-                    .layout_parent_of(node_id)
-                    .is_some_and(|parent| document.nodes[parent].is_ifc_root()))
+            // below the earlier floats, and so is a block that an inline
+            // formatting context lays out, which places it after its lines.
+            let in_ifc = document
+                .layout_parent_of(node_id)
+                .is_some_and(|parent| document.nodes[parent].is_ifc_root());
+            let cleared_past = is_float == in_ifc
                 && document
                     .forced_break_clearance
                     .binary_search(&node_id)

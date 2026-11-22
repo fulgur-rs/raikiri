@@ -195,3 +195,13 @@ fn a_change_of_named_page_starts_the_page_beside_an_earlier_float() {
         &["E@60,0 F@0,30 T@0,0", "Z@0,0", ""],
     );
 }
+
+#[test]
+fn a_block_after_the_break_inside_an_inline_formatting_context_settles() {
+    // A block that a paragraph lays out among its lines is placed after
+    // them rather than at a planned page top; laying it out still settles.
+    let laid_out = pages(
+        "x<div style='break-after:page'><div style='float:right;width:40px;height:250px'>E</div>T</div><div>Z</div>",
+    );
+    assert_eq!(laid_out[0], "E@60,30 T@0,30 x@0,0");
+}
