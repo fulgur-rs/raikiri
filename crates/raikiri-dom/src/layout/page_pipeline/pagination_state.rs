@@ -3307,6 +3307,7 @@ impl PaginationState {
                         super::flex_line_peers(document, cascade, body_id, parent, node_id),
                     )
                 });
+            let holder_before = current_abs_y(document, holder);
             let moved_in_bounded_ancestor = move_box_for_transition(
                 document,
                 cascade,
@@ -3322,6 +3323,19 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            // How far the holder moved, which a bounded ancestor may have
+            // held to less than the landing asked for.
+            let holder_delta = current_abs_y(document, holder) - holder_before;
+            if !forced_transition && holder_delta > 0.01 {
+                super::note_lines_left_beside_floats(
+                    document,
+                    cascade,
+                    holder,
+                    node_id,
+                    holder_delta,
+                    holder_before,
+                );
+            }
             // Forced breaks and closing-tail breaks belong to the whole
             // aligned flex line; the other lines keep their flow coordinates.
             // After a forced break the line moves as far as the box's kept

@@ -36,6 +36,12 @@ pub(crate) struct Plan {
     floats: HashMap<usize, f32>,
     pushed: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
+    /// Blocks the page walk moved whole to a later page, away from the
+    /// floats their lines were broken beside, each with how far it moved
+    /// them and where their top was in the page flow before: layout places
+    /// them as far below their place in the flow, so that their lines are
+    /// broken against the floats that are there, as Chromium lays them out.
+    pushed_flows: HashMap<usize, (f32, f32)>,
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
@@ -50,6 +56,7 @@ impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
         self.floats.is_empty()
             && self.pushed.is_empty()
+            && self.pushed_flows.is_empty()
             && self.margin_flows.is_empty()
             && self.closed.is_empty()
     }
@@ -76,6 +83,26 @@ impl Plan {
 
     pub(crate) fn has_pushed_floats(&self) -> bool {
         !self.pushed.is_empty()
+    }
+
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines.
+    pub(crate) fn same_apart_from_pushed_flows(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this == *other
+    }
+
+    /// The blocks the page walk moved whole to a later page away from the
+    /// floats beside their lines.
+    pub(crate) fn pushed_flows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pushed_flows.keys().copied()
+    }
+
+    /// How far below its place in the flow a block that the page walk moved
+    /// whole to a later page, away from the floats beside its lines, goes.
+    pub(crate) fn pushed_flow_delta(&self, node: usize) -> Option<f32> {
+        self.pushed_flows.get(&node).map(|&(delta, _)| delta)
     }
 
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
@@ -227,6 +254,35 @@ impl Plan {
             }
         }
         plan.pushed.extend(kept);
+        // A block the walk moved whole to a later page, away from the floats
+        // its lines were broken beside, goes as far down again, so that its
+        // lines take the room the floats leave there (Chromium).
+        let previous = &document.context.float_resumptions.pushed_flows;
+        // One that a planned move already put lower and that the walk moves
+        // again no longer sits where the move was planned for: the next walk
+        // judges it afresh.
+        for &(flow, delta, from) in &document.context.pushed_flows {
+            if !previous.contains_key(&flow) {
+                plan.pushed_flows.entry(flow).or_insert((delta, from));
+            }
+        }
+        // One that the walk no longer moves keeps its move while the flow
+        // above it still puts it where it started: then the move is still
+        // what takes it to the later page. Otherwise, or when the walk moves
+        // it on with its lines for another reason, the next walk judges it
+        // afresh.
+        let moved: HashSet<usize> = (document.context.pushed_flows.iter())
+            .map(|&(moved, ..)| moved)
+            .chain(document.context.flows_moved_otherwise.iter().copied())
+            .collect();
+        for (&flow, &(delta, from)) in previous {
+            let moved = moved.contains(&flow);
+            // Far down a long flow, f32 keeps fewer fractions of a pixel.
+            let tolerance = 0.01_f32.max(from.abs() * 1e-6);
+            if !moved && (current_abs_y(document, flow) - delta - from).abs() <= tolerance {
+                plan.pushed_flows.insert(flow, (delta, from));
+            }
+        }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
         plan

@@ -4829,12 +4829,22 @@ fn layout_pages_core(
     // after it below the growth, and one more when that plan moves what
     // comes before it.
     let mut attempts = 0;
+    // Every block ever moved away from the floats beside its lines, laid
+    // out again, can move the content after it, and a move that no longer
+    // fits the flow above it is judged again: each takes up to two more
+    // attempts. Once those are spent, the pages laid out stand, though the
+    // lines of some such block keep the room they were broken for.
+    let mut pushed_flows = HashSet::new();
+    let mut flow_retries = 0;
     // Floats moved whole to a later page take one more attempt to lay the
-    // content beside them out without them.
+    // content beside them out without them, and each block moved whole to a
+    // later page away from the floats beside its lines one more to break its
+    // lines where it lands.
     while attempts
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
+            + 2 * pushed_flows.len()
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -4852,14 +4862,18 @@ fn layout_pages_core(
                 spanner_growth: &spanner_growth,
             },
         )?;
-        if !next.moved_columns
-            && next.resumptions == resumptions
+        let settled_apart_from_flows = !next.moved_columns
+            && next.resumptions.same_apart_from_pushed_flows(&resumptions)
             && next.spanning_origins == spanning_origins
             && next.page_filled_origins == page_filled_origins
-            && next.spanner_growth == spanner_growth
+            && next.spanner_growth == spanner_growth;
+        pushed_flows.extend(next.resumptions.pushed_flows());
+        if settled_apart_from_flows
+            && (next.resumptions == resumptions || flow_retries >= 2 * pushed_flows.len())
         {
             return Ok(next.slices);
         }
+        flow_retries += usize::from(settled_apart_from_flows);
         unpaged_plain_columns |= next.moved_columns;
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
@@ -19404,7 +19418,11 @@ fn move_line_block(
         .unwrap_or(0.0);
     let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
     if delta > 0.0 {
-        let moved_y = current_abs_y(document, moved) + delta;
+        // Lines broken beside floats that the block leaves behind lay out
+        // again where it lands (see `float_resumption`).
+        let from = current_abs_y(document, moved);
+        note_lines_left_beside_floats(document, cascade, moved, block_id, delta, from);
+        let moved_y = from + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
         grow_ancestors_for_line_move(
@@ -19419,6 +19437,65 @@ fn move_line_block(
         );
     }
     (delta, consumed)
+}
+
+/// Notes the block `moved`, which the page walk is about to move `delta`
+/// down to a later page with the block `block_id` it holds, when the lines of
+/// `block_id` were broken beside floats: moved away from them, its lines keep
+/// the wrong room, and Chromium breaks them afresh where the block lands (see
+/// `float_resumption`). The block is noted with `delta` and its top `from` in
+/// the page flow before the move: the flow above it takes the same shifts in
+/// the next walk, which `from` checks.
+fn note_lines_left_beside_floats(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: usize,
+    block_id: usize,
+    delta: f32,
+    from: f32,
+) {
+    // Only block flow lays its children out at a planned top; a block in a
+    // table cell, a flex or grid item, or an inline block is placed by
+    // other layout.
+    let plain = |id: usize| {
+        let node = &document.nodes[id];
+        matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+            && matches!(
+                node.position(),
+                PositionValue::Static | PositionValue::Relative
+            )
+            && cascade.computed[id].float == FloatValue::None
+            && !node.used_writing_mode.is_vertical()
+            && node.multicol.is_none()
+    };
+    let noted = plain(block_id)
+        && document
+            .layout_ancestors(block_id)
+            .take_while(|&id| id != 0)
+            .all(plain)
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| lines.beside_floats)
+        // Floats inside the block move with it, and its lines stay beside
+        // them. A box that holds its own floats keeps them out of view of
+        // that search, and its lines beside only them.
+        && own_floats(document, cascade, moved).is_empty()
+        && !std::iter::once(block_id)
+            .chain(
+                document
+                    .layout_ancestors(block_id)
+                    .take_while(|_| moved != block_id)
+                    .take_while(|&id| id != moved),
+            )
+            .chain((moved != block_id).then_some(moved))
+            .any(|id| holds_floats(document, cascade, id));
+    if noted {
+        document.context.pushed_flows.push((moved, delta, from));
+    } else {
+        document.context.flows_moved_otherwise.push(moved);
+    }
 }
 
 /// A validated first-child forced boundary that carries its plain holder.
