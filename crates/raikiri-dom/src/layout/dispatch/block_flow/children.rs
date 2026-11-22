@@ -1220,9 +1220,12 @@ pub(super) fn layout(
             } else {
                 flow.end + pending.collapse_with_margin(margin.top).resolve()
             };
-            // A block that clears floats starts below them in the flow.
+            // A block that clears floats, or that another plan holds lower,
+            // starts there in the flow.
             ctx.cleared_threshold(style.clear)
-                .map_or(natural, |cleared| natural.max(cleared))
+                .into_iter()
+                .chain(floor)
+                .fold(natural, f32::max)
                 + delta
         });
         let floor = floor.into_iter().chain(pushed_floor).reduce(f32::max);

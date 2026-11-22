@@ -4830,8 +4830,12 @@ fn layout_pages_core(
     // comes before it.
     let mut attempts = 0;
     // Every block ever moved away from the floats beside its lines, laid
-    // out again, can move the content after it: each takes one more attempt.
+    // out again, can move the content after it, and a move that no longer
+    // fits the flow above it is judged again: each takes up to two more
+    // attempts. Once those are spent, the pages laid out stand, though the
+    // lines of some such block keep the room they were broken for.
     let mut pushed_flows = HashSet::new();
+    let mut flow_retries = 0;
     // Floats moved whole to a later page take one more attempt to lay the
     // content beside them out without them, and each block moved whole to a
     // later page away from the floats beside its lines one more to break its
@@ -4840,7 +4844,7 @@ fn layout_pages_core(
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
-            + pushed_flows.len()
+            + 2 * pushed_flows.len()
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -4858,16 +4862,19 @@ fn layout_pages_core(
                 spanner_growth: &spanner_growth,
             },
         )?;
-        if !next.moved_columns
-            && next.resumptions == resumptions
+        let settled_apart_from_flows = !next.moved_columns
+            && next.resumptions.same_apart_from_pushed_flows(&resumptions)
             && next.spanning_origins == spanning_origins
             && next.page_filled_origins == page_filled_origins
-            && next.spanner_growth == spanner_growth
+            && next.spanner_growth == spanner_growth;
+        pushed_flows.extend(next.resumptions.pushed_flows());
+        if settled_apart_from_flows
+            && (next.resumptions == resumptions || flow_retries >= 2 * pushed_flows.len())
         {
             return Ok(next.slices);
         }
+        flow_retries += usize::from(settled_apart_from_flows);
         unpaged_plain_columns |= next.moved_columns;
-        pushed_flows.extend(next.resumptions.pushed_flows());
         resumptions = next.resumptions;
         spanning_origins = next.spanning_origins;
         page_filled_origins = next.page_filled_origins;

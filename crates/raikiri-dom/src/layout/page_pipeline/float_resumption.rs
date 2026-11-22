@@ -85,6 +85,14 @@ impl Plan {
         !self.pushed.is_empty()
     }
 
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines.
+    pub(crate) fn same_apart_from_pushed_flows(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this == *other
+    }
+
     /// The blocks the page walk moved whole to a later page away from the
     /// floats beside their lines.
     pub(crate) fn pushed_flows(&self) -> impl Iterator<Item = usize> + '_ {
@@ -265,8 +273,10 @@ impl Plan {
         // what takes it to the later page. Otherwise the next walk judges
         // it afresh.
         for (&flow, &(delta, from)) in previous {
+            // Far down a long flow, f32 keeps fewer fractions of a pixel.
+            let tolerance = 0.01_f32.max(from.abs() * 1e-6);
             if !plan.pushed_flows.contains_key(&flow)
-                && (current_abs_y(document, flow) - delta - from).abs() <= 0.01
+                && (current_abs_y(document, flow) - delta - from).abs() <= tolerance
             {
                 plan.pushed_flows.insert(flow, (delta, from));
             }

@@ -3326,7 +3326,7 @@ impl PaginationState {
             // How far the holder moved, which a bounded ancestor may have
             // held to less than the landing asked for.
             let holder_delta = current_abs_y(document, holder) - holder_before;
-            if !forced_transition && holder_delta > 0.0 {
+            if !forced_transition && holder_delta > 0.01 {
                 super::note_lines_left_beside_floats(
                     document,
                     cascade,
