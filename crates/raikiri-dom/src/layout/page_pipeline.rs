@@ -19420,6 +19420,8 @@ fn note_lines_left_beside_floats(
             .any(|id| holds_floats(document, cascade, id));
     if noted {
         document.context.pushed_flows.push((moved, delta, from));
+    } else {
+        document.context.flows_moved_otherwise.push(moved);
     }
 }
 

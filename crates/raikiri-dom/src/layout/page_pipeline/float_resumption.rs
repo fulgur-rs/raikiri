@@ -258,26 +258,28 @@ impl Plan {
         // its lines were broken beside, goes as far down again, so that its
         // lines take the room the floats leave there (Chromium).
         let previous = &document.context.float_resumptions.pushed_flows;
+        // One that a planned move already put lower and that the walk moves
+        // again no longer sits where the move was planned for: the next walk
+        // judges it afresh.
         for &(flow, delta, from) in &document.context.pushed_flows {
-            // One that the walk moves again in the same walk, or that it
-            // moves further than the planned move took it, goes that much
-            // further still: the planned move is part of where it was.
-            let entry = match plan.pushed_flows.get(&flow).or_else(|| previous.get(&flow)) {
-                Some(&(planned, _)) => (planned + delta, from - planned),
-                None => (delta, from),
-            };
-            plan.pushed_flows.insert(flow, entry);
+            if !previous.contains_key(&flow) {
+                plan.pushed_flows.entry(flow).or_insert((delta, from));
+            }
         }
         // One that the walk no longer moves keeps its move while the flow
         // above it still puts it where it started: then the move is still
-        // what takes it to the later page. Otherwise the next walk judges
-        // it afresh.
+        // what takes it to the later page. Otherwise, or when the walk moves
+        // it for another reason, the next walk judges it afresh.
         for (&flow, &(delta, from)) in previous {
+            let moved = document
+                .context
+                .pushed_flows
+                .iter()
+                .any(|&(moved, ..)| moved == flow)
+                || document.context.flows_moved_otherwise.contains(&flow);
             // Far down a long flow, f32 keeps fewer fractions of a pixel.
             let tolerance = 0.01_f32.max(from.abs() * 1e-6);
-            if !plan.pushed_flows.contains_key(&flow)
-                && (current_abs_y(document, flow) - delta - from).abs() <= tolerance
-            {
+            if !moved && (current_abs_y(document, flow) - delta - from).abs() <= tolerance {
                 plan.pushed_flows.insert(flow, (delta, from));
             }
         }
