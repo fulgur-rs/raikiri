@@ -36,6 +36,11 @@ pub(crate) struct Plan {
     floats: HashMap<usize, f32>,
     pushed: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
+    /// Blocks the page walk moved whole to a later page, away from the
+    /// floats their lines were broken beside, each with the top it took
+    /// there: layout places them there again, so that their lines are broken
+    /// against the floats that are there, as Chromium lays them out.
+    pushed_flows: HashMap<usize, f32>,
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
@@ -50,6 +55,7 @@ impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
         self.floats.is_empty()
             && self.pushed.is_empty()
+            && self.pushed_flows.is_empty()
             && self.margin_flows.is_empty()
             && self.closed.is_empty()
     }
@@ -78,8 +84,17 @@ impl Plan {
         !self.pushed.is_empty()
     }
 
+    /// Whether the page walk moved a block whole to a later page away from
+    /// the floats beside its lines.
+    pub(crate) fn has_pushed_flows(&self) -> bool {
+        !self.pushed_flows.is_empty()
+    }
+
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
-        self.flows.get(&node).copied()
+        self.flows
+            .get(&node)
+            .or_else(|| self.pushed_flows.get(&node))
+            .copied()
     }
 
     pub(crate) fn has_margin_flows(&self) -> bool {
@@ -207,11 +222,43 @@ impl Plan {
                 origins.insert(float, border_top);
             }
         }
+        // A block the walk moved whole to a later page, away from the floats
+        // its lines were broken beside, is placed at the top it took there,
+        // so that its lines take the room the floats leave there (Chromium).
+        // One placed so before, that layout still puts there, keeps that
+        // place: the walk no longer moves it.
+        let flow_top = |flow: usize| {
+            current_abs_y(document, flow)
+                - super::block_flow_relative_offset_y(document, cascade, flow)
+        };
+        let kept_flows: Vec<(usize, f32)> = document
+            .context
+            .float_resumptions
+            .pushed_flows
+            .iter()
+            .filter(|&(&flow, &top)| {
+                let parent_top = document
+                    .layout_parent_of(flow)
+                    .map_or(0.0, |parent| current_abs_y(document, parent));
+                (flow_top(flow) - parent_top - top).abs() <= 0.01
+            })
+            .map(|(&flow, &top)| (flow, top))
+            .collect();
+        for &flow in &document.context.pushed_flows {
+            if plan.pushed_flows.contains_key(&flow) || kept_flows.iter().any(|&(id, _)| id == flow)
+            {
+                continue;
+            }
+            let border_top = flow_top(flow);
+            plan.pushed_flows.insert(flow, border_top);
+            origins.insert(flow, border_top);
+        }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
         for placements in [
             &mut plan.floats,
             &mut plan.pushed,
+            &mut plan.pushed_flows,
             &mut plan.flows,
             &mut plan.completed,
             &mut plan.completed_containers,
@@ -227,6 +274,7 @@ impl Plan {
             }
         }
         plan.pushed.extend(kept);
+        plan.pushed_flows.extend(kept_flows);
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
         plan

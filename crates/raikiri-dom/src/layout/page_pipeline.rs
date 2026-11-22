@@ -4835,6 +4835,7 @@ fn layout_pages_core(
         < 3 + page_filled_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
+            + usize::from(resumptions.has_pushed_flows())
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -19329,6 +19330,11 @@ fn move_line_block(
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
     let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
+    // Lines broken beside floats that the block leaves behind lay out again
+    // where it lands (see `float_resumption`).
+    if delta > 0.0 {
+        note_lines_left_beside_floats(document, cascade, moved, block_id);
+    }
     if delta > 0.0 {
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -19345,6 +19351,48 @@ fn move_line_block(
         );
     }
     (delta, consumed)
+}
+
+/// Notes the block `moved`, which the page walk moves whole to a later page
+/// with the block `block_id` it holds, when the lines of `block_id` were broken
+/// beside floats: moved away from them, its lines keep the wrong room, and
+/// Chromium breaks them afresh where the block lands (see
+/// `float_resumption`).
+fn note_lines_left_beside_floats(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: usize,
+    block_id: usize,
+) {
+    let plain = |id: usize| {
+        let node = &document.nodes[id];
+        node.display() == DisplayValue::Block
+            && matches!(
+                node.position(),
+                PositionValue::Static | PositionValue::Relative
+            )
+            && cascade.computed[id].float == FloatValue::None
+            && !node.used_writing_mode.is_vertical()
+    };
+    if plain(moved)
+        && plain(block_id)
+        && !document.layout_ancestors(block_id).any(|id| {
+            let ancestor = &document.nodes[id];
+            ancestor.multicol.is_some()
+                || cascade.computed[id].float != FloatValue::None
+                || !matches!(
+                    ancestor.position(),
+                    PositionValue::Static | PositionValue::Relative
+                )
+        })
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| lines.beside_floats)
+    {
+        document.context.pushed_flows.push(moved);
+    }
 }
 
 /// A validated first-child forced boundary that carries its plain holder.

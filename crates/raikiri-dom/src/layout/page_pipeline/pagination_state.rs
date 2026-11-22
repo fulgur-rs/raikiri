@@ -3248,6 +3248,8 @@ impl PaginationState {
                 // below this float.
                 document.context.pushed_floats.push(node_id);
             }
+        } else if !forced_transition && !restarts_on_flow_page {
+            super::note_lines_left_beside_floats(document, cascade, holder, node_id);
         }
         // A negative block-start margin can pull a forced-break box back
         // into the preceding page (the `underflow-from-next-page` case from

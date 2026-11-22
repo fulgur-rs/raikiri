@@ -54,6 +54,9 @@ pub(crate) struct LayoutContext {
     /// Floats the page walk moved whole to a later page without a forced
     /// break, in the order it moved them.
     pub(crate) pushed_floats: Vec<usize>,
+    /// Blocks the page walk moved whole to a later page without a forced
+    /// break, away from the floats their lines were broken beside.
+    pub(crate) pushed_flows: Vec<usize>,
     /// Page origins chosen when a float takes a pending forced break.
     pub(crate) float_resumption_boundaries:
         HashMap<usize, super::page_pipeline::float_resumption::Boundary>,
