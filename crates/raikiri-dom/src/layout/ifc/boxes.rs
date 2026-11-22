@@ -1094,14 +1094,15 @@ fn run_boxes_segment(
                             },
                         );
                         ceiling = ceiling.max(top);
-                        // A float that takes a forced page break starts the
-                        // new page, and the lines after it come after the
-                        // break: none goes above it beside the floats left
-                        // on the earlier page.
-                        if top > line_y && tree.forced_break_clearance.binary_search(&node).is_ok()
-                        {
+                        // A float that goes on to the page the text after it
+                        // opens starts that page, and the lines come after
+                        // it: none goes above it beside the floats left on
+                        // the earlier page.
+                        if top > line_y && tree.named_break_floats.binary_search(&node).is_ok() {
                             y = top;
                             pending = CollapsibleMarginSet::ZERO;
+                            assumed_height = 0.0;
+                            retries = 0;
                         }
                     }
                     continue;

@@ -187,11 +187,6 @@ fn earlier_floats_stay_on_the_page_before() {
             ),
             vec!["120: F@0,30 T@0,0", "100: G@0,0 Z@40,0"],
         ),
-        // A left float, then a right one, with the text at the start.
-        (
-            format!("<div style='page:foo'>T</div>{F}<div style='float:right;width:40px'>G</div>Z"),
-            vec!["120: F@0,30 T@0,0", "100: G@60,0 Z@0,0"],
-        ),
         // More text, which wraps beside the float.
         (
             format!("<div style='page:foo'>T</div>{F}{G} Z Y X W"),

@@ -3931,6 +3931,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 // the box before the float goes on to the new page with that
                 // text, which lines up beside it (Chromium).
                 let before_named_text = !after_forced_break
+                    && !document.nodes[parent].used_writing_mode.is_vertical()
                     && matches!(items.get(index + 1), Some(None))
                     && changes_page(&previous_page_name, &inherited);
                 if before_named_text {
