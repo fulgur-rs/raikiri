@@ -449,7 +449,24 @@ fn a_break_at_the_edge_of_a_flex_or_grid_item_goes_to_its_line() {
     // line leaves the float whole, and one on a later line or row, or at a
     // line that is not at the float's edge, splits it.
     let float = "<div style='float:left;width:100px'>";
-    let cases: [(&str, &[&str]); 13] = [
+    let cases: [(&str, &[&str]); 17] = [
+        // A wrapping row or a grid with text items is judged as a block.
+        (
+            "<div style='display:flex;flex-wrap:wrap'>txt<div style='width:100px'><div style='break-before:page'>B</div></div></div>",
+            &["t@0,0 t@40,0 x@20,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:grid'>txt<div><div style='break-before:page'>B</div></div></div>",
+            &["t@0,0 t@40,0 x@20,0", "B@0,0"],
+        ),
+        (
+            "<div style='display:flex;flex-wrap:wrap'><div style='width:100px'><div style='break-before:page'>B</div></div>txt</div>",
+            &["B@0,0 t@0,30 t@40,30 x@20,30"],
+        ),
+        (
+            "<div style='display:grid'><div><div style='break-before:page'>B</div></div>txt</div>",
+            &["B@0,0 t@0,30 t@40,30 x@20,30"],
+        ),
         // Text before the item is an item of its own, and a column that runs
         // in reverse ends with its first item.
         (
