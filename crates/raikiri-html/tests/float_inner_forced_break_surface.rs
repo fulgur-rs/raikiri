@@ -324,3 +324,120 @@ fn breaks_that_do_not_split_the_float() {
         &["F@0,0 H@20,0 Z@40,0"],
     );
 }
+
+#[test]
+fn a_break_at_the_edge_of_a_float_or_inside_a_line_does_not_split_it() {
+    // A break before the first box of a float, or after its last, reaches
+    // the float's own edge through the padding and borders around it, and a
+    // float is no part of the page flow. A break between two items of a flex
+    // line or grid row falls at the edge of the line or row, which splits
+    // the float only between two lines or rows, or before a flex container
+    // that has content above it in the float.
+    expect(
+        "T<div style='float:left;width:60px;display:flex'><div>A</div><div style='break-before:page'>B</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex'><div style='break-after:page'>A</div><div>B</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex;flex-wrap:wrap'><div style='width:40px'>A</div><div style='width:40px;break-before:page'>B</div></div>Z",
+        &["A@0,0 T@60,0 Z@80,0", "B@0,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:grid;grid-template-columns:20px 20px'><div>A</div><div style='break-before:page'>B</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:grid;grid-template-columns:20px 20px'><div>A</div><div>B</div><div style='break-before:page'>C</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0", "C@0,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px'><div>F</div><div style='display:flex'><div>A</div><div style='break-before:page'>B</div></div></div>Z",
+        &["F@0,0 T@60,0 Z@80,0", "A@0,0 B@20,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex;flex-direction:column'><div style='break-before:page'>A</div><div>B</div></div>Z",
+        &["A@0,0 B@0,30 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px'><div style='display:flex'><div style='break-before:page'>A</div></div><div>B</div></div>Z",
+        &["A@0,0 B@0,30 T@60,0 Z@80,0"],
+    );
+    expect(
+        "<div style='float:left;display:flex;width:60px;border:1px solid'><div style='break-before:page'>A</div></div>",
+        &["A@1,1"],
+    );
+    expect(
+        "<div style='float:left;width:60px;border:1px solid'><div style='break-before:page'>A</div></div>",
+        &["A@1,1"],
+    );
+    expect(
+        "<div style='float:left;width:60px;padding-top:5px'><div style='break-before:page'>A</div></div>",
+        &["A@0,5"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;border:1px solid'><div style='padding-top:5px'><div style='break-before:page'>B</div></div></div>",
+        &["B@1,6 T@62,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;border:1px solid'><div style='float:left;width:10px;height:10px'></div><div style='break-before:page'>B</div></div>",
+        &["B@11,1 T@62,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;border:1px solid'><div style='display:flex'><div style='break-before:page'>B</div></div></div>",
+        &["B@1,1 T@62,0"],
+    );
+}
+
+#[test]
+fn edge_and_line_breaks_look_through_wrappers_and_order() {
+    // A box with a break before it at the float's edge and one after it
+    // between two boxes takes only the second. Elements that generate no box
+    // and plain inline boxes do not separate a box from the float's edge, nor
+    // a flex item from its line, and flex items are taken in `order`; a row
+    // container that wraps in reverse breaks only at its edges.
+    expect(
+        "<div style='float:left;width:40px'><div style='break-before:page;break-after:page'>A</div>B</div>Z",
+        &["A@0,0 Z@40,0", "B@0,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px'><div style='display:contents'><div style='break-before:page'>A</div></div></div>",
+        &["A@0,0 T@60,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px'><span><div style='break-before:page'>A</div></span></div>",
+        &["A@0,0 T@60,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex'><div>A</div><div style='display:contents'><div style='break-before:page'>B</div></div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex;flex-wrap:wrap-reverse'><div style='width:40px'>A</div><div style='width:40px;break-before:page'>B</div></div>Z",
+        &["A@0,30 B@0,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex'><div style='order:2;break-before:page'>A</div><div style='order:1'>B</div></div>Z",
+        &["A@20,0 B@0,0 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:flex;flex-wrap:wrap'><div style='width:40px;order:2;break-before:page'>A</div><div style='width:40px;order:1'>B</div></div>Z",
+        &["B@0,0 T@60,0 Z@80,0", "A@0,0"],
+    );
+    // A break after a grid item falls after its row: inside the float, only
+    // between two rows.
+    expect(
+        "T<div style='float:left;width:60px;display:grid;grid-template-columns:20px 20px'><div>A</div><div>B</div><div style='break-after:page'>C</div></div>Z",
+        &["A@0,0 B@20,0 C@0,30 T@60,0 Z@80,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:grid;grid-template-columns:20px 20px'><div>A</div><div style='break-after:page'>B</div><div>C</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0", "C@0,0"],
+    );
+    expect(
+        "T<div style='float:left;width:60px;display:grid;grid-template-columns:20px 20px'><div style='break-after:page'>A</div><div>B</div></div>Z",
+        &["A@0,0 B@20,0 T@60,0 Z@80,0"],
+    );
+}

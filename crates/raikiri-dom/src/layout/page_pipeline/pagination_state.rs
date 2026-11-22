@@ -2543,7 +2543,7 @@ impl PaginationState {
         // container, as the box does before it moves to `effective_y`.
         let line_y = current_abs_y(document, node_id);
         materialize_y(document, node_id, effective_y);
-        let forced_before = super::forces_page_break(document, cascade, node_id, true)
+        let forced_before = super::takes_forced_break(document, cascade, body_id, node_id, true)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
@@ -2872,8 +2872,17 @@ impl PaginationState {
                 && !stays_empty();
         // A child's boundary belongs to the first plain holder it begins.
         // Computing that owner does not move it or consume the break.
+        // A break forced in the block flow of a float moves the boxes that
+        // start with the box there along with it, as in the page flow, but
+        // never the float itself.
+        let float_scope = candidate
+            .context
+            .is_float_descendant()
+            .then(|| super::break_scope(document, cascade, node_id))
+            .flatten()
+            .filter(|&scope| super::is_side_float(document, cascade, scope));
         let potential_forced_holder = (forced_before
-            && !candidate.context.is_float_descendant()
+            && (!candidate.context.is_float_descendant() || float_scope.is_some())
             && !candidate.context.is_out_of_flow_descendant()
             && is_block_flow_box(document, cascade, candidate))
         .then(|| {
@@ -2881,6 +2890,11 @@ impl PaginationState {
                 .forced_holder(document, cascade, body_id, node_id)
         })
         .flatten()
+        .filter(|&(node, _)| {
+            float_scope.is_none_or(|scope| {
+                node != scope && document.layout_ancestors(node).any(|id| id == scope)
+            })
+        })
         .map(|(node, lead)| {
             let margin_top = break_margins(document, cascade, node, content_width).0
                 + collapsed_start_margin_gain(

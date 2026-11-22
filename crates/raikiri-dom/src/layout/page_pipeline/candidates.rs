@@ -2151,7 +2151,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box in the block flow of a float is a candidate only for
                 // a break forced before, after or inside it, which splits the
                 // float; page names inside a float name no page.
-                let float_flow_break = in_float_flow && (forces_break_here || after_forced_break);
+                let float_flow_break = in_float_flow
+                    && (after_forced_break
+                        || super::takes_forced_break(document, cascade, body_id, node_id, true)
+                        || super::takes_forced_break(document, cascade, body_id, node_id, false));
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that

@@ -10603,6 +10603,145 @@ fn break_flex_line_peers(
     }
 }
 
+/// Whether a forced break at the start (`before`) or the end of `node_id`
+/// reaches the edge of the float around it: `node_id` and every box between
+/// it and the float are the first, or the last, boxes of their parents'
+/// flow, with no generated content on that side. The break passes to the
+/// float, which is no part of the page flow, and Chromium does not take it.
+pub(super) fn break_reaches_float_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    document
+        .ancestors(node_id)
+        .find_map(|parent| {
+            // The edge child looks through boxes that generate none and plain
+            // inline boxes, so it may lie inside the child of `parent` on the
+            // way to `node_id`.
+            let at_edge = page_edge_child(document, cascade, parent, before, 0)
+                .ok()
+                .flatten()
+                .is_some_and(|edge| {
+                    document
+                        .inclusive_ancestors(node_id)
+                        .take_while(|&ancestor| ancestor != parent)
+                        .any(|ancestor| ancestor == edge)
+                });
+            if !at_edge || generated_on_side(cascade, parent, before) {
+                Some(false)
+            } else {
+                is_side_float(document, cascade, parent).then_some(true)
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Where a forced break before (`before`) or after the flex item or grid
+/// item `item` falls among the lines or rows of its container, which lays
+/// its items out in `order`: a break at an item that shares its flex line or
+/// grid row with others is taken before or after the whole line or row.
+/// `Some(true)` when that line or row is the first (or the last) of the
+/// container, so that the break falls at the container's own edge,
+/// `Some(false)` when it falls between two lines or rows, and `None` when
+/// `item` is no flex or grid item on horizontal axes. A row container that
+/// wraps in reverse stacks its lines upwards, and its breaks fall at its
+/// edges, as Chromium prints them.
+pub(super) fn line_break_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    item: usize,
+    before: bool,
+) -> Option<bool> {
+    let container = document.layout_parent_of(item)?;
+    let display = document.nodes[container].display();
+    if document.nodes[container].used_writing_mode.is_vertical()
+        || !matches!(
+            display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        )
+    {
+        return None;
+    }
+    // The items in the order the container lays them out, through the
+    // elements that generate no box.
+    let mut items: Vec<usize> = document
+        .children_through_contents(container)
+        .into_iter()
+        .filter(|&id| {
+            let node = &document.nodes[id];
+            node.kind() == NodeKind::Element
+                && node.display() != DisplayValue::None
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        })
+        .collect();
+    items.sort_by_key(|&id| {
+        cascade
+            .computed
+            .get(id)
+            .map_or(0, |computed| computed.order)
+    });
+    items.iter().position(|&id| id == item)?;
+    let edge_item = if before {
+        items[0]
+    } else {
+        items[items.len() - 1]
+    };
+    if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
+        let computed = &cascade.computed[container];
+        if !matches!(
+            computed.flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        ) {
+            return Some(edge_item == item);
+        }
+        if computed.flex_wrap != FlexWrapValue::Wrap {
+            return Some(true);
+        }
+        let line = flex_line_of(document, cascade, body_id, container, items.clone(), item);
+        return Some(line.contains(&edge_item));
+    }
+    let rows = &document.nodes[container].grid_item_rows;
+    // An item the grid placed no row for is judged as a block.
+    let span = rows.iter().find(|row| row.item == item)?;
+    Some(if before {
+        rows.iter().map(|row| row.start).min() == Some(span.start)
+    } else {
+        rows.iter().map(|row| row.end).max() == Some(span.end)
+    })
+}
+
+/// Whether a forced break before (`before`) or after `node_id`, a box in the
+/// block flow of a float, splits that float: it falls between two boxes of
+/// the float's flow, rather than at the float's own edge, where it passes
+/// to the float, which is no part of the page flow (Chromium). A break at
+/// an item that shares its flex line or grid row falls at the edge of that
+/// line or row.
+pub(super) fn splits_float_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    match line_break_edge(document, cascade, body_id, node_id, before) {
+        Some(false) => true,
+        Some(true) => document.layout_parent_of(node_id).is_none_or(|container| {
+            !is_side_float(document, cascade, container)
+                && !break_reaches_float_edge(document, cascade, container, before)
+        }),
+        None => !break_reaches_float_edge(document, cascade, node_id, before),
+    }
+}
+
 /// Push the later items of the grid `container` that start within the rows
 /// its item `item` spans.
 fn grid_row_peers(document: &Document, container: usize, item: usize, peers: &mut Vec<usize>) {
@@ -10644,8 +10783,8 @@ struct PendingBreak {
     /// only and never reaches the flow outside (Chromium).
     scope: Option<usize>,
     /// The breaks still pending when a break was forced inside a positioned
-    /// box that does not hold their sources, each with that box: they fall
-    /// after it once the flow leaves it.
+    /// box or float that does not hold their sources, each with that box:
+    /// they fall after it once the flow leaves it.
     suspended: Vec<(usize, PendingBreak)>,
 }
 
@@ -10707,8 +10846,8 @@ impl PendingBreak {
         self.scope = outer.scope;
     }
 
-    /// Drop the breaks forced inside an absolutely positioned box that
-    /// `node_id` lies outside of: they break nothing after that box. The
+    /// Drop the breaks forced inside an absolutely positioned box or a float
+    /// that `node_id` lies outside of: they break nothing after that box. The
     /// break forced after a box around that one, or one that was pending
     /// before the flow entered that box, is pending again.
     fn leave_scopes(&mut self, document: &Document, node_id: usize) {
@@ -10775,7 +10914,8 @@ impl PendingBreak {
     ) {
         // A forced break held by a clip box around the node breaks nothing;
         // a change of page name after it still applies.
-        let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
+        let breaks_after = (takes_forced_break(document, cascade, body_id, node_id, false)
+            && !held())
             || deferred_named_break_after;
         if !breaks_after || self.source == Some(node_id) {
             return;
@@ -10832,10 +10972,30 @@ fn break_scope(document: &Document, cascade: &CascadeResult, node_id: usize) -> 
 /// Whether `id` floats to a side in the flow, which a break forced inside
 /// it splits: a footnote is placed in the footnote area instead.
 fn is_side_float(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    matches!(
-        cascade.computed[id].float,
-        FloatValue::Left | FloatValue::Right
-    ) && is_floating_box_for_pagination(document, cascade, id)
+    // An anonymous box has no computed style and floats on no side.
+    cascade
+        .computed
+        .get(id)
+        .is_some_and(|computed| matches!(computed.float, FloatValue::Left | FloatValue::Right))
+        && is_floating_box_for_pagination(document, cascade, id)
+}
+
+/// Whether `node_id` forces a page break before (`before`) or after itself
+/// that pagination takes: inside the block flow of a float, only a break
+/// that falls between two boxes of that flow, and not at the float's edge
+/// (see [`splits_float_flow`]).
+pub(super) fn takes_forced_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    forces_page_break(document, cascade, node_id, before)
+        && break_scope(document, cascade, node_id).is_none_or(|scope| {
+            !is_side_float(document, cascade, scope)
+                || splits_float_flow(document, cascade, body_id, node_id, before)
+        })
 }
 
 /// Whether `node_id` lies in the flow of a float that pagination breaks
@@ -10884,9 +11044,9 @@ fn in_float_block_flow(
             })
 }
 
-/// Whether a break forced inside the positioned box `scope` splits it: a
-/// fixed box, and every box inside one, is monolithic and takes no break
-/// (Chromium).
+/// Whether a break forced inside `scope`, a positioned box or a float,
+/// splits it: a fixed box, and every box inside one, is monolithic and takes
+/// no break (Chromium).
 fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
     std::iter::once(scope)
         .chain(document.layout_ancestors(scope))
@@ -10894,7 +11054,7 @@ fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
 }
 
 /// Whether a break forced inside `scope` (the flow outside every positioned
-/// box when `None`) may fall before `node_id`.
+/// box and float when `None`) may fall before `node_id`.
 fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
     scope.is_none_or(|scope| node_id != scope && is_descendant_or_self(document, node_id, scope))
 }
