@@ -41,6 +41,16 @@ impl Group {
         }
     }
 
+    /// Whether the `entry`th of the entries the group was planned from is a
+    /// wrapper whose boxes joined the flow.
+    pub(super) fn wraps(&self, entry: usize) -> bool {
+        self.flow.as_ref().is_some_and(|flow| {
+            flow.direct
+                .get(entry)
+                .is_some_and(|&index| matches!(flow.roles[index], Role::Open(_)))
+        })
+    }
+
     fn flow_placement(&self, flow: &Flow, index: usize) -> Option<Placement> {
         let Role::Open(close) = flow.roles[index] else {
             return self.placements.get(index)?.clone();
@@ -228,7 +238,14 @@ impl Flow {
         depth: usize,
     ) -> Option<()> {
         let id = entry.0;
-        if !is_flow_wrapper(tree, id) {
+        // A `flow-root` box that holds one row of lines has nowhere to break,
+        // so it goes whole to a column (see `holds_one_row_of_lines`). Its
+        // lines are known only once it is laid out at the column width, as
+        // the entries are.
+        if !is_flow_wrapper(tree, id)
+            || layout_node(tree, id).display() == DisplayValue::FlowRoot
+                && holds_one_row_of_lines(tree, id)
+        {
             // Inside a wrapper, the flow takes paragraphs whose pieces hold
             // nothing but lines, between no padding or border, sized boxes
             // with no lines, and white space; the pieces are recorded without
@@ -379,7 +396,7 @@ fn spans_the_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
 }
 
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
-/// block that holds only blocks, has no border, takes the width of the column
+/// block or `flow-root` box that holds only blocks, has no border, takes the width of the column
 /// and paints nothing, so that cutting it between the columns where its boxes
 /// break leaves nothing of it to show. Its margins adjoin those of its first
 /// and last boxes, as it starts no formatting context, unless padding above or

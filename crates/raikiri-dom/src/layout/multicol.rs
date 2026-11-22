@@ -4483,11 +4483,7 @@ fn layout_column_group(
         // The boxes inside a wrapper whose boxes joined the flow have their
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
-            Some(group)
-                if group.flow.is_some()
-                    && planned.is_some()
-                    && paragraph_group::is_flow_wrapper(tree, child) =>
-            {
+            Some(group) if planned.is_some() && group.wraps(local_order) => {
                 if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
                     .is_none()
                 {
