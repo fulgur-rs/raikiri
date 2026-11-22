@@ -1207,7 +1207,14 @@ fn run_boxes_segment(
                 let baseline = open_block
                     .as_ref()
                     .map_or(baseline, |open| open.first_baseline(line_y, baseline));
-                let wanted = super::outside_marker::leading(marker_pending, baseline);
+                // A line that takes no room, as a line of a margin alone in
+                // quirks mode, is not one the marker sits on.
+                let holds_marker = height > 0.0 || baseline > 0.0;
+                let wanted = if holds_marker {
+                    super::outside_marker::leading(marker_pending, baseline)
+                } else {
+                    0.0
+                };
                 if candidate_leading != wanted {
                     candidate_leading = wanted;
                     continue;
@@ -1372,12 +1379,14 @@ fn run_boxes_segment(
                 calls = 0;
                 moves = 0;
                 y = line_y + height;
-                if marker_pending.is_some()
-                    && let Some(open) = open_block.as_mut()
-                {
-                    open.apply_marker_leading(line.block_start_leading());
+                if holds_marker {
+                    if marker_pending.is_some()
+                        && let Some(open) = open_block.as_mut()
+                    {
+                        open.apply_marker_leading(line.block_start_leading());
+                    }
+                    marker_pending = None;
                 }
-                marker_pending = None;
                 candidate_leading = 0.0;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();

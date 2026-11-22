@@ -54,18 +54,14 @@ fn measure_in_flow_child(
     child: NodeId,
     inputs: LayoutInput,
     context: Option<&mut BlockContext>,
+    marker_wants_baseline: bool,
 ) -> LayoutOutput {
     let measure = |tree: &mut LayoutSession<'_>| {
         tree.compute_child_layout_with_block_ctx(child, inputs, context)
     };
     if inputs.run_mode == RunMode::ComputeSize
         && (tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
-            || crate::layout::ifc::outside_marker::height(
-                tree,
-                tree.style_views.cascade(),
-                usize::from(parent),
-            )
-            .is_some())
+            || marker_wants_baseline)
     {
         // Block flow collects its baseline from an in-flow child's output,
         // just as native flex/grid do through their placement callbacks.
@@ -1301,6 +1297,9 @@ pub(super) fn layout(
             .into_iter()
             .chain(floor)
             .fold(f32::NEG_INFINITY, f32::max);
+        // Only the child that gives the first baseline can be moved down
+        // by the outside marker, so only it is measured for its baseline.
+        let marker_wants_baseline = marker_height.is_some() && flow.baselines.first.is_none();
         let saved = ctx.snapshot();
         let mut final_pass = resolved && joins && style.clear == Clear::None && floor.is_none();
         let mut guess = slot_y
@@ -1329,7 +1328,14 @@ pub(super) fn layout(
                     )
                 };
                 sub.set_origin_resolved(final_pass);
-                let output = measure_in_flow_child(tree, node, child, child_input, Some(&mut sub));
+                let output = measure_in_flow_child(
+                    tree,
+                    node,
+                    child,
+                    child_input,
+                    Some(&mut sub),
+                    marker_wants_baseline,
+                );
                 (
                     output,
                     sub.floated_content_height_contribution(),
@@ -1337,7 +1343,14 @@ pub(super) fn layout(
                 )
             } else {
                 (
-                    measure_in_flow_child(tree, node, child, child_input, None),
+                    measure_in_flow_child(
+                        tree,
+                        node,
+                        child,
+                        child_input,
+                        None,
+                        marker_wants_baseline,
+                    ),
                     f32::NEG_INFINITY,
                     [false; 2],
                 )
