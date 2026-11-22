@@ -10623,6 +10623,175 @@ fn break_flex_line_peers(
     }
 }
 
+/// Whether a forced break at the start (`before`) or the end of `node_id`
+/// reaches the edge of the float around it: `node_id` and every box between
+/// it and the float are the first, or the last, boxes of their parents'
+/// flow, with no generated content on that side, or flex or grid items whose
+/// line or row is the first, or the last, of their container. The break
+/// passes to the float, which is no part of the page flow, and Chromium does
+/// not take it.
+fn break_reaches_float_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    document
+        .ancestors(node_id)
+        .find_map(|parent| {
+            // A break at a flex or grid item is taken at the edge of its
+            // line or row.
+            let line_edge = document
+                .inclusive_ancestors(node_id)
+                .take_while(|&ancestor| ancestor != parent)
+                .find(|&ancestor| document.layout_parent_of(ancestor) == Some(parent))
+                .and_then(|item| line_break_edge(document, cascade, body_id, item, before));
+            let at_edge = line_edge.unwrap_or_else(|| {
+                // The edge child looks through boxes that generate none and
+                // plain inline boxes, so it may lie inside the child of
+                // `parent` on the way to `node_id`.
+                !generated_on_side(cascade, parent, before)
+                    && page_edge_child(document, cascade, parent, before, 0)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|edge| {
+                            document
+                                .inclusive_ancestors(node_id)
+                                .take_while(|&ancestor| ancestor != parent)
+                                .any(|ancestor| ancestor == edge)
+                        })
+            });
+            if at_edge {
+                is_side_float(document, cascade, parent).then_some(true)
+            } else {
+                Some(false)
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Where a forced break before (`before`) or after the flex item or grid
+/// item `item` falls among the lines or rows of its container, which lays
+/// its items out in `order`: a break at an item that shares its flex line or
+/// grid row with others is taken before or after the whole line or row.
+/// `Some(true)` when that line or row is the first (or the last) of the
+/// container, so that the break falls at the container's own edge,
+/// `Some(false)` when it falls between two lines or rows, and `None` when
+/// `item` is no flex or grid item on horizontal axes. A row container that
+/// wraps in reverse stacks its lines upwards, and its breaks fall at its
+/// edges, as Chromium prints them.
+pub(super) fn line_break_edge(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    item: usize,
+    before: bool,
+) -> Option<bool> {
+    let container = document.layout_parent_of(item)?;
+    let display = document.nodes[container].display();
+    if document.nodes[container].used_writing_mode.is_vertical()
+        || !matches!(
+            display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        )
+    {
+        return None;
+    }
+    // The items in the order the container lays them out, through the
+    // elements that generate no box, with the anonymous items of text.
+    let children = document.children_through_contents(container);
+    let is_text_item = |id: usize| {
+        let node = &document.nodes[id];
+        node.kind() == NodeKind::Text
+            && node
+                .text_content()
+                .is_some_and(|text| !text.trim_ascii().is_empty())
+    };
+    let anonymous = children.iter().any(|&id| is_text_item(id));
+    let mut items: Vec<usize> = children
+        .into_iter()
+        .filter(|&id| {
+            let node = &document.nodes[id];
+            (node.kind() == NodeKind::Element
+                && node.display() != DisplayValue::None
+                && !matches!(
+                    node.position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                ))
+                || is_text_item(id)
+        })
+        .collect();
+    items.sort_by_key(|&id| {
+        cascade
+            .computed
+            .get(id)
+            .map_or(0, |computed| computed.order)
+    });
+    items.iter().position(|&id| id == item)?;
+    // Generated content on that side is an item before or after the others.
+    let generated = super::generated_on_side(cascade, container, before);
+    if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
+        let computed = &cascade.computed[container];
+        let row = matches!(
+            computed.flex_direction,
+            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+        );
+        if row && computed.flex_wrap != FlexWrapValue::Wrap {
+            return Some(true);
+        }
+        // A column that runs in reverse puts its first item at its end.
+        let first = before != (computed.flex_direction == FlexDirectionValue::ColumnReverse);
+        let edge_item = if first {
+            items[0]
+        } else {
+            items[items.len() - 1]
+        };
+        if !row {
+            return Some(!generated && edge_item == item);
+        }
+        // The lines of text items are not measured; such a container is
+        // judged as a block.
+        if generated || anonymous {
+            return None;
+        }
+        let line = flex_line_of(document, cascade, body_id, container, items.clone(), item);
+        return Some(line.contains(&edge_item));
+    }
+    // The rows of text items are not recorded; such a grid is judged as a
+    // block.
+    if generated || anonymous {
+        return None;
+    }
+    let rows = &document.nodes[container].grid_item_rows;
+    // An item the grid placed no row for is judged as a block.
+    let span = rows.iter().find(|row| row.item == item)?;
+    Some(if before {
+        rows.iter().map(|row| row.start).min() == Some(span.start)
+    } else {
+        rows.iter().map(|row| row.end).max() == Some(span.end)
+    })
+}
+
+/// Whether a forced break before (`before`) or after `node_id`, a box in the
+/// block flow of a float, splits that float: it falls between two boxes of
+/// the float's flow, rather than at the float's own edge, where it passes
+/// to the float, which is no part of the page flow (Chromium). A break at
+/// an item that shares its flex line or grid row falls at the edge of that
+/// line or row, and one at the edge of an item at the edge of that item.
+pub(super) fn splits_float_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    !break_reaches_float_edge(document, cascade, body_id, node_id, before)
+}
+
 /// Push the later items of the grid `container` that start within the rows
 /// its item `item` spans.
 fn grid_row_peers(document: &Document, container: usize, item: usize, peers: &mut Vec<usize>) {
@@ -10659,13 +10828,13 @@ struct PendingBreak {
     /// Each still falls after its own box once the break inside it has been
     /// taken.
     enclosing: Vec<EnclosingBreak>,
-    /// The nearest absolutely positioned box around the source, if any: a
-    /// break forced inside one falls before the next box inside it only and
-    /// never reaches the flow outside (Chromium).
+    /// The nearest absolutely positioned box or float around the source, if
+    /// any: a break forced inside one falls before the next box inside it
+    /// only and never reaches the flow outside (Chromium).
     scope: Option<usize>,
     /// The breaks still pending when a break was forced inside a positioned
-    /// box that does not hold their sources, each with that box: they fall
-    /// after it once the flow leaves it.
+    /// box or float that does not hold their sources, each with that box:
+    /// they fall after it once the flow leaves it.
     suspended: Vec<(usize, PendingBreak)>,
 }
 
@@ -10727,8 +10896,8 @@ impl PendingBreak {
         self.scope = outer.scope;
     }
 
-    /// Drop the breaks forced inside an absolutely positioned box that
-    /// `node_id` lies outside of: they break nothing after that box. The
+    /// Drop the breaks forced inside an absolutely positioned box or a float
+    /// that `node_id` lies outside of: they break nothing after that box. The
     /// break forced after a box around that one, or one that was pending
     /// before the flow entered that box, is pending again.
     fn leave_scopes(&mut self, document: &Document, node_id: usize) {
@@ -10795,7 +10964,8 @@ impl PendingBreak {
     ) {
         // A forced break held by a clip box around the node breaks nothing;
         // a change of page name after it still applies.
-        let breaks_after = (forces_page_break(document, cascade, node_id, false) && !held())
+        let breaks_after = (takes_forced_break(document, cascade, body_id, node_id, false)
+            && !held())
             || deferred_named_break_after;
         if !breaks_after || self.source == Some(node_id) {
             return;
@@ -10811,7 +10981,7 @@ impl PendingBreak {
                 ends_enclosing: self.ends_enclosing,
                 scope: self.scope,
             });
-        } else if let Some(scope) = break_scope(document, node_id)
+        } else if let Some(scope) = break_scope(document, cascade, node_id)
             .filter(|&scope| self.source.is_some() && self.scope != Some(scope))
         {
             // A break that has not fallen yet, outside the positioned box
@@ -10835,21 +11005,98 @@ impl PendingBreak {
             .is_some_and(|outer| at_block_edge(document, cascade, node_id, outer.source, false));
         self.source = Some(node_id);
         self.line_peers = later_line_peers(document, cascade, body_id, node_id);
-        self.scope = break_scope(document, node_id);
+        self.scope = break_scope(document, cascade, node_id);
     }
 }
 
-/// The nearest absolutely or fixed positioned box around `node_id`, which
-/// keeps the breaks forced inside it to itself.
-fn break_scope(document: &Document, node_id: usize) -> Option<usize> {
+/// The nearest absolutely or fixed positioned box or float around
+/// `node_id`, which keeps the breaks forced inside it to itself: Chromium
+/// splits that box at the break and leaves the flow outside it in place.
+/// A footnote is no float of the flow: its body goes to the footnote area.
+fn break_scope(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
     document
         .layout_ancestors(node_id)
-        .find(|&id| is_out_of_flow_positioned(document, id))
+        .find(|&id| is_out_of_flow_positioned(document, id) || is_side_float(document, cascade, id))
 }
 
-/// Whether a break forced inside the positioned box `scope` splits it: a
-/// fixed box, and every box inside one, is monolithic and takes no break
-/// (Chromium).
+/// Whether `id` floats to a side in the flow, which a break forced inside
+/// it splits: a footnote is placed in the footnote area instead.
+fn is_side_float(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    // An anonymous box has no computed style and floats on no side.
+    cascade
+        .computed
+        .get(id)
+        .is_some_and(|computed| matches!(computed.float, FloatValue::Left | FloatValue::Right))
+        && is_floating_box_for_pagination(document, cascade, id)
+}
+
+/// Whether `node_id` forces a page break before (`before`) or after itself
+/// that pagination takes: inside the block flow of a float, only a break
+/// that falls between two boxes of that flow, and not at the float's edge
+/// (see [`splits_float_flow`]).
+pub(super) fn takes_forced_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+    before: bool,
+) -> bool {
+    forces_page_break(document, cascade, node_id, before)
+        && break_scope(document, cascade, node_id).is_none_or(|scope| {
+            !is_side_float(document, cascade, scope)
+                || splits_float_flow(document, cascade, body_id, node_id, before)
+        })
+}
+
+/// Whether `node_id` lies in the flow of a float that pagination breaks
+/// through: each box between the two stacks its children in block flow or
+/// lays them out as flex or grid items, none of them is monolithic, and no
+/// monolithic box holds the float. A break forced there splits the float,
+/// and what follows the break inside it goes on to the next page, while the
+/// flow beside and after the float stays where it is (Chromium). An
+/// absolutely positioned box on the way keeps the break to itself, as in
+/// any flow.
+fn in_float_block_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    transposed: bool,
+) -> bool {
+    let stacks_boxes = |id: usize| {
+        breaks_through_block_flow(document, cascade, id)
+            || (matches!(
+                document.nodes[id].display(),
+                DisplayValue::Flex | DisplayValue::Grid
+            ) && !is_monolithic_for_pagination_with_transposed_axes(
+                document, cascade, id, transposed,
+            ))
+    };
+    let Some(scope) = document
+        .layout_ancestors(node_id)
+        .filter(|&id| document.nodes[id].display() != DisplayValue::Contents)
+        .find(|&id| {
+            !stacks_boxes(id)
+                || is_out_of_flow_positioned(document, id)
+                || is_side_float(document, cascade, id)
+        })
+        .filter(|&id| stacks_boxes(id) && splits_at_forced_breaks(document, id))
+    else {
+        return false;
+    };
+    // The float lies in the flow of its parent: a monolithic box around it,
+    // up to an absolutely positioned box, keeps it whole.
+    !is_side_float(document, cascade, scope)
+        || !document
+            .layout_ancestors(scope)
+            .take_while(|&id| !is_out_of_flow_positioned(document, id))
+            .any(|id| {
+                is_monolithic_for_pagination_with_transposed_axes(document, cascade, id, transposed)
+            })
+}
+
+/// Whether a break forced inside `scope`, a positioned box or a float,
+/// splits it: a fixed box, and every box inside one, is monolithic and takes
+/// no break (Chromium).
 fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
     std::iter::once(scope)
         .chain(document.layout_ancestors(scope))
@@ -10857,7 +11104,7 @@ fn splits_at_forced_breaks(document: &Document, scope: usize) -> bool {
 }
 
 /// Whether a break forced inside `scope` (the flow outside every positioned
-/// box when `None`) may fall before `node_id`.
+/// box and float when `None`) may fall before `node_id`.
 fn in_break_scope(document: &Document, scope: Option<usize>, node_id: usize) -> bool {
     scope.is_none_or(|scope| node_id != scope && is_descendant_or_self(document, node_id, scope))
 }
@@ -19615,6 +19862,25 @@ fn move_box_for_transition(
         );
     } else if forced_transition
         && nested_block
+        && break_scope(document, cascade, node_id)
+            .is_some_and(|scope| is_side_float(document, cascade, scope))
+    {
+        // A break forced inside a float moves what follows it inside the
+        // float, which grows to hold it, as for its lines that a page end
+        // moves: the flow beside and after the float stays where it is, and
+        // only the boxes that clear the float follow it.
+        moved_in_bounded_ancestor = grow_ancestors_for_line_move(
+            document,
+            cascade,
+            holder,
+            node_delta,
+            body_id,
+            shifts,
+            flow_page,
+            &followed_ifc_boxes,
+        );
+    } else if forced_transition
+        && nested_block
         && !candidate.context.is_flex_item()
         && !candidate.context.is_grid_item()
         && !candidate.context.is_table_row()
@@ -20075,9 +20341,10 @@ fn grow_ancestors_walk(
             shifts
                 .bounded
                 .push((parent, flow_delta - flow_passed, flow_page));
-        } else if flow_passed > flow_delta + 0.001 {
+        } else if flow_passed > flow_delta + 0.001 && !is_out_of_flow_positioned(document, parent) {
             // A box holding its floats grew around a float that moved with
-            // the content it overflowed: the flow after the box follows.
+            // the content it overflowed: the flow after the box follows. The
+            // flow around an absolutely positioned box stays.
             shifts.growth.push((parent, flow_passed - flow_delta));
         }
         float_delta = if owns_floats {
@@ -20095,6 +20362,11 @@ fn grow_ancestors_walk(
         size_delta = size_absorbed;
         child = parent;
         if parent == body_id {
+            break;
+        }
+        // An absolutely positioned box grows, and neither its parent nor
+        // the flow after it follows.
+        if is_out_of_flow_positioned(document, parent) {
             break;
         }
     }

@@ -1744,8 +1744,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !is_float
                     && !super::is_out_of_flow_positioned(document, node_id)
                     && super::splits_at_forced_breaks(document, node_id);
+                // The same holds in the block flow inside a float.
+                let in_float_flow = inside_float
+                    && !inline_level
+                    && !is_float
+                    && super::in_float_block_flow(
+                        document,
+                        cascade,
+                        node_id,
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let after_forced_break = self.forces_break_after
-                    && (in_any_flow || in_static_positioned_flow)
+                    && (in_any_flow || in_static_positioned_flow || in_float_flow)
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame
@@ -2134,10 +2144,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // a clip box around it holds the break depends on where
                 // pagination puts that box, so it is judged there (see
                 // `clip_holds_breaks`).
-                let sets_page_flow = deferred_named_break_after
-                    || own_page_name.is_some()
-                    || forces_page_break(document, cascade, node_id, true)
+                let forces_break_here = forces_page_break(document, cascade, node_id, true)
                     || forces_page_break(document, cascade, node_id, false);
+                let sets_page_flow =
+                    deferred_named_break_after || own_page_name.is_some() || forces_break_here;
+                // A box in the block flow of a float is a candidate only for
+                // a break forced before, after or inside it, which splits the
+                // float; page names inside a float name no page.
+                let float_flow_break = in_float_flow
+                    && (after_forced_break
+                        || super::takes_forced_break(document, cascade, body_id, node_id, true)
+                        || super::takes_forced_break(document, cascade, body_id, node_id, false));
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that
@@ -2295,7 +2312,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 });
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
-                    && !inside_float
+                    && (!inside_float || float_flow_break)
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
