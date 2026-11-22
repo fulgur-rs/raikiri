@@ -3121,11 +3121,6 @@ impl PaginationState {
             })
     }
 
-    /// Opens the page a box starts on when it meets a page transition: a
-    /// forced break, a change of the page type it names, or a break inside it
-    /// that it avoids. The box moves to the top of that page, and the flow
-    /// after it, its floats and the siblings of a wrapped flex line move with
-    /// it.
     /// Plans the box `node_id` after a forced break, whose margin box
     /// starts at `flow_top`, at the top of the page the break opens when
     /// only the clearance at the break kept it below that top and an earlier
@@ -3160,6 +3155,7 @@ impl PaginationState {
         {
             return;
         }
+        let is_float = is_floating_box_for_pagination(document, cascade, node_id);
         // The page the break opens follows the flow's page, and any page an
         // earlier forced break opened.
         let opened = env.page_origins.origin(
@@ -3167,7 +3163,6 @@ impl PaginationState {
                 .max(self.last_forced_page.unwrap_or(0))
                 .saturating_add(1),
         );
-        let is_float = is_floating_box_for_pagination(document, cascade, node_id);
         // A float before a block that takes the break with it is left below
         // the earlier floats, and so is a block that an inline formatting
         // context lays out, which places it after its lines.
@@ -3192,6 +3187,11 @@ impl PaginationState {
         }
     }
 
+    /// Opens the page a box starts on when it meets a page transition: a
+    /// forced break, a change of the page type it names, or a break inside it
+    /// that it avoids. The box moves to the top of that page, and the flow
+    /// after it, its floats and the siblings of a wrapped flex line move with
+    /// it.
     pub(super) fn open_page_for_box(
         &mut self,
         document: &mut LayoutSession<'_>,

@@ -238,4 +238,20 @@ fn a_box_with_a_break_before_it_starts_the_page_beside_a_float_in_its_flow() {
         "<div><div style='float:left;width:10px;height:300px'></div><div style='height:30px'>A</div><div style='height:30px;break-before:page'>B</div></div><div>X</div>",
         &["A@10,0", "B@10,0 X@10,30", ""],
     );
+    // The box keeps its top margin there, and a box after an earlier block
+    // that runs on past the page the break opens starts the page after it.
+    expect(
+        "<div style='display:flow-root'><div style='float:left;width:10px;height:300px'></div><div style='height:30px'>A</div><div style='height:30px;margin-top:20px;break-before:page'>B</div></div><div>X</div>",
+        &["A@10,0", "B@10,20", "", "X@0,0"],
+    );
+    expect(
+        "<div style='display:flow-root'><div style='float:left;width:10px;height:300px'></div><div style='height:150px;overflow:hidden'>A</div><div style='height:30px;break-before:page'>B</div></div><div>X</div>",
+        &["A@10,0", "", "B@10,0", "X@0,0"],
+    );
+    // A float after the break in that flow is laid out beside the earlier
+    // float, as a float of block flow is.
+    expect(
+        "<div style='display:flow-root'><div style='float:left;width:10px;height:300px'></div><div style='height:30px;break-after:page'>A</div><div style='float:left;width:30px'>G</div>Z</div><div>X</div>",
+        &["A@10,0", "G@10,0 Z@40,0", "", "X@0,0"],
+    );
 }
