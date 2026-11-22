@@ -91,6 +91,27 @@ fn lines_moved_away_from_the_floats_beside_them_take_the_whole_width() {
             "<div style='height:100px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0;break-inside:avoid'>A B<br>K</p>",
             (1, 0, 20),
         ),
+        // A box moved to the second page earlier shifts the flow; the
+        // paragraph still starts the third page at its start.
+        (
+            "<div style='height:100px'></div><div style='height:40px;break-inside:avoid'><div style='height:40px'></div></div><div style='height:70px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C K</p>",
+            (2, 120, 0),
+        ),
+        // Only the first line was beside the float; the rest wrap anew.
+        (
+            "<div style='height:100px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C D E F G H I J K</p>",
+            (1, 0, 40),
+        ),
+        // A list item moves the same way.
+        (
+            "<div style='height:110px'></div><div style='float:left;width:40px;height:5px'></div><ul style='margin:0;padding:0;list-style:none'><li>A B C K</li></ul>",
+            (1, 120, 0),
+        ),
+        // The paragraph after it follows it.
+        (
+            "<div style='height:110px'></div><div style='float:left;width:40px;height:5px'></div><p style='margin:0'>A B C</p><p style='margin:0'>K</p>",
+            (1, 0, 20),
+        ),
     ] {
         assert_eq!(marker(body), expected, "{body}");
     }

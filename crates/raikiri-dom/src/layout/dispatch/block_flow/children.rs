@@ -1042,6 +1042,10 @@ pub(super) fn layout(
             .chain(tree.context.float_resumptions.flow_top(usize::from(child)))
             .chain(margin_floor)
             .reduce(f32::max);
+        let pushed_delta = tree
+            .context
+            .float_resumptions
+            .pushed_flow_delta(usize::from(child));
         // An `auto` width fills the room, but a table, a compressible
         // replaced box and a button take their own size then; `stretch` fills
         // it for them too (CSS Sizing 4 §5.1).
@@ -1207,6 +1211,18 @@ pub(super) fn layout(
         // margins of its parent.
         let mut separated = false;
         let joins = leading && collapse_start;
+        // A block the page walk moved whole to a later page, away from the
+        // floats beside its lines, goes as far below its place in the flow
+        // as the walk moved it, so that its lines are broken where it lands.
+        let pushed_floor = pushed_delta.map(|delta| {
+            let natural = if joins {
+                flow.end
+            } else {
+                flow.end + pending.collapse_with_margin(margin.top).resolve()
+            };
+            natural + delta
+        });
+        let floor = floor.into_iter().chain(pushed_floor).reduce(f32::max);
         let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         if !same {
             let margins = pending.collapse_with_margin(margin.top);
@@ -1399,6 +1415,13 @@ pub(super) fn layout(
             0.0
         };
         let top = top + marker_gap;
+        // A block the page walk moved to a later page, away from the floats
+        // beside its lines, that sits at the top planned for it there.
+        if inputs.run_mode == RunMode::PerformLayout
+            && pushed_floor.is_some_and(|planned| (top - planned).abs() <= 0.01)
+        {
+            tree.context.held_flows.insert(usize::from(child));
+        }
         if held_margins {
             tree.context.held_margins.pop();
         }
