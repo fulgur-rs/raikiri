@@ -1645,7 +1645,17 @@ fn run_boxes_segment(
                 // starts the new page, the lines line up beside that float,
                 // below the floats before it only.
                 let block_id = node.0 as usize;
-                let threshold = if tree
+                // A float after the break that starts the new page beside an
+                // earlier float running on onto it takes the lines along to
+                // its top there.
+                let line_break_top = tree
+                    .context
+                    .line_break_floats
+                    .get(&block_id)
+                    .and_then(|&float| tree.context.float_resumptions.break_top(float));
+                let threshold = if let Some(top) = line_break_top {
+                    Some(top)
+                } else if tree
                     .forced_break_line_clearance
                     .binary_search(&block_id)
                     .is_ok()
@@ -4829,11 +4839,23 @@ pub(crate) fn commit_float(
         tree.context
             .float_resumptions
             .pushed_float_top(float.node)
-            .map_or(line_top, |top| top.max(line_top)),
+            .into_iter()
+            .chain(tree.context.float_resumptions.break_top(float.node))
+            .fold(line_top, f32::max),
         float.direction,
         float.clear,
         adjoins_top_margin,
     );
+    // The boxes after a float that starts a page beside an earlier float
+    // running on onto it line up beside it there.
+    if tree
+        .context
+        .float_resumptions
+        .break_top(float.node)
+        .is_some()
+    {
+        ctx.set_page_start_float_floor(position.y);
+    }
     if perform {
         let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
             (position.x, position.y)

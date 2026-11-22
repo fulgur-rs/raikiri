@@ -3819,6 +3819,7 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared = Vec::new();
     document.context.float_resumption_candidates.clear();
     document.context.float_break_closers.clear();
+    document.context.line_break_floats.clear();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
     let mut cleared_lines_to_float_floor = Vec::new();
@@ -3865,6 +3866,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 if let Some(block) = last_block.take()
                     && (after_forced_break || changes_page(&previous_page_name, &inherited))
                 {
+                    record_line_break_float(document, block, float_after_break, break_float);
                     if std::mem::take(&mut block_ends_with_page_start_float) {
                         cleared_lines_to_float_floor.push(block);
                     } else {
@@ -3954,11 +3956,21 @@ fn clear_floats_at_forced_breaks<'name>(
                     last_block = None;
                 }
                 if after_forced_break && !float_after_break {
-                    document.record_pass_override(
-                        child,
-                        raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
-                    );
-                    cleared.push(child);
+                    // One the page walk found beside an earlier float that runs
+                    // on onto the new page starts that page instead (see
+                    // `float_resumption`).
+                    if document
+                        .context
+                        .float_resumptions
+                        .break_top(child)
+                        .is_none()
+                    {
+                        document.record_pass_override(
+                            child,
+                            raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
+                        );
+                        cleared.push(child);
+                    }
                     float_after_break = true;
                     break_float = Some(child);
                     if carries_flow_break {
@@ -4060,7 +4072,13 @@ fn clear_floats_at_forced_breaks<'name>(
                         .float_resumption_candidates
                         .push((float, child));
                 }
-            } else if forced {
+            } else if forced
+                && document
+                    .context
+                    .float_resumptions
+                    .break_top(child)
+                    .is_none()
+            {
                 document.record_pass_override(
                     child,
                     raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
@@ -4077,6 +4095,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 raikiri_style::PseudoElem::After,
             )
         {
+            record_line_break_float(document, block, float_after_break, break_float);
             if block_ends_with_page_start_float {
                 cleared_lines_to_float_floor.push(block);
             } else {
@@ -4101,6 +4120,30 @@ fn clear_floats_at_forced_breaks<'name>(
         document.forced_break_line_float_floor = cleared_lines_to_float_floor;
         document.named_break_floats = named_break_floats;
         document.layout_dirty = true;
+    }
+}
+
+/// Note the float right after a forced break that the lines after `block`
+/// start beside, when `float_after_break` says it is the last box before
+/// them and the page walk planned it a top beside an earlier float (see
+/// `float_resumption`). The lines take that top only from a float of their
+/// own paragraph, whose top is in the paragraph's coordinates.
+fn record_line_break_float(
+    document: &mut super::context::LayoutSession<'_>,
+    block: usize,
+    float_after_break: bool,
+    break_float: Option<usize>,
+) {
+    if float_after_break
+        && let Some(float) = break_float
+        && document
+            .context
+            .float_resumptions
+            .break_top(float)
+            .is_some()
+        && document.layout_parent_of(float) == document.layout_parent_of(block)
+    {
+        document.context.line_break_floats.insert(block, float);
     }
 }
 
