@@ -280,3 +280,37 @@ fn a_generated_line_below_a_float_after_a_forced_break_follows_the_float() {
         ),
     ]);
 }
+
+#[test]
+fn a_generated_line_of_the_body_after_a_forced_break_starts_the_next_page() {
+    assert_pages(&[
+        (
+            r#"<style>body::after{content:"x"}</style><div style="width:20px;break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div>"#,
+            &["T@0,0", "F@0,0 x@20,0"],
+        ),
+        (
+            r#"<style>body::after{content:"x"}</style><div style="width:20px;break-after:page">T</div><div style="float:right;width:20px;height:20px">F</div>"#,
+            &["T@0,0", "F@80,0 x@0,0"],
+        ),
+        (
+            r#"<style>body{width:20px}body::after{content:"x"}</style><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div>"#,
+            &["T@0,0", "F@0,0 x@0,20"],
+        ),
+        (
+            r#"<style>body{width:20px}body::after{content:"x"}</style><div style="break-after:page">T</div><div style="float:left;width:20px;height:40px">F</div>"#,
+            &["T@0,0", "F@0,0 x@0,40"],
+        ),
+        (
+            r#"<style>body::after{content:"x"}</style><div style="width:20px">a</div><div style="width:20px;break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div>"#,
+            &["T@0,30 a@0,0", "F@0,0 x@20,0"],
+        ),
+        (
+            r#"<style>body{padding-bottom:10px}body::after{content:"x"}</style><div style="width:20px;break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div>"#,
+            &["T@0,0", "F@0,0 x@20,0"],
+        ),
+        (
+            r#"<style>body::after{content:"x y"}body{width:20px}</style><div style="break-after:page">T</div>"#,
+            &["T@0,0", "x@0,0 y@0,30"],
+        ),
+    ]);
+}
