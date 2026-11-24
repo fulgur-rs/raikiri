@@ -47,6 +47,11 @@ pub(crate) struct LayoutContext {
     /// around them sends to the next page, each with the outermost of those
     /// boxes: only floats follow the break inside that box.
     pub(crate) float_break_closers: HashMap<usize, usize>,
+    /// The float right after a forced break, before the text that follows
+    /// it, keyed by the block whose end the break follows: the lines after
+    /// that block start where the float does when the page walk planned the
+    /// float a top beside an earlier float (see `float_resumption`).
+    pub(crate) line_break_floats: HashMap<usize, usize>,
     /// The floats of `float_break_closers` whose box the page walk ended on
     /// the page the break leaves, each with the lowest top it takes, local
     /// to its parent: where that box ends.
@@ -54,6 +59,11 @@ pub(crate) struct LayoutContext {
     /// Floats the page walk moved whole to a later page without a forced
     /// break, in the order it moved them.
     pub(crate) pushed_floats: Vec<usize>,
+    /// Boxes after a forced break that clearance took past the top of the
+    /// page the break opens, below an earlier float that runs on onto that
+    /// page, each with the top the walk found for it there: the border-box
+    /// top of a block, or the margin-box top of a float.
+    pub(crate) forced_break_tops: Vec<(usize, f32)>,
     /// Blocks the page walk moved whole to a later page without a forced
     /// break, away from the floats their lines were broken beside, each with
     /// how far it moved them and where its top was in the page flow before.

@@ -50,6 +50,12 @@ pub(crate) struct Plan {
     /// lowest top it takes: where the box closes, as the flow after the box
     /// starts the next page beside the float.
     closed: HashMap<usize, f32>,
+    /// Boxes after a forced break that start the page the break opens
+    /// beside an earlier float that runs on onto it, each with its top
+    /// there, local to its parent: the border-box top of a block, or the
+    /// margin-box top of a float. Layout places them there in place of the
+    /// clearance the break gives them.
+    break_tops: HashMap<usize, f32>,
 }
 
 impl Plan {
@@ -59,6 +65,29 @@ impl Plan {
             && self.pushed_flows.is_empty()
             && self.margin_flows.is_empty()
             && self.closed.is_empty()
+            && self.break_tops.is_empty()
+    }
+
+    /// Where a box after a forced break starts the page the break opens,
+    /// beside an earlier float that runs on onto that page.
+    pub(crate) fn break_top(&self, node: usize) -> Option<f32> {
+        self.break_tops.get(&node).copied()
+    }
+
+    /// The boxes after a forced break that the plan starts beside an earlier
+    /// float that runs on onto the page the break opens.
+    pub(crate) fn break_top_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.break_tops.keys().copied()
+    }
+
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines and the boxes started beside an
+    /// earlier float after a forced break.
+    pub(crate) fn same_apart_from_flows_and_break_tops(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this.break_tops.clone_from(&other.break_tops);
+        this == *other
     }
 
     /// The lowest top of a float after a box that closed on the page the
@@ -234,6 +263,9 @@ impl Plan {
                 origins.insert(float, border_top);
             }
         }
+        for &(node, top) in &document.context.forced_break_tops {
+            plan.break_tops.insert(node, top);
+        }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
         for placements in [
@@ -242,6 +274,7 @@ impl Plan {
             &mut plan.flows,
             &mut plan.completed,
             &mut plan.completed_containers,
+            &mut plan.break_tops,
         ] {
             for (&id, top) in placements {
                 let parent_top = document.layout_parent_of(id).map_or(0.0, |parent| {

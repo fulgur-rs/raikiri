@@ -385,6 +385,10 @@ pub(super) struct PaginationState {
     /// its run-on reaches leave out.
     pub(super) margin_rooms: HashMap<usize, f32>,
     pub(super) page_names: PageNames,
+    /// The last page a forced break opened, which content out of the flow,
+    /// such as that of an absolutely positioned box, may have opened
+    /// without the flow reaching it.
+    last_forced_page: Option<u32>,
     pub(super) pending_break: PendingBreak,
     /// The absolutely positioned boxes left at their static position that a
     /// pending break moved to the page it opens (see
@@ -488,6 +492,7 @@ impl PaginationState {
             kept_margin_ends: HashMap::new(),
             margin_rooms: HashMap::new(),
             page_names,
+            last_forced_page: None,
             pending_break: PendingBreak::default(),
             moved_static_boxes: HashSet::new(),
             sibling_margins: SiblingMargins::default(),
@@ -2612,7 +2617,35 @@ impl PaginationState {
                         - current_abs_y(document, node_id);
                     !super::clip_holds_breaks(document, env, child, true, child_y)
                 });
-        let pending_break_applies = self.pending_break.applies_to(document, node_id);
+        // A float that layout could not start at the top the walk planned
+        // for it beside an earlier float, as it is too wide or clears it,
+        // lies lower on that page: the break falls before the content
+        // after it, which starts the page.
+        // A box that layout put at its planned top, or below it as it clears
+        // the earlier float, keeps the plan while that float still runs past
+        // the top; a float below it keeps the plan in any case.
+        if let Some(top) = planned_break_top(document, node_id) {
+            let node = &document.nodes[node_id];
+            let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+            let margin_top = node.layout.margin.top;
+            let place = current_abs_y(document, node_id)
+                - super::layout_relative_offset_y(document, cascade, body_id, node_id)
+                - if is_float { margin_top } else { 0.0 };
+            let page_top = if is_float { top } else { top - margin_top };
+            let keeps = place > top - 0.5
+                && float_runs_past(
+                    document,
+                    cascade,
+                    super::float_context_root(document, cascade, node_id, body_id),
+                    node_id,
+                    page_top,
+                );
+            if keeps || below_planned_break_top(document, cascade, body_id, node_id) {
+                document.context.forced_break_tops.push((node_id, top));
+            }
+        }
+        let pending_break_applies = self.pending_break.applies_to(document, node_id)
+            && !below_planned_break_top(document, cascade, body_id, node_id);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -3032,6 +3065,18 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let forced_holder = potential_forced_holder.filter(|_| !forced_break_at_page_start);
+        // A box that the clearance at its own break has already moved to the
+        // top of a later page opens no page here, and is planned as one that
+        // the break moves would be.
+        if forced_break_at_page_start && potential_forced_holder.is_none() {
+            self.plan_break_top(
+                document,
+                env,
+                node_id,
+                effective_y - relative_offset - margin_top,
+                margin_top,
+            );
+        }
         // The line of the item that holds the break moves rather than one
         // inside it.
         let flex_line = match forced_holder {
@@ -3116,6 +3161,72 @@ impl PaginationState {
                 let collapsed = after_positive.max(positive) + after_negative.min(negative);
                 margin_top.max(gap.min(collapsed))
             })
+    }
+
+    /// Plans the box `node_id` after a forced break, whose margin box
+    /// starts at `flow_top`, at the top of the page the break opens when
+    /// only the clearance at the break kept it below that top and an earlier
+    /// float of its formatting context runs on past it. A float that runs on
+    /// onto that page takes its place there beside the content that starts
+    /// the page (Chromium), so the next layout starts the box at that top
+    /// and leaves the float beside it. A box planned before keeps its plan
+    /// (see `begin_box`).
+    fn plan_break_top(
+        &self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        node_id: usize,
+        flow_top: f32,
+        margin_top: f32,
+    ) {
+        let cascade = env.cascade;
+        let node = &document.nodes[node_id];
+        if matches!(
+            node.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || node.used_writing_mode.is_vertical()
+            || document
+                .context
+                .float_resumptions
+                .break_top(node_id)
+                .is_some()
+            || document
+                .forced_break_clearance
+                .binary_search(&node_id)
+                .is_err()
+        {
+            return;
+        }
+        let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+        // The page the break opens follows the flow's page, and any page an
+        // earlier forced break opened.
+        let opened = env.page_origins.origin(
+            self.current_page
+                .max(self.last_forced_page.unwrap_or(0))
+                .saturating_add(1),
+        );
+        // A float before a block that takes the break with it is left below
+        // the earlier floats, and so is a block that an inline formatting
+        // context lays out, which places it after its lines.
+        let in_ifc = document
+            .layout_parent_of(node_id)
+            .is_some_and(|parent| document.nodes[parent].is_ifc_root());
+        if is_float == in_ifc
+            && flow_top > opened + 0.5
+            && float_runs_past(
+                document,
+                cascade,
+                super::float_context_root(document, cascade, node_id, env.body_id),
+                node_id,
+                opened,
+            )
+        {
+            let lead = if is_float { 0.0 } else { margin_top };
+            document
+                .context
+                .forced_break_tops
+                .push((node_id, opened + lead));
+        }
     }
 
     /// Opens the page a box starts on when it meets a page transition: a
@@ -3292,6 +3403,31 @@ impl PaginationState {
             reach_page(control, target_page)?;
         }
         let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
+        // Clearance at a forced break keeps a box below the floats of the
+        // page the break leaves. A float that runs on onto the page the break
+        // opens takes its place there beside the content that starts that
+        // page (Chromium), so the next layout starts the box at that page's
+        // top instead and leaves the float beside it.
+        if lands_after_forced_break && forced_holder.is_none() {
+            self.plan_break_top(
+                document,
+                env,
+                node_id,
+                position.effective_y - relative_offset - margin_top,
+                margin_top,
+            );
+        }
+        // Only a break the flow takes opens a page for it: one inside a float,
+        // or inside a box positioned away from its static position, does not.
+        if lands_after_forced_break
+            && !candidate.context.is_float_descendant()
+            && document
+                .layout_ancestors(node_id)
+                .filter(|&id| super::is_out_of_flow_positioned(document, id))
+                .all(|id| crate::layout::page::is_static_position_absolute(document, cascade, id))
+        {
+            self.last_forced_page = Some(target_page);
+        }
         if is_floating_box_for_pagination(document, cascade, node_id) {
             if pending_break_applies {
                 document.context.float_resumption_boundaries.insert(
@@ -3695,15 +3831,21 @@ impl PaginationState {
         // layout now puts there, stands below the content after it in the
         // source, beside it: that content starts on the page the flow is on,
         // as it does after a float that this walk moves.
+        // So does one that layout could not start beside an earlier float
+        // at the top of the page a forced break opens.
+        let below_break_top = below_planned_break_top(document, cascade, body_id, node_id);
         if natural_page > self.current_page
-            && document
-                .context
-                .float_resumptions
-                .pushed_float_top(node_id)
-                .is_some()
+            && (below_break_top
+                || document
+                    .context
+                    .float_resumptions
+                    .pushed_float_top(node_id)
+                    .is_some())
         {
             // It still starts the later page, and keeps its place there.
-            document.context.pushed_floats.push(node_id);
+            if !below_break_top {
+                document.context.pushed_floats.push(node_id);
+            }
             if self.float_shifts.pending.is_none() {
                 self.float_shifts
                     .add_to_pending(node_id, 0.0, self.current_page);
@@ -6863,4 +7005,69 @@ impl FloatBreakPage {
         self.inline_layout
             .is_none_or(|root| root.is_some() && root == candidate.ifc_root.map(|(root, _)| root))
     }
+}
+
+/// The top that the page walk planned for `node_id` after a forced break,
+/// beside an earlier float that runs on onto the page the break opens (see
+/// `float_resumption`), in the coordinates of the flow.
+fn planned_break_top(document: &LayoutSession<'_>, node_id: usize) -> Option<f32> {
+    let top = document.context.float_resumptions.break_top(node_id)?;
+    let parent_top = document
+        .layout_parent_of(node_id)
+        .map_or(0.0, |parent| current_abs_y(document, parent));
+    Some(parent_top + top)
+}
+
+/// Whether layout put the float `node_id` lower than the top the page walk
+/// planned for it after a forced break: one too wide to start beside the
+/// earlier float there, or one that clears it.
+fn below_planned_break_top(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    is_floating_box_for_pagination(document, cascade, node_id)
+        && planned_break_top(document, node_id).is_some_and(|top| {
+            current_abs_y(document, node_id)
+                - super::layout_relative_offset_y(document, cascade, body_id, node_id)
+                - document.nodes[node_id].layout.margin.top
+                > top + 0.5
+        })
+}
+
+/// Whether a float placed before `node_id` in the block formatting context
+/// of `root` starts above `edge` and runs on past it.
+fn float_runs_past(
+    document: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    node_id: usize,
+    edge: f32,
+) -> bool {
+    let mut pending: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = pending.pop() {
+        if id == node_id {
+            return false;
+        }
+        if is_floating_box_for_pagination(document, cascade, id) {
+            let node = &document.nodes[id];
+            let border_top = current_abs_y(document, id);
+            let top = border_top - node.layout.margin.top;
+            let bottom = border_top + node.layout.size.height + node.layout.margin.bottom;
+            if top < edge && bottom > edge + 0.5 {
+                return true;
+            }
+        }
+        // A box that holds its floats keeps them from the flow around it.
+        if !super::holds_floats(document, cascade, id) {
+            pending.extend(document.nodes[id].children.iter().rev().copied());
+        }
+    }
+    false
 }
