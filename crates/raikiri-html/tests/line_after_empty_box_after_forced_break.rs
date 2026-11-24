@@ -201,6 +201,35 @@ fn generated_boxes_of_a_contents_element_after_the_empty_box() {
     ]);
 }
 
+/// A block `::after` of the paragraph itself comes after the empty box and
+/// any phantom lines; with height it keeps the margins apart, and with none
+/// it lets them join.
+#[test]
+fn a_generated_block_after_the_paragraph_lines() {
+    assert_pages(&[
+        (
+            r#"<style>.g::after{content:"";display:block;height:30px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:30px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:30px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span></div><div style="margin-top:10px">Z</div>"#,
+            &["T@0,0", "Z@0,60"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+    ]);
+}
+
 #[test]
 fn a_line_of_text_after_the_empty_box_sits_below_its_margins() {
     assert_pages(&[
