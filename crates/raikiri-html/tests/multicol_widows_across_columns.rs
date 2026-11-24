@@ -1,7 +1,8 @@
 //! A paragraph split over three or more columns keeps its widows in the last
 //! column: Chromium ends the column before it early, so that one holds fewer
 //! lines, and keeps the orphans before each break. The widows and orphans are
-//! those of the paragraph, which may differ from the container's.
+//! those of the paragraph, which may differ from the container's. Orphans
+//! win when both cannot hold, and widows taller than a column are dropped.
 //!
 //! The lines are the ones Chromium lays out for the same documents (10px
 //! Ahem), shown per column, top to bottom, with `|` between the columns.
@@ -116,6 +117,44 @@ fn the_last_column_keeps_the_widows_of_a_paragraph_over_three_columns_or_more() 
         (
             r#"<div style="columns:3;column-gap:0;width:300px;widows:5;orphans:1"><div style="width:20px">ab cd ef gh ij kl mn op</div></div>"#,
             "ab cd ef | gh ij kl mn op",
+        ),
+    ] {
+        assert_eq!(columns(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn orphans_win_over_widows_and_widows_taller_than_a_column_are_dropped() {
+    for (body, expected) in [
+        // orphans win over widows
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div style="width:20px;orphans:3;widows:2">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl | mn",
+        ),
+        // auto-filled, orphans win over widows
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;column-fill:auto;height:30px"><div style="width:20px;orphans:3;widows:2">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl | mn",
+        ),
+        // auto-filled, widows that begin at the start of the piece
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;column-fill:auto;height:30px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl | mn",
+        ),
+        // auto-filled, the break moves up as far as the orphans let it
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;column-fill:auto;height:30px"><div style="width:20px;orphans:2;widows:3">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij | kl mn",
+        ),
+        // auto-filled, widows taller than a column are dropped
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;column-fill:auto;height:30px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn op</div></div>"#,
+            "ab cd ef | gh ij kl | mn op",
+        ),
+        // auto-filled, overflow column
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;column-fill:auto;height:30px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn op qr st</div></div>"#,
+            "ab cd ef | gh ij kl | mn op qr | st",
         ),
     ] {
         assert_eq!(columns(body), expected, "{body}");

@@ -855,33 +855,16 @@ fn piece_lines(
     } else {
         1
     };
-    // A piece the box goes on from keeps its widows too, as the pieces of a
-    // paragraph do.
-    let wanted = if start == 0 {
-        paragraph.orphans
-    } else {
-        paragraph.orphans.max(widows)
-    };
-    let least = start + wanted.clamp(1, held - start);
-    let end = fitting.min(held - widows);
-    if end >= least {
-        return Some(Some(end));
-    }
-    // A later piece too short for its widows still ends where the widows of
-    // the last piece begin, as long as it keeps its orphans: the widows
-    // then stand at the top of the last piece, and a piece between them
-    // holds fewer lines (Chromium). When the widows begin at or before its
-    // start, no break inside it leaves them, and it runs to the column end.
-    let kept = start + paragraph.orphans.clamp(1, held - start);
-    if start > 0 && fitting >= kept {
-        return Some(Some(if held - widows <= start {
-            fitting
-        } else {
-            end.max(kept)
-        }));
-    }
-    if fitting >= least {
-        return Some(Some(fitting));
+    // The break keeps the orphans before it and moves up for the widows of
+    // the last piece where it can, as a paragraph's does.
+    let orphans = paragraph.orphans.clamp(1, held - start);
+    if fitting >= start + orphans {
+        return Some(Some(super::constrained_chain::piece_end(
+            start,
+            fitting,
+            held,
+            (orphans, widows),
+        )));
     }
     if content {
         return Some(None);
