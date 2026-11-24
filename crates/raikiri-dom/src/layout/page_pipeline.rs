@@ -11827,17 +11827,18 @@ fn block_above_line(document: &Document, root: usize, line: usize) -> Option<usi
         .map(|&(block, _)| block)
 }
 
-/// The paragraph whose single unplaced line follows the block that ends with
+/// The paragraph whose unplaced lines follow the block that ends with
 /// `source`, a box that forces a page break after it (see
-/// [`unplaced_line_after_block`]). No text candidate takes the break before
-/// such a line, so the line takes it: Chromium starts the next page with it,
-/// as with a line of text there. A float of the paragraph after `source`
-/// takes the break first, so the line is left to follow it.
+/// [`unplaced_line_after_block`]), the first of those lines, and the first
+/// float of the paragraph after `source`, if any. No text candidate takes
+/// the break before such a line, so the line takes it: Chromium starts the
+/// next page with it, as with a line of text there. A float of the paragraph
+/// after `source` takes the break first, and the line follows it.
 fn line_after_forced_break(
     document: &Document,
     cascade: &CascadeResult,
     source: usize,
-) -> Option<(usize, usize)> {
+) -> Option<(usize, usize, Option<usize>)> {
     // The paragraph may hold `source` inside blocks that end with it, each
     // of them a paragraph of its own.
     for root in document.ancestors(source) {
@@ -11849,8 +11850,11 @@ fn line_after_forced_break(
             && document.is_ancestor_or_self(block, source)
             && (block == source || at_block_edge(document, cascade, source, block, false))
         {
-            return (!float_after(document, cascade, root, source))
-                .then_some((root, unplaced.line));
+            return Some((
+                root,
+                unplaced.line,
+                float_after(document, cascade, root, source),
+            ));
         }
         if !at_block_edge(document, cascade, source, root, false) {
             return None;
@@ -11859,13 +11863,18 @@ fn line_after_forced_break(
     None
 }
 
-/// Whether a float of the paragraph `root` follows `source` in it.
-fn float_after(document: &Document, cascade: &CascadeResult, root: usize, source: usize) -> bool {
+/// The first float of the paragraph `root` that follows `source` in it.
+fn float_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    source: usize,
+) -> Option<usize> {
     document
         .preorder(root)
         .skip_while(|&id| id != source)
         .filter(|&id| !document.is_ancestor_or_self(source, id))
-        .any(|id| is_floating_box_for_pagination(document, cascade, id))
+        .find(|&id| is_floating_box_for_pagination(document, cascade, id))
 }
 
 /// Whether the block child `block` of the paragraph `root` sits in no inline

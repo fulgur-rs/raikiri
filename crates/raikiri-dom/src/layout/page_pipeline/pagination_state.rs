@@ -1531,6 +1531,15 @@ impl PaginationState {
         line: super::UnplacedBlockLine,
     ) -> Result<Option<PageCandidate>, Halt> {
         let node_id = candidate.node_id;
+        // The break forced after the block moves the line instead, with the
+        // float between them that it lies beside.
+        if super::block_above_line(document, node_id, line.line).is_some_and(|block| {
+            super::page_edge_constraint(document, env.cascade, block, false).0
+                && super::float_after(document, env.cascade, node_id, block)
+                    .is_none_or(|float| line_beside_float(document, node_id, line.line, float))
+        }) {
+            return Ok(None);
+        }
         let owner = super::leading_inline::LeadingInlineLine {
             root: node_id,
             line: line.line,
@@ -1775,19 +1784,24 @@ impl PaginationState {
         // its own: its line follows the flow the cell's row is in, when that
         // is the flow outside every float and positioned box. A break forced
         // inside a float or positioned box moves only a line inside it.
-        let Some((root, line, paragraph)) =
+        // A float of the paragraph after the block takes the break, and the
+        // line moves with it, just before it.
+        let Some((root, line, float, paragraph)) =
             super::line_after_forced_break(document, env.cascade, source)
-                .filter(|&(root, _)| {
-                    next.is_none_or(|next| !document.is_ancestor_or_self(root, next))
+                .filter(|&(root, line, float)| match float {
+                    Some(float) => {
+                        next == Some(float) && line_beside_float(document, root, line, float)
+                    }
+                    None => next.is_none_or(|next| !document.is_ancestor_or_self(root, next)),
                 })
-                .filter(|&(root, _)| {
+                .filter(|&(root, _, _)| {
                     !leaves_scope
                         || self
                             .pending_break
                             .scope
                             .is_some_and(|scope| document.is_ancestor_or_self(scope, root))
                 })
-                .and_then(|(root, line)| {
+                .and_then(|(root, line, float)| {
                     let paragraph = self.lines_after_blocks.remove(&root).or_else(|| {
                         (document.nodes[root].display() == DisplayValue::TableCell
                             && self.pending_break.scope.is_none())
@@ -1799,9 +1813,11 @@ impl PaginationState {
                             beside_flow: false,
                         })
                     })?;
-                    Some((root, line, paragraph))
+                    Some((root, line, float, paragraph))
                 })
-                .filter(|(_, _, paragraph)| paragraph.page_name_in_flow || paragraph.beside_flow)
+                .filter(|(_, _, _, paragraph)| {
+                    paragraph.page_name_in_flow || paragraph.beside_flow
+                })
         else {
             return Ok(());
         };
@@ -1809,10 +1825,15 @@ impl PaginationState {
         let (top, height) = super::leading_inline::bounds(document, owner);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
         let flow_top = top - relative;
+        // The line keeps its place below or beside the float, which starts
+        // the next page.
+        let moved_top = float.map_or(flow_top, |float| {
+            flow_top.min(super::float_extent(document, float).0 - relative)
+        });
         let page_origins = env.page_origins;
         let target = self.forced_break_page(page_origins);
         reach_page(env.control, target)?;
-        let shift = (page_origins.origin(target) - flow_top).max(0.0);
+        let shift = (page_origins.origin(target) - moved_top).max(0.0);
         let follows =
             shift <= 0.0 || super::lines_shift_growth(document, root, shift) >= shift - 0.01;
         if shift > 0.0 {
@@ -1831,7 +1852,12 @@ impl PaginationState {
         }
         let end_page = page_origins.page_index_for_end(top + shift + height);
         // The flow beside a float stays on its page: the float grows with
-        // its line, and only what clears it follows.
+        // its line, and only what clears it follows. A float of the
+        // paragraph takes the break itself.
+        if float.is_some() {
+            self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
+            return Ok(());
+        }
         if !follows || paragraph.beside_flow {
             if follows {
                 self.pending_break.take(document, root);
@@ -7106,4 +7132,14 @@ fn float_runs_past(
         }
     }
     false
+}
+
+/// Whether the line `line` of the paragraph `root` starts above the bottom
+/// of its float `float`, beside it.
+fn line_beside_float(document: &LayoutSession<'_>, root: usize, line: usize, float: usize) -> bool {
+    let (top, _) = super::leading_inline::bounds(
+        document,
+        super::leading_inline::LeadingInlineLine { root, line },
+    );
+    top < super::float_extent(document, float).1 - 0.01
 }

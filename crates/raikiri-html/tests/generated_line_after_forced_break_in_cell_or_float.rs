@@ -137,3 +137,71 @@ fn a_generated_line_after_a_forced_break_in_a_block_starts_the_next_page() {
         &["T@0,40", "Z@0,30 x@0,0"],
     )]);
 }
+
+const SHORT: &str = r#"<style>.g::after{content:"x"}</style><div style="height:10px"></div>"#;
+
+#[test]
+fn the_generated_line_after_a_forced_break_moves_when_lines_come_before_the_block() {
+    let block = r#"<div style="height:20px;break-after:page">T</div>"#;
+    let inline_block = r#"<span style="display:inline-block;width:20px;height:20px"></span>"#;
+    assert_pages(&[
+        (
+            &format!(
+                r#"{GENERATED}<div style="width:20px"><div class=g>{inline_block}{block}</div>Z</div>"#
+            ),
+            &["T@0,70", "Z@0,30 x@0,0"],
+        ),
+        (
+            &format!(r#"{SHORT}<div style="width:20px"><div class=g>A{block}</div>Z</div>"#),
+            &["A@0,10 T@0,40", "Z@0,30 x@0,0"],
+        ),
+        (
+            &format!(r#"{SHORT}<div style="width:20px"><div class=g>A B{block}</div>Z</div>"#),
+            &["A@0,10 B@0,40 T@0,70", "Z@0,30 x@0,0"],
+        ),
+        (
+            &format!(r#"{SHORT}<div style="width:20px"><div class=g>A{block}B</div>Z</div>"#),
+            &["A@0,10 T@0,40", "B@0,0 Z@0,30 x@20,0"],
+        ),
+        (
+            &format!(
+                r#"{SHORT}<div style="width:20px"><div class=g>A{block}{inline_block}</div>Z</div>"#
+            ),
+            &["A@0,10 T@0,40", "Z@0,60 x@0,30"],
+        ),
+        (
+            &format!(
+                r#"{SHORT}<div style="width:20px"><table style="border-spacing:0"><tr><td class=g style="padding:0">A{block}</td></tr></table>Z</div>"#
+            ),
+            &["A@0,10 T@0,40", "Z@0,30 x@0,0"],
+        ),
+    ]);
+}
+
+#[test]
+fn the_generated_lines_after_a_block_of_more_lines_move_past_the_page_end() {
+    assert_pages(&[
+        (
+            &format!(
+                r#"{SHORT}<div style="width:20px"><div class=g>A<div style="height:45px">T</div></div>Z</div>"#
+            ),
+            &["A@0,10 T@0,40", "Z@0,30 x@0,0"],
+        ),
+        (
+            &format!(
+                r#"{SHORT}<div style="width:20px"><div class=g>A<div style="height:20px;break-after:avoid">T</div></div><div style="height:30px">Z</div></div>"#
+            ),
+            &["A@0,10 T@0,40 x@0,60", "Z@0,0"],
+        ),
+    ]);
+}
+
+#[test]
+fn a_generated_line_beside_a_float_after_a_forced_break_moves_with_the_float() {
+    assert_pages(&[(
+        &format!(
+            r#"{GENERATED}<div style="width:40px"><div class=g><div style="height:20px;break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div>Z</div>"#
+        ),
+        &["T@0,40", "F@0,0 Z@0,30 x@20,0"],
+    )]);
+}
