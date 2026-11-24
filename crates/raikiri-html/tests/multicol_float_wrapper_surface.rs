@@ -193,3 +193,14 @@ fn the_children_of_a_wrapper_with_a_float_break_between_columns() {
         assert_eq!(words(body), sorted(expected), "{body}");
     }
 }
+
+#[test]
+fn a_wrapper_of_another_direction_keeps_its_children_on_its_own_side() {
+    // An ltr wrapper in an rtl multicol aligns a fixed-width child to its own
+    // left edge, as in Chromium (A@50,0 in the first column on the right).
+    let body = "<div class=m style='direction:rtl'><div style='direction:ltr'><div style='width:10px'>A</div><div style='float:left'>F</div><div>B</div><div>C</div></div></div>";
+    let words = words(body);
+    assert!(words.split(' ').any(|word| word == "A@0:50,0"), "{words}");
+    assert!(words.split(' ').any(|word| word == "F@0:50,10"), "{words}");
+    assert!(words.split(' ').any(|word| word == "B@0:60,10"), "{words}");
+}
