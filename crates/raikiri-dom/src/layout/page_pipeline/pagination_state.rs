@@ -3419,11 +3419,14 @@ impl PaginationState {
         // into the preceding page (the `underflow-from-next-page` case from
         // CSS Break). The break still opens its page, and the box lands at
         // the pulled-up coordinate with the flow after it.
-        // A carried holder lands from its flow position, and a float that a
-        // forced break moves resumes below the boundary its offset keeps (see
-        // `float_resumption`): neither lands with the offset.
+        // A carried holder lands from its flow position, so it does not land
+        // with the offset. Any other box, a float included, keeps the relative
+        // offset its ancestors give it on the page the break opens; a float
+        // that a negative offset would lift above that page's top lands at
+        // the top instead, so it stays on the page the break opens.
         let landing_relative = if forced_holder.is_some()
-            || (lands_after_forced_break
+            || (relative_offset < 0.0
+                && lands_after_forced_break
                 && is_floating_box_for_pagination(document, cascade, node_id))
         {
             0.0
