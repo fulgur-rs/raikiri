@@ -11818,7 +11818,8 @@ fn first_line_after_last_block(document: &Document, root: usize) -> Option<usize
 }
 
 /// The block child of the paragraph `root` laid out last above its line
-/// `line`, if any.
+/// `line`, if any. A block that generated content lays out names no node of
+/// the document, and counts as none.
 fn block_above_line(document: &Document, root: usize, line: usize) -> Option<usize> {
     document
         .ifc_layout_node(root)?
@@ -11831,6 +11832,7 @@ fn block_above_line(document: &Document, root: usize, line: usize) -> Option<usi
         .rev()
         .find(|&&(_, after)| after <= line)
         .map(|&(block, _)| block)
+        .filter(|&block| block < document.nodes.len())
 }
 
 /// The paragraph whose unplaced lines follow the block that ends with
