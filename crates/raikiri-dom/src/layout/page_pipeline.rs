@@ -11868,7 +11868,10 @@ fn line_after_forced_break(
             return Some((
                 root,
                 unplaced.line(),
-                float_after(document, cascade, root, block),
+                // A float after `source` inside the block that ends with it
+                // takes no room in that block's flow: it takes the break as
+                // one after the block does.
+                float_after(document, cascade, root, source),
             ));
         }
         if !at_block_edge(document, cascade, source, root, false) {
@@ -11876,6 +11879,16 @@ fn line_after_forced_break(
         }
     }
     None
+}
+
+/// Whether the float `float` of the paragraph `root` lies inside a block
+/// child of it, which its lines lay out as a block among them: such a float
+/// stays where the block puts it when the lines after the block move.
+pub(super) fn float_in_block_of(document: &Document, root: usize, float: usize) -> bool {
+    document
+        .ancestors(float)
+        .take_while(|&id| id != root)
+        .any(|id| is_block_level_flow_box(document.nodes[id].display()))
 }
 
 /// The first float of the paragraph `root` that follows `source` in it.

@@ -280,3 +280,49 @@ fn a_generated_line_below_a_float_after_a_forced_break_follows_the_float() {
         ),
     ]);
 }
+
+#[test]
+fn a_generated_line_after_a_forced_break_follows_a_float_after_the_break_inside_its_block() {
+    assert_pages(&[
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@0,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:20px"><div><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@0,50 x@0,20"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px"><div style="break-after:page">T</div><div style="float:right;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@0,50 x@0,20"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px"><div><div style="break-after:page">T</div></div><div style="float:left;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@0,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:50px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@20,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:20px"><div><div style="break-after:page">T</div><div style="float:left;width:20px;height:50px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 x@0,50", "Z@0,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px;padding-bottom:10px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 Z@0,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:60px"><div style="width:20px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div><div style="float:left;width:20px;height:20px">G</div></div></div><div>Z</div>"#,
+            &["T@0,0", "F@0,0 G@0,20 Z@20,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px">a<div style="width:20px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div></div><div>Z</div>"#,
+            &["T@0,30 a@0,0", "F@0,0 Z@0,30 x@20,0"],
+        ),
+        (
+            r#"<style>.g::after{content:"x"}</style><div class=g style="width:40px"><div style="width:20px"><div style="break-after:page">T</div><div style="float:left;width:20px;height:20px">F</div></div></div>"#,
+            &["T@0,0", "F@0,0 x@20,0"],
+        ),
+    ]);
+}
