@@ -40,7 +40,7 @@ use source_walk::{WalkedSources, walk_sources};
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{
-    IfcTextLine, TextLineIndex, single_unplaced_line, unplaced_lines_from,
+    IfcTextLine, TextLineIndex, glyph_owners, single_unplaced_line, unplaced_lines_from,
 };
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -9421,7 +9421,8 @@ fn last_box_past_phantom_lines(
 /// `block`, such as one of a generated `::after`: the line box keeps the
 /// block-end margin of the block apart from that of `root` (CSS 2 §8.3.1).
 /// A phantom line, of an empty inline element or a blank generated box, has
-/// no block size and counts as no line (CSS 2 §9.4.2).
+/// no block size and no text, and counts as no line (CSS 2 §9.4.2); a line of
+/// text keeps the margins apart even when its `line-height` is zero.
 fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
     document
         .ifc_layout_node(root)
@@ -9437,7 +9438,7 @@ fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
                         .lines
                         .iter()
                         .skip(after)
-                        .any(|line| line.block_size() > 0.0)
+                        .any(|line| line.block_size() > 0.0 || !glyph_owners(line).is_empty())
                 })
         })
 }

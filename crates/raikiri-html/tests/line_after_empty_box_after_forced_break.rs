@@ -118,6 +118,13 @@ fn the_margins_of_the_empty_box_stay_above_the_line() {
             ),
             &["T@0,0", "Z@0,50 x@0,0"],
         ),
+        // A line of text with no height keeps the margins apart too.
+        (
+            &format!(
+                r#"{AFTER}<div class=g style="width:20px;line-height:0"><div style="break-after:page;line-height:30px">T</div><div style="height:0;margin-bottom:20px"></div></div><div style="margin-top:30px">Z</div>"#
+            ),
+            &["T@0,0", "Z@0,50 x@0,5"],
+        ),
         (
             &format!(
                 r#"{AFTER}<div class=g style="width:20px;margin-bottom:10px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#
