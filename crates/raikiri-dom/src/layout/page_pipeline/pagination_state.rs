@@ -1533,16 +1533,17 @@ impl PaginationState {
         let node_id = candidate.node_id;
         // The break forced after the block moves the line instead, with the
         // float between them that it lies beside.
-        if super::block_above_line(document, node_id, line.line).is_some_and(|block| {
+        if super::block_above_line(document, node_id, line.line()).is_some_and(|block| {
             super::page_edge_constraint(document, env.cascade, block, false).0
-                && super::float_after(document, env.cascade, node_id, block)
-                    .is_none_or(|float| line_beside_float(document, env, node_id, line.line, float))
+                && super::float_after(document, env.cascade, node_id, block).is_none_or(|float| {
+                    line_beside_float(document, env, node_id, line.line(), float)
+                })
         }) {
             return Ok(None);
         }
         let owner = super::leading_inline::LeadingInlineLine {
             root: node_id,
-            line: line.line,
+            line: line.line(),
         };
         let (top, _) = super::leading_inline::bounds(document, owner);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);

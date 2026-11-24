@@ -11670,11 +11670,18 @@ struct UnplacedBlockLine {
     /// [`unplaced_line_after_block`]).
     after_block: bool,
     /// The index of the line in its paragraph, or of the first line of a
-    /// run of them after a block.
-    line: usize,
+    /// run of them after a block (see [`Self::line`]), kept narrow for the
+    /// size of the candidates that hold it.
+    line_index: u16,
 }
 
 impl UnplacedBlockLine {
+    /// The index of the line in its paragraph, or of the first line of a
+    /// run of them after a block.
+    fn line(self) -> usize {
+        usize::from(self.line_index)
+    }
+
     /// Where the line ends below the border-box top of its block, of block
     /// size `height`: a block shorter than its line ends where the block does.
     fn end_within(self, height: f32) -> f32 {
@@ -11797,7 +11804,7 @@ fn paragraph_unplaced_line(
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
         after_block,
-        line: unplaced.line.line,
+        line_index: u16::try_from(unplaced.line.line).ok()?,
     })
 }
 
@@ -11854,13 +11861,13 @@ fn line_after_forced_break(
             continue;
         }
         if let Some(unplaced) = unplaced_line_after_block(document, cascade, root)
-            && let Some(block) = block_above_line(document, root, unplaced.line)
+            && let Some(block) = block_above_line(document, root, unplaced.line())
             && document.is_ancestor_or_self(block, source)
             && (block == source || at_block_edge(document, cascade, source, block, false))
         {
             return Some((
                 root,
-                unplaced.line,
+                unplaced.line(),
                 float_after(document, cascade, root, block),
             ));
         }
