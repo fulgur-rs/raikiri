@@ -19398,8 +19398,8 @@ struct LineMove {
     with_block_before: bool,
     /// How far the paragraph grows as the lines move, when what moved them
     /// decides it instead of the lines: a float that took a forced break
-    /// above them grows it itself (see
-    /// `PaginationState::break_before_line_after_forced_break`). `None`
+    /// above them grows it itself (see `break_before_line_after_forced_break`
+    /// in [`mod@pagination_state`]). `None`
     /// leaves it to the lines (see [`lines_shift_growth`]).
     growth: Option<f32>,
 }
