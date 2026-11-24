@@ -19396,6 +19396,12 @@ struct LineMove {
     /// Whether the block child laid out right before the first moved line
     /// moves with the lines too (see [`blocks_after_line`]).
     with_block_before: bool,
+    /// How far the paragraph grows as the lines move, when what moved them
+    /// decides it instead of the lines: a float that took a forced break
+    /// above them grows it itself (see
+    /// `PaginationState::break_before_line_after_forced_break`). `None`
+    /// leaves it to the lines (see [`lines_shift_growth`]).
+    growth: Option<f32>,
 }
 
 /// How far each out-of-flow box of the paragraph `moved.block_id` moves down
@@ -19487,7 +19493,9 @@ fn shift_paragraph_lines(
     moved: &LineMove,
     went_ahead: Option<&[usize]>,
 ) -> (f32, Vec<usize>) {
-    let growth = lines_shift_growth(document, moved.block_id, moved.shift);
+    let growth = moved
+        .growth
+        .unwrap_or_else(|| lines_shift_growth(document, moved.block_id, moved.shift));
     let follows = out_of_flow_moves(document, cascade, moved, growth);
     // Atomic boxes keep their positions on the shifted lines, whether a
     // text candidate or a delegated atomic-only line owns the move.

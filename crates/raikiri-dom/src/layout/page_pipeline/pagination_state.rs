@@ -1238,10 +1238,10 @@ impl PaginationState {
             self.move_delegated_line(
                 document,
                 env,
-                entry.page_before_candidate,
+                (entry.page_before_candidate, target),
                 owner,
                 shift,
-                target,
+                None,
             );
         }
         if pending {
@@ -1504,10 +1504,10 @@ impl PaginationState {
         self.move_delegated_line(
             document,
             env,
-            entry.page_before_candidate,
+            (entry.page_before_candidate, next),
             owner,
             page_origins.origin(next) - flow_top,
-            next,
+            None,
         );
         let mut grown = candidate.clone();
         grown.height = document.nodes[node_id].layout.size.height;
@@ -1591,10 +1591,10 @@ impl PaginationState {
         self.move_delegated_line(
             document,
             env,
-            entry.page_before_candidate,
+            (entry.page_before_candidate, target),
             owner,
             shift,
-            target,
+            None,
         );
         // The boxes that clear a float that grew with its line, and the
         // floats after it, follow the float.
@@ -1620,17 +1620,17 @@ impl PaginationState {
         &mut self,
         document: &mut LayoutSession<'_>,
         env: &FlowEnv<'_>,
-        flow_page: u32,
+        (flow_page, page): (u32, u32),
         owner: super::leading_inline::LeadingInlineLine,
         shift: f32,
-        page: u32,
+        growth: Option<f32>,
     ) {
         let growth = super::leading_inline::move_line(
             document,
             env.cascade,
             env.body_id,
             owner,
-            shift,
+            (shift, growth),
             &mut self.subtree_shifts,
             (flow_page, page),
         );
@@ -1793,7 +1793,9 @@ impl PaginationState {
             super::line_after_forced_break(document, env.cascade, source)
                 .filter(|&(root, line, float)| match float {
                     Some(float) => {
-                        next == Some(float) && line_beside_float(document, env, root, line, float)
+                        next == Some(float)
+                            && (line_beside_float(document, env, root, line, float)
+                                || line_below_float(document, env, root, line, float))
                     }
                     None => next.is_none_or(|next| !document.is_ancestor_or_self(root, next)),
                 })
@@ -1828,19 +1830,72 @@ impl PaginationState {
         let (top, height) = super::leading_inline::bounds(document, owner);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
         let flow_top = top - relative;
-        // The line keeps its place below or beside the float, which starts
-        // the next page.
-        let moved_top = float.map_or(flow_top, |float| {
-            flow_top.min(float_flow_extent(document, env, float).0)
-        });
         let page_origins = env.page_origins;
         let target = self.forced_break_page(page_origins);
         reach_page(env.control, target)?;
-        let shift = (page_origins.origin(target) - moved_top).max(0.0);
+        // A line below the float goes right below it once the float starts
+        // the next page, wherever an earlier break left the line. The float
+        // that moves there grows the paragraph and moves the flow after it
+        // itself, so the line does not grow it again.
+        let below = float.filter(|&float| line_below_float(document, env, root, line, float));
+        let shift = if let Some(float) = below {
+            // The floats from `float` on that end above the line move with
+            // it, as they stand: the line goes below the lowest of them.
+            let float_top = float_flow_extent(document, env, float).0;
+            let bottom = floats_above_line(document, env, root, float, flow_top)
+                .map(|float| float_flow_extent(document, env, float).1)
+                .fold(float_top, f32::max);
+            (page_origins.origin(target) + bottom - float_top - flow_top).max(0.0)
+        } else {
+            // The line keeps its place beside the float, which starts the
+            // next page.
+            let moved_top = float.map_or(flow_top, |float| {
+                flow_top.min(float_flow_extent(document, env, float).0)
+            });
+            (page_origins.origin(target) - moved_top).max(0.0)
+        };
         let follows =
             shift <= 0.0 || super::lines_shift_growth(document, root, shift) >= shift - 0.01;
         if shift > 0.0 {
-            self.move_delegated_line(document, env, paragraph.flow_page, owner, shift, target);
+            self.move_delegated_line(
+                document,
+                env,
+                (paragraph.flow_page, target),
+                owner,
+                shift,
+                // A line that an earlier break moved down grew the paragraph
+                // then; the float now grows it in its place.
+                below.map(|_| {
+                    -self
+                        .deferred_shifts
+                        .line_splits
+                        .iter()
+                        .filter(|split| split.root == root && split.first_moved <= line)
+                        .map(|split| split.growth)
+                        .sum::<f32>()
+                }),
+            );
+            // A line that the floats leave across the end of a page starts
+            // the next one, and the paragraph grows with it.
+            let moved_top = flow_top + shift;
+            let page = page_origins.page_index_in_flow(moved_top).unwrap_or(target);
+            let next_origin = page_origins.origin(page.saturating_add(1));
+            let mut moved = shift;
+            if below.is_some()
+                && moved_top > page_origins.origin(page) + 0.01
+                && moved_top + height > next_origin + 0.01
+            {
+                reach_page(env.control, page.saturating_add(1))?;
+                self.move_delegated_line(
+                    document,
+                    env,
+                    (paragraph.flow_page, page.saturating_add(1)),
+                    owner,
+                    next_origin - moved_top,
+                    None,
+                );
+                moved += next_origin - moved_top;
+            }
             // The boxes that clear a float that grew with its line, and the
             // floats after it, follow the float.
             if paragraph.beside_flow {
@@ -1849,7 +1904,7 @@ impl PaginationState {
                     env.cascade,
                     env.body_id,
                     root,
-                    shift,
+                    moved,
                 );
             }
         }
@@ -5766,6 +5821,7 @@ impl PaginationState {
                 shift,
                 page,
                 with_block_before,
+                growth: None,
             },
             &mut self.subtree_shifts,
             entry.page_before_candidate,
@@ -5968,6 +6024,7 @@ impl PaginationState {
                             shift,
                             page,
                             with_block_before: false,
+                            growth: None,
                         },
                         None,
                     );
@@ -6021,6 +6078,7 @@ impl PaginationState {
                     shift,
                     page,
                     with_block_before: false,
+                    growth: None,
                 },
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
@@ -7153,6 +7211,50 @@ fn line_beside_float(
     let top = top - accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
     let (float_top, float_bottom) = float_flow_extent(document, env, float);
     top < float_bottom - 0.01 && top + height > float_top + 0.01
+}
+
+/// Whether the line `line` of the paragraph `root` starts at or below the
+/// bottom of the margin box of its float `float`, where the flow puts them.
+fn line_below_float(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    root: usize,
+    line: usize,
+    float: usize,
+) -> bool {
+    let (top, _) = super::leading_inline::bounds(
+        document,
+        super::leading_inline::LeadingInlineLine { root, line },
+    );
+    let top = top - accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
+    top >= float_flow_extent(document, env, float).1 - 0.01
+}
+
+/// The floats of the paragraph `root` from `first` on, in tree order, whose
+/// margin boxes end at or above `line_top`, where the flow puts them. A float
+/// inside another float or inside a box that roots its own block formatting
+/// context belongs to that context, not to the paragraph's flow.
+fn floats_above_line<'a>(
+    document: &'a LayoutSession<'_>,
+    env: &'a FlowEnv<'_>,
+    root: usize,
+    first: usize,
+    line_top: f32,
+) -> impl Iterator<Item = usize> + 'a {
+    let floating = move |id| super::is_floating_box_for_pagination(document, env.cascade, id);
+    document
+        .preorder(root)
+        .skip_while(move |&id| id != first)
+        .filter(move |&id| {
+            floating(id)
+                && document
+                    .ancestors(id)
+                    .take_while(|&ancestor| ancestor != root)
+                    .all(|ancestor| {
+                        !floating(ancestor) && !document.nodes[ancestor].roots_block_context()
+                    })
+                && float_flow_extent(document, env, id).1 <= line_top + 0.01
+        })
 }
 
 /// The margin box of the float `float` where the flow puts it, without the
