@@ -5736,16 +5736,21 @@ fn paginate_flow(
         while let Some(mut candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
-            state
-                .pending_break
-                .leave_scopes(document, candidate.node_id);
-            if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
-                halted = true;
-                break;
+            // The line after a break forced inside a float or positioned box
+            // takes it before the flow leaves that box and the break ends.
+            let leaving = state.break_before_line_leaving_scope(document, &env, candidate.node_id);
+            if leaving.is_ok() {
+                state
+                    .pending_break
+                    .leave_scopes(document, candidate.node_id);
+                if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
+                    halted = true;
+                    break;
+                }
             }
-            if let Err(halt) =
+            if let Err(halt) = leaving.and_then(|()| {
                 state.break_before_content_after_forced_break(document, &env, Some(&candidate))
-            {
+            }) {
                 halt.finish()?;
                 halted = true;
                 break;
@@ -11716,6 +11721,12 @@ fn unplaced_line(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> Option<UnplacedBlockLine> {
+    let node = &document.nodes[node_id];
+    if !is_block_level_flow_box(node.display())
+        || is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        return None;
+    }
     paragraph_unplaced_line(document, cascade, node_id).filter(|line| !line.after_block)
 }
 
@@ -11742,13 +11753,14 @@ fn paragraph_unplaced_line(
 ) -> Option<UnplacedBlockLine> {
     let node = &document.nodes[node_id];
     if !node.is_ifc_root()
-        || !is_block_level_flow_box(node.display())
+        || !(is_block_level_flow_box(node.display())
+            || node.display() == DisplayValue::TableCell
+            || is_floating_box_for_pagination(document, cascade, node_id))
         || node.used_writing_mode.is_vertical()
         || !matches!(
             node.position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
         )
-        || is_floating_box_for_pagination(document, cascade, node_id)
     {
         return None;
     }
@@ -22386,7 +22398,23 @@ impl FloatShifts {
         block_id: usize,
         amount: f32,
     ) {
-        if amount <= 0.0 || !candidate.context.is_float_descendant() {
+        if !candidate.context.is_float_descendant() {
+            return;
+        }
+        self.record_floats_around(document, cascade, body_id, block_id, amount);
+    }
+
+    /// Records the floats around the paragraph `block_id`, or that it is,
+    /// whose lines moved down by `amount` (see [`Self::record_grown_floats`]).
+    fn record_floats_around(
+        &mut self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        block_id: usize,
+        amount: f32,
+    ) {
+        if amount <= 0.0 {
             return;
         }
         let mut node = Some(block_id);

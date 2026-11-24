@@ -1650,8 +1650,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         .flatten();
                 // A line after a block child keeps nothing whole: the page
                 // breaks between the block and the line, inside a flex or
-                // grid item too, as between the lines of text there.
-                let line_after_block = unplaced_base
+                // grid item, a float or a table cell too, as between the
+                // lines of text there.
+                let line_after_block = (!inside_out_of_flow
+                    && !is_rendered_leaf
+                    && !document.context.pagination_on_transposed_axes)
                     .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(
@@ -2312,7 +2315,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 });
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
-                    && (!inside_float || float_flow_break)
+                    // Inside a float, only the boxes of its block flow that
+                    // take a break, or whose line follows a block, are
+                    // candidates.
+                    && (!inside_float
+                        || float_flow_break
+                        || (in_float_flow && line_after_block.is_some()))
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
