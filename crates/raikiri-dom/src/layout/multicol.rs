@@ -4477,7 +4477,13 @@ fn layout_column_group(
                         .then_some(after.top + margin_top)
                         .filter(|&content_top| {
                             break_height.is_some_and(|height| {
-                                first_piece_fits(tree, child, content_top, height, context.orphans)
+                                first_piece_fits(
+                                    tree,
+                                    child,
+                                    content_top,
+                                    height,
+                                    tree.nodes[child].paragraph_orphans,
+                                )
                             })
                         });
                     // A block at the top of a column stays there, and its

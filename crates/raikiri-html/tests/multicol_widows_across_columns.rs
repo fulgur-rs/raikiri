@@ -160,3 +160,22 @@ fn orphans_win_over_widows_and_widows_taller_than_a_column_are_dropped() {
         assert_eq!(columns(body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_paragraph_beside_a_float_keeps_its_own_orphans_in_its_first_column() {
+    for (body, expected) in [
+        // Too few lines fit for the paragraph's orphans: it starts the next
+        // column, though the container's orphans would let it begin here.
+        (
+            r#"<div style="columns:2;column-gap:0;width:200px;height:50px;orphans:1;widows:1"><div style="height:25px"></div><div style="float:left;width:80px;height:10px"></div><div style="orphans:3">ab cd ef gh ij kl mn op</div></div>"#,
+            "abcdef ghijkl mnop",
+        ),
+        // The paragraph's single orphan fits, though the container's would not.
+        (
+            r#"<div style="columns:2;column-gap:0;width:200px;height:50px;orphans:3;widows:1"><div style="height:25px"></div><div style="float:left;width:80px;height:10px"></div><div style="orphans:1">ab cd ef gh ij kl mn op</div></div>"#,
+            "ab | cdefgh ijklmn op",
+        ),
+    ] {
+        assert_eq!(columns(body), expected, "{body}");
+    }
+}
