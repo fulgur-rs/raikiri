@@ -153,6 +153,9 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         && style.padding() == Edges::splat(LengthPercentage::ZERO)
         && style.border() == Edges::splat(LengthPercentage::ZERO)
         && style.size().width.is_auto()
+        // An aspect ratio gives the wrapper a height of its own, which its
+        // children alone would not take up.
+        && style.aspect_ratio().is_none()
         // The columns place the boxes they hold by the container's direction,
         // so a wrapper of another direction keeps its own placement.
         && tree

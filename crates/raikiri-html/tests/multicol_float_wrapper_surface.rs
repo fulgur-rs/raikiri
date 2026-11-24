@@ -204,3 +204,16 @@ fn a_wrapper_of_another_direction_keeps_its_children_on_its_own_side() {
     assert!(words.split(' ').any(|word| word == "F@0:50,10"), "{words}");
     assert!(words.split(' ').any(|word| word == "B@0:60,10"), "{words}");
 }
+
+#[test]
+fn a_wrapper_with_an_aspect_ratio_keeps_its_height() {
+    let body = "<div class=m style='column-fill:auto;height:100px'><div style='aspect-ratio:1'><div style='float:left'>F</div><div>A</div></div><div>B</div></div>";
+    // Chromium: A@0:10,0 B@0:0,50 F@0:0,0. The wrapper keeps its 50px
+    // height, so B does not move up beside its short children. Where B goes
+    // after the wrapper is left to the path a wrapper with a float takes
+    // without opening it.
+    let words = words(body);
+    let has = |word: &str| words.split(' ').any(|w| w == word);
+    assert!(has("A@0:10,0") && has("F@0:0,0"), "{words}");
+    assert!(!has("B@0:0,10"), "{words}");
+}
