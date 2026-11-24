@@ -130,7 +130,8 @@ fn is_transparent_float_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
 }
 
 /// Whether `id` is a block in flow with no box of its own for the columns to
-/// break: see [`is_transparent_float_wrapper`].
+/// break, in the direction of its parent: see
+/// [`is_transparent_float_wrapper`].
 fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     if !node.is_in_document()
@@ -152,6 +153,11 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         && style.padding() == Edges::splat(LengthPercentage::ZERO)
         && style.border() == Edges::splat(LengthPercentage::ZERO)
         && style.size().width.is_auto()
+        // The columns place the boxes they hold by the container's direction,
+        // so a wrapper of another direction keeps its own placement.
+        && tree
+            .parent_of(id)
+            .is_none_or(|parent| style_of(tree, parent).direction() == style.direction())
 }
 
 /// Whether `idx` is a float.
