@@ -1884,6 +1884,7 @@ fn multicol_has_only_paragraph_children(
     // existing path.
     let several = children.clone().nth(1).is_some();
     let mut decorated = false;
+    let mut sized_lines = false;
     let mut paragraphs = 0usize;
     let plain = children.all(|child| {
         if lineless::is_sized_leaf(tree, child) || lineless::is_margin_only_block(tree, child) {
@@ -1907,6 +1908,10 @@ fn multicol_has_only_paragraph_children(
             || is_whole_formatting_context_box(tree, child)
             || is_whole_button(tree, child)
         {
+            // The planner also breaks a box of lines with a height of its own
+            // between its lines, which the path of one paragraph does not.
+            sized_lines |= is_sized_paragraph(tree, child)
+                && tree.nodes[child].layout_position() == Position::Static;
             paragraphs += 1;
             return insets_are_a_relative_offset(tree, child);
         }
@@ -1942,7 +1947,7 @@ fn multicol_has_only_paragraph_children(
             && style.max_size().height.is_auto()
     });
     // The paragraphs of a wrapper count as the container's own.
-    plain && paragraphs > 0 && (several || paragraphs > 1 || decorated || balances)
+    plain && paragraphs > 0 && (several || paragraphs > 1 || decorated || sized_lines || balances)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
@@ -2057,7 +2062,8 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
 
 /// Whether `child` is a plain block of lines whose height is authored: a box
 /// the planner slices at column ends, whatever its lines would give it, as it
-/// slices a box with no lines, keeping its lines in its first piece, or places
+/// slices a box with no lines, keeping its lines in its first piece unless a
+/// column end breaks between them, or places
 /// whole in a column. The structure decides this before the box
 /// is laid out; [`paragraph_group`] also checks that the lines fit the height
 /// once they are shaped.
@@ -2567,7 +2573,8 @@ fn place_wrapped_boxes(
         tree.set_unrounded_layout(NodeId::from(wrapped.node), &layout);
         leave_block_offset_to_painter(tree, wrapped.node);
         if let Some(root) = tree.nodes[wrapped.node].ifc.as_mut() {
-            // A sliced box holds its lines in its first piece.
+            // A sliced box holds its lines in its first piece, unless a column
+            // end breaks between them.
             root.multicol_fragments = Some(
                 placement
                     .fragments
@@ -2849,6 +2856,16 @@ fn push_wrapper_pieces(
     Some(())
 }
 
+/// Whether a column end broke between the lines of the sliced box placed at
+/// `placement`, so that more than one of its pieces holds lines.
+fn splits_lines(placement: &paragraph_group::Placement) -> bool {
+    placement.sliced
+        && placement
+            .fragments
+            .iter()
+            .any(|piece| piece.line_start > 0 && piece.line_start < piece.line_end)
+}
+
 /// Record the pieces of `child`, a box with no lines that `placement` slices
 /// between columns of `column_height`: its first piece `first_fragment`,
 /// pushed under the container, and one more for each column after it. Each
@@ -2872,6 +2889,10 @@ fn push_sliced_box_pieces(
     let sliced = lineless::slices_decorations(tree, child);
     let column_top = first.rect.y - placement.first_y;
     let count = placement.fragments.len();
+    // Whether a column end broke between the lines of the box, so that more
+    // than one of its pieces holds lines. Such a box has no padding or border
+    // above or below its lines, so a piece that holds lines starts with them.
+    let split = splits_lines(placement);
     let mut taken = 0.0f32;
     for (index, piece) in placement.fragments.iter().enumerate() {
         let height = if index == 0 {
@@ -2882,6 +2903,7 @@ fn push_sliced_box_pieces(
             column_height
         }
         .max(0.0);
+        let holds_lines = split && piece.line_start < piece.line_end;
         let rect = crate::fragment::FragmentRect {
             x: first.rect.x + piece.x,
             y: first.rect.y + piece.y,
@@ -2901,6 +2923,18 @@ fn push_sliced_box_pieces(
             )),
             fragment_index: index,
             fragment_count: count,
+            // A piece that holds lines, when a column end broke between
+            // them, names the ones it holds.
+            line_start: if split {
+                holds_lines.then_some(piece.line_start)
+            } else {
+                first.line_start
+            },
+            line_end: if split {
+                holds_lines.then_some(piece.line_end)
+            } else {
+                first.line_end
+            },
             ..first
         };
         if index == 0 {
@@ -4658,9 +4692,10 @@ fn layout_column_group(
         leave_block_offset_to_painter(tree, child);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
-                // A sliced box holds its lines in its first piece; the pieces
-                // after it hold none, and are recorded as the pieces of a box
-                // with no lines (see `push_sliced_box_pieces`).
+                // A sliced box holds its lines in its first piece, unless a
+                // column end breaks between them; the pieces that hold none are
+                // recorded as the pieces of a box with no lines (see
+                // `push_sliced_box_pieces`).
                 root.multicol_fragments = Some(
                     placement
                         .fragments
@@ -4853,7 +4888,10 @@ fn layout_column_group(
             origin_y: content_origin.y,
             ..record_context
         };
+        // The pieces of a sliced box whose lines a column end broke between
+        // name the lines they hold.
         if !wrapped
+            && !planned.is_some_and(splits_lines)
             && record_nested_ifc_box_fragments(
                 tree,
                 child,
