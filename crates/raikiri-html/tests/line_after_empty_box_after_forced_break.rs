@@ -172,6 +172,35 @@ fn phantom_lines_after_the_empty_box_keep_its_margins_joined() {
     ]);
 }
 
+/// The `::before` and `::after` boxes of a `display: contents` element after
+/// the empty box have no node of their own; a block of them with height and
+/// a line of their text keep the margins apart, and an empty one does not.
+#[test]
+fn generated_boxes_of_a_contents_element_after_the_empty_box() {
+    assert_pages(&[
+        (
+            r#"<style>.c::after{content:"";display:block;height:30px}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=c style="display:contents"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50"],
+        ),
+        (
+            r#"<style>.c::after{content:"";display:block;height:30px}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=c style="display:contents"></div></div><div style="margin-top:10px">Z</div>"#,
+            &["T@0,0", "Z@0,60"],
+        ),
+        (
+            r#"<style>.c::after{content:"";display:block;height:0}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=c style="display:contents"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+        (
+            r#"<style>.c::before{content:"";display:block;height:30px}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=c style="display:contents"><span></span></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50"],
+        ),
+        (
+            r#"<style>.c::after{content:"y"}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=c style="display:contents"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50 y@0,20"],
+        ),
+    ]);
+}
+
 #[test]
 fn a_line_of_text_after_the_empty_box_sits_below_its_margins() {
     assert_pages(&[

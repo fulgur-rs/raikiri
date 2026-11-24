@@ -9408,9 +9408,17 @@ fn last_box_past_phantom_lines(
             |child| match sibling_adjacency::flow_box(document, cascade, child) {
                 sibling_adjacency::FlowBox::Phantom => None,
                 // A `display: contents` element of phantom lines alone has no
-                // box: the box before it ends the flow.
+                // box: the box before it ends the flow. Its `::before` and
+                // `::after` boxes that keep margins apart end the flow too,
+                // though they have no node of their own, so the element
+                // stands for them.
                 sibling_adjacency::FlowBox::Contents => {
-                    last_box_past_phantom_lines(document, cascade, child)
+                    let generated = |pseudo| {
+                        generated_box_keeps_margins_apart(document, child, pseudo).then_some(child)
+                    };
+                    generated(raikiri_style::PseudoElem::After)
+                        .or_else(|| last_box_past_phantom_lines(document, cascade, child))
+                        .or_else(|| generated(raikiri_style::PseudoElem::Before))
                 }
                 _ => Some(child),
             },
@@ -9443,6 +9451,38 @@ fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
         })
 }
 
+/// Whether the `pseudo` box of the `display: contents` element `element`
+/// keeps margins apart in the paragraph of its box parent. Such a box has no
+/// node of its own: it is a block or inline content in that paragraph.
+fn generated_box_keeps_margins_apart(
+    document: &super::context::LayoutSession<'_>,
+    element: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
+    let vertical = document.context.pagination_on_transposed_axes;
+    BoxTree::for_layout(document)
+        .parent(element, BoxParentScope::Document)
+        .and_then(|parent| document.ifc_layout_node(parent))
+        .is_some_and(|node| {
+            let width = node.layout.size.width;
+            // A block box the line loop placed holds lines or clearance, and
+            // inline content puts text on a line; either keeps the margins
+            // apart, like the content that `has_in_flow_content` counts.
+            node.ifc.as_ref().is_some_and(|ifc| {
+                ifc.generated_blocks
+                    .iter()
+                    .any(|block| block.start == id && block.separates_margins(width, vertical))
+                    || ifc.lines.as_ref().is_some_and(|lines| {
+                        lines.placed_blocks.iter().any(|placed| placed.node == id)
+                            || lines.lines.iter().any(|line| {
+                                super::ifc::text_lines::glyph_owners(line).contains(&(id as usize))
+                            })
+                    })
+            })
+        })
+}
+
 /// Whether a `::before` or `::after` box of a `display: contents` element
 /// between `previous` and `node_id`, its following sibling box, keeps their
 /// margins apart. Such a box has no node of its own: it is a block or inline
@@ -9456,30 +9496,7 @@ fn generated_box_separates(
     use raikiri_style::PseudoElem;
 
     let separates = |element: usize, pseudo: PseudoElem| {
-        let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
-        let vertical = document.context.pagination_on_transposed_axes;
-        BoxTree::for_layout(document)
-            .parent(element, BoxParentScope::Document)
-            .and_then(|parent| document.ifc_layout_node(parent))
-            .is_some_and(|node| {
-                let width = node.layout.size.width;
-                // A block box the line loop placed holds lines or clearance,
-                // and inline content puts text on a line; either keeps the
-                // margins apart, like the content that `has_in_flow_content`
-                // counts.
-                node.ifc.as_ref().is_some_and(|ifc| {
-                    ifc.generated_blocks
-                        .iter()
-                        .any(|block| block.start == id && block.separates_margins(width, vertical))
-                        || ifc.lines.as_ref().is_some_and(|lines| {
-                            lines.placed_blocks.iter().any(|placed| placed.node == id)
-                                || lines.lines.iter().any(|line| {
-                                    super::ifc::text_lines::glyph_owners(line)
-                                        .contains(&(id as usize))
-                                })
-                        })
-                })
-            })
+        generated_box_keeps_margins_apart(document, element, pseudo)
     };
     let is_contents = |id: usize| {
         document.nodes[id].kind() == NodeKind::Element
