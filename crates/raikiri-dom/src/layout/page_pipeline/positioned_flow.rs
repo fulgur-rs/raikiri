@@ -754,6 +754,7 @@ fn keep_run(
                     shift,
                     page,
                     with_block_before: false,
+                    growth: None,
                 },
                 None,
             ))
