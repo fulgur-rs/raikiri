@@ -867,6 +867,19 @@ fn piece_lines(
     if end >= least {
         return Some(Some(end));
     }
+    // A later piece too short for its widows still ends where the widows of
+    // the last piece begin, as long as it keeps its orphans: the widows
+    // then stand at the top of the last piece, and a piece between them
+    // holds fewer lines (Chromium). When the widows begin at or before its
+    // start, no break inside it leaves them, and it runs to the column end.
+    let kept = start + paragraph.orphans.clamp(1, held - start);
+    if start > 0 && fitting >= kept {
+        return Some(Some(if held - widows <= start {
+            fitting
+        } else {
+            end.max(kept)
+        }));
+    }
     if fitting >= least {
         return Some(Some(fitting));
     }

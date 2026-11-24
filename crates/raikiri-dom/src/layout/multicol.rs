@@ -4248,6 +4248,13 @@ fn layout_column_group(
             if !can_balance_atomic_paragraph(tree, leaf, BlockEdges::Refused) {
                 return None;
             }
+            // The orphans and widows that break the lines are the
+            // paragraph's own, which may differ from the container's.
+            let context = FragmentationContext {
+                orphans: tree.nodes[leaf].paragraph_orphans.max(1),
+                widows: tree.nodes[leaf].paragraph_widows.max(1),
+                ..context
+            };
             let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
             let (fragments, height) = root_column_fragments(lines, context);
             // Lines that need all of a definite height, or more, fill the

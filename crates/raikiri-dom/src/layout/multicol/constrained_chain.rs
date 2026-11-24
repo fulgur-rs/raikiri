@@ -93,7 +93,10 @@ fn constrained_line_ranges(
     let last_start = length.checked_sub(widows)?;
     let mut prefixes: Vec<Option<Prefix>> = vec![None; length];
     let mut candidates: VecDeque<(usize, usize)> = VecDeque::new();
-    let middle_minimum = orphans.max(widows);
+    // Widows ask for lines after the last break only: a piece between two
+    // breaks keeps its orphans and may hold fewer lines than the widows, as
+    // the break after it still leaves them (Chromium).
+    let middle_minimum = orphans;
     // Each prefix keeps the fewest preceding slices that satisfy both the
     // line-count minima and the physical height. The sliding minimum visits
     // each line once; variable line heights do not require trying every cut.
@@ -342,7 +345,8 @@ pub(super) fn layout(
     let widows = tree.nodes[leaf].paragraph_widows.max(1);
     let violates_minima = pieces.iter().enumerate().any(|(index, piece)| {
         let count = piece.end - piece.start;
-        (index > 0 && count < widows) || (index + 1 < pieces.len() && count < orphans)
+        (index > 0 && index + 1 == pieces.len() && count < widows)
+            || (index + 1 < pieces.len() && count < orphans)
     });
     if violates_minima
         && let Some(ranges) = constrained_line_ranges(&extents, height, leaf_top, orphans, widows)
@@ -366,7 +370,7 @@ pub(super) fn layout(
         let minimum = if boundary + 2 == pieces.len() {
             widows
         } else {
-            orphans.max(widows)
+            orphans
         };
         let needed = minimum.saturating_sub(pieces[boundary + 1].end - pieces[boundary + 1].start);
         // An intermediate slice can borrow from its predecessor on the next
