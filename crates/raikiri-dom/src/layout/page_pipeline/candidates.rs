@@ -2313,7 +2313,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && break_before_available()
                         && breaks_only_around(document, cascade, node_id, self.has_named_pages)
                 });
-                let is_break_candidate = !is_body
+                // The body is no box to break before, but the line after a
+                // block child of its own takes a break as in any paragraph.
+                let is_break_candidate = (!is_body
+                    || (node_id == body_id && line_after_block.is_some()))
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     // Inside a float, only the boxes of its block flow that
                     // take a break, or whose line follows a block, are
