@@ -973,6 +973,7 @@ pub(super) fn layout(
                                 .float_resumptions
                                 .closed_float_top(usize::from(child)),
                         )
+                        .chain(tree.context.float_resumptions.break_top(usize::from(child)))
                         .fold(top, f32::max)
                 },
                 if style.float == Float::Left {
@@ -1036,6 +1037,7 @@ pub(super) fn layout(
             .flatten()
             .into_iter()
             .chain(tree.context.float_resumptions.flow_top(usize::from(child)))
+            .chain(tree.context.float_resumptions.break_top(usize::from(child)))
             .chain(margin_floor)
             .reduce(f32::max);
         let pushed_delta = tree
