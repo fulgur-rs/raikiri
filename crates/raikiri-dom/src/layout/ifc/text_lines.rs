@@ -132,7 +132,8 @@ pub(crate) fn places_lines(cascade: &CascadeResult, node: usize, text: &str) -> 
 }
 
 /// The single line of a paragraph that no text node places (see
-/// [`single_unplaced_line`]).
+/// [`single_unplaced_line`]), or the run of such lines that ends it (see
+/// [`unplaced_lines_from`]), from the top of its first line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct UnplacedLine {
     /// The line, in the root's content box.
@@ -174,10 +175,11 @@ pub(crate) fn single_unplaced_line(
 }
 
 /// The lines of the paragraph rooted at `root` from its line `first` to its
-/// last, as one line, when no text node places any of them (see
-/// [`single_unplaced_line`]), whatever lines come before them: the lines
-/// before them are placed by their own text, or lie above a block of the
-/// paragraph. The run is atomic when each of its lines is.
+/// last, taken together, when no text node places any of them (see
+/// [`single_unplaced_line`]) and the last holds generated text, whatever
+/// lines come before them: the lines before them are placed by their own
+/// text, or lie above a block of the paragraph. A run of more lines than one
+/// is not atomic: a page break may still fall between its lines.
 pub(crate) fn unplaced_lines_from(
     doc: &Document,
     cascade: &CascadeResult,
@@ -189,22 +191,18 @@ pub(crate) fn unplaced_lines_from(
         return None;
     }
     let lines = ifc.lines.as_ref()?;
-    (first..lines.lines.len())
-        .map(|index| unplaced_line_at(doc, cascade, root, lines, index))
-        .try_fold(None::<UnplacedLine>, |run, line| {
-            let line = line?;
-            Some(Some(match run {
-                None => line,
-                Some(run) => UnplacedLine {
-                    line: IfcTextLine {
-                        bottom: line.line.bottom,
-                        ..run.line
-                    },
-                    atomic: run.atomic && line.atomic,
-                },
-            }))
-        })
-        .flatten()
+    let last = lines.lines.len().checked_sub(1)?;
+    let mut run = unplaced_line_at(doc, cascade, root, lines, first)?;
+    for index in first + 1..=last {
+        let line = unplaced_line_at(doc, cascade, root, lines, index)?;
+        run.line.bottom = line.line.bottom;
+        run.atomic = false;
+    }
+    // The ids of generated text name no node of the document.
+    glyph_owners(&lines.lines[last])
+        .iter()
+        .any(|&owner| doc.nodes.get(owner).is_none())
+        .then_some(run)
 }
 
 /// The line `index` of the paragraph rooted at `root`, when no text node

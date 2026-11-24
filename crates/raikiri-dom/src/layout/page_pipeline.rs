@@ -11651,8 +11651,8 @@ fn box_is_unbreakable(
                 && super::page::establishes_orthogonal_flow(document, cascade, node_id)))
 }
 
-/// The single line of a paragraph that no text node places, as the block
-/// that holds it sees it.
+/// The single line of a paragraph that no text node places, or the run of
+/// such lines after its last block, as the block that holds it sees it.
 #[derive(Clone, Copy)]
 struct UnplacedBlockLine {
     /// How far below the border-box top of the block the line starts.
@@ -11669,8 +11669,8 @@ struct UnplacedBlockLine {
     /// text there, instead of keeping the paragraph whole (see
     /// [`unplaced_line_after_block`]).
     after_block: bool,
-    /// The index of the line in its paragraph: the last line, which follows
-    /// a block when the paragraph has other lines.
+    /// The index of the line in its paragraph, or of the first line of a
+    /// run of them after a block.
     line: usize,
 }
 
@@ -11771,10 +11771,16 @@ fn paragraph_unplaced_line(
     }
     // A paragraph of more lines may end with lines after a block, past the
     // lines that their own text or the block place: they move as one.
-    let unplaced = single_unplaced_line(document, cascade, node_id).or_else(|| {
-        let first = first_line_after_last_block(document, node_id)?;
-        unplaced_lines_from(document, cascade, node_id, first)
-    })?;
+    let (unplaced, run) = match single_unplaced_line(document, cascade, node_id) {
+        Some(unplaced) => (unplaced, false),
+        None => {
+            let first = first_line_after_last_block(document, node_id)?;
+            (
+                unplaced_lines_from(document, cascade, node_id, first)?,
+                true,
+            )
+        }
+    };
     let ifc_node = document.ifc_layout_node(node_id)?;
     let layout = ifc_node.layout;
     let after_block =
@@ -11783,7 +11789,7 @@ fn paragraph_unplaced_line(
             block_outside_inline(document, node_id, block) && (forced || !avoided)
         });
     // Only a line after a block leaves the lines above it to break apart.
-    if unplaced.line.line > 0 && !after_block {
+    if run && !after_block {
         return None;
     }
     Some(UnplacedBlockLine {
@@ -11853,7 +11859,7 @@ fn line_after_forced_break(
             return Some((
                 root,
                 unplaced.line,
-                float_after(document, cascade, root, source),
+                float_after(document, cascade, root, block),
             ));
         }
         if !at_block_edge(document, cascade, source, root, false) {
