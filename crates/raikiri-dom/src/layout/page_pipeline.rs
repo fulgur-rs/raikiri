@@ -9379,6 +9379,7 @@ fn ends_with_bottom_margin_of(
             || !margins_may_collapse_through(document, cascade, parent)
             || !document.block_axis(parent).height().is_auto()
             || last_flow_box(document, cascade, parent) != Some(id)
+            || line_follows_block(document, parent, id)
         {
             return None;
         }
@@ -9387,6 +9388,22 @@ fn ends_with_bottom_margin_of(
         id = parent;
     }
     Some(extremes)
+}
+
+/// Whether the paragraph `root` lays out a line after its block child
+/// `block`, such as one of a generated `::after`: the line box keeps the
+/// block-end margin of the block apart from that of `root` (CSS 2 §8.3.1).
+fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(child, after)| child == block && after < lines.lines.len())
+        })
 }
 
 /// Whether a `::before` or `::after` box of a `display: contents` element
