@@ -5743,7 +5743,7 @@ fn paginate_flow(
                 halted = true;
                 break;
             }
-                state
+            state
                 .pending_break
                 .leave_scopes(document, candidate.node_id);
             if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
@@ -11755,7 +11755,8 @@ fn paragraph_unplaced_line(
 ) -> Option<UnplacedBlockLine> {
     let node = &document.nodes[node_id];
     if !node.is_ifc_root()
-        || !(is_block_level_flow_box(node.display()) || node.display() == DisplayValue::TableCell
+        || !(is_block_level_flow_box(node.display())
+            || node.display() == DisplayValue::TableCell
             || is_floating_box_for_pagination(document, cascade, node_id))
         || node.used_writing_mode.is_vertical()
         || !matches!(

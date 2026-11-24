@@ -4,11 +4,11 @@ use super::candidates::{EdgesBreak, FlowRoots};
 use super::page_start::ChildPositions;
 use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
-    ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
-    FootnoteAreas, ForcedBreakHolder, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError,
-    LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, NodeKind,
-    PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
-    DisplayValue, PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
+    ColumnContexts, DeferredShifts, DisplayValue, EnteredParagraphs, FloatShifts, FloatTransition,
+    FloatValue, FootnoteAreas, ForcedBreakHolder, HeaderRepeats, IfcBoxShifts, LastNamedBox,
+    LayoutError, LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation,
+    NodeKind, PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
+    PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_after_last_line,
     block_effective_y, block_fits_page_step, border_box_height_bounds,
@@ -1586,6 +1586,19 @@ impl PaginationState {
             shift,
             target,
         );
+        // The boxes that clear a float that grew with its line, and the
+        // floats after it, follow the float.
+        if candidate.context.is_float_descendant()
+            || is_floating_box_for_pagination(document, env.cascade, node_id)
+        {
+            self.float_shifts.record_floats_around(
+                document,
+                env.cascade,
+                env.body_id,
+                node_id,
+                shift,
+            );
+        }
         let mut grown = candidate.clone();
         grown.height = document.nodes[node_id].layout.size.height;
         Ok(Some(grown))
@@ -1759,19 +1772,28 @@ impl PaginationState {
         }
         // A box of the paragraph before `next` is not past the line yet, and
         // the line takes one break at most. A table cell is no candidate of
-        // its own: its line follows the flow the cell's row is in.
+        // its own: its line follows the flow the cell's row is in, when that
+        // is the flow outside every float and positioned box. A break forced
+        // inside a float or positioned box moves only a line inside it.
         let Some((root, paragraph)) = super::line_after_forced_break(document, env.cascade, source)
             .filter(|&root| next.is_none_or(|next| !document.is_ancestor_or_self(root, next)))
+            .filter(|&root| {
+                !leaves_scope
+                    || self
+                        .pending_break
+                        .scope
+                        .is_some_and(|scope| document.is_ancestor_or_self(scope, root))
+            })
             .and_then(|root| {
                 let paragraph = self.lines_after_blocks.remove(&root).or_else(|| {
-                    (document.nodes[root].display() == DisplayValue::TableCell).then(|| {
-                        LineAfterBlock {
-                            flow_page: self.current_page,
-                            page_name: self.page_names.current.clone(),
-                            page_name_in_flow: true,
-                            in_flow: true,
-                            beside_flow: false,
-                        }
+                    (document.nodes[root].display() == DisplayValue::TableCell
+                        && self.pending_break.scope.is_none())
+                    .then(|| LineAfterBlock {
+                        flow_page: self.current_page,
+                        page_name: self.page_names.current.clone(),
+                        page_name_in_flow: true,
+                        in_flow: true,
+                        beside_flow: false,
                     })
                 })?;
                 Some((root, paragraph))
@@ -1795,14 +1817,22 @@ impl PaginationState {
             // The boxes that clear a float that grew with its line, and the
             // floats after it, follow the float.
             if paragraph.beside_flow {
-                self.float_shifts
-                    .record_floats_around(document, env.cascade, env.body_id, root, shift);
+                self.float_shifts.record_floats_around(
+                    document,
+                    env.cascade,
+                    env.body_id,
+                    root,
+                    shift,
+                );
             }
         }
         let end_page = page_origins.page_index_for_end(top + shift + height);
         // The flow beside a float stays on its page: the float grows with
         // its line, and only what clears it follows.
         if !follows || paragraph.beside_flow {
+            if follows {
+                self.pending_break.take(document, root);
+            }
             self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
             return Ok(());
         }

@@ -81,6 +81,12 @@ fn a_generated_line_after_a_forced_break_in_a_table_cell_starts_the_next_page() 
             ),
             &["T@3,43", "Z@0,33 x@3,0"],
         ),
+        (
+            &format!(
+                r#"{GENERATED}<div style="width:20px"><table style="border-spacing:0"><tr><td style="padding:0"><div class=g><div style="height:20px;break-after:page">T</div></div></td></tr></table>Z</div>"#
+            ),
+            &["T@0,40", "Z@0,30 x@0,0"],
+        ),
     ]);
 }
 
@@ -89,6 +95,26 @@ fn a_generated_line_after_a_forced_break_in_a_float_starts_the_next_page() {
     assert_pages(&[(
         &format!(
             r#"{GENERATED}<div style="width:20px"><div class=g style="float:left"><div style="height:20px;break-after:page">T</div></div><div style="clear:both">Z</div></div>"#
+        ),
+        &["T@0,40", "Z@0,30 x@0,0"],
+    )]);
+}
+
+#[test]
+fn a_generated_line_after_a_forced_break_in_a_block_of_a_float_leads_the_rest_of_it() {
+    assert_pages(&[(
+        &format!(
+            r#"{GENERATED}<div style="width:20px"><div style="float:left"><div class=g><div style="height:20px;break-after:page">T</div></div><div>W</div></div><div style="clear:both">Z</div></div>"#
+        ),
+        &["T@0,40", "W@0,30 Z@0,60 x@0,0"],
+    )]);
+}
+
+#[test]
+fn a_generated_line_of_a_float_past_the_page_end_pushes_the_clearing_content() {
+    assert_pages(&[(
+        &format!(
+            r#"{GENERATED}<div style="width:20px"><div class=g style="float:left"><div style="height:45px">T</div></div><div style="clear:both">Z</div></div>"#
         ),
         &["T@0,40", "Z@0,30 x@0,0"],
     )]);
