@@ -1864,16 +1864,21 @@ impl PaginationState {
                 owner,
                 shift,
                 // A line that an earlier break moved down grew the paragraph
-                // then; the float now grows it in its place.
-                below.map(|_| {
-                    -self
-                        .deferred_shifts
-                        .line_splits
-                        .iter()
-                        .filter(|split| split.root == root && split.first_moved <= line)
-                        .map(|split| split.growth)
-                        .sum::<f32>()
-                }),
+                // then; the float now grows it in its place. So does a float
+                // inside a block of the paragraph beside the line: the line
+                // does not take it along, so its own move to the next page
+                // moves the flow after the paragraph.
+                below
+                    .or(float.filter(|&float| super::float_in_block_of(document, root, float)))
+                    .map(|_| {
+                        -self
+                            .deferred_shifts
+                            .line_splits
+                            .iter()
+                            .filter(|split| split.root == root && split.first_moved <= line)
+                            .map(|split| split.growth)
+                            .sum::<f32>()
+                    }),
             );
             // A line that the floats leave across the end of a page starts
             // the next one, and the paragraph grows with it.
