@@ -1651,7 +1651,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A line after a block child keeps nothing whole: the page
                 // breaks between the block and the line, inside a flex or
                 // grid item too, as between the lines of text there.
-                let line_after_block = unplaced_base
+                let line_after_block = (!inside_out_of_flow
+                    && !is_rendered_leaf
+                    && !document.context.pagination_on_transposed_axes)
                     .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(

@@ -8,7 +8,7 @@ use super::{
     FootnoteAreas, ForcedBreakHolder, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError,
     LineBreakFix, LineBreakMove, LineMove, LineSplit, MarginBreak, MarginTruncation, NodeKind,
     PageBox, PageCandidate, PageContentInsets, PageLayoutControl, PageNames, PageOrigins,
-    PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
+    DisplayValue, PageReach, ParagraphLineFit, PendingBreak, PendingPrefix, PositionValue, PrecedingFlexItems,
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, avoided_box_moves, block_after_last_line,
     block_effective_y, block_fits_page_step, border_box_height_bounds,
@@ -1462,7 +1462,8 @@ impl PaginationState {
                     page_name_in_flow: candidate.context.page_name_in_flow(),
                     in_flow: !candidate.context.is_out_of_flow_descendant(),
                     beside_flow: candidate.context.is_float_descendant()
-                        || candidate.context.is_out_of_flow_descendant(),
+                        || candidate.context.is_out_of_flow_descendant()
+                        || is_floating_box_for_pagination(document, env.cascade, node_id),
                 },
             );
             return self.break_before_line_after_block(document, env, candidate, entry, line);
@@ -1742,21 +1743,35 @@ impl PaginationState {
         let Some(source) = self.pending_break.source else {
             return Ok(());
         };
-        if self.lines_after_blocks.is_empty()
-            || next.is_some_and(|next| !self.pending_break.applies_to(document, next))
+        // The break forced inside a float ends with the float: the flow
+        // after it does not take it, but the line of the float after the
+        // block still does, before the flow leaves the float.
+        let leaves_scope = next
+            .is_some_and(|next| !super::in_break_scope(document, self.pending_break.scope, next));
+        if next.is_some_and(|next| !leaves_scope && !self.pending_break.applies_to(document, next))
         {
             return Ok(());
         }
         // A box of the paragraph before `next` is not past the line yet, and
-        // the line takes one break at most.
+        // the line takes one break at most. A table cell is no candidate of
+        // its own: its line follows the flow the cell's row is in.
         let Some((root, paragraph)) = super::line_after_forced_break(document, env.cascade, source)
             .filter(|&root| next.is_none_or(|next| !document.is_ancestor_or_self(root, next)))
-            .and_then(|root| Some((root, self.lines_after_blocks.remove(&root)?)))
-            .filter(|(root, paragraph)| {
-                paragraph.page_name_in_flow
-                    && !paragraph.beside_flow
-                    && !super::moves_reach_cell_row(document, *root)
+            .and_then(|root| {
+                let paragraph = self.lines_after_blocks.remove(&root).or_else(|| {
+                    (document.nodes[root].display() == DisplayValue::TableCell).then(|| {
+                        LineAfterBlock {
+                            flow_page: self.current_page,
+                            page_name: self.page_names.current.clone(),
+                            page_name_in_flow: true,
+                            in_flow: true,
+                            beside_flow: false,
+                        }
+                    })
+                })?;
+                Some((root, paragraph))
             })
+            .filter(|(_, paragraph)| paragraph.page_name_in_flow || paragraph.beside_flow)
         else {
             return Ok(());
         };
@@ -1772,9 +1787,17 @@ impl PaginationState {
             shift <= 0.0 || super::lines_shift_growth(document, root, shift) >= shift - 0.01;
         if shift > 0.0 {
             self.move_delegated_line(document, env, paragraph.flow_page, owner, shift, target);
+            // The boxes that clear a float that grew with its line, and the
+            // floats after it, follow the float.
+            if paragraph.beside_flow {
+                self.float_shifts
+                    .record_floats_around(document, env.cascade, env.body_id, root, shift);
+            }
         }
         let end_page = page_origins.page_index_for_end(top + shift + height);
-        if !follows {
+        // The flow beside a float stays on its page: the float grows with
+        // its line, and only what clears it follows.
+        if !follows || paragraph.beside_flow {
             self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
             return Ok(());
         }
@@ -1783,6 +1806,25 @@ impl PaginationState {
         self.page_names.current = paragraph.page_name;
         self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
         Ok(())
+    }
+
+    /// Moves the line after the block that forced the pending break inside a
+    /// float or an absolutely positioned box to the page that break opens,
+    /// when `next` is the first candidate past that box: the break ends with
+    /// the box, so this is the last chance for the line inside it to take
+    /// it (see [`Self::break_before_line_after_forced_break`]).
+    pub(super) fn break_before_line_leaving_scope(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        next: usize,
+    ) -> Result<(), Halt> {
+        if self.pending_break.source.is_none()
+            || super::in_break_scope(document, self.pending_break.scope, next)
+        {
+            return Ok(());
+        }
+        self.break_before_line_after_forced_break(document, env, Some(next))
     }
 
     /// Takes the pending break before what follows a forced break ahead of
