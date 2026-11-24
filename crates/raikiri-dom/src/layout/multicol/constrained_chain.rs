@@ -102,6 +102,47 @@ pub(super) fn piece_end(
     }
 }
 
+/// The height of the balanced columns that hold the lines `extents` from
+/// `start` on, the first column with `top` taken already: the least height,
+/// up to `height`, at which the lines broken one column at a time fit the
+/// columns left. Like Chromium, the columns are first made tall enough to
+/// hold the orphans and the widows of the paragraph, where `height` allows.
+fn balanced_height(
+    extents: &[(f32, f32)],
+    (start, top): (usize, f32),
+    height: f32,
+    context: FragmentationContext,
+    (orphans, widows): (usize, usize),
+    break_lines: &dyn Fn(usize, f32, f32) -> Vec<(usize, usize, f32)>,
+) -> f32 {
+    let columns = context
+        .column_count
+        .saturating_sub(context.column_index)
+        .max(1);
+    let count = extents.len();
+    let first = (start + orphans.min(count - start)).max(start + 1);
+    let last = count - widows.clamp(1, count - start);
+    let floor = (top + extents[first - 1].1 - extents[start].0)
+        .max(extents[count - 1].1 - extents[last].0)
+        .min(height);
+    let fits = |candidate: f32| break_lines(start, top, candidate).len() <= columns;
+    if fits(floor) || !fits(height) {
+        return if fits(floor) { floor } else { height };
+    }
+    // The count of columns falls as they grow, so the least height that
+    // fits lies between one that does not and one that does.
+    let (mut low, mut high) = (floor, height);
+    for _ in 0..32 {
+        let middle = (low + high) / 2.0;
+        if fits(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
+}
+
 pub(super) fn layout(
     tree: &mut LayoutSession<'_>,
     parent: usize,
@@ -275,37 +316,60 @@ pub(super) fn layout(
         start = extents.len();
     }
     let orphans = tree.nodes[leaf].paragraph_orphans.max(1);
-    // Widows taller than a column cannot follow a break together, and are
-    // dropped, as Chromium drops them.
-    let widows = tree.nodes[leaf]
-        .paragraph_widows
-        .clamp(1, extents.len().max(1));
-    let widows = if extents.len() >= widows
-        && extents
-            .last()
-            .is_some_and(|last| last.1 - extents[extents.len() - widows].0 <= height + f32::EPSILON)
-    {
-        widows
-    } else {
-        1
+    let paragraph_widows = tree.nodes[leaf].paragraph_widows;
+    // The lines from `start` on, broken greedily into columns `height` tall,
+    // the first of which has `top` taken already.
+    let break_lines = |start: usize, top: f32, height: f32| {
+        // Widows taller than a column cannot follow a break together, and
+        // are dropped, as Chromium drops them.
+        let widows = paragraph_widows.clamp(1, extents.len().max(1));
+        let widows = if extents.len() >= widows
+            && extents.last().is_some_and(|last| {
+                last.1 - extents[extents.len() - widows].0 <= height + f32::EPSILON
+            }) {
+            widows
+        } else {
+            1
+        };
+        let mut ranges = Vec::new();
+        let (mut start, mut top) = (start, top);
+        while start < extents.len() {
+            let source_top = extents[start].0;
+            let fitting = start
+                + extents[start..]
+                    .partition_point(|extent| extent.1 - source_top <= height - top + f32::EPSILON);
+            let end = piece_end(start, fitting, extents.len(), (orphans, widows));
+            // A line taller than an empty fragmentainer must make progress.
+            let end = end.max(start + 1).min(extents.len());
+            ranges.push((start, end, top));
+            start = end;
+            top = 0.0;
+        }
+        ranges
     };
-    while start < extents.len() {
-        let source_top = extents[start].0;
-        let fitting = start
-            + extents[start..]
-                .partition_point(|extent| extent.1 - source_top <= height - top + f32::EPSILON);
-        let mut end = piece_end(start, fitting, extents.len(), (orphans, widows));
-        // A line taller than an empty fragmentainer must make progress.
-        end = end.max(start + 1).min(extents.len());
+    // Balanced columns break the lines at their own height; the columns
+    // keep the height of the container.
+    let column_height = if context.column_fill == ColumnFillValue::Balance && start < extents.len()
+    {
+        balanced_height(
+            &extents,
+            (start, top),
+            height,
+            context,
+            (orphans, paragraph_widows),
+            &break_lines,
+        )
+    } else {
+        height
+    };
+    for (start, end, top) in break_lines(start, top, column_height) {
         pieces.push(Piece {
             start,
             end,
             column: context.column_index.checked_add(pieces.len())?,
             top,
-            bottom: top + extents[end - 1].1 - source_top,
+            bottom: top + extents[end - 1].1 - extents[start].0,
         });
-        start = end;
-        top = 0.0;
     }
     let required = pieces.len().checked_mul(chain.len())?.checked_add(1)?;
     if required
