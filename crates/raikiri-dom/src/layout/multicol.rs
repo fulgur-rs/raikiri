@@ -59,7 +59,8 @@ fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
     if tree.nodes[node_id].ifc.is_some() {
         return false;
     }
-    let rendered: Vec<usize> = flow_children(tree, node_id)
+    let rendered: Vec<usize> = float_flow_children(tree, node_id)
+        .0
         .into_iter()
         .filter(|&child| {
             let node = &tree.nodes[child];
@@ -73,6 +74,93 @@ fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
         && !others
             .iter()
             .any(|&child| multicol_subtree_has_float_or_block_margin(tree, child))
+}
+
+/// The children of `node_id` that the columns place as its own, with the
+/// children of each transparent wrapper that holds a float in place of the
+/// wrapper (see [`is_transparent_float_wrapper`]), and those wrappers, outer
+/// ones first. Such a wrapper has no box of its own to break: its children
+/// lay out and break between the columns as the container's own do, the
+/// lines after a float in it beside that float.
+fn float_flow_children(tree: &LayoutSession<'_>, node_id: usize) -> (Vec<usize>, Vec<usize>) {
+    let mut children = Vec::new();
+    let mut wrappers = Vec::new();
+    let mut pending: Vec<usize> = flow_children(tree, node_id).into_iter().rev().collect();
+    while let Some(child) = pending.pop() {
+        if wrappers.len() < MAX_TRANSPARENT_WRAPPERS && is_transparent_float_wrapper(tree, child) {
+            wrappers.push(child);
+            pending.extend(flow_children(tree, child).into_iter().rev());
+        } else {
+            children.push(child);
+        }
+    }
+    (children, wrappers)
+}
+
+/// How many transparent wrappers [`float_flow_children`] opens, and how deep
+/// [`is_transparent_float_wrapper`] looks for a float. The ones past it stay
+/// boxes the columns place whole.
+const MAX_TRANSPARENT_WRAPPERS: usize = 64;
+
+/// Whether `id` is a block in flow that takes the whole width of its column
+/// and has no margin, padding, border or background, nor anything else of
+/// its own that the columns would have to break, start or end, and that holds
+/// a rendered float among its children or those of such a wrapper inside it.
+/// Its floats float in the formatting context of the container's columns.
+fn is_transparent_float_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    if !is_transparent_wrapper(tree, id) {
+        return false;
+    }
+    let mut pending = vec![(id, 1usize)];
+    while let Some((wrapper, depth)) = pending.pop() {
+        for child in flow_children(tree, wrapper) {
+            let node = &tree.nodes[child];
+            if !node.is_in_document() || node.is_display_none() {
+                continue;
+            }
+            if is_floated(tree, child) {
+                return true;
+            }
+            if depth < MAX_TRANSPARENT_WRAPPERS && is_transparent_wrapper(tree, child) {
+                pending.push((child, depth + 1));
+            }
+        }
+    }
+    false
+}
+
+/// Whether `id` is a block in flow with no box of its own for the columns to
+/// break, in the direction of its parent: see
+/// [`is_transparent_float_wrapper`].
+fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
+    if !node.is_in_document()
+        || node.is_display_none()
+        || node.display() != DisplayValue::Block
+        || node.roots_block_context()
+        || node.layout_position() != Position::Static
+        || node.paints_background_color
+        || !paragraph_group::is_flow_wrapper(tree, id)
+    {
+        return false;
+    }
+    let style = style_of(tree, id);
+    let zero = LengthPercentageAuto::length(0.0);
+    let margin = style.margin();
+    [margin.top, margin.bottom, margin.left, margin.right]
+        .iter()
+        .all(|side| *side == zero)
+        && style.padding() == Edges::splat(LengthPercentage::ZERO)
+        && style.border() == Edges::splat(LengthPercentage::ZERO)
+        && style.size().width.is_auto()
+        // An aspect ratio gives the wrapper a height of its own, which its
+        // children alone would not take up.
+        && style.aspect_ratio().is_none()
+        // The columns place the boxes they hold by the container's direction,
+        // so a wrapper of another direction keeps its own placement.
+        && tree
+            .parent_of(id)
+            .is_none_or(|parent| style_of(tree, parent).direction() == style.direction())
 }
 
 /// Whether `idx` is a float.
@@ -2232,13 +2320,29 @@ fn relayout_nested_multicol_children(
 ) -> f32 {
     let index = usize::from(node_id);
     let fallback_height = border_box_size.height;
-    let children: Vec<usize> = flow_children(tree, index)
-        .into_iter()
-        .filter(|&child| tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none())
-        .collect();
+    let rendered = |tree: &LayoutSession<'_>, children: Vec<usize>| -> Vec<usize> {
+        children
+            .into_iter()
+            .filter(|&child| {
+                tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none()
+            })
+            .collect()
+    };
+    let mut children = rendered(tree, flow_children(tree, index));
     let has_spanners = children
         .iter()
         .any(|&child| spanning::is_spanner(tree, child));
+    // The children of transparent wrappers that hold floats take their place
+    // among the container's own, as long as the columns can lay those out
+    // with the floats (see `multicol_has_direct_float`).
+    let mut wrappers = Vec::new();
+    if !has_spanners && multicol_has_direct_float(tree, index) {
+        let (flattened, opened) = float_flow_children(tree, index);
+        if !opened.is_empty() {
+            children = rendered(tree, flattened);
+            wrappers = opened;
+        }
+    }
     if has_spanners {
         spanning::retire_preliminary_fragments(tree, &children);
     }
@@ -2278,7 +2382,12 @@ fn relayout_nested_multicol_children(
             block_end_inset,
         )
     } else {
-        layout_column_group(
+        // The boxes inside each opened wrapper stand relative to the
+        // container while the columns place them, outer wrappers first.
+        for &wrapper in &wrappers {
+            shift_flow_children(tree, wrapper, tree.nodes[wrapper].layout.location);
+        }
+        let used = layout_column_group(
             tree,
             index,
             &children,
@@ -2292,7 +2401,28 @@ fn relayout_nested_multicol_children(
                 && context.available_height.is_none()
                 && !tree.context.unpaged_plain_columns,
             bounded_by_maximum,
-        )
+        );
+        // Then relative to their wrapper again, inner wrappers first, each
+        // wrapper moved to where its boxes went (see `place_opened_wrapper`).
+        for &wrapper in wrappers.iter().rev() {
+            place_opened_wrapper(
+                tree,
+                wrapper,
+                context,
+                content_origin,
+                used - block_end_inset,
+            );
+            let origin = tree.nodes[wrapper].layout.location;
+            shift_flow_children(
+                tree,
+                wrapper,
+                Point {
+                    x: -origin.x,
+                    y: -origin.y,
+                },
+            );
+        }
+        used
     };
     let fragment_height = if tree.nodes[index]
         .multicol
@@ -2308,6 +2438,87 @@ fn relayout_nested_multicol_children(
         fragment.rect.height = fragment_height;
     } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
+}
+
+/// Give `wrapper`, a transparent wrapper whose children the columns of
+/// `context` placed as the container's own (in the container's coordinates),
+/// the box its children reach: it starts at the top of its first child, in
+/// that child's column, and ends below its last child in that column, or at
+/// `columns_end`, the end of the columns, when its children go on in later
+/// columns. `None` when it has no child to place it by, which leaves it as it
+/// is.
+fn place_opened_wrapper(
+    tree: &mut LayoutSession<'_>,
+    wrapper: usize,
+    context: FragmentationContext,
+    content_origin: Point<f32>,
+    columns_end: f32,
+) -> Option<()> {
+    let children: Vec<usize> = flow_children(tree, wrapper)
+        .into_iter()
+        .filter(|&child| is_rendered_element(tree, child))
+        .collect();
+    let first = *children.first()?;
+    let column = column_at(
+        context,
+        tree.nodes[first].layout.location.x - content_origin.x,
+    );
+    // Floats keep their margins apart from the wrapper's; the margins of a
+    // block collapse through the wrapper's edges.
+    let margin_box = |tree: &LayoutSession<'_>, child: usize| {
+        let layout = tree.nodes[child].layout;
+        if is_floated(tree, child) {
+            (
+                layout.location.y - layout.margin.top,
+                layout.location.y + layout.size.height + layout.margin.bottom,
+            )
+        } else {
+            (layout.location.y, layout.location.y + layout.size.height)
+        }
+    };
+    let top = margin_box(tree, first).0;
+    let mut bottom = top;
+    for &child in &children {
+        if column_at(
+            context,
+            tree.nodes[child].layout.location.x - content_origin.x,
+        ) != column
+        {
+            bottom = bottom.max(columns_end);
+            break;
+        }
+        bottom = bottom.max(margin_box(tree, child).1);
+    }
+    let mut layout = tree.nodes[wrapper].layout;
+    layout.location = Point {
+        x: content_origin.x + context.column_offset_x(column),
+        y: top,
+    };
+    layout.size.height = bottom - top;
+    tree.set_unrounded_layout(NodeId::from(wrapper), &layout);
+    Some(())
+}
+
+/// The column of `context` that a box `x` right of the container's content
+/// box starts in.
+fn column_at(context: FragmentationContext, x: f32) -> usize {
+    let step = (context.column_width + context.column_gap).max(f32::EPSILON);
+    let column = if context.rtl {
+        ((context.available_width - context.column_width - x) / step - LINE_EPSILON).ceil()
+    } else {
+        (x / step + LINE_EPSILON).floor()
+    };
+    column.max(0.0) as usize
+}
+
+/// Move each child of `wrapper` in flow by `offset`.
+fn shift_flow_children(tree: &mut LayoutSession<'_>, wrapper: usize, offset: Point<f32>) {
+    for child in flow_children(tree, wrapper) {
+        let mut layout = tree.nodes[child].layout;
+        layout.location.x += offset.x;
+        layout.location.y += offset.y;
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+    }
 }
 
 /// Place the boxes inside the wrapper that the `entry`th child of `group`
