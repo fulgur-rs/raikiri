@@ -18168,11 +18168,11 @@ fn float_top_after_closed_edges(
         return None;
     }
     let relative = |id: usize| accumulated_relative_offset_y(document, cascade, body_id, id);
-    // A relative offset on the way from the box down to the float moves the
-    // float away from the flow that the page walk lines up beside it; that
-    // case keeps the float where the flow puts it.
+    // A negative relative offset on the way from the box down to the float
+    // would lift the float above the page the walk lines it up on; that case
+    // keeps the float where the flow puts it.
     let outside = document.layout_parent_of(closer).map_or(0.0, relative);
-    if (relative(float) - outside).abs() > 0.001 {
+    if relative(float) - outside < -0.001 {
         return None;
     }
     let flow_y = |id: usize| current_abs_y(document, id) - relative(id);
