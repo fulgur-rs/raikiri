@@ -5736,23 +5736,21 @@ fn paginate_flow(
         while let Some(mut candidate) = candidates.next()
             && control.within_page_limit(state.current_page)?
         {
-            if let Err(halt) =
-                state.break_before_line_leaving_scope(document, &env, candidate.node_id)
-            {
-                halt.finish()?;
-                halted = true;
-                break;
+            // The line after a break forced inside a float or positioned box
+            // takes it before the flow leaves that box and the break ends.
+            let leaving = state.break_before_line_leaving_scope(document, &env, candidate.node_id);
+            if leaving.is_ok() {
+                state
+                    .pending_break
+                    .leave_scopes(document, candidate.node_id);
+                if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
+                    halted = true;
+                    break;
+                }
             }
-            state
-                .pending_break
-                .leave_scopes(document, candidate.node_id);
-            if break_before_edges(&mut state, document, &env, &mut edges_breaks, done)? {
-                halted = true;
-                break;
-            }
-            if let Err(halt) =
+            if let Err(halt) = leaving.and_then(|()| {
                 state.break_before_content_after_forced_break(document, &env, Some(&candidate))
-            {
+            }) {
                 halt.finish()?;
                 halted = true;
                 break;
