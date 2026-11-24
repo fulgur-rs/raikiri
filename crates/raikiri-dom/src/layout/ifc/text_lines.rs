@@ -167,9 +167,56 @@ pub(crate) fn single_unplaced_line(
         return None;
     }
     let lines = ifc.lines.as_ref()?;
-    let [line] = lines.lines.as_slice() else {
+    if lines.lines.len() != 1 {
         return None;
-    };
+    }
+    unplaced_line_at(doc, cascade, root, lines, 0)
+}
+
+/// The lines of the paragraph rooted at `root` from its line `first` to its
+/// last, as one line, when no text node places any of them (see
+/// [`single_unplaced_line`]), whatever lines come before them: the lines
+/// before them are placed by their own text, or lie above a block of the
+/// paragraph. The run is atomic when each of its lines is.
+pub(crate) fn unplaced_lines_from(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    first: usize,
+) -> Option<UnplacedLine> {
+    let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.multicol_fragments.is_some() {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    (first..lines.lines.len())
+        .map(|index| unplaced_line_at(doc, cascade, root, lines, index))
+        .try_fold(None::<UnplacedLine>, |run, line| {
+            let line = line?;
+            Some(Some(match run {
+                None => line,
+                Some(run) => UnplacedLine {
+                    line: IfcTextLine {
+                        bottom: line.line.bottom,
+                        ..run.line
+                    },
+                    atomic: run.atomic && line.atomic,
+                },
+            }))
+        })
+        .flatten()
+}
+
+/// The line `index` of the paragraph rooted at `root`, when no text node
+/// places it.
+fn unplaced_line_at(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    lines: &super::root::IfcLines,
+    index: usize,
+) -> Option<UnplacedLine> {
+    let line = &lines.lines[index];
     if line_owners_counted::<false>(line)
         .iter()
         .any(|&owner| is_placing_text_owner(doc, cascade, owner))
@@ -191,10 +238,10 @@ pub(crate) fn single_unplaced_line(
     {
         return None;
     }
-    let top = lines.line_top(0) - super::outside_marker::fit_leading(doc, root, 0);
+    let top = lines.line_top(index) - super::outside_marker::fit_leading(doc, root, index);
     Some(UnplacedLine {
         line: IfcTextLine {
-            line: 0,
+            line: index,
             top,
             bottom: top + block_size,
         },

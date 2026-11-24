@@ -39,7 +39,9 @@ use source_walk::{WalkedSources, walk_sources};
 
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::inline_boxes::atomic_nodes;
-use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
+use super::ifc::text_lines::{
+    IfcTextLine, TextLineIndex, single_unplaced_line, unplaced_lines_from,
+};
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
@@ -11667,6 +11669,9 @@ struct UnplacedBlockLine {
     /// text there, instead of keeping the paragraph whole (see
     /// [`unplaced_line_after_block`]).
     after_block: bool,
+    /// The index of the line in its paragraph: the last line, which follows
+    /// a block when the paragraph has other lines.
+    line: usize,
 }
 
 impl UnplacedBlockLine {
@@ -11764,7 +11769,12 @@ fn paragraph_unplaced_line(
     {
         return None;
     }
-    let unplaced = single_unplaced_line(document, cascade, node_id)?;
+    // A paragraph of more lines may end with lines after a block, past the
+    // lines that their own text or the block place: they move as one.
+    let unplaced = single_unplaced_line(document, cascade, node_id).or_else(|| {
+        let first = first_line_after_last_block(document, node_id)?;
+        unplaced_lines_from(document, cascade, node_id, first)
+    })?;
     let ifc_node = document.ifc_layout_node(node_id)?;
     let layout = ifc_node.layout;
     let after_block =
@@ -11772,12 +11782,33 @@ fn paragraph_unplaced_line(
             let (forced, avoided) = page_edge_constraint(document, cascade, block, false);
             block_outside_inline(document, node_id, block) && (forced || !avoided)
         });
+    // Only a line after a block leaves the lines above it to break apart.
+    if unplaced.line.line > 0 && !after_block {
+        return None;
+    }
     Some(UnplacedBlockLine {
         start: layout.border.top + layout.padding.top + unplaced.line.top,
         end: layout.border.top + layout.padding.top + unplaced.line.bottom,
         atomic: unplaced.atomic,
         after_block,
+        line: unplaced.line.line,
     })
+}
+
+/// The first line of the paragraph `root` below the last of its block
+/// children, if a line follows that block.
+fn first_line_after_last_block(document: &Document, root: usize) -> Option<usize> {
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    let &(_, first) = lines
+        .block_line_starts
+        .iter()
+        .max_by_key(|&&(_, after)| after)?;
+    (first < lines.lines.len()).then_some(first)
 }
 
 /// The block child of the paragraph `root` laid out last above its line
@@ -11806,20 +11837,20 @@ fn line_after_forced_break(
     document: &Document,
     cascade: &CascadeResult,
     source: usize,
-) -> Option<usize> {
+) -> Option<(usize, usize)> {
     // The paragraph may hold `source` inside blocks that end with it, each
     // of them a paragraph of its own.
     for root in document.ancestors(source) {
         if !document.nodes[root].is_ifc_root() {
             continue;
         }
-        if unplaced_line_after_block(document, cascade, root).is_some()
-            && let Some(unplaced) = single_unplaced_line(document, cascade, root)
-            && let Some(block) = block_above_line(document, root, unplaced.line.line)
+        if let Some(unplaced) = unplaced_line_after_block(document, cascade, root)
+            && let Some(block) = block_above_line(document, root, unplaced.line)
             && document.is_ancestor_or_self(block, source)
             && (block == source || at_block_edge(document, cascade, source, block, false))
         {
-            return (!float_after(document, cascade, root, source)).then_some(root);
+            return (!float_after(document, cascade, root, source))
+                .then_some((root, unplaced.line));
         }
         if !at_block_edge(document, cascade, source, root, false) {
             return None;

@@ -1533,7 +1533,7 @@ impl PaginationState {
         let node_id = candidate.node_id;
         let owner = super::leading_inline::LeadingInlineLine {
             root: node_id,
-            line: 0,
+            line: line.line,
         };
         let (top, _) = super::leading_inline::bounds(document, owner);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
@@ -1775,34 +1775,37 @@ impl PaginationState {
         // its own: its line follows the flow the cell's row is in, when that
         // is the flow outside every float and positioned box. A break forced
         // inside a float or positioned box moves only a line inside it.
-        let Some((root, paragraph)) = super::line_after_forced_break(document, env.cascade, source)
-            .filter(|&root| next.is_none_or(|next| !document.is_ancestor_or_self(root, next)))
-            .filter(|&root| {
-                !leaves_scope
-                    || self
-                        .pending_break
-                        .scope
-                        .is_some_and(|scope| document.is_ancestor_or_self(scope, root))
-            })
-            .and_then(|root| {
-                let paragraph = self.lines_after_blocks.remove(&root).or_else(|| {
-                    (document.nodes[root].display() == DisplayValue::TableCell
-                        && self.pending_break.scope.is_none())
-                    .then(|| LineAfterBlock {
-                        flow_page: self.current_page,
-                        page_name: self.page_names.current.clone(),
-                        page_name_in_flow: true,
-                        in_flow: true,
-                        beside_flow: false,
-                    })
-                })?;
-                Some((root, paragraph))
-            })
-            .filter(|(_, paragraph)| paragraph.page_name_in_flow || paragraph.beside_flow)
+        let Some((root, line, paragraph)) =
+            super::line_after_forced_break(document, env.cascade, source)
+                .filter(|&(root, _)| {
+                    next.is_none_or(|next| !document.is_ancestor_or_self(root, next))
+                })
+                .filter(|&(root, _)| {
+                    !leaves_scope
+                        || self
+                            .pending_break
+                            .scope
+                            .is_some_and(|scope| document.is_ancestor_or_self(scope, root))
+                })
+                .and_then(|(root, line)| {
+                    let paragraph = self.lines_after_blocks.remove(&root).or_else(|| {
+                        (document.nodes[root].display() == DisplayValue::TableCell
+                            && self.pending_break.scope.is_none())
+                        .then(|| LineAfterBlock {
+                            flow_page: self.current_page,
+                            page_name: self.page_names.current.clone(),
+                            page_name_in_flow: true,
+                            in_flow: true,
+                            beside_flow: false,
+                        })
+                    })?;
+                    Some((root, line, paragraph))
+                })
+                .filter(|(_, _, paragraph)| paragraph.page_name_in_flow || paragraph.beside_flow)
         else {
             return Ok(());
         };
-        let owner = super::leading_inline::LeadingInlineLine { root, line: 0 };
+        let owner = super::leading_inline::LeadingInlineLine { root, line };
         let (top, height) = super::leading_inline::bounds(document, owner);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, root);
         let flow_top = top - relative;
