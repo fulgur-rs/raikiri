@@ -6841,16 +6841,13 @@ fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
             "{css}"
         );
     }
-    // A lone box of lines with a height of its own is placed whole by the
-    // planner, which the columns that balance need.
+    // A lone box of lines with a height of its own is placed by the planner,
+    // which breaks it between its lines, whether the columns balance or not.
     let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
     for balances in [true, false] {
-        assert_eq!(
-            with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container, balances)
-            }),
-            balances
-        );
+        assert!(with_bridged_session(&mut doc, |session| {
+            multicol_has_only_paragraph_children(session, container, balances)
+        }));
     }
 }
 

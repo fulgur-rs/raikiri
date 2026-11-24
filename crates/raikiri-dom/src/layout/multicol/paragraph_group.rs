@@ -515,18 +515,27 @@ struct Paragraph {
     cloned: bool,
     /// For a box the columns hold whole or slice, the number of lines it
     /// holds: the one fragment of a whole box, or the first piece of a sliced
-    /// one, reaches all of them, however many extents the plan gives it.
+    /// one whose lines no column end breaks, reaches all of them, however many
+    /// extents the plan gives it.
     held_lines: Option<usize>,
     /// For a box the columns hold whole or slice, the block offset its held
-    /// lines reach from the top of its border box: a sliced box keeps them all
-    /// in its first piece.
+    /// lines reach from the top of its border box: a sliced box whose lines no
+    /// column end breaks keeps them all in its first piece.
     held_reach: f32,
+    /// For a sliced box of lines with no padding or border above or below
+    /// them, the block extents of its lines. A column end that cuts them
+    /// breaks between two lines: the lines after the break go to the top of
+    /// the next column, in the next piece, where they may overflow its end
+    /// and overlap what follows the box (Chromium). Empty for every other
+    /// paragraph, whose lines all lie in its first piece.
+    held_extents: Vec<(f32, f32)>,
     /// A monolithic box that stays whole at the top of an empty column even
     /// when it is taller than the column, overflowing its end.
     overflows: bool,
     /// A sized box whose one extent the columns cut wherever a column ends: a
     /// piece of it fills the rest of each column it reaches. The lines of one
-    /// that holds lines lie in its first piece.
+    /// that holds lines lie in its first piece, unless `held_extents` lets a
+    /// column end break between them.
     sliced: bool,
     /// The padding above the first box of a wrapper, with the index of the
     /// entry that closes the wrapper. A break between it and that box is a
@@ -569,6 +578,7 @@ impl Paragraph {
             cloned: false,
             held_lines: lines,
             held_reach: 0.0,
+            held_extents: Vec::new(),
             overflows: false,
             sliced: false,
         }
@@ -596,11 +606,16 @@ pub(super) fn balance(
         sized_leaf,
     } = collect(tree, &flow, true, BlockEdges::Refused, true, None)?;
     // A chain of wrappers around one paragraph keeps the strategies of such
-    // chains, unless the wrappers hold room that those cannot place, or a
-    // sized box with no lines stands beside the paragraph, which the columns
-    // slice.
+    // chains, unless the wrappers hold room that those cannot place, a sized
+    // box with no lines stands beside the paragraph, which the columns slice,
+    // or the paragraph is a sliced box whose lines a column end may break
+    // between, which only this plan does.
+    let cut_lines = paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.sliced && !paragraph.held_extents.is_empty());
     if paragraph_count == 0
-        || (paragraph_count == 1 && !has_empty && !room && !sized_leaf)
+        || (paragraph_count == 1 && !has_empty && !room && !sized_leaf && !cut_lines)
         || !high.is_finite()
         || context.column_count == 0
     {
@@ -728,6 +743,7 @@ pub(super) fn fill_definite(
         for index in cut {
             if let Some(paragraph) = paragraphs[index].as_mut() {
                 paragraph.sliced = false;
+                paragraph.held_extents.clear();
             }
         }
     }
@@ -781,8 +797,9 @@ fn fill_definite_paragraphs(
 }
 
 /// The indices of the sliced boxes of lines in `group` whose lines a column
-/// end cuts: the pieces of a sliced box place no lines of their own, so all
-/// of them must lie in its first piece.
+/// end cuts inside its first piece without a break between them: the lines
+/// a piece holds must lie inside it, unless the break sent the rest on to the
+/// next piece.
 fn boxes_with_cut_lines(paragraphs: &[Option<Paragraph>], group: &Group) -> Vec<usize> {
     paragraphs
         .iter()
@@ -791,12 +808,72 @@ fn boxes_with_cut_lines(paragraphs: &[Option<Paragraph>], group: &Group) -> Vec<
         .filter_map(|(index, (paragraph, placement))| {
             let (paragraph, placement) = (paragraph.as_ref()?, placement.as_ref()?);
             (paragraph.sliced
-                && paragraph.held_lines.is_some()
+                && paragraph
+                    .held_lines
+                    .is_some_and(|held| placement.fragments[0].line_end >= held)
                 && placement.fragments.len() > 1
                 && paragraph.held_reach > placement.first_height + f32::EPSILON)
                 .then_some(index)
         })
         .collect()
+}
+
+/// The end of the lines that the piece of the sliced box `paragraph` from
+/// line `start` on holds, when `room` of a column is left for it: all the
+/// lines left, or, when the column ends before the last of them, the lines
+/// above the break that the column end cuts. The piece keeps `paragraph`'s
+/// orphans, and its widows where the orphans leave lines for them. `Some(None)`
+/// when the column holds too few lines for the orphans and has `content`
+/// before the box, which then goes on to the next column. An empty column
+/// that holds too few lines for them holds the lines that fit, unless the
+/// fill is `strict`, as a trial of balanced columns is, which taller columns
+/// pass instead. `None` when no line fits an empty column.
+fn piece_lines(
+    paragraph: &Paragraph,
+    start: usize,
+    (room, height): (f32, f32),
+    content: bool,
+    strict: bool,
+) -> Option<Option<usize>> {
+    let held = paragraph.held_lines.unwrap_or(1);
+    let lines = &paragraph.held_extents;
+    if start >= lines.len() {
+        return Some(Some(held));
+    }
+    // The first piece begins at the top of the box, and a later one with its
+    // first line.
+    let origin = if start == 0 { 0.0 } else { lines[start].0 };
+    let fitting =
+        start + lines[start..].partition_point(|line| line.1 - origin <= room + f32::EPSILON);
+    if fitting >= held {
+        return Some(Some(held));
+    }
+    // Widows taller than a column are dropped, as for a paragraph.
+    let widows = paragraph.widows.clamp(1, held);
+    let widows = if lines[held - 1].1 - lines[held - widows].0 <= height + f32::EPSILON {
+        widows
+    } else {
+        1
+    };
+    // A piece the box goes on from keeps its widows too, as the pieces of a
+    // paragraph do.
+    let wanted = if start == 0 {
+        paragraph.orphans
+    } else {
+        paragraph.orphans.max(widows)
+    };
+    let least = start + wanted.clamp(1, held - start);
+    let end = fitting.min(held - widows);
+    if end >= least {
+        return Some(Some(end));
+    }
+    if fitting >= least {
+        return Some(Some(fitting));
+    }
+    if content {
+        return Some(None);
+    }
+    (fitting > start && !strict).then_some(Some(fitting))
 }
 
 /// The paragraphs of `entries` with their line extents, when each entry is a
@@ -875,6 +952,7 @@ fn collect(
                 cloned: false,
                 held_lines: None,
                 held_reach: 0.0,
+                held_extents: Vec::new(),
                 overflows: false,
                 sliced: separates,
             }));
@@ -930,8 +1008,7 @@ fn collect(
         // where they end, as one with no lines is, unless it avoids breaks or
         // a cut would paint it wrong: then it goes whole to a column that
         // holds it. Its lines must lie inside its height, or they would reach
-        // past the column, and a sliced one keeps them all in its first piece
-        // (see `holds_lines_in_first_pieces`).
+        // past the piece that holds them.
         if sized && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
             let lines = node.ifc.as_ref()?.lines.as_ref()?;
             let (before, after) = block_edges(&layout);
@@ -960,13 +1037,33 @@ fn collect(
             // One with block margins goes whole to a column, as a sized box
             // with no lines needs none to be sliced (see
             // `lineless::is_sized_leaf`).
+            let sliced = margin_top == 0.0
+                && margin_bottom == 0.0
+                && lineless::slices_sized_leaf(tree, child);
+            // A column end may break between the lines of a sliced box with
+            // no padding or border above or below them, whose lines hold only
+            // text: its pieces carry the lines and nothing placed on them. A
+            // box that a relative offset moves keeps its lines together, as
+            // the offset is carried across pages for the whole box.
+            let breaks_lines = sliced
+                && before == 0.0
+                && after == 0.0
+                && lines.lines.len() > 1
+                && node.layout_position() == Position::Static
+                && node.ifc.as_ref().is_some_and(|root| root.boxes.is_empty());
             paragraphs.push(Some(Paragraph {
                 opens: None,
                 closes: false,
-                sliced: margin_top == 0.0
-                    && margin_bottom == 0.0
-                    && lineless::slices_sized_leaf(tree, child),
+                sliced,
                 held_reach: before + reach,
+                held_extents: lines
+                    .lines
+                    .iter()
+                    .filter(|_| breaks_lines)
+                    .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+                    .collect(),
+                orphans: node.paragraph_orphans,
+                widows: node.paragraph_widows,
                 ..whole
             }));
             // The plan needs a paragraph, and this box holds lines, unlike one
@@ -1070,6 +1167,7 @@ fn collect(
                 cloned: false,
                 held_lines: None,
                 held_reach: 0.0,
+                held_extents: Vec::new(),
                 overflows: false,
                 sliced: false,
             }));
@@ -1103,6 +1201,7 @@ fn collect(
             cloned: node.clones_box_decorations && edge_start + edge_end > 0.0,
             held_lines: None,
             held_reach: 0.0,
+            held_extents: Vec::new(),
             overflows: false,
             sliced: false,
         }));
@@ -1216,7 +1315,13 @@ fn first_piece(paragraphs: &[Option<Paragraph>], padding: f32, start: usize, clo
             continue;
         }
         if paragraph.sliced || paragraph.sized_leaf {
-            return need + paragraph.held_lines.map_or(0.0, |_| paragraph.held_reach);
+            // A box whose lines a column end may cut needs room for its
+            // orphans only.
+            let reach = match paragraph.held_extents.as_slice() {
+                [] => paragraph.held_lines.map_or(0.0, |_| paragraph.held_reach),
+                lines => lines[paragraph.orphans.clamp(1, lines.len()) - 1].1,
+            };
+            return need + reach;
         }
         let lines = paragraph.orphans.clamp(1, paragraph.extents.len());
         let mut piece = paragraph.edge_start + paragraph.extents[lines - 1].1 - first_top;
@@ -1473,12 +1578,23 @@ fn fill_chunk_with(
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
             let mut fragments: Vec<MulticolTextFragment> = Vec::new();
             let (mut first_column, mut first_y, mut first_height) = (column, top, 0.0);
+            // The lines that earlier pieces of the box hold.
+            let mut placed_lines = 0;
             loop {
                 let room = height - top;
                 // A column that the content before the box fills to its end
                 // holds no piece of it. A remainder below one layout unit is
                 // rounding left by balancing, not room.
-                if room >= SLICE_MIN_ROOM || top <= 0.0 {
+                let lines = piece_lines(
+                    paragraph,
+                    placed_lines,
+                    (room, height),
+                    column_has_content,
+                    strict,
+                )?;
+                if let Some(line_end) = lines
+                    && (room >= SLICE_MIN_ROOM || top <= 0.0)
+                {
                     // A box cut into more pieces than the budget, or that a
                     // column too short for it to shrink cannot hold, is left
                     // to the other strategies.
@@ -1489,16 +1605,17 @@ fn fill_chunk_with(
                     if fragments.is_empty() {
                         (first_column, first_y, first_height) = (column, top, used);
                     }
-                    // The lines a sliced box holds lie in its first piece.
-                    let held = paragraph.held_lines.unwrap_or(1);
-                    let line_start = if fragments.is_empty() || paragraph.held_lines.is_none() {
+                    // The lines a column end cuts off a piece go to the top of
+                    // the next column, with the next piece.
+                    let line_start = if paragraph.held_lines.is_none() {
                         0
                     } else {
-                        held
+                        placed_lines
                     };
+                    placed_lines = line_end;
                     fragments.push(MulticolTextFragment {
                         line_start,
-                        line_end: held,
+                        line_end,
                         fragmentainer: column,
                         x: context.column_offset_x(column) - context.column_offset_x(first_column),
                         y: top - first_y,
@@ -1508,7 +1625,15 @@ fn fill_chunk_with(
                     maximum = maximum.max(cursor);
                     // A strict fill takes even such a remainder to the next
                     // column, so that a taller trial never needs more columns.
-                    if left < SLICE_MIN_ROOM && (!strict || left <= 0.0) {
+                    // Lines that the pieces so far leave over go on to the
+                    // next column with what is left of the box, however
+                    // little; with none left, they would need a column past
+                    // its end, and taller columns hold them.
+                    let lines_left = placed_lines < paragraph.held_extents.len();
+                    if lines_left && left <= 0.0 {
+                        return None;
+                    }
+                    if left < SLICE_MIN_ROOM && (!strict || left <= 0.0) && !lines_left {
                         break;
                     }
                 }
@@ -1518,6 +1643,7 @@ fn fill_chunk_with(
                     .checked_add(1)
                     .filter(|&next| next < context.column_count)?;
                 top = 0.0;
+                column_has_content = false;
             }
             column_has_content = true;
             pending_margin = Margins::default().with(paragraph.margin_bottom);
