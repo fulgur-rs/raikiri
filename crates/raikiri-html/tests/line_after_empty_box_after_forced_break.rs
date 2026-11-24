@@ -5,6 +5,10 @@
 //! so the flow after the paragraph does not join the margins that the empty
 //! block keeps at the top of the page.
 //!
+//! Empty inline elements after the empty block lay out phantom lines, which
+//! keep no margins apart, and a line of text right after the empty block
+//! sits below the margins that it keeps at the top of the page.
+//!
 //! The positions are the ones Chromium prints for the same documents
 //! (`page.pdf` with 100px square pages). Each 20px Ahem glyph is shown as
 //! `text@x,top` on its page, sorted, with 30px lines.
@@ -135,6 +139,55 @@ fn the_flow_after_a_line_below_a_box_of_floats_follows_the_line() {
         (
             r#"<div style="width:20px"><div style="break-after:page">T</div><div><div style="float:left;width:20px;height:20px">F</div></div>x</div><div>Z</div>"#,
             &["T@0,0", "F@0,0 Z@0,50 x@0,20"],
+        ),
+    ]);
+}
+
+#[test]
+fn phantom_lines_after_the_empty_box_keep_its_margins_joined() {
+    assert_pages(&[
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span> <span><span></span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div style="display:contents"><span></span></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+        (
+            r#"<style>.g::after{content:""}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,20"],
+        ),
+    ]);
+}
+
+#[test]
+fn a_line_of_text_after_the_empty_box_sits_below_its_margins() {
+    assert_pages(&[
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div>y</div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50 y@0,20"],
+        ),
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span>y</span><span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50 y@0,20"],
+        ),
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div style="height:0;margin-bottom:10px"></div>y</div><div>Z</div>"#,
+            &["T@0,0", "Z@0,50 y@0,20"],
+        ),
+        (
+            r#"<div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-top:15px"></div>y</div><div>Z</div>"#,
+            &["T@0,0", "Z@0,45 y@0,15"],
+        ),
+        // The margin of the box that forces the break is truncated there.
+        (
+            r#"<div style="width:20px"><div style="break-after:page;margin-bottom:20px">T</div>y</div><div>Z</div>"#,
+            &["T@0,0", "Z@0,30 y@0,0"],
         ),
     ]);
 }

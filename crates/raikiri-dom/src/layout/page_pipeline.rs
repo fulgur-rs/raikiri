@@ -9378,7 +9378,7 @@ fn ends_with_bottom_margin_of(
         if layout.border.bottom + layout.padding.bottom > 0.0
             || !margins_may_collapse_through(document, cascade, parent)
             || !document.block_axis(parent).height().is_auto()
-            || last_flow_box(document, cascade, parent) != Some(id)
+            || last_box_past_phantom_lines(document, cascade, parent) != Some(id)
             || line_follows_block(document, parent, id)
         {
             return None;
@@ -9390,9 +9390,38 @@ fn ends_with_bottom_margin_of(
     Some(extremes)
 }
 
+/// The last box in the flow of the block `node_id` (see [`last_flow_box`]),
+/// passing over the empty inline elements after it that lay out phantom
+/// lines, which count as no content between margins (CSS 2 §9.4.2).
+fn last_box_past_phantom_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&child| takes_part_in_flow(document, cascade, child))
+        .find_map(
+            |child| match sibling_adjacency::flow_box(document, cascade, child) {
+                sibling_adjacency::FlowBox::Phantom => None,
+                // A `display: contents` element of phantom lines alone has no
+                // box: the box before it ends the flow.
+                sibling_adjacency::FlowBox::Contents => {
+                    last_box_past_phantom_lines(document, cascade, child)
+                }
+                _ => Some(child),
+            },
+        )
+}
+
 /// Whether the paragraph `root` lays out a line after its block child
 /// `block`, such as one of a generated `::after`: the line box keeps the
 /// block-end margin of the block apart from that of `root` (CSS 2 §8.3.1).
+/// A phantom line, of an empty inline element or a blank generated box, has
+/// no block size and counts as no line (CSS 2 §9.4.2).
 fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
     document
         .ifc_layout_node(root)
@@ -9402,7 +9431,14 @@ fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
             lines
                 .block_line_starts
                 .iter()
-                .any(|&(child, after)| child == block && after < lines.lines.len())
+                .filter(|&&(child, _)| child == block)
+                .any(|&(_, after)| {
+                    lines
+                        .lines
+                        .iter()
+                        .skip(after)
+                        .any(|line| line.block_size() > 0.0)
+                })
         })
 }
 
