@@ -43,6 +43,20 @@ pub(crate) struct LayoutContext {
     pub(crate) float_resumptions: super::page_pipeline::float_resumption::Plan,
     /// Floats taking a preceding normal-flow break, with the flow resumed beside them.
     pub(crate) float_resumption_candidates: Vec<(usize, usize)>,
+    /// Floats whose content the page walk moved down past page edges, so
+    /// that they grew, and how the lines beside them moved (see
+    /// [`LineGrowth`](super::page_pipeline::float_resumption::LineGrowth)).
+    pub(crate) float_line_growth:
+        HashMap<usize, super::page_pipeline::float_resumption::LineGrowth>,
+    /// How far the page walk moved the top of each float it placed, for
+    /// `float_line_growth`.
+    pub(crate) float_start_shifts: HashMap<usize, f32>,
+    /// How far the page walk moved the lines of each paragraph past page
+    /// edges, in all, for `float_line_growth`.
+    pub(crate) paragraph_line_moves: HashMap<usize, f32>,
+    /// The floats whose content the page walk moved whole to a later page by
+    /// moving their first lines: they get no line extent.
+    pub(crate) floats_moved_whole: HashSet<usize>,
     /// Floats that a forced break at the end of the content of the boxes
     /// around them sends to the next page, each with the outermost of those
     /// boxes: only floats follow the break inside that box.

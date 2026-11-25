@@ -984,6 +984,22 @@ pub(super) fn layout(
                 style.clear,
                 leading && collapse_start,
             );
+            if let Some(extent) = tree
+                .context
+                .float_resumptions
+                .line_extent(usize::from(child))
+            {
+                ctx.extend_float_for_lines(
+                    position,
+                    output.size + margin.sum_axes(),
+                    if style.float == Float::Left {
+                        FloatDirection::Left
+                    } else {
+                        FloatDirection::Right
+                    },
+                    extent,
+                );
+            }
             if track_margin_floats {
                 margin_float_tops.push((usize::from(child), position.y));
             }
@@ -1292,6 +1308,15 @@ pub(super) fn layout(
         child_input.available_space.width = AvailableSpace::Definite(assigned_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
+        // The clearance a forced break gives a box does not clear the floats
+        // that run on onto the page the break opens.
+        if tree
+            .forced_break_clearance
+            .binary_search(&usize::from(child))
+            .is_err()
+        {
+            ctx.clear_line_extensions(style.clear);
+        }
         // Clearance refers to preceding floats. Descendant floats created
         // by a speculative child must never push that same child downward.
         let clear_y = ctx

@@ -20,6 +20,23 @@ pub(crate) struct FloatContext {
     /// The width last set with [`Self::set_width`], which the library keeps
     /// private.
     width: f32,
+    /// The parts of floats that only lines are broken against: the library
+    /// knows nothing of them, so neither floats nor boxes placed after them
+    /// move for them (see [`Self::extend_for_lines`]).
+    line_extensions: Vec<LineExtension>,
+}
+
+/// A band below a float that the lines of the flow are broken against as if
+/// the float reached down through it, in the coordinates of the floats.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LineExtension {
+    /// The side the float sits on.
+    pub(crate) direction: FloatDirection,
+    /// The edge of the float's margin box that faces the lines: its right
+    /// edge for a left float, its left edge for a right one.
+    pub(crate) edge: f32,
+    pub(crate) top: f32,
+    pub(crate) bottom: f32,
 }
 
 impl FloatContext {
@@ -29,7 +46,52 @@ impl FloatContext {
         Self {
             inner: taffy::FloatContext::new(),
             width: 0.0,
+            line_extensions: Vec::new(),
         }
+    }
+
+    /// Breaks the lines between `top` and `bottom` against the float placed
+    /// at `position` with the margin-box `size` as if it reached down that
+    /// far, without moving any float or box placed after it.
+    pub(crate) fn extend_for_lines(
+        &mut self,
+        position: Point<f32>,
+        size: Size<f32>,
+        direction: FloatDirection,
+        bottom: f32,
+    ) {
+        let top = position.y + size.height;
+        let edge = match direction {
+            FloatDirection::Left => position.x + size.width,
+            FloatDirection::Right => position.x,
+        };
+        self.line_extensions.push(LineExtension {
+            direction,
+            edge,
+            top,
+            bottom,
+        });
+    }
+
+    /// The bands below floats that lines are broken against.
+    pub(crate) fn line_extensions(&self) -> &[LineExtension] {
+        &self.line_extensions
+    }
+
+    /// Whether any band below a float on a side that `clear` clears is left:
+    /// a box that clears that side starts below where the float ends on the
+    /// page after, so no line after it is broken against those bands.
+    pub(crate) fn has_cleared_line_extensions(&self, clear: Clear) -> bool {
+        self.line_extensions
+            .iter()
+            .any(|band| clears(clear, band.direction))
+    }
+
+    /// Drops the bands below floats on the sides `clear` clears (see
+    /// [`Self::has_cleared_line_extensions`]).
+    pub(crate) fn clear_line_extensions(&mut self, clear: Clear) {
+        self.line_extensions
+            .retain(|band| !clears(clear, band.direction));
     }
 
     /// Set the width of the formatting context, which the room beside the
@@ -171,4 +233,14 @@ impl FloatIntrinsicWidthCalculator {
     pub(crate) fn result(&self) -> f32 {
         self.0.result()
     }
+}
+
+/// Whether `clear` clears the floats on the side `direction`.
+fn clears(clear: Clear, direction: FloatDirection) -> bool {
+    matches!(
+        (clear, direction),
+        (Clear::Both, _)
+            | (Clear::Left, FloatDirection::Left)
+            | (Clear::Right, FloatDirection::Right)
+    )
 }
