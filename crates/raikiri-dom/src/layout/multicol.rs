@@ -4248,6 +4248,13 @@ fn layout_column_group(
             if !can_balance_atomic_paragraph(tree, leaf, BlockEdges::Refused) {
                 return None;
             }
+            // The orphans and widows that break the lines are the
+            // paragraph's own, which may differ from the container's.
+            let context = FragmentationContext {
+                orphans: tree.nodes[leaf].paragraph_orphans.max(1),
+                widows: tree.nodes[leaf].paragraph_widows.max(1),
+                ..context
+            };
             let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
             let (fragments, height) = root_column_fragments(lines, context);
             // Lines that need all of a definite height, or more, fill the
@@ -4470,7 +4477,13 @@ fn layout_column_group(
                         .then_some(after.top + margin_top)
                         .filter(|&content_top| {
                             break_height.is_some_and(|height| {
-                                first_piece_fits(tree, child, content_top, height, context.orphans)
+                                first_piece_fits(
+                                    tree,
+                                    child,
+                                    content_top,
+                                    height,
+                                    tree.nodes[child].paragraph_orphans,
+                                )
                             })
                         });
                     // A block at the top of a column stays there, and its
@@ -6468,8 +6481,9 @@ fn line_ranges_in_columns(
     ranges
 }
 
-/// Move lines between the pieces `ranges` of a paragraph so that each keeps
-/// the `orphans` and `widows` of `context`.
+/// Move lines between the pieces `ranges` of a paragraph so that a piece
+/// after a break holds the `widows` of `context` where the piece before it
+/// keeps its `orphans`. Lines move one break at a time, from the first.
 fn respect_orphans_and_widows(ranges: &mut [(usize, usize, usize)], context: FragmentationContext) {
     // CSS Fragmentation §3.3 constrains each line break. If the final
     // fragment would contain fewer than `widows` lines, move lines from the
