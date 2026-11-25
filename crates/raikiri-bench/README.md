@@ -356,3 +356,6 @@ After the workspace gate finished, three fresh 20,000-row processes took
 The median was 5.103 seconds, 2.1% above five seconds. The workspace gate
 passed at a1eaffa8a against origin/main with zero uncovered added lines
 after its coverage exemptions (11 added lines exempt across the patch).
+With the same Fulgur revision rebuilt without the streaming-diagnostics
+feature, the same input took 5.253, 5.188 and 5.212 seconds at 93,124,
+94,648 and 93,124 KiB in three fresh processes.
