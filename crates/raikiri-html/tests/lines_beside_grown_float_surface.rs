@@ -104,6 +104,13 @@ fn the_lines_on_the_next_page_wrap_beside_the_float_that_continues_there() {
 }
 
 #[test]
+fn a_box_after_a_forced_break_starts_beside_a_float_that_a_break_inside_it_grew() {
+    let body = "<div style='float:left;width:40px'>F<div style='break-before:page'>H</div></div>\
+                Z<div style='break-before:page'>Q</div>";
+    assert_eq!(words(body), "F@0:0,0 H@1:0,0 Q@1:40,0 Z@0:40,0");
+}
+
+#[test]
 fn a_float_that_runs_over_several_pages_narrows_the_lines_on_each() {
     let body = "<div style='float:left;width:40px'>F G G G G G G</div>\
                 ZZ YY XX WW VV UU TT SS RR QQ PP";
@@ -129,6 +136,15 @@ fn what_the_float_growth_already_moves_keeps_its_place() {
             format!("{FLOAT}ZZ YY XX WW<div style='clear:left'>Q</div>"),
             "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 Q@1:0,60 WW@1:40,30 XX@1:40,0 \
              YY@0:40,30 ZZ@0:40,0",
+        ),
+        // A paragraph that clears the float takes the full width below it.
+        (
+            format!("{FLOAT}<p style='clear:left;margin:0'>AA BB CC</p>"),
+            "AA@2:0,0 BB@2:60,0 CC@2:0,30 F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30",
+        ),
+        (
+            format!("{FLOAT}ZZ<p style='clear:left;margin:0'>AA BB CC</p>"),
+            "AA@2:0,0 BB@2:60,0 CC@2:0,30 F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 ZZ@0:40,0",
         ),
         // A block beside the float that moves to the next page whole moves
         // the flow after it as far as the float grew: the lines after it

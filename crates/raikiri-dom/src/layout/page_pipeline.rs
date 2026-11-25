@@ -4915,6 +4915,9 @@ fn layout_pages_core(
     // moves. Once those are spent, the pages laid out stand, though the
     // later boxes of a long chain of such breaks keep the clearance the
     // break gives them.
+    // Each float whose growth past a page edge first narrows the lines
+    // beside it takes one more attempt to break them there.
+    let mut line_extent_floats = HashSet::new();
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
     let mut break_top_settled = None;
@@ -4924,6 +4927,7 @@ fn layout_pages_core(
             + usize::from(resumptions.has_pushed_floats())
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
+            + line_extent_floats.len()
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -4947,6 +4951,7 @@ fn layout_pages_core(
             && next.page_filled_origins == page_filled_origins
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
+        line_extent_floats.extend(next.resumptions.line_extent_floats());
         let known_break_tops = break_top_nodes.len();
         break_top_nodes.extend(next.resumptions.break_top_nodes());
         let break_tops_grew = break_top_nodes.len() > known_break_tops;
@@ -20558,19 +20563,16 @@ fn grow_ancestors_walk(
             let grown = size_delta;
             if grown > 0.001 {
                 let context = float_context_root(document, cascade, child, body_id);
-                let start_shift = document
-                    .context
-                    .float_start_shifts
-                    .get(&child)
-                    .copied()
-                    .unwrap_or(0.0);
+                // Only a float the walk placed itself has its top's move: one
+                // inside another float or a positioned box moves with it.
+                let start_shift = document.context.float_start_shifts.get(&child).copied();
                 // Vertical lines run along the page edges: no line is broken
                 // against the part of the float on the next page.
                 let horizontal = [child, context].iter().all(|&id| {
                     cascade.computed[id].writing_mode
                         == raikiri_style::property::WritingMode::HorizontalTb
                 });
-                if horizontal {
+                if let Some(start_shift) = start_shift.filter(|_| horizontal) {
                     document
                         .context
                         .float_line_growth

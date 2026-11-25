@@ -1308,6 +1308,15 @@ pub(super) fn layout(
         child_input.available_space.width = AvailableSpace::Definite(assigned_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
+        // The clearance a forced break gives a box does not clear the floats
+        // that run on onto the page the break opens.
+        if tree
+            .forced_break_clearance
+            .binary_search(&usize::from(child))
+            .is_err()
+        {
+            ctx.clear_line_extensions(style.clear);
+        }
         // Clearance refers to preceding floats. Descendant floats created
         // by a speculative child must never push that same child downward.
         let clear_y = ctx

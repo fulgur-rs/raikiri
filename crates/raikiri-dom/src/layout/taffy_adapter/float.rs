@@ -81,6 +81,22 @@ impl FloatContext {
         &self.line_extensions
     }
 
+    /// Whether any band below a float on a side that `clear` clears is left:
+    /// a box that clears that side starts below where the float ends on the
+    /// page after, so no line after it is broken against those bands.
+    pub(crate) fn has_cleared_line_extensions(&self, clear: Clear) -> bool {
+        self.line_extensions
+            .iter()
+            .any(|band| clears(clear, band.direction))
+    }
+
+    /// Drops the bands below floats on the sides `clear` clears (see
+    /// [`Self::has_cleared_line_extensions`]).
+    pub(crate) fn clear_line_extensions(&mut self, clear: Clear) {
+        self.line_extensions
+            .retain(|band| !clears(clear, band.direction));
+    }
+
     /// Set the width of the formatting context, which the room beside the
     /// floats is measured in.
     #[inline]
@@ -220,4 +236,14 @@ impl FloatIntrinsicWidthCalculator {
     pub(crate) fn result(&self) -> f32 {
         self.0.result()
     }
+}
+
+/// Whether `clear` clears the floats on the side `direction`.
+fn clears(clear: Clear, direction: FloatDirection) -> bool {
+    matches!(
+        (clear, direction),
+        (Clear::Both, _)
+            | (Clear::Left, FloatDirection::Left)
+            | (Clear::Right, FloatDirection::Right)
+    )
 }

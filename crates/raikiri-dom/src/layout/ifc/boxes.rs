@@ -3128,6 +3128,9 @@ fn layout_block_child(
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     // The box after the float that starts a page is held below the floats
     // before that float as well.
     let floor = page_start_float_floor(tree, ctx, node);
@@ -3490,6 +3493,9 @@ fn layout_vertical_block_child_with_edges(
             }
         });
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
@@ -3943,6 +3949,9 @@ fn layout_formatting_context_child(
     let margin = resolved_margins(tree, node, geometry.width);
     let style_margin = tree.physical_style(node).margin();
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     let x_margins = margin.left + margin.right;
     let top_margin = pending.collapse_with_margin(margin.top);
     let hypothetical = if collapse_top {

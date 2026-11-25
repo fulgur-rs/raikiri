@@ -7291,12 +7291,11 @@ fn record_lines_beside_grown_floats(
     shift: f32,
     page: u32,
 ) {
-    if document.context.float_line_growth.is_empty()
-        || candidate.context.is_float_descendant()
-        || candidate.context.is_out_of_flow_descendant()
-    {
+    if candidate.context.is_float_descendant() || candidate.context.is_out_of_flow_descendant() {
         return;
     }
+    // The lines of the paragraph moved before a float grew count too: the
+    // float's top may have moved with them.
     let moved = document
         .context
         .paragraph_line_moves
@@ -7304,6 +7303,9 @@ fn record_lines_beside_grown_floats(
         .or_default();
     *moved += shift;
     let lines_shift = *moved;
+    if document.context.float_line_growth.is_empty() {
+        return;
+    }
     let context = super::float_context_root(document, env.cascade, block_id, env.body_id);
     let text_shift = text.effective_y - text.first_line_shift - candidate.raw_y;
     super::raise_beside_shift(

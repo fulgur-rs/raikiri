@@ -423,6 +423,15 @@ impl BlockContext<'_> {
         );
     }
 
+    /// Drops the bands below floats that lines are broken against on the
+    /// sides `clear` clears: a box that clears them starts below the floats
+    /// as they end on the page after, and so does the flow after it.
+    pub(crate) fn clear_line_extensions(&mut self, clear: Clear) {
+        if self.owner.floats.has_cleared_line_extensions(clear) {
+            Arc::make_mut(&mut self.owner.floats).clear_line_extensions(clear);
+        }
+    }
+
     /// The inline edges, from the border-box start, that the bands below
     /// floats which lines are broken against leave a line from `from` that
     /// is `height` tall: the start the left bands push it past and the end

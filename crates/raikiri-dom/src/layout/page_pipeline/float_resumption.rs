@@ -94,6 +94,12 @@ impl Plan {
             && self.line_extents.is_empty()
     }
 
+    /// The floats whose lines are broken against them below their end laid
+    /// out unbroken (see [`Self::line_extent`]).
+    pub(crate) fn line_extent_floats(&self) -> impl Iterator<Item = usize> + '_ {
+        self.line_extents.keys().copied()
+    }
+
     /// How far below the end of the float `node`, laid out unbroken, the
     /// lines beside it are broken against it: the part of the float that the
     /// page walk moved past a page edge and that the lines beside it did not
@@ -352,16 +358,16 @@ impl Plan {
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
-        // A float keeps the extent first planned for it: the lines broken
-        // against it move as far again, and a new extent would break them
-        // anew.
-        let planned = &document.context.float_resumptions.line_extents;
+        // A float keeps the extent first planned for it, even once it no
+        // longer grows: the lines broken against it move as far again, and a
+        // new extent, or none, would break them anew, so that the plan would
+        // not settle.
+        plan.line_extents
+            .clone_from(&document.context.float_resumptions.line_extents);
         for (&float, growth) in &document.context.float_line_growth {
             let extent = growth.grown - (growth.beside_shift - growth.start_shift).max(0.0);
-            if let Some(&extent) = planned.get(&float) {
-                plan.line_extents.insert(float, extent);
-            } else if extent > 0.001 {
-                plan.line_extents.insert(float, extent);
+            if extent > 0.001 {
+                plan.line_extents.entry(float).or_insert(extent);
             }
         }
         plan

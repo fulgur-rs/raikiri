@@ -52,7 +52,7 @@ pub(crate) struct LayoutContext {
     /// `float_line_growth`.
     pub(crate) float_start_shifts: HashMap<usize, f32>,
     /// How far the page walk moved the lines of each paragraph past page
-    /// edges, in all, while floats it grew are in `float_line_growth`.
+    /// edges, in all, for `float_line_growth`.
     pub(crate) paragraph_line_moves: HashMap<usize, f32>,
     /// Floats that a forced break at the end of the content of the boxes
     /// around them sends to the next page, each with the outermost of those
