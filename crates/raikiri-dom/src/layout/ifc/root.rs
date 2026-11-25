@@ -200,6 +200,9 @@ pub(crate) struct IfcLines {
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
+    /// True when floats moved some line down below them, to where it fits
+    /// the room they leave.
+    pub(crate) below_floats: bool,
     /// Empty content-start space below inherited floats, with no owned
     /// content above their exclusion end. Pagination may consume it once.
     pub(crate) external_float_gap: f32,
@@ -862,6 +865,7 @@ impl fmt::Debug for IfcLines {
             .field("lines", &self.lines.len())
             .field("height", &self.height)
             .field("beside_floats", &self.beside_floats)
+            .field("below_floats", &self.below_floats)
             .field("escaping_margin", &self.escaping_margin.resolve())
             .field("shifts", &self.shifts)
             .field(

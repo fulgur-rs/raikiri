@@ -668,3 +668,97 @@ fn shrinking_a_block_child_keeps_a_static_absolute_box_with_its_line() {
     assert_word_on_page(&document, "W", 1, 0.0, 65.0);
     assert_eq!(short_spacer_boxes(&document), [(1, 0.0)]);
 }
+
+#[test]
+fn an_avoiding_box_lays_its_content_out_again_on_the_page_it_moves_to() {
+    // The box moves whole to the next page, past the end of the float that
+    // put its line down. Chromium lays it out again there, so the line
+    // follows the block before it, or the box's own float, and no longer
+    // the float left on the previous page.
+    let lead = "<div style='height:5px'></div>Y";
+    let own = "<span style='float:left;width:10px;height:10px'></span>Y";
+    let positioned = "Y<div style='position:absolute;left:50px;bottom:0;width:20px'>Q</div>";
+    let flex_end = "Y<div style='position:absolute;left:50px;top:0;bottom:0;width:20px;\
+                    display:flex;align-items:flex-end'>Q</div>";
+    let cases: [(u32, u32, String, &[(&str, f32, f32)]); 10] = [
+        (
+            60,
+            20,
+            narrow("break-inside:avoid", lead),
+            &[("Y", 0.0, 5.0)],
+        ),
+        (
+            60,
+            20,
+            format!("{}{}", narrow("break-inside:avoid", lead), narrow("", "Z")),
+            &[("Y", 0.0, 5.0), ("Z", 0.0, 35.0)],
+        ),
+        (
+            70,
+            10,
+            narrow("break-inside:avoid", lead),
+            &[("Y", 0.0, 5.0)],
+        ),
+        (
+            60,
+            20,
+            narrow("break-inside:avoid", "<div style='height:15px'></div>Y"),
+            &[("Y", 0.0, 15.0)],
+        ),
+        (
+            60,
+            20,
+            narrow("break-inside:avoid", "<div style='height:5px'>Q</div>Y"),
+            &[("Q", 0.0, 0.0), ("Y", 0.0, 5.0)],
+        ),
+        (
+            70,
+            20,
+            format!("<div style='width:40px;break-inside:avoid'>{own}</div>"),
+            &[("Y", 10.0, 0.0)],
+        ),
+        (
+            70,
+            10,
+            format!("<div style='width:40px;break-inside:avoid'>{own}</div>"),
+            &[("Y", 10.0, 0.0)],
+        ),
+        (
+            70,
+            20,
+            format!(
+                "<div style='width:40px;break-inside:avoid'>{own}</div>{}",
+                narrow("", "Z")
+            ),
+            &[("Y", 10.0, 0.0), ("Z", 0.0, 30.0)],
+        ),
+        (
+            60,
+            20,
+            narrow("break-inside:avoid;position:relative", positioned),
+            &[("Y", 0.0, 0.0), ("Q", 50.0, 0.0)],
+        ),
+        (
+            60,
+            20,
+            narrow("break-inside:avoid;position:relative", flex_end),
+            &[("Y", 0.0, 0.0), ("Q", 50.0, 0.0)],
+        ),
+    ];
+    for (spacer, float, rest, words) in cases {
+        let document = lay_out(&after_left_float(spacer, float, &rest));
+        for &(word, x, top) in words {
+            assert_word_on_page(&document, word, 1, x, top);
+        }
+    }
+}
+
+#[test]
+fn an_avoiding_box_below_a_right_float_lays_out_again_on_the_next_page() {
+    let document = lay_out(
+        "<div style='height:60px'></div>\
+         <div style='float:right;width:20px;height:20px'></div>\
+         <div style='width:100px;break-inside:avoid'><div style='height:5px'></div>YYYYY</div>",
+    );
+    assert_word_on_page(&document, "YYYYY", 1, 0.0, 5.0);
+}

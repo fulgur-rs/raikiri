@@ -20103,8 +20103,9 @@ fn move_line_block(
 
 /// Notes the block `moved`, which the page walk is about to move `delta`
 /// down to a later page with the block `block_id` it holds, when the lines of
-/// `block_id` were broken beside floats: moved away from them, its lines keep
-/// the wrong room, and Chromium breaks them afresh where the block lands (see
+/// `block_id` were broken beside floats or moved down below them: moved away
+/// from them, its lines keep the wrong room, and Chromium breaks them afresh
+/// where the block lands (see
 /// `float_resumption`). The block is noted with `delta` and its top `from` in
 /// the page flow before the move: the flow above it takes the same shifts in
 /// the next walk, which `from` checks.
@@ -20139,11 +20140,11 @@ fn note_lines_left_beside_floats(
             .ifc_layout_node(block_id)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| lines.beside_floats)
-        // Floats inside the block move with it, and its lines stay beside
-        // them. A box that holds its own floats keeps them out of view of
-        // that search, and its lines beside only them.
-        && own_floats(document, cascade, moved).is_empty()
+            .is_some_and(|lines| lines.beside_floats || lines.below_floats)
+        // Floats inside the block are laid out again with it where it
+        // lands, as Chromium places them there with its lines. A box that
+        // holds its own floats keeps the floats outside it out of view of
+        // its lines, which are then beside only its own.
         && !std::iter::once(block_id)
             .chain(
                 document

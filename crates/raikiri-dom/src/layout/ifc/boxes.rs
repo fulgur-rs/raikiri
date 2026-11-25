@@ -188,6 +188,7 @@ pub(crate) fn layout_with_boxes_in(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            below_floats: false,
             external_float_gap: 0.0,
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -408,6 +409,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            below_floats: false,
             external_float_gap: 0.0,
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -445,6 +447,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut oof_candidates = OofCandidates::new();
     let mut max_height = 0.0_f32;
     let mut beside_floats = false;
+    let mut below_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
 
     let fragmentainer_height = context.available_height.filter(|height| *height > 0.0);
@@ -580,6 +583,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
         max_height = max_height.max(outcome.lines.height);
         beside_floats |= outcome.lines.beside_floats;
+        below_floats |= outcome.lines.below_floats;
         escaping_margin = outcome.lines.escaping_margin;
         remember_source_placements(
             &mut source_float_placements,
@@ -614,6 +618,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         oof_candidates,
         height: max_height,
         beside_floats,
+        below_floats,
         external_float_gap: 0.0,
         discarded_float_gap: 0.0,
         escaping_margin,
@@ -874,6 +879,8 @@ fn run_boxes_segment(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
+    // Whether floats moved some line down below them, to where it fits.
+    let mut below = false;
     // The floats met at the start of the line being laid out, one after the
     // other. Each narrows the space of the line, and the engine keeps what it
     // scanned of the line only for the space it scanned it in, so a line that
@@ -1346,6 +1353,7 @@ fn run_boxes_segment(
                     y = next;
                     pending = CollapsibleMarginSet::ZERO;
                     moves += 1;
+                    below = true;
                     assumed_height = 0.0;
                     retries = 0;
                     calls = 0;
@@ -1796,6 +1804,7 @@ fn run_boxes_segment(
             object_text_prefixes: Default::default(),
             oof_candidates,
             beside_floats: beside,
+            below_floats: below,
             external_float_gap,
             discarded_float_gap: 0.0,
             escaping_margin,
