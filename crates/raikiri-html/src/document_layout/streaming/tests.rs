@@ -1734,6 +1734,69 @@ fn row_markers_in_a_comment_do_not_select_window_layout() {
 }
 
 #[test]
+fn a_stray_end_tag_preserves_parse_warnings_when_replaying_the_table() {
+    let html = format!(
+        "<!doctype html><!--{}--><table>{}</table></span>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let reference = crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    assert!(!reference.uncascaded.warnings.is_empty());
+    let messages = |warnings: &[RenderWarning]| {
+        warnings
+            .iter()
+            .filter_map(|warning| match &warning.kind {
+                WarningKind::HtmlParseError { message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = messages(&reference.uncascaded.warnings);
+    assert!(!expected.is_empty());
+    assert_eq!(messages(&summary.warnings), expected);
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(record.pages, batch_pages(&html));
+}
+
+#[test]
+fn content_after_a_complete_table_is_replayed_with_its_anchor() {
+    let html = format!(
+        "<!doctype html><!--{}--><table>{}</table><p id=end>after</p>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    let expected = batch_pages(&html);
+    assert_eq!(record.pages, expected);
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(
+        summary.anchors.get("end").unwrap().page_index,
+        expected.last().unwrap().0
+    );
+}
+
+#[test]
 fn unsupported_row_after_table_selection_replays_before_reading_the_suffix() {
     let prefix = format!(
         "<!doctype html><!--{}--><table>{}",
