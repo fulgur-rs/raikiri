@@ -6525,6 +6525,18 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     if !low.is_finite() || !high.is_finite() || high < low {
         return None;
     }
+    // A break leaves at least `orphans` lines before it and `widows` after
+    // it, so the columns are first made tall enough for the first `orphans`
+    // and the last `widows` lines, as in Chromium. The widows give way to
+    // the orphans when the paragraph cannot hold both. A break in the middle
+    // may still leave fewer than `widows` lines in a middle column (see
+    // `respect_orphans_and_widows`).
+    let count = extents.len();
+    let orphans = context.orphans.max(1).min(count);
+    let widows = context.widows.max(1).min(count - orphans).max(1);
+    let first = extents[orphans - 1].1 - extents[0].0;
+    let last = extents[count - 1].1 - extents[count - widows].0;
+    low = low.max(first).max(last).min(high);
     // The columns the lines take at `height`, when the column of the last one
     // exists and no column is taller than `height`.
     let columns_at = |height: f32| {
@@ -6566,9 +6578,10 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     // A column that a break follows keeps at least `orphans` lines: a break
     // that leaves fewer lines before it is not an option, so the columns grow,
     // one step at a time to the next height at which a column takes another
-    // line, until every such column does. `widows` is not checked: the columns
-    // after a break give up lines to it when they can, and when they cannot,
-    // the last column keeps the lines it has. When no height below `limit`
+    // line, until every such column does. `widows` is only checked through
+    // the starting height: the columns after a break give up lines to it
+    // when they can, and when they cannot, the last column keeps the lines
+    // it has. When no height below `limit`
     // keeps the `orphans`, the answer is `limit`. After too many steps the
     // `orphans` are given up and the last height stands.
     let orphans = context.orphans.max(1);

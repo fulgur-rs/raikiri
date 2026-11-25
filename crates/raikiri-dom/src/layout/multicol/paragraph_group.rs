@@ -650,8 +650,24 @@ fn balanced(
         .filter(|paragraph| paragraph.overflows)
         .map(|paragraph| paragraph.extents[0].1)
         .fold(0.0, f32::max);
+    // A break between the lines of a paragraph leaves at least its `orphans`
+    // before it and its `widows` after it, so the columns are at least as
+    // tall as those lines, as Chromium balances them. The widows give way to
+    // the orphans when the paragraph cannot hold both.
+    let breaks = paragraphs
+        .iter()
+        .flatten()
+        .filter(|paragraph| paragraph.extents.len() > 1)
+        .map(|paragraph| {
+            let lines = &paragraph.extents;
+            let count = lines.len();
+            let orphans = paragraph.orphans.clamp(1, count);
+            let widows = paragraph.widows.min(count - orphans).max(1);
+            (lines[orphans - 1].1 - lines[0].0).max(lines[count - 1].1 - lines[count - widows].0)
+        })
+        .fold(0.0, f32::max);
     // Trial work and storage depend on shaped lines, never the declared count.
-    let mut low = monolithic.min(ceiling);
+    let mut low = monolithic.max(breaks).min(ceiling);
     let mut high = ceiling;
     for _ in 0..32 {
         if high - low <= 0.001 {
