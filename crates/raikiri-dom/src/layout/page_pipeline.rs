@@ -40,7 +40,7 @@ use source_walk::{WalkedSources, walk_sources};
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{
-    IfcTextLine, TextLineIndex, single_unplaced_line, unplaced_lines_from,
+    IfcTextLine, TextLineIndex, glyph_owners, single_unplaced_line, unplaced_lines_from,
 };
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -9363,7 +9363,11 @@ fn forced_margin_reaches(
 
 /// The block-end margins of `ancestor` and of the boxes inside it down to
 /// `last`, when `last` ends each of them with no padding, border or used
-/// height to keep its block-end margin from theirs (CSS 2 §8.3.1).
+/// height to keep its block-end margin from theirs (CSS 2 §8.3.1). A line
+/// after `last` or a block `::after` with height keeps them apart too; an
+/// empty block `::after`, and the empty generated blocks of the
+/// `display: contents` elements after `last`, let their own margins join
+/// them.
 fn ends_with_bottom_margin_of(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9378,15 +9382,220 @@ fn ends_with_bottom_margin_of(
         if layout.border.bottom + layout.padding.bottom > 0.0
             || !margins_may_collapse_through(document, cascade, parent)
             || !document.block_axis(parent).height().is_auto()
-            || last_flow_box(document, cascade, parent) != Some(id)
+            || last_box_past_phantom_lines(document, cascade, parent) != Some(id)
+            || line_follows_block(document, parent, id)
+            || generated_box_in_keeps_margins_apart(
+                document,
+                parent,
+                parent,
+                raikiri_style::PseudoElem::After,
+            )
         {
             return None;
+        }
+        // The empty block `::after` of the block, and the empty generated
+        // blocks of the `display: contents` elements after `id`, let their
+        // margins collapse through them with those around them.
+        for margin in generated_margins_after(document, cascade, parent, id) {
+            extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
         }
         let margin = layout.margin.bottom;
         extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
         id = parent;
     }
     Some(extremes)
+}
+
+/// The block-start and block-end margins of the generated blocks that the
+/// paragraph of the block `node` lays out after its flow box `last`: its own
+/// `::after` and the `::before` and `::after` boxes of the `display: contents`
+/// elements after `last`.
+fn generated_margins_after(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+    last: usize,
+) -> Vec<f32> {
+    use raikiri_style::PseudoElem;
+
+    let mut ids = vec![crate::generated_content::generated_node_id(
+        node,
+        PseudoElem::After,
+    )];
+    generated_boxes_after(document, cascade, node, last, &mut ids);
+    let ids: Vec<u64> = ids.into_iter().map(|id| id as u64).collect();
+    document
+        .ifc_layout_node(node)
+        .into_iter()
+        .flat_map(|layout_node| {
+            let width = content_width(&layout_node.layout);
+            layout_node
+                .ifc
+                .iter()
+                .flat_map(|ifc| ifc.generated_blocks.iter())
+                .filter(|block| ids.contains(&block.start) && !block.on_root_axes)
+                .flat_map(move |block| {
+                    let margins = block.margins(width);
+                    [margins.top, margins.bottom]
+                })
+        })
+        .collect()
+}
+
+/// Pushes the node ids of the `::before` and `::after` boxes of the
+/// `display: contents` elements in the flow of `element` after `last`, in
+/// reverse order, and returns whether `last` was reached.
+fn generated_boxes_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    last: usize,
+    ids: &mut Vec<usize>,
+) -> bool {
+    use raikiri_style::PseudoElem;
+
+    document.nodes[element]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&child| flows_or_is_contents(document, cascade, child))
+        .any(|child| {
+            if child == last {
+                return true;
+            }
+            is_contents_element(document, child) && {
+                ids.push(crate::generated_content::generated_node_id(
+                    child,
+                    PseudoElem::After,
+                ));
+                let reached = generated_boxes_after(document, cascade, child, last, ids);
+                if !reached {
+                    ids.push(crate::generated_content::generated_node_id(
+                        child,
+                        PseudoElem::Before,
+                    ));
+                }
+                reached
+            }
+        })
+}
+
+/// The last box in the flow of the block `node_id` (see [`last_flow_box`]),
+/// passing over the empty inline elements after it that lay out phantom
+/// lines, which count as no content between margins (CSS 2 §9.4.2).
+fn last_box_past_phantom_lines(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    document.nodes[node_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&child| flows_or_is_contents(document, cascade, child))
+        .find_map(
+            |child| match sibling_adjacency::flow_box(document, cascade, child) {
+                sibling_adjacency::FlowBox::Phantom => None,
+                // A `display: contents` element of phantom lines alone has no
+                // box: the box before it ends the flow. Its `::before` and
+                // `::after` boxes that keep margins apart end the flow too,
+                // though they have no node of their own, so the element
+                // stands for them.
+                sibling_adjacency::FlowBox::Contents => {
+                    let generated = |pseudo| {
+                        generated_box_keeps_margins_apart(document, child, pseudo).then_some(child)
+                    };
+                    generated(raikiri_style::PseudoElem::After)
+                        .or_else(|| last_box_past_phantom_lines(document, cascade, child))
+                        .or_else(|| generated(raikiri_style::PseudoElem::Before))
+                }
+                _ => Some(child),
+            },
+        )
+}
+
+/// The content-box width of a block laid out as `layout`: the containing
+/// block width that the percentage margins of its generated blocks resolve
+/// against (CSS 2 §8.3).
+fn content_width(layout: &raikiri_layout_geometry::BoxLayout) -> f32 {
+    layout.size.width
+        - layout.padding.left
+        - layout.padding.right
+        - layout.border.left
+        - layout.border.right
+}
+
+/// Whether the paragraph `root` lays out a line after its block child
+/// `block`, such as one of a generated `::after`: the line box keeps the
+/// block-end margin of the block apart from that of `root` (CSS 2 §8.3.1).
+/// A phantom line, of an empty inline element or a blank generated box, has
+/// no block size and no text, and counts as no line (CSS 2 §9.4.2); a line of
+/// text keeps the margins apart even when its `line-height` is zero.
+fn line_follows_block(document: &Document, root: usize, block: usize) -> bool {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .is_some_and(|lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .filter(|&&(child, _)| child == block)
+                .any(|&(_, after)| {
+                    lines
+                        .lines
+                        .iter()
+                        .skip(after)
+                        .any(|line| line.block_size() > 0.0 || !glyph_owners(line).is_empty())
+                })
+        })
+}
+
+/// Whether the `pseudo` box of the `display: contents` element `element`
+/// keeps margins apart in the paragraph of its box parent. Such a box has no
+/// node of its own: it is a block or inline content in that paragraph.
+fn generated_box_keeps_margins_apart(
+    document: &super::context::LayoutSession<'_>,
+    element: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    BoxTree::for_layout(document)
+        .parent(element, BoxParentScope::Document)
+        .is_some_and(|parent| {
+            generated_box_in_keeps_margins_apart(document, parent, element, pseudo)
+        })
+}
+
+/// Whether the `pseudo` box of `element` keeps margins apart in the
+/// paragraph of the block `paragraph`, which is `element` itself or the box
+/// parent of a `display: contents` element.
+fn generated_box_in_keeps_margins_apart(
+    document: &super::context::LayoutSession<'_>,
+    paragraph: usize,
+    element: usize,
+    pseudo: raikiri_style::PseudoElem,
+) -> bool {
+    let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
+    let vertical = document.context.pagination_on_transposed_axes;
+    document.ifc_layout_node(paragraph).is_some_and(|node| {
+        let width = content_width(&node.layout);
+        // A block box the line loop placed holds lines or clearance, and
+        // inline content puts text on a line; either keeps the margins
+        // apart, like the content that `has_in_flow_content` counts.
+        node.ifc.as_ref().is_some_and(|ifc| {
+            ifc.generated_blocks
+                .iter()
+                .any(|block| block.start == id && block.separates_margins(width, vertical))
+                || ifc.lines.as_ref().is_some_and(|lines| {
+                    lines.placed_blocks.iter().any(|placed| placed.node == id)
+                        || lines.lines.iter().any(|line| {
+                            super::ifc::text_lines::glyph_owners(line).contains(&(id as usize))
+                        })
+                })
+        })
+    })
 }
 
 /// Whether a `::before` or `::after` box of a `display: contents` element
@@ -9402,30 +9611,7 @@ fn generated_box_separates(
     use raikiri_style::PseudoElem;
 
     let separates = |element: usize, pseudo: PseudoElem| {
-        let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
-        let vertical = document.context.pagination_on_transposed_axes;
-        BoxTree::for_layout(document)
-            .parent(element, BoxParentScope::Document)
-            .and_then(|parent| document.ifc_layout_node(parent))
-            .is_some_and(|node| {
-                let width = node.layout.size.width;
-                // A block box the line loop placed holds lines or clearance,
-                // and inline content puts text on a line; either keeps the
-                // margins apart, like the content that `has_in_flow_content`
-                // counts.
-                node.ifc.as_ref().is_some_and(|ifc| {
-                    ifc.generated_blocks
-                        .iter()
-                        .any(|block| block.start == id && block.separates_margins(width, vertical))
-                        || ifc.lines.as_ref().is_some_and(|lines| {
-                            lines.placed_blocks.iter().any(|placed| placed.node == id)
-                                || lines.lines.iter().any(|line| {
-                                    super::ifc::text_lines::glyph_owners(line)
-                                        .contains(&(id as usize))
-                                })
-                        })
-                })
-            })
+        generated_box_keeps_margins_apart(document, element, pseudo)
     };
     let is_contents = |id: usize| {
         document.nodes[id].kind() == NodeKind::Element
@@ -13463,6 +13649,22 @@ fn last_flow_child(document: &Document, cascade: &CascadeResult, node_id: usize)
 
 /// Whether `node_id` is an element that takes part in the flow of its
 /// parent: neither floated nor absolutely positioned.
+/// Whether `node_id` is a `display: contents` element in the document: it
+/// has no box, so `position` and `float` do not apply to it, and its
+/// children and generated boxes take part in the flow of its box parent.
+fn is_contents_element(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.is_in_document()
+        && node.kind() == NodeKind::Element
+        && node.display() == DisplayValue::Contents
+}
+
+/// [`takes_part_in_flow`], or a `display: contents` element, whatever its
+/// `position` and `float`.
+fn flows_or_is_contents(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    is_contents_element(document, node_id) || takes_part_in_flow(document, cascade, node_id)
+}
+
 fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     node.is_in_document()

@@ -4923,9 +4923,16 @@ impl PaginationState {
         let mut page = page_origins.page_index_for_y(text.effective_y + metrics[0].0 + 0.001);
         // A page edge in the margin between the block before the run and its
         // first line truncates that margin: the line starts the page. The
-        // first edge cuts it, however many pages the rest would fill.
+        // first edge cuts it, however many pages the rest would fill. An
+        // empty block that a forced break took to the top of the page keeps
+        // its margins whole below that top instead (see
+        // `forced_empty_box_shift`), as Chromium does.
         let run_top = text.effective_y + metrics[0].0;
+        let after_forced_empty_box = self.sibling_margins.forced_break_box.is_some()
+            && super::block_above_line(document, root, run.start)
+                == self.sibling_margins.forced_break_box;
         if let Some(edge) = margin_above_line(document, cascade, body_id, root, run.start)
+            .filter(|_| !after_forced_empty_box)
             .and_then(|gap| first_edge_in_margin_above(page_origins, run_top - gap, run_top, page))
         {
             self.move_run_lines(
