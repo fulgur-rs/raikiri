@@ -45,7 +45,7 @@ pub(crate) struct LayoutContext {
     pub(crate) float_resumption_candidates: Vec<(usize, usize)>,
     /// Floats whose content the page walk moved down past page edges, so
     /// that they grew, and how the lines beside them moved (see
-    /// `float_resumption::LineGrowth`).
+    /// [`LineGrowth`](super::page_pipeline::float_resumption::LineGrowth)).
     pub(crate) float_line_growth:
         HashMap<usize, super::page_pipeline::float_resumption::LineGrowth>,
     /// How far the page walk moved the top of each float it placed, for

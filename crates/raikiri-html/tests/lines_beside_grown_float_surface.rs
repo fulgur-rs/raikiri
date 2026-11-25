@@ -209,3 +209,29 @@ fn the_lines_wrap_beside_each_float_that_continues_on_the_next_page() {
         assert_eq!(words(body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_word_too_wide_for_the_room_beside_a_continuing_float_moves_below_it() {
+    for (body, expected) in [
+        // `WWWW` fits the page but not the 60px beside the float's
+        // continuation: its line moves below where the float ends.
+        (
+            format!("{FLOAT}ZZ YY XX WWWW VV"),
+            "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 VV@2:0,0 WWWW@1:0,60 XX@0:40,60 \
+             YY@0:40,30 ZZ@0:40,0",
+        ),
+        (
+            "<div style='float:right;width:40px'>F G G G</div>ZZ YY XX WWWW VV".to_string(),
+            "F@0:60,0 G@0:60,30 G@1:60,0 G@1:60,30 VV@2:0,0 WWWW@1:0,60 XX@0:0,60 \
+             YY@0:0,30 ZZ@0:0,0",
+        ),
+        // The words that fit beside the continuation stay there.
+        (
+            format!("{FLOAT}ZZ YY XX WW VVVV UU"),
+            "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 UU@2:0,0 VVVV@1:0,60 WW@1:40,0 \
+             XX@0:40,60 YY@0:40,30 ZZ@0:40,0",
+        ),
+    ] {
+        assert_eq!(words(&body), expected, "{body}");
+    }
+}

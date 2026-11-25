@@ -1968,17 +1968,29 @@ fn clears(clear: Clear, side: FloatDirection) -> bool {
 
 /// The next block offset below `y` (both from the content-box top) where the
 /// floats beside a line change: the start of the next float segment, else the
-/// bottom of the floats. `None` when no float is beside `y`.
+/// bottom of the floats, or the end of a band below a float that lines are
+/// broken against when that comes first. `None` when neither is beside `y`.
 fn next_float_edge(ctx: &BlockContext<'_>, top_edge: f32, y: f32) -> Option<f32> {
     let at = top_edge + y;
-    let segment = ctx.find_content_slot(at, Clear::None, None).segment_id?;
-    let next = ctx.find_content_slot(at, Clear::None, Some(segment));
-    let edge = if next.segment_id.is_some() && next.y > at {
-        next.y
-    } else {
-        ctx.cleared_threshold(Clear::Both)?
-    };
-    (edge > at).then_some(edge - top_edge)
+    let float_edge = ctx
+        .find_content_slot(at, Clear::None, None)
+        .segment_id
+        .and_then(|segment| {
+            let next = ctx.find_content_slot(at, Clear::None, Some(segment));
+            if next.segment_id.is_some() && next.y > at {
+                Some(next.y)
+            } else {
+                ctx.cleared_threshold(Clear::Both)
+            }
+        });
+    // The bands below floats that lines are broken against end where those
+    // floats end on the page after; a line moves past them as well.
+    [float_edge, ctx.next_line_extension_end(at)]
+        .into_iter()
+        .flatten()
+        .filter(|&edge| edge > at)
+        .min_by(f32::total_cmp)
+        .map(|edge| edge - top_edge)
 }
 
 /// The space of a line of the generated block `open`, if one is open, set

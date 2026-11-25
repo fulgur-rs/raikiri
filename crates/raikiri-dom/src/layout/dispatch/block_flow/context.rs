@@ -455,6 +455,22 @@ impl BlockContext<'_> {
         edges
     }
 
+    /// Where the nearest band below a float that lines are broken against,
+    /// of those beside `from`, ends, from the border-box start: a line too
+    /// wide for the space beside the band moves there.
+    pub(crate) fn next_line_extension_end(&self, from: f32) -> Option<f32> {
+        let top = self.origin + from;
+        self.owner
+            .floats
+            .line_extensions()
+            .iter()
+            .filter(|band| band.top <= top + 0.001)
+            .map(|band| band.bottom)
+            .filter(|&bottom| bottom > top)
+            .min_by(f32::total_cmp)
+            .map(|bottom| bottom - self.origin)
+    }
+
     pub(crate) fn find_content_slot(
         &self,
         from: f32,
