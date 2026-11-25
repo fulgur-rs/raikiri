@@ -22,7 +22,7 @@ fn words(body: &str) -> String {
     words_and_pages(body).0
 }
 
-/// [`words`] with the number of pages.
+/// `words` with the number of pages.
 fn words_and_pages(body: &str) -> (String, usize) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
