@@ -139,3 +139,33 @@ fn a_long_paragraph_below_a_short_float_breaks_across_many_pages() {
         expected.join(" ")
     );
 }
+
+#[test]
+fn the_lines_a_float_runs_beside_onto_a_later_page_take_the_full_width_below_it() {
+    // A float 195px tall runs beside the lines of two pages; the page edge
+    // below each moves a narrowed line down, and the lines below the float
+    // on the third page take the full width. Chromium prints both floats,
+    // 195px and 185px tall, the same way.
+    for height in [195, 185] {
+        let text = vec!["XX"; 16].join(" ");
+        let mut expected = Vec::new();
+        for page in 0..2 {
+            expected.extend((0..3).map(|line| format!("XX@{page}:40,{}", line * 30)));
+        }
+        for (page, lines) in [(2, 3), (3, 2)] {
+            for line in 0..lines {
+                for x in [0, 60] {
+                    expected.push(format!("XX@{page}:{x},{}", line * 30));
+                }
+            }
+        }
+        expected.sort();
+        assert_eq!(
+            words(&format!(
+                "<div style='float:left;width:40px;height:{height}px'></div>{text}"
+            )),
+            expected.join(" "),
+            "{height}"
+        );
+    }
+}

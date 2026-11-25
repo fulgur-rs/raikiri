@@ -1734,11 +1734,9 @@ fn run_boxes_segment(
             }
         }
     }
-    if let Some((after_gap, gap)) = last_gap
-        && y == after_gap
-    {
-        y -= gap;
-    }
+    y -= last_gap
+        .filter(|&(after_gap, _)| y == after_gap)
+        .map_or(0.0, |(_, gap)| gap);
     // The margins below a last block child collapse through the root's
     // bottom edge when nothing separates them from the root's own; otherwise
     // the paragraph contains them.
