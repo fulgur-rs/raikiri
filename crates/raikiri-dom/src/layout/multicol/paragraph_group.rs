@@ -673,13 +673,15 @@ fn balanced(
             (lines[orphans - 1].1 - lines[0].0).max(lines[count - 1].1 - lines[count - widows].0)
         })
         .fold(0.0, f32::max);
+    // When the lines a break needs already fit, the columns are that tall;
+    // otherwise the search starts from the monolithic boxes.
+    let floor = monolithic.max(breaks).min(ceiling);
+    let fits_floor = breaks > monolithic && fill_strictly(paragraphs, context, floor).is_some();
     // Trial work and storage depend on shaped lines, never the declared count.
-    let mut low = monolithic.max(breaks).min(ceiling);
-    // When the lines a break needs already fit, the columns are that tall.
-    let mut high = if breaks > monolithic && fill_strictly(paragraphs, context, low).is_some() {
-        low
+    let (mut low, mut high) = if fits_floor {
+        (floor, floor)
     } else {
-        ceiling
+        (monolithic.min(ceiling), ceiling)
     };
     for _ in 0..32 {
         if high - low <= 0.001 {
