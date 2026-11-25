@@ -345,18 +345,16 @@ impl TableWindows {
                 | (Some("thead"), "tr")
                 | (Some("tr"), "th" | "td") => {}
                 (Some("body"), "table") if table.replace(id).is_none() => {}
-                (Some("table"), "tbody") if group.replace(id).is_none() => {}
+                (Some("table"), "tbody") if group.is_none() && dom.parent_of(id) == table => {
+                    group = Some(id);
+                }
                 _ => return None,
             }
-        }
-        let group = group?;
-        if dom.parent_of(group) != table {
-            return None;
         }
         Some(Self {
             shell,
             rows,
-            group,
+            group: group?,
             columns: None,
         })
     }

@@ -34,6 +34,7 @@ struct Record {
     stage_before: Option<u32>,
     staged: Vec<u32>,
     discarded: usize,
+    fail_finish: bool,
     fail_on_page: Option<u32>,
     abort_on_page: Option<(u32, AbortController)>,
 }
@@ -105,6 +106,9 @@ impl PageSink for &mut Record {
     }
 
     fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
+        if self.fail_finish {
+            return Err(std::io::Error::other("output finalization failed"));
+        }
         self.finished = true;
         Ok(summary)
     }
@@ -1888,4 +1892,24 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
         image_owners(StreamPage::from_window(&layout, 0, 0, 1).page()),
         image_owners(layout.page(0).unwrap()).map(|id| id + 1000)
     );
+}
+
+#[test]
+fn error_finalizing_the_table_sink_reaches_the_public_caller() {
+    let html = format!(
+        "<!doctype html><!--{}--><table>{}</table>",
+        " ".repeat(55000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let mut record = Record {
+        fail_finish: true,
+        ..Default::default()
+    };
+    let error = stream(&html, 8192, &mut record, Default::default()).unwrap_err();
+    assert!(
+        matches!(error, RenderError::Io(error) if error.to_string() == "output finalization failed")
+    );
+    assert!(record.offered_table_pages > 0);
+    assert!(record.pages.len() > 1);
+    assert!(!record.finished);
 }
