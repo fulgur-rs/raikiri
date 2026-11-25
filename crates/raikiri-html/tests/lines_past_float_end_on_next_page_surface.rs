@@ -169,3 +169,62 @@ fn the_lines_a_float_runs_beside_onto_a_later_page_take_the_full_width_below_it(
         );
     }
 }
+
+#[test]
+fn a_hanging_indent_is_no_float_narrowing_a_line() {
+    // Every line but the first is indented 10px, so a full-width line still
+    // leaves less room than the content box: only the lines beside the
+    // float are narrowed by it, and the page edges after them move full-width
+    // lines. Chromium puts one word on each line, three lines on each page,
+    // and keeps two lines for each of the last two pages.
+    let text = vec!["XX"; 100].join(" ");
+    let mut expected = vec![
+        "XX@0:40,0".to_string(),
+        "XX@0:50,30".to_string(),
+        "XX@0:50,60".to_string(),
+    ];
+    for page in 1..=33 {
+        let lines = if page >= 32 { 2 } else { 3 };
+        expected.extend((0..lines).map(|line| format!("XX@{page}:10,{}", line * 30)));
+    }
+    expected.sort();
+    assert_eq!(
+        words(&format!(
+            "<div style='text-indent:10px hanging'>\
+             <div style='float:left;width:40px;height:95px'></div>{text}</div>"
+        )),
+        expected.join(" ")
+    );
+}
+
+#[test]
+fn a_float_many_pages_tall_still_paginates() {
+    // A float 1095px tall narrows the lines of eleven pages, and the line
+    // each page edge moves takes a gap where it lands, up to a bound on the
+    // layouts that takes. Chromium puts one word on each line beside the
+    // float, three lines on each page. Past the bound, the pages laid out
+    // stand: the first line below the float keeps the room it was broken
+    // for, and every word is still laid out.
+    let text = vec!["XX"; 100].join(" ");
+    let laid_out = words(&format!(
+        "<div style='float:left;width:40px;height:1095px'></div>{text}"
+    ));
+    // The words of the pages beside the float, which `words` lists as
+    // `XX@page:x,y`.
+    let beside: Vec<&str> = laid_out
+        .split(' ')
+        .filter(|word| {
+            word.trim_start_matches("XX@")
+                .split_once(':')
+                .and_then(|(page, _)| page.parse::<u32>().ok())
+                .is_some_and(|page| page <= 10)
+        })
+        .collect();
+    let mut expected = Vec::new();
+    for page in 0..=10 {
+        expected.extend((0..3).map(|line| format!("XX@{page}:40,{}", line * 30)));
+    }
+    expected.sort();
+    assert_eq!(beside.join(" "), expected.join(" "));
+    assert_eq!(laid_out.split(' ').count(), 100);
+}

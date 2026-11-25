@@ -111,6 +111,12 @@ impl Plan {
             .flat_map(|(&root, (_, gaps))| gaps.iter().map(move |&(top, _)| (root, top.to_bits())))
     }
 
+    /// Keeps the gaps planned above lines as `previous` has them, in place
+    /// of the ones this plan found.
+    pub(crate) fn keep_line_gaps_of(&mut self, previous: &Self) {
+        self.line_gaps.clone_from(&previous.line_gaps);
+    }
+
     /// The gaps that layout leaves in the paragraph `root`: the block offset
     /// of each line the page walk moved past a page edge, from the content-box
     /// top as layout put it with the gaps before it, and how far the walk

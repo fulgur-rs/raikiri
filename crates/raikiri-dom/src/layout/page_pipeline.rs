@@ -4902,7 +4902,8 @@ fn layout_pages_core(
     // Each gap left above a line that the walk moved past a page edge, away
     // from the floats beside it, takes one more attempt to break the lines
     // after it where they land, up to a bound: a gap dropped and planned
-    // again counts once.
+    // again counts once. Once those are spent, the plan keeps the gaps it
+    // has, and the pages laid out with them stand.
     let mut line_gaps = HashSet::new();
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
@@ -4917,7 +4918,7 @@ fn layout_pages_core(
             + line_gaps.len().min(MAX_LINE_GAP_ATTEMPTS)
     {
         attempts += 1;
-        let next = layout_pages_attempt(
+        let mut next = layout_pages_attempt(
             document,
             cascade,
             page_box,
@@ -4932,6 +4933,12 @@ fn layout_pages_core(
                 spanner_growth: &spanner_growth,
             },
         )?;
+        // Once the gaps have taken all the attempts they may, the plan
+        // keeps the gaps it has: the pages laid out with them stand, though
+        // the lines after the last gap keep the room they were broken for.
+        if line_gaps.len() >= MAX_LINE_GAP_ATTEMPTS {
+            next.resumptions.keep_line_gaps_of(&resumptions);
+        }
         let settled_apart_from_flows = !next.moved_columns
             && next.resumptions.same_apart_from_pushed_flows(&resumptions)
             && next.spanning_origins == spanning_origins
@@ -20171,12 +20178,12 @@ fn note_line_gap(
     {
         return;
     }
-    let Some(lines) = document
+    let Some((ifc, lines)) = document
         .ifc_layout_node(root)
         .and_then(|node| node.ifc.as_ref())
-        .and_then(|ifc| ifc.lines.as_ref())
-        .filter(|lines| lines.beside_floats)
-        .filter(|lines| line < lines.lines.len())
+        .and_then(|ifc| Some((ifc, ifc.lines.as_ref()?)))
+        .filter(|(_, lines)| lines.beside_floats)
+        .filter(|(_, lines)| line < lines.lines.len())
     else {
         return;
     };
@@ -20192,9 +20199,18 @@ fn note_line_gap(
     // Only a line that floats narrowed, or one after it, breaks differently
     // where it lands: once the floats end above the lines, a page edge they
     // cross moves them with the room they already have.
-    let narrowed = lines.lines[line..]
-        .iter()
-        .any(|line| line.inline_size() + line.remaining_inline_size() < lines.width - 0.5);
+    // The room a line had is its content and what it left unfilled, with
+    // the text indent of an indented line, which neither counts.
+    let text_indent = ifc.options.text_indent;
+    let indent = crate::layout::ifc::flow::resolve_indent(ifc.indent, lines.width);
+    let narrowed = (line..lines.lines.len()).any(|index| {
+        let after_break = index > 0 && lines.lines[index - 1].forced_break().is_some();
+        let indented = (index == 0 || text_indent.each_line && after_break) != text_indent.hanging;
+        let room = lines.lines[index].inline_size()
+            + lines.lines[index].remaining_inline_size()
+            + if indented { indent } else { 0.0 };
+        room < lines.width - 0.5
+    });
     if floats_above && narrowed {
         document.context.line_gaps.push((root, top, delta));
     }
