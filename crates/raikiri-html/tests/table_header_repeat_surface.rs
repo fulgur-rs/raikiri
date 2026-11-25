@@ -739,3 +739,44 @@ fn a_header_too_tall_to_repeat_still_moves_whole_unless_the_author_allows_a_brea
     assert_eq!(tops(&document, "r6"), [(1, 60.0)]);
     assert_eq!(tops(&document, "z"), [(1, 70.0)]);
 }
+
+#[test]
+fn cells_stay_aligned_with_rows_after_fractional_page_breaks() {
+    let rows = (0..500)
+        .map(|row| format!("<tr><td>{row}</td><td>Item name {row}</td><td>0.00</td></tr>"))
+        .collect::<String>();
+    let document = lay_out_with_css(
+        &format!(
+            "<table><thead><tr><th>Id</th><th>Name</th><th>Amount</th></tr></thead><tbody>{rows}</tbody></table>"
+        ),
+        "@page{size:A4;margin:0}body{margin:8px;font:10px Ahem}table{border-collapse:collapse;width:100%}td,th{width:auto;height:auto;border:1px solid;padding:2px}tbody tr:nth-child(7n+2) td{font-size:18px}",
+    );
+    assert!(document.page_count() >= 7);
+    let mut count = 0;
+    for page in document.pages() {
+        let dom = page.dom();
+        let mut row_y = None;
+        let mut next_body_y = None;
+        for fragment in page.fragments() {
+            match dom.local_name(fragment.node()) {
+                Some("tr") => {
+                    let rect = fragment.rect();
+                    row_y = Some(rect.y);
+                    if dom.parent(fragment.node()).and_then(|p| dom.local_name(p)) == Some("tbody")
+                    {
+                        if let Some(expected) = next_body_y {
+                            assert_eq!(rect.y, expected, "adjacent row at cell {count}");
+                        }
+                        next_body_y = Some(rect.y + rect.height);
+                    }
+                }
+                Some("td") => {
+                    assert_eq!(Some(fragment.rect().y), row_y, "cell {count}");
+                    count += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(count, 1500);
+}

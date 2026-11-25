@@ -76,6 +76,7 @@ mod source_walk_tests;
 mod table_caption_page_end_tests;
 mod table_follow_tests;
 mod table_header_caption_tests;
+mod table_row_coordinate_tests;
 mod table_tail_tests;
 mod top_edge_tests;
 mod tree_order_tests;

@@ -8681,6 +8681,23 @@ fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> Ifc
     IfcBoxShifts::default()
 }
 
+// A row and its cells share the row group's origin. When its absolute position
+// crosses a power of two, translating by a rounded absolute delta can leave
+// the row one representable coordinate away from its target.
+fn materialize_table_row_y(document: &mut Document, row: usize, desired_y: f32) {
+    materialize_y(document, row, desired_y);
+    if desired_y.is_finite()
+        && current_abs_y(document, row) != desired_y
+        && let Some(parent) = document.layout_parent_of(row)
+    {
+        let parent_y = current_abs_y(document, parent);
+        let local_y = desired_y - parent_y;
+        if parent_y + local_y == desired_y {
+            document.set_pagination_local_y(row, local_y);
+        }
+    }
+}
+
 /// The lines of the text `text` of the paragraph `root` start a later
 /// page: they, the lines after them and the paragraph's boxes below their
 /// top move down by `delta`.
@@ -18366,7 +18383,7 @@ fn make_room_for_header_copy(
     {
         let origin = page_origins.origin(current_page);
         let delta = (origin + header.height + header.gap - row_y).max(0.0);
-        materialize_y(document, row, row_y + delta);
+        materialize_table_row_y(document, row, row_y + delta);
         header.placements.insert(current_page, (origin, origin));
         return delta;
     }
