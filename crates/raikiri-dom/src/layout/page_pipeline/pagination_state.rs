@@ -4555,6 +4555,19 @@ impl PaginationState {
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
+            // Floats that put the first line down past the end of the page
+            // the block starts on leave the block's top on that page, with
+            // the room above the line. The lines open a later fragment of
+            // the block, on the page the first of them is on, and break from
+            // there, as in Chromium: that fragment does not move the block
+            // whole, which keeps its top where it is, and its first line need
+            // not keep `orphans` with it.
+            let first_line_page =
+                page_origins.page_index_for_y(text.effective_y + line_metrics[0].0 + 0.001);
+            if float_lead > 0.0 && first_line_page > page {
+                page = first_line_page;
+                moved_whole = true;
+            }
             // Lines a clip hides after a move are left where they are.
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
