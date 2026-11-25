@@ -403,7 +403,7 @@ impl BlockContext<'_> {
 
     /// Breaks the lines below the float placed at `position` with the
     /// margin-box `size`, down to `extent` below it, against it as if it
-    /// reached that far (see `FloatContext::extend_for_lines`).
+    /// reached that far (see [`FloatContext::extend_for_lines`]).
     pub(crate) fn extend_float_for_lines(
         &mut self,
         position: Point<f32>,
