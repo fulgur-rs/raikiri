@@ -873,7 +873,9 @@ fn run_boxes_segment(
     // `float_resumption::Plan::line_gaps`).
     let line_gaps = owner
         .filter(|_| fragmentainer.is_none() && root.writing_mode == WritingMode::HorizontalTb)
-        .map_or(&[][..], |owner| tree.context.float_resumptions.line_gaps(owner))
+        .map_or(&[][..], |owner| {
+            tree.context.float_resumptions.line_gaps(owner)
+        })
         .to_vec();
     let mut gap_cursor = 0;
     let mut lines: Vec<shodo::Line> = Vec::new();

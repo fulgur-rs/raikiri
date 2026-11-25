@@ -20147,7 +20147,12 @@ fn note_line_gap(
     delta: f32,
 ) {
     if !document.context.float_line_growth.is_empty()
-        || document.context.float_resumptions.line_extent_floats().next().is_some()
+        || document
+            .context
+            .float_resumptions
+            .line_extent_floats()
+            .next()
+            .is_some()
         || !std::iter::once(root)
             .chain(document.layout_ancestors(root).take_while(|&id| id != 0))
             .all(|id| lays_out_at_planned_top(document, cascade, id))
@@ -20173,6 +20178,31 @@ fn note_line_gap(
     if floats_above {
         document.context.line_gaps.push((root, top, delta));
     }
+}
+
+/// Notes where the content box of the paragraph `root` starts on its page
+/// in the page walk, `content_top`, which the gaps planned above its lines
+/// were found for. Once the paragraph starts elsewhere on its page, as when
+/// an earlier layout put it lower before a margin was truncated at a page
+/// start, its lines no longer fall where the walk moved them, and the gaps
+/// planned for them are dropped.
+fn note_paragraph_page_top(
+    document: &mut super::context::LayoutSession<'_>,
+    page_origins: &PageOrigins,
+    root: usize,
+    content_top: f32,
+) {
+    let page_top =
+        content_top - page_origins.origin(page_origins.page_index_for_y(content_top + 0.001));
+    if document
+        .context
+        .float_resumptions
+        .line_gaps_page_top(root)
+        .is_some_and(|planned| (planned - page_top).abs() > 0.01)
+    {
+        document.context.stale_line_gaps.push(root);
+    }
+    document.context.paragraph_page_tops.insert(root, page_top);
 }
 
 /// Whether block flow lays the box `id` out at a planned top: a block in a

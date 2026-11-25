@@ -86,8 +86,9 @@ pub(crate) struct Plan {
     /// the content-box top, of the lines it moved and how far it moved each:
     /// layout leaves that gap above the line, so that the lines from there on
     /// are broken against the floats beside them where they land, as Chromium
-    /// breaks them (see [`Self::line_gaps`]).
-    line_gaps: HashMap<usize, Vec<(f32, f32)>>,
+    /// breaks them (see [`Self::line_gaps`]). Each paragraph also has where
+    /// its content box started on its page when the walk moved them.
+    line_gaps: HashMap<usize, (f32, Vec<(f32, f32)>)>,
 }
 
 impl Plan {
@@ -105,7 +106,7 @@ impl Plan {
     /// The paragraphs that layout breaks with a gap above a line moved past
     /// a page edge (see [`Self::line_gaps`]), each with how many gaps.
     pub(crate) fn line_gap_count(&self) -> usize {
-        self.line_gaps.values().map(Vec::len).sum()
+        self.line_gaps.values().map(|(_, gaps)| gaps.len()).sum()
     }
 
     /// The gaps that layout leaves in the paragraph `root`: the block offset
@@ -113,7 +114,16 @@ impl Plan {
     /// top as layout put it with the gaps before it, and how far the walk
     /// moved it, in order.
     pub(crate) fn line_gaps(&self, root: usize) -> &[(f32, f32)] {
-        self.line_gaps.get(&root).map_or(&[], Vec::as_slice)
+        self.line_gaps
+            .get(&root)
+            .map_or(&[], |(_, gaps)| gaps.as_slice())
+    }
+
+    /// Where the content box of the paragraph `root` started on its page,
+    /// from the page's origin, when the page walk moved the lines that the
+    /// gaps planned for it are left above, if any are.
+    pub(crate) fn line_gaps_page_top(&self, root: usize) -> Option<f32> {
+        self.line_gaps.get(&root).map(|&(page_top, _)| page_top)
     }
 
     /// The floats whose lines are broken against them below their end laid
@@ -380,27 +390,38 @@ impl Plan {
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
+        // A paragraph keeps the gaps planned for it while it starts where it
+        // did on its page when they were found, and takes the first new move
+        // the walk makes below the line after its last gap: a gap moves the
+        // lines after it, so the later moves of the same walk no longer fall
+        // where they did, and a move of that line itself is no new gap.
+        plan.line_gaps
+            .clone_from(&document.context.float_resumptions.line_gaps);
+        for root in &document.context.stale_line_gaps {
+            plan.line_gaps.remove(root);
+        }
+        let mut gapped = HashSet::new();
+        for &(root, top, delta) in &document.context.line_gaps {
+            let Some(&page_top) = document.context.paragraph_page_tops.get(&root) else {
+                continue;
+            };
+            let below_gaps = plan
+                .line_gaps
+                .get(&root)
+                .and_then(|(_, gaps)| gaps.last())
+                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
+            if below_gaps && gapped.insert(root) {
+                plan.line_gaps
+                    .entry(root)
+                    .or_insert_with(|| (page_top, Vec::new()))
+                    .1
+                    .push((top, delta));
+            }
+        }
         // A float keeps the extent first planned for it, even once it no
         // longer grows: the lines broken against it move as far again, and a
         // new extent, or none, would break them anew, so that the plan would
         // not settle.
-        // A paragraph keeps the gaps planned for it, and takes the first new
-        // move the walk makes below the line after its last gap: a gap moves
-        // the lines after it, so the later moves of the same walk no longer
-        // fall where they did, and a move of that line itself is no new gap.
-        plan.line_gaps
-            .clone_from(&document.context.float_resumptions.line_gaps);
-        let mut gapped = HashSet::new();
-        for &(root, top, delta) in &document.context.line_gaps {
-            let below_gaps = plan
-                .line_gaps
-                .get(&root)
-                .and_then(|gaps| gaps.last())
-                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
-            if below_gaps && gapped.insert(root) {
-                plan.line_gaps.entry(root).or_default().push((top, delta));
-            }
-        }
         plan.line_extents
             .clone_from(&document.context.float_resumptions.line_extents);
         for (&float, growth) in &document.context.float_line_growth {
