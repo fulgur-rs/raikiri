@@ -308,3 +308,16 @@ Two 20,000-row runs took 5.057 and 5.041 seconds at 90,408 and 88,212 KiB.
 
 At 40,000 rows this build produced 635 window pages in 10.278 and 10.250
 seconds at 98,976 and 97,836 KiB peak RSS.
+
+A window-width comparison used Raikiri f86907411 and Fulgur a7413d9e.
+In a scratch build the production lookahead (512) was supplied at runtime.
+The input contained a 54,000-space prefix comment and 600 two-cell rows
+(numbered 0 through 599, second cell text "row"). Pages measured 240 by
+150 CSS px, with zero page and body margins, Ahem at 12px with 16px line
+height, collapsed 1px solid cell borders, 21.25px cell height, 1.25px
+padding and break-inside:avoid on rows. The public batch and streaming
+entry points each produced 100 pages. Diagnostics confirmed 100 window
+pages at each lookahead of 14, 18 and 31. Poppler pdftoppm at 72 dpi
+produced identical PPM bytes per page in all four runs. SHA-256 over
+the concatenated binary SHA-256 digests of those PPM files in page order
+was 29b8796d2ef49b620a0289dfba4a7e3669dc00f13fea8aaa090ebe57f6eee9e5.
