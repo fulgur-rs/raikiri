@@ -3939,6 +3939,35 @@ impl PaginationState {
                     .map(|(ancestor, held)| (ancestor, held, natural_page)),
             );
         }
+        // A float placed below a margin that a page edge cuts lands at that
+        // edge, as the box after it does (see `float_in_cut_margin`). It
+        // opens no page of its own: a break forced before the box after it
+        // opens the page the float landed on.
+        let mut float_landed = false;
+        if truncation.is_none()
+            && !forced_before
+            && let Some(delta) = self.float_in_cut_margin(document, env, candidate, flow_y)
+        {
+            document.translate_pagination_y(node_id, delta);
+            super::shrink_ancestors_after_content_change(
+                document,
+                cascade,
+                node_id,
+                0.0,
+                delta,
+                body_id,
+                &super::IfcBoxShifts::default(),
+                None,
+            );
+            // Its content moves with it, and the flow after it does not.
+            self.flow_shift += delta;
+            self.subtree_shifts
+                .bounded
+                .push((node_id, delta, self.current_page));
+            position.effective_y += delta;
+            natural_page = page_origins.page_index_for_y(flow_y + delta);
+            float_landed = true;
+        }
         // A box that the margins inside it took to the top of a page keeps
         // its bottom margin whole below it there (see
         // `split_box_kept_margin`).
@@ -3976,8 +4005,47 @@ impl PaginationState {
                     .add_to_pending(node_id, 0.0, self.current_page);
             }
         }
-        self.current_page = self.current_page.max(natural_page);
+        if !float_landed {
+            self.current_page = self.current_page.max(natural_page);
+        }
         Ok(())
+    }
+
+    /// How far up the float `candidate`, at `flow_y` in the flow, moves when
+    /// it lies below the block-end margin of the box before it and a page
+    /// edge cuts that margin: to the first page edge in the margin, where
+    /// Chromium places it, as the box after it starts there. `None` for any
+    /// other box.
+    fn float_in_cut_margin(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        flow_y: f32,
+    ) -> Option<f32> {
+        let node_id = candidate.node_id;
+        if !is_floating_box_for_pagination(document, env.cascade, node_id)
+            || candidate.context.is_float_descendant()
+            || candidate.context.is_out_of_flow_descendant()
+        {
+            return None;
+        }
+        let raw_y = flow_raw_y(document, env.cascade, env.body_id, candidate);
+        let (previous, gap) =
+            self.sibling_margins
+                .previous_and_gap(document, env.cascade, node_id, raw_y)?;
+        // Only the margin below the box before it: an earlier float may have
+        // taken the float further down.
+        if gap > document.nodes[previous].layout.margin.bottom + 0.001 {
+            return None;
+        }
+        let previous_bottom = flow_y - gap;
+        let edge = env.page_origins.origin(
+            env.page_origins
+                .page_index_for_y(previous_bottom)
+                .saturating_add(1),
+        );
+        (gap > 0.0 && edge < flow_y - 0.001).then_some(edge - flow_y)
     }
 
     /// Whether the lines of the paragraph `block_id` move down inside it, to

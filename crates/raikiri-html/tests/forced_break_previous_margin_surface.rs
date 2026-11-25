@@ -19,6 +19,11 @@ const ADVANCE: f32 = 10.0;
 /// Every word of `body` as `word@page:x,y`, the left and top of its glyphs on
 /// its page, on 100x100 pages with no margin and 10px Ahem lines 10px apart.
 fn words(body: &str) -> String {
+    words_and_pages(body).0
+}
+
+/// [`words`] with the number of pages.
+fn words_and_pages(body: &str) -> (String, usize) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -55,7 +60,7 @@ fn words(body: &str) -> String {
             }
         }
     }
-    words.join(" ")
+    (words.join(" "), result.page_count() as usize)
 }
 
 /// A 50px box with a block-end margin of `margin_bottom` and a line, then a
@@ -184,16 +189,6 @@ fn the_block_before_is_found_past_empty_boxes_and_contents_wrappers() {
     }
 }
 
-/// The page of `word` in `words`.
-fn page_of(words: &str, word: &str) -> u32 {
-    words
-        .split(' ')
-        .find_map(|entry| entry.strip_prefix(&format!("{word}@")))
-        .and_then(|rest| rest.split(':').next())
-        .and_then(|page| page.parse().ok())
-        .unwrap_or_else(|| panic!("{word} in {words}"))
-}
-
 #[test]
 fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
     // The margin of an inline-block is part of its line: no block margin to
@@ -205,17 +200,15 @@ fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
          <div style='break-before:page'>S</div><div>X</div>",
     );
     assert_eq!(inline, "S@3:0,60 X@3:0,70");
-    // A generated block between the two comes before the box, on an earlier
-    // page.
+    // A generated block between the two starts the page after the margin's
+    // first page edge, which cuts the margin, and the box follows it on the
+    // page after.
     let generated = words(
         "<style>.w::after{content:'G';display:block}</style>\
          <div style='display:contents' class=w><div style='height:50px;margin-bottom:250px'>A</div></div>\
          <div style='break-before:page'>S</div><div>X</div>",
     );
-    assert!(
-        page_of(&generated, "G") < page_of(&generated, "S"),
-        "{generated}"
-    );
+    assert_eq!(generated, "A@0:0,0 G@1:0,0 S@2:0,0 X@2:0,10");
 }
 
 #[test]
@@ -447,5 +440,69 @@ fn a_forced_break_after_a_line_that_runs_past_its_page_opens_the_next_page() {
             .collect::<Vec<_>>()
             .join(" ");
         assert_eq!(boxes, expected, "{content}: {words}");
+    }
+}
+
+#[test]
+fn a_cut_margin_leaves_no_page_after_the_content() {
+    // The box that a forced break takes up to the page after the margin's
+    // first page edge takes the end of the flow up with it, as an unforced
+    // break that cuts the margin does: no page follows the content.
+    for (body, expected) in [
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div><div>X</div>",
+            ("A@0:0,0 S@1:0,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:250px'>A</div>\
+             <div style='break-before:page'>S</div><div>X</div>",
+            ("A@0:0,0 S@1:0,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:150px;break-after:page'>A</div><div>S</div>",
+            ("A@0:0,0 S@1:0,0", 2),
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div>\
+             <div style='break-before:page;height:30px'>S</div>",
+            ("A@0:0,0 S@1:0,0", 2),
+        ),
+        (
+            "<div style='float:left;width:10px;height:10px'></div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div>",
+            ("A@0:10,0 S@1:0,0", 2),
+        ),
+    ] {
+        let (words, pages) = words_and_pages(body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_float_below_a_cut_margin_starts_the_page_with_the_box_after_it() {
+    // The page edge cuts the margin above the float as it cuts the one above
+    // the box after it, which sits beside the float at the top of the page.
+    for (body, expected) in [
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div><div>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:250px'>A</div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // A float in the margin above a box that ends it keeps its place.
+        (
+            "<div style='height:50px;margin-bottom:30px'>A</div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@0:10,80 X@0:0,90", 1),
+        ),
+    ] {
+        let (words, pages) = words_and_pages(body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
     }
 }

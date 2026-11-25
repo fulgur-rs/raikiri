@@ -20056,6 +20056,26 @@ fn move_box_for_transition(
         moved_in_bounded_ancestor = shift_block_flow_after(
             document, cascade, holder, body_id, node_delta, shifts, flow_page,
         );
+    } else if forced_transition
+        && node_delta < 0.0
+        && !is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        // A forced break that opens a page above the one the box reached,
+        // where the margin before it crossed a page edge, takes the box up,
+        // and the boxes around it shrink with it as for a truncated margin.
+        let held = shrink_ancestors_after_margin_truncation(
+            document,
+            cascade,
+            holder,
+            node_delta,
+            body_id,
+            &followed_ifc_boxes,
+        );
+        moved_in_bounded_ancestor = !held.is_empty();
+        shifts.bounded.extend(
+            held.into_iter()
+                .map(|(ancestor, held)| (ancestor, held, flow_page)),
+        );
     }
     moved_in_bounded_ancestor
 }
