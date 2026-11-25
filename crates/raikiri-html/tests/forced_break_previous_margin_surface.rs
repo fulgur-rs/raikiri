@@ -591,6 +591,18 @@ fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
             "<div style='clear:left'>S</div><div>X</div>",
             ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
         ),
+        // Nor in a contents wrapper, nor with a relative offset on the box,
+        // which paints it on the next page here.
+        (
+            "<div style='display:contents'><div style='float:right;width:10px;height:150px'>R</div></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,50 X@1:0,60", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:both;position:relative;top:50px'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 X@1:0,60 S@2:0,0", 3),
+        ),
         // A float that is not shown does not hold it down.
         (
             "<div style='display:none'><div style='float:right;height:500px'>H</div></div>",

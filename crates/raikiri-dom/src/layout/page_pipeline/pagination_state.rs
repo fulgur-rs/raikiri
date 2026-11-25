@@ -4076,8 +4076,13 @@ impl PaginationState {
             .map_or(0.0, |next| {
                 let clear = env.cascade.computed[next].clear;
                 let others = other_float_bottoms(document, env, node_id, clear);
-                // Where the flow puts it, as `flow_y` is for the float.
-                let top = flow_y + current_abs_y(document, next) - current_abs_y(document, node_id);
+                // Where the flow puts it, as `flow_y` is for the float,
+                // without the relative offsets that paint either elsewhere.
+                let flow_top = |id| {
+                    current_abs_y(document, id)
+                        - accumulated_relative_offset_y(document, env.cascade, env.body_id, id)
+                };
+                let top = flow_y + flow_top(next) - flow_top(node_id);
                 others
                     .map_or(delta, |bottom| delta.max(bottom - top))
                     .min(0.0)
@@ -7445,17 +7450,18 @@ fn other_float_bottoms(
             if matches!(float, FloatValue::Left | FloatValue::Right)
                 && super::clears_float_side(clear, float)
             {
-                let layout = &document.nodes[id].layout;
-                let bottom =
-                    current_abs_y(document, id) + layout.size.height + layout.margin.bottom;
+                let (_, bottom) = float_flow_extent(document, env, id);
                 lowest = Some(lowest.map_or(bottom, |lowest| lowest.max(bottom)));
             }
             continue;
         }
-        if super::holds_floats(document, env.cascade, id) {
+        // A `display: contents` element has no box and holds no floats.
+        if node.display() != DisplayValue::Contents
+            && super::holds_floats(document, env.cascade, id)
+        {
             continue;
         }
-        stack.extend(document.nodes[id].children.iter().rev().copied());
+        stack.extend(node.children.iter().rev().copied());
     }
     lowest
 }
