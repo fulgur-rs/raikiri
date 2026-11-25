@@ -4062,10 +4062,8 @@ impl PaginationState {
             return None;
         }
         // The earlier floats that run on past the edge keep their place.
-        let delta = float_top_at_edge(document, env, node_id, edge) - flow_y;
-        if delta >= -0.001 {
-            return None;
-        }
+        let delta = Some(float_top_at_edge(document, env, node_id, edge) - flow_y)
+            .filter(|&delta| delta < -0.001)?;
         // A block-level box after it that clears its side, a float among
         // them, keeps its clearance: it follows the float to the page edge,
         // as far as the other floats it clears let it.
@@ -7497,13 +7495,10 @@ fn float_top_at_edge(
     // The outer left and right of a float in its formatting context.
     let span = |id: usize| {
         let mut left = 0.0;
-        let mut current = id;
-        while current != root {
-            left += document.nodes[current].layout.location.x;
-            match document.layout_parent_of(current) {
-                Some(parent) => current = parent,
-                None => break,
-            }
+        let mut current = Some(id);
+        while let Some(node) = current.filter(|&node| node != root) {
+            left += document.nodes[node].layout.location.x;
+            current = document.layout_parent_of(node);
         }
         let layout = &document.nodes[id].layout;
         (
@@ -7515,12 +7510,9 @@ fn float_top_at_edge(
     let mut top = edge;
     for (id, other) in earlier_floats(document, env, node_id) {
         let bottom = float_flow_extent(document, env, id).1;
-        if bottom <= edge + 0.001 {
-            continue;
-        }
         let (other_start, other_end) = span(id);
         let meets = other_start < end - 0.001 && start < other_end - 0.001;
-        if meets || super::clears_float_side(clear, other) {
+        if bottom > edge + 0.001 && (meets || super::clears_float_side(clear, other)) {
             top = top.max(bottom);
         }
     }
