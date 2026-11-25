@@ -6506,7 +6506,8 @@ fn respect_orphans_and_widows(ranges: &mut [(usize, usize, usize)], context: Fra
 
 /// Find the smallest column height that fits `extents` within the available
 /// columns, with at least `orphans` lines in every column that a break
-/// follows. The returned height is then used to fill each column in source
+/// follows, and no shorter than the first `orphans` and the last `widows`
+/// lines. The returned height is then used to fill each column in source
 /// order, including a partially filled final column.
 ///
 /// A definite `available_height` caps the columns: lines that do not fit
@@ -6547,6 +6548,22 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
         columns_at(cap)?;
         high = cap;
     }
+    // A break leaves at least `orphans` lines before it and `widows` after
+    // it, so the columns are first made tall enough for the first `orphans`
+    // and the last `widows` lines, as in Chromium. The widows give way to
+    // the orphans when the paragraph cannot hold both, and lines taller than
+    // the cap of a definite height are dropped. A break in the middle may
+    // still leave fewer than `widows` lines in a middle column (see
+    // `respect_orphans_and_widows`).
+    let count = extents.len();
+    let orphans = context.orphans.max(1).min(count);
+    let widows = context.widows.max(1).min(count - orphans).max(1);
+    let first = extents[orphans - 1].1 - extents[0].0;
+    let last = extents[count - 1].1 - extents[count - widows].0;
+    low = [first, last]
+        .into_iter()
+        .filter(|&lines| lines <= high)
+        .fold(low, f32::max);
 
     // The columns never need to be taller than `limit`: the cap of a definite
     // height, or all the lines in one column.
@@ -6566,9 +6583,10 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     // A column that a break follows keeps at least `orphans` lines: a break
     // that leaves fewer lines before it is not an option, so the columns grow,
     // one step at a time to the next height at which a column takes another
-    // line, until every such column does. `widows` is not checked: the columns
-    // after a break give up lines to it when they can, and when they cannot,
-    // the last column keeps the lines it has. When no height below `limit`
+    // line, until every such column does. `widows` is only checked through
+    // the starting height: the columns after a break give up lines to it
+    // when they can, and when they cannot, the last column keeps the lines
+    // it has. When no height below `limit`
     // keeps the `orphans`, the answer is `limit`. After too many steps the
     // `orphans` are given up and the last height stands.
     let orphans = context.orphans.max(1);
