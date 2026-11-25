@@ -657,9 +657,16 @@ fn balanced(
     let breaks = paragraphs
         .iter()
         .flatten()
-        .filter(|paragraph| paragraph.extents.len() > 1)
-        .map(|paragraph| {
-            let lines = &paragraph.extents;
+        .filter_map(|paragraph| {
+            // The lines of a sliced box that a column end may break between.
+            let lines = if paragraph.held_extents.is_empty() {
+                &paragraph.extents
+            } else {
+                &paragraph.held_extents
+            };
+            (lines.len() > 1).then_some((paragraph, lines))
+        })
+        .map(|(paragraph, lines)| {
             let count = lines.len();
             let orphans = paragraph.orphans.clamp(1, count);
             let widows = paragraph.widows.min(count - orphans).max(1);
@@ -668,7 +675,12 @@ fn balanced(
         .fold(0.0, f32::max);
     // Trial work and storage depend on shaped lines, never the declared count.
     let mut low = monolithic.max(breaks).min(ceiling);
-    let mut high = ceiling;
+    // When the lines a break needs already fit, the columns are that tall.
+    let mut high = if breaks > monolithic && fill_strictly(paragraphs, context, low).is_some() {
+        low
+    } else {
+        ceiling
+    };
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;

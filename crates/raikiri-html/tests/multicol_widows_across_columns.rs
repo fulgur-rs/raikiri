@@ -246,6 +246,21 @@ fn balanced_columns_grow_to_hold_the_orphans_and_the_widows() {
 #[test]
 fn balanced_columns_with_other_boxes_grow_to_hold_the_widows() {
     for (body, expected) in [
+        // A box of set height whose lines the columns break between.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;height:70px;orphans:1;widows:4">ab cd ef gh ij kl mn</div><div>Y</div></div>"#,
+            "X ab cd ef | gh ij kl mn | Y",
+        ),
+        // Columns of a container of definite height balance below it.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;height:45px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl mn",
+        ),
+        // Widows taller than the container are dropped.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;height:35px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl | mn",
+        ),
         (
             r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;orphans:1;widows:4">ab cd ef gh ij kl mn</div><div>Y</div></div>"#,
             "X ab cd ef | gh ij kl mn | Y",
