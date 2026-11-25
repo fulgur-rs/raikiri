@@ -3939,6 +3939,45 @@ impl PaginationState {
                     .map(|(ancestor, held)| (ancestor, held, natural_page)),
             );
         }
+        // A float placed below a margin that a page edge cuts lands at that
+        // edge, as the box after it does (see `float_in_cut_margin`). It
+        // opens no page of its own: a break forced before the box after it
+        // opens the page the float landed on.
+        let mut float_landed = false;
+        if truncation.is_none()
+            && !forced_before
+            && let Some((delta, follow)) =
+                self.float_in_cut_margin(document, env, candidate, flow_y)
+        {
+            document.translate_pagination_y(node_id, delta);
+            let held = super::shrink_ancestors_after_content_change(
+                document,
+                cascade,
+                node_id,
+                follow,
+                delta,
+                body_id,
+                &super::IfcBoxShifts::default(),
+                None,
+            );
+            // Its content moves with it. The flow after it follows it by
+            // `follow`: as far as the other floats that the box after it
+            // clears let it, when that box clears it, and not at all
+            // otherwise.
+            self.flow_shift += delta;
+            if (delta - follow).abs() > 0.001 {
+                self.subtree_shifts
+                    .bounded
+                    .push((node_id, delta - follow, self.current_page));
+            }
+            self.subtree_shifts.bounded.extend(
+                held.into_iter()
+                    .map(|(ancestor, held)| (ancestor, held, self.current_page)),
+            );
+            position.effective_y += delta;
+            natural_page = page_origins.page_index_for_y(flow_y + delta);
+            float_landed = true;
+        }
         // A box that the margins inside it took to the top of a page keeps
         // its bottom margin whole below it there (see
         // `split_box_kept_margin`).
@@ -3976,8 +4015,81 @@ impl PaginationState {
                     .add_to_pending(node_id, 0.0, self.current_page);
             }
         }
-        self.current_page = self.current_page.max(natural_page);
+        if !float_landed {
+            self.current_page = self.current_page.max(natural_page);
+        }
         Ok(())
+    }
+
+    /// How far up the float `candidate`, at `flow_y` in the flow, moves when
+    /// it lies below the block-end margin of the box before it and a page
+    /// edge cuts that margin: to the first page edge in the margin, where
+    /// Chromium places it, as the box after it starts there, and how far the
+    /// flow after it follows it up: as far, when the box after it clears it,
+    /// but no further than the other floats that box clears allow. `None`
+    /// for any other box.
+    fn float_in_cut_margin(
+        &self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        flow_y: f32,
+    ) -> Option<(f32, f32)> {
+        let node_id = candidate.node_id;
+        if !is_floating_box_for_pagination(document, env.cascade, node_id)
+            || candidate.context.is_float_descendant()
+            || candidate.context.is_out_of_flow_descendant()
+        {
+            return None;
+        }
+        let raw_y = flow_raw_y(document, env.cascade, env.body_id, candidate);
+        let (previous, gap) =
+            self.sibling_margins
+                .previous_and_gap(document, env.cascade, node_id, raw_y)?;
+        // Only the margins below the box before it, its own and those of
+        // the last boxes in it that end with it: an earlier float may have
+        // taken the float further down.
+        if gap > super::bottom_margins_of(document, env.cascade, previous) + 0.001 {
+            return None;
+        }
+        let previous_bottom = flow_y - gap;
+        let edge = env.page_origins.origin(
+            env.page_origins
+                .page_index_for_y(previous_bottom)
+                .saturating_add(1),
+        );
+        if gap <= 0.0 || edge >= flow_y - 0.001 {
+            return None;
+        }
+        // The earlier floats that run on past the edge keep their place.
+        let delta = Some(float_top_at_edge(document, env, node_id, edge) - flow_y)
+            .filter(|&delta| delta < -0.001)?;
+        // A block-level box after it that clears its side, a float among
+        // them, keeps its clearance: it follows the float to the page edge,
+        // as far as the other floats it clears let it.
+        let follow = next_box_after(document, node_id)
+            .filter(|&next| {
+                !document.nodes[next].display().is_inline_level()
+                    && super::clears_float_side(
+                        env.cascade.computed[next].clear,
+                        env.cascade.computed[node_id].float,
+                    )
+            })
+            .map_or(0.0, |next| {
+                let clear = env.cascade.computed[next].clear;
+                let others = other_float_bottoms(document, env, node_id, clear);
+                // Where the flow puts it, as `flow_y` is for the float,
+                // without the relative offsets that paint either elsewhere.
+                let flow_top = |id| {
+                    current_abs_y(document, id)
+                        - accumulated_relative_offset_y(document, env.cascade, env.body_id, id)
+                };
+                let top = flow_y + flow_top(next) - flow_top(node_id);
+                others
+                    .map_or(delta, |bottom| delta.max(bottom - top))
+                    .min(0.0)
+            });
+        Some((delta, follow))
     }
 
     /// Whether the lines of the paragraph `block_id` move down inside it, to
@@ -7275,4 +7387,134 @@ fn float_flow_extent(document: &LayoutSession<'_>, env: &FlowEnv<'_>, float: usi
     let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, float);
     let (top, bottom) = super::float_extent(document, float);
     (top - relative, bottom - relative)
+}
+
+/// The box after `node_id` in the layout: its next element sibling that is
+/// shown, looking inside `display: contents` elements, which have no box, and
+/// past the boxes positioned out of the flow, which take no part in it.
+fn next_box_after(document: &LayoutSession<'_>, node_id: usize) -> Option<usize> {
+    let mut node = node_id;
+    loop {
+        let parent = document.parent_of(node)?;
+        let siblings = &document.nodes[parent].children;
+        let index = siblings.iter().position(|&id| id == node)?;
+        let mut stack: Vec<usize> = siblings[index + 1..].iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let child = &document.nodes[id];
+            if child.kind() != NodeKind::Element || child.is_display_none() {
+                continue;
+            }
+            if child.display() == DisplayValue::Contents {
+                stack.extend(child.children.iter().rev().copied());
+                continue;
+            }
+            if super::is_out_of_flow_positioned(document, id) {
+                continue;
+            }
+            return Some(id);
+        }
+        // The box after a float at the end of a `display: contents` element
+        // follows the element.
+        if document.nodes[parent].display() != DisplayValue::Contents {
+            return None;
+        }
+        node = parent;
+    }
+}
+
+/// The lowest outer bottom, in the page flow, of the floats before `node_id`
+/// in its formatting context on the sides `clear` clears, other than
+/// `node_id` itself.
+fn other_float_bottoms(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    clear: raikiri_style::property::ClearValue,
+) -> Option<f32> {
+    earlier_floats(document, env, node_id)
+        .into_iter()
+        .filter(|&(_, side)| super::clears_float_side(clear, side))
+        .map(|(id, _)| float_flow_extent(document, env, id).1)
+        .reduce(f32::max)
+}
+
+/// The left and right floats shown before `node_id` in its formatting
+/// context, each with its side.
+fn earlier_floats(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+) -> Vec<(usize, FloatValue)> {
+    let root = super::float_context_root(document, env.cascade, node_id, env.body_id);
+    let mut stack: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut floats = Vec::new();
+    while let Some(id) = stack.pop() {
+        if id == node_id {
+            break;
+        }
+        let node = &document.nodes[id];
+        if node.kind() != NodeKind::Element || node.is_display_none() {
+            continue;
+        }
+        if is_floating_box_for_pagination(document, env.cascade, id) {
+            let side = env.cascade.computed[id].float;
+            if matches!(side, FloatValue::Left | FloatValue::Right) {
+                floats.push((id, side));
+            }
+            continue;
+        }
+        // A `display: contents` element has no box and holds no floats.
+        if node.display() != DisplayValue::Contents
+            && super::holds_floats(document, env.cascade, id)
+        {
+            continue;
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    floats
+}
+
+/// Where the float `node_id` starts when it moves up to the page edge
+/// `edge`: there, beside the earlier floats that run on past the edge when
+/// they leave it room where it stands, or else below them and below those
+/// it clears. One that would stand beside an earlier float on its own side,
+/// further in, starts below it too, as only its block position moves here.
+fn float_top_at_edge(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    edge: f32,
+) -> f32 {
+    let clear = env.cascade.computed[node_id].clear;
+    let root = super::float_context_root(document, env.cascade, node_id, env.body_id);
+    // The outer left and right of a float in its formatting context.
+    let span = |id: usize| {
+        let mut left = 0.0;
+        let mut current = Some(id);
+        while let Some(node) = current.filter(|&node| node != root) {
+            left += document.nodes[node].layout.location.x;
+            current = document.layout_parent_of(node);
+        }
+        let layout = &document.nodes[id].layout;
+        (
+            left - layout.margin.left,
+            left + layout.size.width + layout.margin.right,
+        )
+    };
+    let (start, end) = span(node_id);
+    let mut top = edge;
+    for (id, other) in earlier_floats(document, env, node_id) {
+        let bottom = float_flow_extent(document, env, id).1;
+        let (other_start, other_end) = span(id);
+        let meets = other_start < end - 0.001 && start < other_end - 0.001;
+        if bottom > edge + 0.001 && (meets || super::clears_float_side(clear, other)) {
+            top = top.max(bottom);
+        }
+    }
+    top
 }
