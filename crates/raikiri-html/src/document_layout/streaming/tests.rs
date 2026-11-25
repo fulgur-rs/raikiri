@@ -28,6 +28,8 @@ struct Record {
     events: Vec<Vec<NodeId>>,
     finished: bool,
     expected_document: Option<crate::HtmlDocument>,
+    offered_table_pages: usize,
+    paint_lines: Vec<Vec<NodeId>>,
     stage_before: Option<u32>,
     staged: Vec<u32>,
     discarded: usize,
@@ -47,6 +49,7 @@ impl PageSink for &mut Record {
             return Err(std::io::Error::other("sink failed"));
         }
         if let Some(expected) = &self.expected_document {
+            self.paint_lines.push(painted_line_roots(page.page()));
             let view = page.page().dom();
             for fragment in page.page().fragments() {
                 let id = fragment.node();
@@ -76,6 +79,7 @@ impl PageSink for &mut Record {
     }
 
     fn stage_table_page(&mut self, page: StreamPage<'_>) -> std::io::Result<bool> {
+        self.offered_table_pages += 1;
         if self.stage_before.is_some_and(|limit| page.index() < limit) {
             self.staged.push(page.index());
             if self.fail_on_page == Some(page.index()) {
@@ -96,6 +100,20 @@ impl PageSink for &mut Record {
         self.finished = true;
         Ok(summary)
     }
+}
+
+fn painted_line_roots(page: crate::Page<'_>) -> Vec<NodeId> {
+    let runs = page.text_runs();
+    for run in &runs {
+        assert!(page.text_run_opacity_group(run).is_none());
+    }
+    page.paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            crate::PaintEvent::TextLine(line) => Some(line.root),
+            _ => None,
+        })
+        .collect()
 }
 
 fn batch_pages(html: &str) -> Vec<(u32, Vec<NodeId>)> {
@@ -1456,7 +1474,6 @@ fn window_passes_use_the_streams_configured_stylesheet() {
     assert_eq!(record.pages.len(), ordinary.pages.len());
 }
 
-#[cfg(feature = "streaming-diagnostics")]
 #[test]
 fn public_html_stream_automatically_delivers_large_table_windows() {
     let mut html = String::from(
@@ -1489,6 +1506,8 @@ fn public_html_stream_automatically_delivers_large_table_windows() {
     assert!(stream.table_input.is_some());
     let summary = completed(stream.finish().unwrap());
     assert!(summary.page_count > 2);
+    assert!(record.offered_table_pages > 0);
+    #[cfg(feature = "streaming-diagnostics")]
     assert_eq!(
         summary.diagnostics.table_window_pages, summary.page_count,
         "{:?}",
@@ -1508,6 +1527,10 @@ fn public_html_stream_automatically_delivers_large_table_windows() {
     assert_eq!(reference.pages().len(), record.pages.len());
     for (page, (index, actual)) in reference.pages().zip(&record.pages) {
         assert_eq!(page.index(), *index);
+        assert_eq!(
+            painted_line_roots(page),
+            record.paint_lines[*index as usize]
+        );
         let expected: Vec<_> = page.fragments().map(|fragment| fragment.node()).collect();
         assert_eq!(expected.len(), actual.len(), "page {index}");
         for (position, (expected, actual)) in expected.iter().zip(actual).enumerate() {
@@ -1516,7 +1539,6 @@ fn public_html_stream_automatically_delivers_large_table_windows() {
     }
 }
 
-#[cfg(feature = "streaming-diagnostics")]
 #[test]
 fn failing_public_table_sink_does_not_interrupt_another_document() {
     let ready = std::sync::Barrier::new(2);
@@ -1552,6 +1574,8 @@ fn failing_public_table_sink_does_not_interrupt_another_document() {
                 let summary = completed(result.unwrap());
                 assert!(record.finished);
                 assert!(summary.page_count > 2);
+                assert!(record.offered_table_pages > 0);
+                #[cfg(feature = "streaming-diagnostics")]
                 assert_eq!(summary.diagnostics.table_window_pages, summary.page_count);
                 assert_eq!(record.pages.len(), summary.page_count as usize);
             }
