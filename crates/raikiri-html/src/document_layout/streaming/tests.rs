@@ -1960,3 +1960,52 @@ fn error_finalizing_the_table_sink_reaches_the_public_caller() {
     assert!(record.pages.len() > 1);
     assert!(!record.finished);
 }
+
+#[test]
+fn table_page_count_footers_skip_staging_and_use_the_final_count() {
+    struct Footers(Vec<String>);
+    impl PageSink for &mut Footers {
+        type Output = ();
+        fn stage_table_page(&mut self, _: StreamPage<'_>) -> std::io::Result<bool> {
+            panic!("page-count footer reached tentative painting");
+        }
+        fn page(
+            &mut self,
+            page: StreamPage<'_>,
+            _: Vec<ConsumerPropertyEvent>,
+        ) -> std::io::Result<()> {
+            self.0.push(page.page().margin_boxes()[0].content.clone());
+            Ok(())
+        }
+        fn finish(self, _: StreamSummary) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:12px;@bottom-center{{content:counter(page) '/' counter(pages)}}}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
+        " ".repeat(55000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let mut sink = Footers(Vec::new());
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut sink,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    assert!(matches!(
+        stream.finish().unwrap(),
+        StreamStatus::Completed(())
+    ));
+    let total = batch_pages(&html).len();
+    assert!(total > 2);
+    assert_eq!(
+        sink.0,
+        (1..=total)
+            .map(|i| format!("{i}/{total}"))
+            .collect::<Vec<_>>()
+    );
+}

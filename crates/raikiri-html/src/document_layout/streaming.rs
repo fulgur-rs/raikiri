@@ -1548,6 +1548,11 @@ fn stream_table_windows<S: PageSink>(
     let started = std::time::Instant::now();
     let mut staging = true;
     let mut staged = 0u32;
+    let page_limit = settings
+        .config
+        .limits
+        .max_document_pages
+        .unwrap_or(u32::MAX);
     let mut stage_failed = false;
     let plan = measured.and_then(|()| {
         windows.plan_pages_with(window_size, render, |layout, pages| {
@@ -1563,19 +1568,13 @@ fn stream_table_windows<S: PageSink>(
                 {
                     return Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted));
                 }
-                let Some(next) = staged.checked_add(1) else {
+                if staged >= page_limit {
                     staging = false;
                     break;
-                };
+                }
+                let next = staged + 1;
                 let page = StreamPage::from_window(layout, local, staged, next);
-                if next
-                    > settings
-                        .config
-                        .limits
-                        .max_document_pages
-                        .unwrap_or(u32::MAX)
-                    || !page.page().margin_boxes().is_empty()
-                {
+                if !page.page().margin_boxes().is_empty() {
                     staging = false;
                     break;
                 }
