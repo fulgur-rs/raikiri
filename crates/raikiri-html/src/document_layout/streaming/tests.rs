@@ -2009,3 +2009,37 @@ fn table_page_count_footers_skip_staging_and_use_the_final_count() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn window_assembly_preserves_limits_in_the_requested_media_context() {
+    let html = format!(
+        "<style>@media screen {{{}}}</style><table><tr><td>x</table>",
+        "td {color:blue}".repeat(128)
+    );
+    let resources = RenderResources::new();
+    let options = Default::default();
+    let assemble = |context, limits: &RenderLimits| {
+        let shell = crate::parse(html.as_bytes(), &options).unwrap();
+        assemble_resolved(&resources, &context, shell, &options, limits)
+    };
+    let mut limits = RenderLimits::default();
+    limits.max_dom_nodes = Some(1);
+    assert!(matches!(
+        assemble(Default::default(), &limits),
+        Err(RenderError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            ..
+        })
+    ));
+    let mut limits = RenderLimits::default();
+    limits.max_cascade_candidates_per_element = Some(64);
+    assert!(assemble(raikiri_style::MediaContext::print(), &limits).is_ok());
+    assert!(matches!(
+        assemble(raikiri_style::MediaContext::screen(), &limits),
+        Err(RenderError::LimitExceeded {
+            kind: LimitKind::CascadeCandidatesPerElement,
+            limit: 64,
+            ..
+        })
+    ));
+}
