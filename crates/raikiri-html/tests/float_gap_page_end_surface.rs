@@ -669,6 +669,9 @@ fn shrinking_a_block_child_keeps_a_static_absolute_box_with_its_line() {
     assert_eq!(short_spacer_boxes(&document), [(1, 0.0)]);
 }
 
+/// A word and the left edge and top of its line on the page.
+type Word<'a> = (&'a str, f32, f32);
+
 #[test]
 fn an_avoiding_box_lays_its_content_out_again_on_the_page_it_moves_to() {
     // The box moves whole to the next page, past the end of the float that
@@ -680,7 +683,7 @@ fn an_avoiding_box_lays_its_content_out_again_on_the_page_it_moves_to() {
     let positioned = "Y<div style='position:absolute;left:50px;bottom:0;width:20px'>Q</div>";
     let flex_end = "Y<div style='position:absolute;left:50px;top:0;bottom:0;width:20px;\
                     display:flex;align-items:flex-end'>Q</div>";
-    let cases: [(u32, u32, String, &[(&str, f32, f32)]); 10] = [
+    let cases: [(u32, u32, String, &[Word]); 10] = [
         (
             60,
             20,
