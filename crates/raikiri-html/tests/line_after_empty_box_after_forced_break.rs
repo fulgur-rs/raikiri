@@ -230,6 +230,31 @@ fn a_generated_block_after_the_paragraph_lines() {
     ]);
 }
 
+/// The margins of an empty block `::after` of the paragraph collapse
+/// through it with those of the empty box, and all of them are kept at the
+/// top of the page.
+#[test]
+fn the_margins_of_an_empty_generated_block_join_those_kept() {
+    assert_pages(&[
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:40px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,40"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:40px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><span></span></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,40"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-top:30px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,30"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-top:-15px}</style><div class=g style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,5"],
+        ),
+    ]);
+}
+
 #[test]
 fn a_line_of_text_after_the_empty_box_sits_below_its_margins() {
     assert_pages(&[

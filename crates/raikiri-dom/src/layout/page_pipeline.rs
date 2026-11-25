@@ -9363,7 +9363,9 @@ fn forced_margin_reaches(
 
 /// The block-end margins of `ancestor` and of the boxes inside it down to
 /// `last`, when `last` ends each of them with no padding, border or used
-/// height to keep its block-end margin from theirs (CSS 2 §8.3.1).
+/// height to keep its block-end margin from theirs (CSS 2 §8.3.1). A line
+/// after `last` or a block `::after` with height keeps them apart too; an
+/// empty `::after` lets its own margins join them.
 fn ends_with_bottom_margin_of(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9389,11 +9391,38 @@ fn ends_with_bottom_margin_of(
         {
             return None;
         }
+        // An empty block `::after` of the block lets its margins collapse
+        // through it with those around it.
+        for margin in generated_after_margins(document, parent) {
+            extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
+        }
         let margin = layout.margin.bottom;
         extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
         id = parent;
     }
     Some(extremes)
+}
+
+/// The block-start and block-end margins of the block `::after` of the
+/// block `node` that the paragraph of `node` lays out, if it has one.
+fn generated_after_margins(document: &super::context::LayoutSession<'_>, node: usize) -> Vec<f32> {
+    let id =
+        crate::generated_content::generated_node_id(node, raikiri_style::PseudoElem::After) as u64;
+    let Some(layout_node) = document.ifc_layout_node(node) else {
+        return Vec::new();
+    };
+    let width = layout_node.layout.size.width;
+    layout_node
+        .ifc
+        .as_ref()
+        .into_iter()
+        .flat_map(|ifc| ifc.generated_blocks.iter())
+        .filter(|block| block.start == id && !block.on_root_axes)
+        .flat_map(|block| {
+            let margins = block.margins(width);
+            [margins.top, margins.bottom]
+        })
+        .collect()
 }
 
 /// The last box in the flow of the block `node_id` (see [`last_flow_box`]),
