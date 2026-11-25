@@ -192,3 +192,6 @@ fn compact(sink: &CompactSink, state: &RefCell<RowCapture>, handles: Vec<Handle>
     remap(&sink.attributes, &index);
     remap(&sink.attribute_names, &index);
 }
+
+#[cfg(test)]
+mod tests;
