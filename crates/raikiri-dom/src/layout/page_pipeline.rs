@@ -9391,9 +9391,10 @@ fn ends_with_bottom_margin_of(
         {
             return None;
         }
-        // An empty block `::after` of the block lets its margins collapse
-        // through it with those around it.
-        for margin in generated_after_margins(document, parent) {
+        // The empty block `::after` of the block, and the empty generated
+        // blocks of the `display: contents` elements after `id`, let their
+        // margins collapse through them with those around them.
+        for margin in generated_margins_after(document, cascade, parent, id) {
             extremes = join_margin_extremes(extremes, (margin.max(0.0), margin.min(0.0)));
         }
         let margin = layout.margin.bottom;
@@ -9403,11 +9404,24 @@ fn ends_with_bottom_margin_of(
     Some(extremes)
 }
 
-/// The block-start and block-end margins of the block `::after` of the
-/// block `node` that the paragraph of `node` lays out, if it has one.
-fn generated_after_margins(document: &super::context::LayoutSession<'_>, node: usize) -> Vec<f32> {
-    let id =
-        crate::generated_content::generated_node_id(node, raikiri_style::PseudoElem::After) as u64;
+/// The block-start and block-end margins of the generated blocks that the
+/// paragraph of the block `node` lays out after its flow box `last`: its own
+/// `::after` and the `::before` and `::after` boxes of the `display: contents`
+/// elements after `last`.
+fn generated_margins_after(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+    last: usize,
+) -> Vec<f32> {
+    use raikiri_style::PseudoElem;
+
+    let mut ids = vec![crate::generated_content::generated_node_id(
+        node,
+        PseudoElem::After,
+    )];
+    generated_boxes_after(document, cascade, node, last, &mut ids);
+    let ids: Vec<u64> = ids.into_iter().map(|id| id as u64).collect();
     document
         .ifc_layout_node(node)
         .into_iter()
@@ -9417,13 +9431,54 @@ fn generated_after_margins(document: &super::context::LayoutSession<'_>, node: u
                 .ifc
                 .iter()
                 .flat_map(|ifc| ifc.generated_blocks.iter())
-                .filter(|block| block.start == id && !block.on_root_axes)
+                .filter(|block| ids.contains(&block.start) && !block.on_root_axes)
                 .flat_map(move |block| {
                     let margins = block.margins(width);
                     [margins.top, margins.bottom]
                 })
         })
         .collect()
+}
+
+/// Pushes the node ids of the `::before` and `::after` boxes of the
+/// `display: contents` elements in the flow of `element` after `last`, in
+/// reverse order, and returns whether `last` was reached.
+fn generated_boxes_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    last: usize,
+    ids: &mut Vec<usize>,
+) -> bool {
+    use raikiri_style::PseudoElem;
+
+    document.nodes[element]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&child| takes_part_in_flow(document, cascade, child))
+        .any(|child| {
+            if child == last {
+                return true;
+            }
+            let contents = document.nodes[child].kind() == NodeKind::Element
+                && document.nodes[child].display() == DisplayValue::Contents;
+            contents && {
+                ids.push(crate::generated_content::generated_node_id(
+                    child,
+                    PseudoElem::After,
+                ));
+                let reached = generated_boxes_after(document, cascade, child, last, ids);
+                if !reached {
+                    ids.push(crate::generated_content::generated_node_id(
+                        child,
+                        PseudoElem::Before,
+                    ));
+                }
+                reached
+            }
+        })
 }
 
 /// The last box in the flow of the block `node_id` (see [`last_flow_box`]),
