@@ -1649,7 +1649,7 @@ fn failing_public_table_sink_does_not_interrupt_another_document() {
 }
 
 #[test]
-fn aborting_on_first_or_last_staged_page_discards_all_pending_output() {
+fn aborting_on_first_or_last_table_page_preserves_only_final_output() {
     let html = format!(
         "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
         " ".repeat(54000),
@@ -1658,12 +1658,12 @@ fn aborting_on_first_or_last_staged_page_discards_all_pending_output() {
     let pages = batch_pages(&html);
     let last = pages.last().unwrap().0;
     assert!(last > 1);
-    for index in [0, last] {
+    for (index, staging) in [(0, true), (last, true), (0, false), (last, false)] {
         let controller = AbortController::new();
         let mut config = LayoutConfig::default();
         config.signal = Some(controller.signal.clone());
         let mut record = Record {
-            stage_before: Some(u32::MAX),
+            stage_before: staging.then_some(u32::MAX),
             abort_on_page: Some((index, controller)),
             ..Default::default()
         };
@@ -1671,9 +1671,15 @@ fn aborting_on_first_or_last_staged_page_discards_all_pending_output() {
             stream(&html, 8192, &mut record, config).unwrap(),
             StreamStatus::Aborted
         ));
-        assert_eq!(record.discarded, index as usize + 1);
+        let delivered = index as usize + 1;
+        if staging {
+            assert_eq!(record.discarded, delivered);
+            assert!(record.pages.is_empty());
+        } else {
+            assert_eq!(record.discarded, 0);
+            assert_eq!(record.pages, pages[..delivered]);
+        }
         assert!(record.staged.is_empty());
-        assert!(record.pages.is_empty());
         assert!(!record.finished);
     }
 }
