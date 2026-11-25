@@ -223,9 +223,14 @@ fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
             expected,
         );
     }
-    // An `orphans` that no height below the number of steps keeps gives up on
-    // it, and the columns stay as tall as the last step made them.
-    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+    // An `orphans` larger than the lines makes the columns tall enough for
+    // all of them, without a step for each line.
+    assert_height(height(2000, 2, 100_000, 1), 20_000.0);
+    // The first `orphans` lines and the last `widows` lines set the least
+    // height the columns start from; the widows give way to the orphans.
+    assert_height(height(7, 3, 2, 4), 40.0);
+    assert_height(height(5, 3, 2, 4), 30.0);
+    assert_height(height(10, 3, 3, 5), 50.0);
 
     // A definite height caps the columns. When no height below the cap keeps
     // the `orphans`, the columns take the cap, and the lines that do not fit
@@ -6841,16 +6846,13 @@ fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
             "{css}"
         );
     }
-    // A lone box of lines with a height of its own is placed whole by the
-    // planner, which the columns that balance need.
+    // A lone box of lines with a height of its own is placed by the planner,
+    // which breaks it between its lines, whether the columns balance or not.
     let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
     for balances in [true, false] {
-        assert_eq!(
-            with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container, balances)
-            }),
-            balances
-        );
+        assert!(with_bridged_session(&mut doc, |session| {
+            multicol_has_only_paragraph_children(session, container, balances)
+        }));
     }
 }
 

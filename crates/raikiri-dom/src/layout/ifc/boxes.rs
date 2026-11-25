@@ -1076,7 +1076,8 @@ fn run_boxes_segment(
                     && !withdrawn.contains(&node)
                 {
                     for float in tentative.drain(..).chain(std::iter::once(float)) {
-                        ceiling = ceiling.max(commit_fragmented_float(
+                        let node = float.node;
+                        let top = commit_fragmented_float(
                             tree,
                             ctx,
                             float,
@@ -1091,7 +1092,18 @@ fn run_boxes_segment(
                                 oof_candidates: &mut oof_candidates,
                                 float_views: &mut float_views,
                             },
-                        ));
+                        );
+                        ceiling = ceiling.max(top);
+                        // A float that goes on to the page the text after it
+                        // opens starts that page, and the lines come after
+                        // it: none goes above it beside the floats left on
+                        // the earlier page.
+                        if top > line_y && tree.named_break_floats.binary_search(&node).is_ok() {
+                            y = top;
+                            pending = CollapsibleMarginSet::ZERO;
+                            assumed_height = 0.0;
+                            retries = 0;
+                        }
                     }
                     continue;
                 }
@@ -1195,7 +1207,14 @@ fn run_boxes_segment(
                 let baseline = open_block
                     .as_ref()
                     .map_or(baseline, |open| open.first_baseline(line_y, baseline));
-                let wanted = super::outside_marker::leading(marker_pending, baseline);
+                // A line that takes no room, as a line of a margin alone in
+                // quirks mode, is not one the marker sits on.
+                let holds_marker = height > 0.0 || baseline > 0.0;
+                let wanted = if holds_marker {
+                    super::outside_marker::leading(marker_pending, baseline)
+                } else {
+                    0.0
+                };
                 if candidate_leading != wanted {
                     candidate_leading = wanted;
                     continue;
@@ -1360,12 +1379,14 @@ fn run_boxes_segment(
                 calls = 0;
                 moves = 0;
                 y = line_y + height;
-                if marker_pending.is_some()
-                    && let Some(open) = open_block.as_mut()
-                {
-                    open.apply_marker_leading(line.block_start_leading());
+                if holds_marker {
+                    if marker_pending.is_some()
+                        && let Some(open) = open_block.as_mut()
+                    {
+                        open.apply_marker_leading(line.block_start_leading());
+                    }
+                    marker_pending = None;
                 }
-                marker_pending = None;
                 candidate_leading = 0.0;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
@@ -1633,7 +1654,17 @@ fn run_boxes_segment(
                 // starts the new page, the lines line up beside that float,
                 // below the floats before it only.
                 let block_id = node.0 as usize;
-                let threshold = if tree
+                // A float after the break that starts the new page beside an
+                // earlier float running on onto it takes the lines along to
+                // its top there.
+                let line_break_top = tree
+                    .context
+                    .line_break_floats
+                    .get(&block_id)
+                    .and_then(|&float| tree.context.float_resumptions.break_top(float));
+                let threshold = if let Some(top) = line_break_top {
+                    Some(top)
+                } else if tree
                     .forced_break_line_clearance
                     .binary_search(&block_id)
                     .is_ok()
@@ -4817,11 +4848,23 @@ pub(crate) fn commit_float(
         tree.context
             .float_resumptions
             .pushed_float_top(float.node)
-            .map_or(line_top, |top| top.max(line_top)),
+            .into_iter()
+            .chain(tree.context.float_resumptions.break_top(float.node))
+            .fold(line_top, f32::max),
         float.direction,
         float.clear,
         adjoins_top_margin,
     );
+    // The boxes after a float that starts a page beside an earlier float
+    // running on onto it line up beside it there.
+    if tree
+        .context
+        .float_resumptions
+        .break_top(float.node)
+        .is_some()
+    {
+        ctx.set_page_start_float_floor(position.y);
+    }
     if perform {
         let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
             (position.x, position.y)

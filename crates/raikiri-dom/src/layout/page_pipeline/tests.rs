@@ -21687,6 +21687,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             shift: 12.0,
             page: 0,
             with_block_before: false,
+            growth: None,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21764,6 +21765,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         shift: 12.0,
         page: 0,
         with_block_before: false,
+        growth: None,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),

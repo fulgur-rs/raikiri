@@ -59,7 +59,8 @@ fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
     if tree.nodes[node_id].ifc.is_some() {
         return false;
     }
-    let rendered: Vec<usize> = flow_children(tree, node_id)
+    let rendered: Vec<usize> = float_flow_children(tree, node_id)
+        .0
         .into_iter()
         .filter(|&child| {
             let node = &tree.nodes[child];
@@ -73,6 +74,93 @@ fn multicol_has_direct_float(tree: &LayoutSession<'_>, node_id: usize) -> bool {
         && !others
             .iter()
             .any(|&child| multicol_subtree_has_float_or_block_margin(tree, child))
+}
+
+/// The children of `node_id` that the columns place as its own, with the
+/// children of each transparent wrapper that holds a float in place of the
+/// wrapper (see [`is_transparent_float_wrapper`]), and those wrappers, outer
+/// ones first. Such a wrapper has no box of its own to break: its children
+/// lay out and break between the columns as the container's own do, the
+/// lines after a float in it beside that float.
+fn float_flow_children(tree: &LayoutSession<'_>, node_id: usize) -> (Vec<usize>, Vec<usize>) {
+    let mut children = Vec::new();
+    let mut wrappers = Vec::new();
+    let mut pending: Vec<usize> = flow_children(tree, node_id).into_iter().rev().collect();
+    while let Some(child) = pending.pop() {
+        if wrappers.len() < MAX_TRANSPARENT_WRAPPERS && is_transparent_float_wrapper(tree, child) {
+            wrappers.push(child);
+            pending.extend(flow_children(tree, child).into_iter().rev());
+        } else {
+            children.push(child);
+        }
+    }
+    (children, wrappers)
+}
+
+/// How many transparent wrappers [`float_flow_children`] opens, and how deep
+/// [`is_transparent_float_wrapper`] looks for a float. The ones past it stay
+/// boxes the columns place whole.
+const MAX_TRANSPARENT_WRAPPERS: usize = 64;
+
+/// Whether `id` is a block in flow that takes the whole width of its column
+/// and has no margin, padding, border or background, nor anything else of
+/// its own that the columns would have to break, start or end, and that holds
+/// a rendered float among its children or those of such a wrapper inside it.
+/// Its floats float in the formatting context of the container's columns.
+fn is_transparent_float_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    if !is_transparent_wrapper(tree, id) {
+        return false;
+    }
+    let mut pending = vec![(id, 1usize)];
+    while let Some((wrapper, depth)) = pending.pop() {
+        for child in flow_children(tree, wrapper) {
+            let node = &tree.nodes[child];
+            if !node.is_in_document() || node.is_display_none() {
+                continue;
+            }
+            if is_floated(tree, child) {
+                return true;
+            }
+            if depth < MAX_TRANSPARENT_WRAPPERS && is_transparent_wrapper(tree, child) {
+                pending.push((child, depth + 1));
+            }
+        }
+    }
+    false
+}
+
+/// Whether `id` is a block in flow with no box of its own for the columns to
+/// break, in the direction of its parent: see
+/// [`is_transparent_float_wrapper`].
+fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
+    if !node.is_in_document()
+        || node.is_display_none()
+        || node.display() != DisplayValue::Block
+        || node.roots_block_context()
+        || node.layout_position() != Position::Static
+        || node.paints_background_color
+        || !paragraph_group::is_flow_wrapper(tree, id)
+    {
+        return false;
+    }
+    let style = style_of(tree, id);
+    let zero = LengthPercentageAuto::length(0.0);
+    let margin = style.margin();
+    [margin.top, margin.bottom, margin.left, margin.right]
+        .iter()
+        .all(|side| *side == zero)
+        && style.padding() == Edges::splat(LengthPercentage::ZERO)
+        && style.border() == Edges::splat(LengthPercentage::ZERO)
+        && style.size().width.is_auto()
+        // An aspect ratio gives the wrapper a height of its own, which its
+        // children alone would not take up.
+        && style.aspect_ratio().is_none()
+        // The columns place the boxes they hold by the container's direction,
+        // so a wrapper of another direction keeps its own placement.
+        && tree
+            .parent_of(id)
+            .is_none_or(|parent| style_of(tree, parent).direction() == style.direction())
 }
 
 /// Whether `idx` is a float.
@@ -1796,6 +1884,7 @@ fn multicol_has_only_paragraph_children(
     // existing path.
     let several = children.clone().nth(1).is_some();
     let mut decorated = false;
+    let mut sized_lines = false;
     let mut paragraphs = 0usize;
     let plain = children.all(|child| {
         if lineless::is_sized_leaf(tree, child) || lineless::is_margin_only_block(tree, child) {
@@ -1819,6 +1908,10 @@ fn multicol_has_only_paragraph_children(
             || is_whole_formatting_context_box(tree, child)
             || is_whole_button(tree, child)
         {
+            // The planner also breaks a box of lines with a height of its own
+            // between its lines, which the path of one paragraph does not.
+            sized_lines |= is_sized_paragraph(tree, child)
+                && tree.nodes[child].layout_position() == Position::Static;
             paragraphs += 1;
             return insets_are_a_relative_offset(tree, child);
         }
@@ -1854,7 +1947,7 @@ fn multicol_has_only_paragraph_children(
             && style.max_size().height.is_auto()
     });
     // The paragraphs of a wrapper count as the container's own.
-    plain && paragraphs > 0 && (several || paragraphs > 1 || decorated || balances)
+    plain && paragraphs > 0 && (several || paragraphs > 1 || decorated || sized_lines || balances)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
@@ -1969,7 +2062,8 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
 
 /// Whether `child` is a plain block of lines whose height is authored: a box
 /// the planner slices at column ends, whatever its lines would give it, as it
-/// slices a box with no lines, keeping its lines in its first piece, or places
+/// slices a box with no lines, keeping its lines in its first piece unless a
+/// column end breaks between them, or places
 /// whole in a column. The structure decides this before the box
 /// is laid out; [`paragraph_group`] also checks that the lines fit the height
 /// once they are shaped.
@@ -1977,7 +2071,8 @@ fn is_sized_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     node.formatting_context == FormattingContext::Inline
-        && lineless::is_plain_block_holding_lines(tree, child)
+        && (lineless::is_plain_block_holding_lines(tree, child)
+            || lineless::is_plain_list_item_holding_lines(tree, child))
         && !node
             .authored_writing_mode
             .is_some_and(WritingMode::is_vertical)
@@ -2165,8 +2260,10 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         if clips
             || painted
             // The paragraph at the end may be a list item, whose marker sits on
-            // its first line.
-            || !(node.display() == DisplayValue::Block
+            // its first line. A `flow-root` box of the chain starts a
+            // formatting context, which changes nothing here: no box of the
+            // chain has a margin to collapse or a float to hold.
+            || !(matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
                 || node.ifc.is_some() && node.display() == DisplayValue::ListItem)
             || style.float().is_floated()
             || margin.top != zero_margin
@@ -2229,13 +2326,29 @@ fn relayout_nested_multicol_children(
 ) -> f32 {
     let index = usize::from(node_id);
     let fallback_height = border_box_size.height;
-    let children: Vec<usize> = flow_children(tree, index)
-        .into_iter()
-        .filter(|&child| tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none())
-        .collect();
+    let rendered = |tree: &LayoutSession<'_>, children: Vec<usize>| -> Vec<usize> {
+        children
+            .into_iter()
+            .filter(|&child| {
+                tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none()
+            })
+            .collect()
+    };
+    let mut children = rendered(tree, flow_children(tree, index));
     let has_spanners = children
         .iter()
         .any(|&child| spanning::is_spanner(tree, child));
+    // The children of transparent wrappers that hold floats take their place
+    // among the container's own, as long as the columns can lay those out
+    // with the floats (see `multicol_has_direct_float`).
+    let mut wrappers = Vec::new();
+    if !has_spanners && multicol_has_direct_float(tree, index) {
+        let (flattened, opened) = float_flow_children(tree, index);
+        if !opened.is_empty() {
+            children = rendered(tree, flattened);
+            wrappers = opened;
+        }
+    }
     if has_spanners {
         spanning::retire_preliminary_fragments(tree, &children);
     }
@@ -2275,7 +2388,12 @@ fn relayout_nested_multicol_children(
             block_end_inset,
         )
     } else {
-        layout_column_group(
+        // The boxes inside each opened wrapper stand relative to the
+        // container while the columns place them, outer wrappers first.
+        for &wrapper in &wrappers {
+            shift_flow_children(tree, wrapper, tree.nodes[wrapper].layout.location);
+        }
+        let used = layout_column_group(
             tree,
             index,
             &children,
@@ -2289,7 +2407,28 @@ fn relayout_nested_multicol_children(
                 && context.available_height.is_none()
                 && !tree.context.unpaged_plain_columns,
             bounded_by_maximum,
-        )
+        );
+        // Then relative to their wrapper again, inner wrappers first, each
+        // wrapper moved to where its boxes went (see `place_opened_wrapper`).
+        for &wrapper in wrappers.iter().rev() {
+            place_opened_wrapper(
+                tree,
+                wrapper,
+                context,
+                content_origin,
+                used - block_end_inset,
+            );
+            let origin = tree.nodes[wrapper].layout.location;
+            shift_flow_children(
+                tree,
+                wrapper,
+                Point {
+                    x: -origin.x,
+                    y: -origin.y,
+                },
+            );
+        }
+        used
     };
     let fragment_height = if tree.nodes[index]
         .multicol
@@ -2305,6 +2444,87 @@ fn relayout_nested_multicol_children(
         fragment.rect.height = fragment_height;
     } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
+}
+
+/// Give `wrapper`, a transparent wrapper whose children the columns of
+/// `context` placed as the container's own (in the container's coordinates),
+/// the box its children reach: it starts at the top of its first child, in
+/// that child's column, and ends below its last child in that column, or at
+/// `columns_end`, the end of the columns, when its children go on in later
+/// columns. `None` when it has no child to place it by, which leaves it as it
+/// is.
+fn place_opened_wrapper(
+    tree: &mut LayoutSession<'_>,
+    wrapper: usize,
+    context: FragmentationContext,
+    content_origin: Point<f32>,
+    columns_end: f32,
+) -> Option<()> {
+    let children: Vec<usize> = flow_children(tree, wrapper)
+        .into_iter()
+        .filter(|&child| is_rendered_element(tree, child))
+        .collect();
+    let first = *children.first()?;
+    let column = column_at(
+        context,
+        tree.nodes[first].layout.location.x - content_origin.x,
+    );
+    // Floats keep their margins apart from the wrapper's; the margins of a
+    // block collapse through the wrapper's edges.
+    let margin_box = |tree: &LayoutSession<'_>, child: usize| {
+        let layout = tree.nodes[child].layout;
+        if is_floated(tree, child) {
+            (
+                layout.location.y - layout.margin.top,
+                layout.location.y + layout.size.height + layout.margin.bottom,
+            )
+        } else {
+            (layout.location.y, layout.location.y + layout.size.height)
+        }
+    };
+    let top = margin_box(tree, first).0;
+    let mut bottom = top;
+    for &child in &children {
+        if column_at(
+            context,
+            tree.nodes[child].layout.location.x - content_origin.x,
+        ) != column
+        {
+            bottom = bottom.max(columns_end);
+            break;
+        }
+        bottom = bottom.max(margin_box(tree, child).1);
+    }
+    let mut layout = tree.nodes[wrapper].layout;
+    layout.location = Point {
+        x: content_origin.x + context.column_offset_x(column),
+        y: top,
+    };
+    layout.size.height = bottom - top;
+    tree.set_unrounded_layout(NodeId::from(wrapper), &layout);
+    Some(())
+}
+
+/// The column of `context` that a box `x` right of the container's content
+/// box starts in.
+fn column_at(context: FragmentationContext, x: f32) -> usize {
+    let step = (context.column_width + context.column_gap).max(f32::EPSILON);
+    let column = if context.rtl {
+        ((context.available_width - context.column_width - x) / step - LINE_EPSILON).ceil()
+    } else {
+        (x / step + LINE_EPSILON).floor()
+    };
+    column.max(0.0) as usize
+}
+
+/// Move each child of `wrapper` in flow by `offset`.
+fn shift_flow_children(tree: &mut LayoutSession<'_>, wrapper: usize, offset: Point<f32>) {
+    for child in flow_children(tree, wrapper) {
+        let mut layout = tree.nodes[child].layout;
+        layout.location.x += offset.x;
+        layout.location.y += offset.y;
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+    }
 }
 
 /// Place the boxes inside the wrapper that the `entry`th child of `group`
@@ -2346,11 +2566,23 @@ fn place_wrapped_boxes(
                 - context.column_offset_x(parent.first_column),
             y: placement.first_y - parent.first_y,
         };
-        layout.size.height = placement.first_height;
+        // A sliced box keeps its whole block size, which its pieces share.
+        if !placement.sliced {
+            layout.size.height = placement.first_height;
+        }
         tree.set_unrounded_layout(NodeId::from(wrapped.node), &layout);
         leave_block_offset_to_painter(tree, wrapped.node);
         if let Some(root) = tree.nodes[wrapped.node].ifc.as_mut() {
-            root.multicol_fragments = Some(placement.fragments.clone());
+            // A sliced box holds its lines in its first piece, unless a column
+            // end breaks between them.
+            root.multicol_fragments = Some(
+                placement
+                    .fragments
+                    .iter()
+                    .filter(|range| !placement.sliced || range.line_start < range.line_end)
+                    .copied()
+                    .collect(),
+            );
             root.multicol_fragment_origins_recorded = true;
         }
         columns.extend(
@@ -2360,6 +2592,10 @@ fn place_wrapped_boxes(
                 .filter(|range| range.line_start < range.line_end)
                 .map(|range| range.fragmentainer),
         );
+        // A sliced box occupies every column a piece of it reaches.
+        if placement.sliced {
+            columns.extend(placement.first_column..=placement.last_column);
+        }
         let column_context = context.in_column(
             placement.first_column,
             context.origin_x + context.column_offset_x(placement.first_column),
@@ -2394,12 +2630,16 @@ fn record_wrapped_fragments(
     for wrapped in group.wrapped(entry) {
         let parent_fragment = *fragments.get(&wrapped.parent_node)?;
         let layout = tree.nodes[wrapped.node].layout;
-        let Some(lines) = tree.nodes[wrapped.node]
+        let lines = tree.nodes[wrapped.node]
             .ifc
             .as_ref()
             .and_then(|root| root.lines.as_ref())
-            .filter(|_| !wrapped.placement.fragments.is_empty())
-        else {
+            .filter(|_| !wrapped.placement.fragments.is_empty());
+        // A sliced box with no lines has a piece in each column it reaches.
+        let sliced_leaf =
+            lines.is_none() && wrapped.placement.sliced && wrapped.placement.fragments.len() > 1;
+        if lines.is_none() && !sliced_leaf {
+            let placement = &wrapped.placement;
             let fragment = tree
                 .fragment_tree
                 .try_push(crate::fragment::LayoutFragment {
@@ -2419,25 +2659,60 @@ fn record_wrapped_fragments(
                     line_end: None,
                 })?;
             fragments.insert(wrapped.node, fragment);
+            let pieces = wrapped.end.map_or(Some(()), |end| {
+                push_wrapper_pieces(
+                    tree,
+                    wrapped.node,
+                    fragment,
+                    (placement.first_column, placement.first_y),
+                    end,
+                    group.height,
+                    context,
+                )
+            });
+            pieces?;
             continue;
-        };
-        let extents: Vec<(f32, f32)> = lines
-            .lines
-            .iter()
-            .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
-            .collect();
+        }
+        let extents: Vec<(f32, f32)> = lines.map_or_else(Vec::new, |lines| {
+            lines
+                .lines
+                .iter()
+                .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+                .collect()
+        });
         let count = wrapped.placement.fragments.len();
+        let sliced = wrapped.placement.sliced;
         // A box whose height is authored keeps it when it stands whole in one
         // column, even where its lines end short of it.
         let authored =
             (count == 1 && is_sized_paragraph(tree, wrapped.node)).then_some(layout.size.height);
         // The top of the columns in the space of the wrapper's fragment.
         let columns_top = -wrapped.parent.first_y;
+        // What the pieces of a sliced box took of its block size so far.
+        let mut taken = 0.0f32;
+        // A sliced box whose decorations slice paints whole in each piece,
+        // moved up by what the earlier pieces took, and the column clips it.
+        let whole_box = (sliced && lineless::slices_decorations(tree, wrapped.node))
+            .then_some(layout.size.height);
         for (index, range) in wrapped.placement.fragments.iter().enumerate() {
             let y = layout.location.y + range.y;
-            let last = range.line_end >= extents.len();
+            let last = if sliced {
+                index + 1 == count
+            } else {
+                range.line_end >= extents.len()
+            };
             let height = if let Some(height) = authored {
                 height
+            } else if sliced {
+                // Each piece of a sliced box but the last fills its column,
+                // and the last holds what is left of it.
+                if index == 0 {
+                    wrapped.placement.first_height
+                } else if last {
+                    (layout.size.height - taken).max(0.0)
+                } else {
+                    group.height
+                }
             } else if last {
                 let first = extents.get(range.line_start).map_or(0.0, |extent| extent.0);
                 extents
@@ -2453,13 +2728,20 @@ fn record_wrapped_fragments(
                 width: layout.size.width,
                 height,
             };
+            // A piece of a sliced box past its first holds none of its lines,
+            // and is placed as a box, so the column it is in counts as used.
+            let holds_lines = !sliced_leaf && (!sliced || range.line_start < range.line_end);
             // The clip cuts a piece at the block edges of its column, so the
             // lines of its neighbours stay out, and leaves the inline axis
             // open. The edge where the paragraph begins or ends has no
-            // neighbour behind it.
+            // neighbour behind it; a sliced box ends where its column does.
             let clip = (count > 1).then(|| {
-                let reach = paragraph_group::BLOCK_INK_REACH;
-                let top = if range.line_start == 0 {
+                let reach = if sliced {
+                    0.0
+                } else {
+                    paragraph_group::BLOCK_INK_REACH
+                };
+                let top = if index == 0 {
                     columns_top - reach
                 } else {
                     columns_top
@@ -2477,16 +2759,111 @@ fn record_wrapped_fragments(
                     node_id: wrapped.node,
                     parent: Some(parent_fragment),
                     fragmentainer: range.fragmentainer,
-                    rect,
+                    rect: lineless::sliced_rect(rect, whole_box.map(|whole| (taken, whole))),
                     fragmentainer_clip: clip,
                     fragment_index: index,
                     fragment_count: count,
-                    line_start: Some(range.line_start),
-                    line_end: Some(range.line_end),
+                    line_start: holds_lines.then_some(range.line_start),
+                    line_end: holds_lines.then_some(range.line_end),
                 })?;
+            taken += height;
         }
     }
     Some(())
+}
+
+/// Give `wrapper`, a wrapper whose boxes joined the flow, a piece in each
+/// column its border box reaches, from `start`, the column and block offset
+/// where it starts, to `end`, where it ends, in columns `column_height` tall:
+/// its first piece `first_fragment`, which holds its boxes, and one more for
+/// each column after it, which paint its background and borders there. A
+/// wrapper that paints neither keeps its one piece. A wrapper that slices
+/// its block-axis border and padding paints whole in each piece, moved up by
+/// what the earlier pieces took, and the column clips it. `None` when the
+/// fragments run out.
+fn push_wrapper_pieces(
+    tree: &mut LayoutSession<'_>,
+    wrapper: usize,
+    first_fragment: usize,
+    start: (usize, f32),
+    end: (usize, f32),
+    column_height: f32,
+    context: FragmentationContext,
+) -> Option<()> {
+    if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
+        return Some(());
+    }
+    let first = tree.fragment_tree.fragments[first_fragment];
+    let column_top = first.rect.y - start.1;
+    let count = end.0 - start.0 + 1;
+    let heights: Vec<f32> = (start.0..=end.0)
+        .map(|column| {
+            let top = if column == start.0 { start.1 } else { 0.0 };
+            let bottom = if column == end.0 {
+                end.1
+            } else {
+                column_height
+            };
+            (bottom - top).max(0.0)
+        })
+        .collect();
+    let total: f32 = heights.iter().sum();
+    let sliced = lineless::slices_decorations(tree, wrapper);
+    let mut taken = 0.0f32;
+    for (index, height) in heights.into_iter().enumerate() {
+        let column = start.0 + index;
+        let top = if index == 0 { start.1 } else { 0.0 };
+        let rect = crate::fragment::FragmentRect {
+            x: first.rect.x + context.column_offset_x(column) - context.column_offset_x(start.0),
+            y: column_top + top,
+            height,
+            ..first.rect
+        };
+        // The clip cuts the piece where the wrapper breaks, and leaves the
+        // edges where it begins and ends open, as a paragraph's are, so the
+        // ink of what it holds may overflow there.
+        let above = if index == 0 {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
+        let below = if index + 1 == count {
+            paragraph_group::BLOCK_INK_REACH
+        } else {
+            0.0
+        };
+        let fragment = crate::fragment::LayoutFragment {
+            fragmentainer: first.fragmentainer + index,
+            rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
+            fragmentainer_clip: Some(paragraph_group::inline_open_clip(
+                crate::fragment::FragmentRect {
+                    y: column_top - above,
+                    height: column_height + above + below,
+                    ..rect
+                },
+            )),
+            fragment_index: index,
+            fragment_count: count,
+            ..first
+        };
+        if index == 0 {
+            tree.fragment_tree.fragments[first_fragment] = fragment;
+        } else {
+            tree.fragment_tree.try_push(fragment)?;
+        }
+        taken += height;
+    }
+    Some(())
+}
+
+/// Whether a column end broke between the lines of the sliced box placed at
+/// `placement`, so that more than one of its pieces holds lines.
+fn splits_lines(placement: &paragraph_group::Placement) -> bool {
+    placement.sliced
+        && placement
+            .fragments
+            .iter()
+            .any(|piece| piece.line_start > 0 && piece.line_start < piece.line_end)
 }
 
 /// Record the pieces of `child`, a box with no lines that `placement` slices
@@ -2512,6 +2889,10 @@ fn push_sliced_box_pieces(
     let sliced = lineless::slices_decorations(tree, child);
     let column_top = first.rect.y - placement.first_y;
     let count = placement.fragments.len();
+    // Whether a column end broke between the lines of the box, so that more
+    // than one of its pieces holds lines. Such a box has no padding or border
+    // above or below its lines, so a piece that holds lines starts with them.
+    let split = splits_lines(placement);
     let mut taken = 0.0f32;
     for (index, piece) in placement.fragments.iter().enumerate() {
         let height = if index == 0 {
@@ -2522,6 +2903,7 @@ fn push_sliced_box_pieces(
             column_height
         }
         .max(0.0);
+        let holds_lines = split && piece.line_start < piece.line_end;
         let rect = crate::fragment::FragmentRect {
             x: first.rect.x + piece.x,
             y: first.rect.y + piece.y,
@@ -2541,6 +2923,18 @@ fn push_sliced_box_pieces(
             )),
             fragment_index: index,
             fragment_count: count,
+            // A piece that holds lines, when a column end broke between
+            // them, names the ones it holds.
+            line_start: if split {
+                holds_lines.then_some(piece.line_start)
+            } else {
+                first.line_start
+            },
+            line_end: if split {
+                holds_lines.then_some(piece.line_end)
+            } else {
+                first.line_end
+            },
             ..first
         };
         if index == 0 {
@@ -3854,6 +4248,13 @@ fn layout_column_group(
             if !can_balance_atomic_paragraph(tree, leaf, BlockEdges::Refused) {
                 return None;
             }
+            // The orphans and widows that break the lines are the
+            // paragraph's own, which may differ from the container's.
+            let context = FragmentationContext {
+                orphans: tree.nodes[leaf].paragraph_orphans.max(1),
+                widows: tree.nodes[leaf].paragraph_widows.max(1),
+                ..context
+            };
             let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
             let (fragments, height) = root_column_fragments(lines, context);
             // Lines that need all of a definite height, or more, fill the
@@ -4076,7 +4477,13 @@ fn layout_column_group(
                         .then_some(after.top + margin_top)
                         .filter(|&content_top| {
                             break_height.is_some_and(|height| {
-                                first_piece_fits(tree, child, content_top, height, context.orphans)
+                                first_piece_fits(
+                                    tree,
+                                    child,
+                                    content_top,
+                                    height,
+                                    tree.nodes[child].paragraph_orphans,
+                                )
                             })
                         });
                     // A block at the top of a column stays there, and its
@@ -4298,9 +4705,10 @@ fn layout_column_group(
         leave_block_offset_to_painter(tree, child);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
-                // A sliced box holds its lines in its first piece; the pieces
-                // after it hold none, and are recorded as the pieces of a box
-                // with no lines (see `push_sliced_box_pieces`).
+                // A sliced box holds its lines in its first piece, unless a
+                // column end breaks between them; the pieces that hold none are
+                // recorded as the pieces of a box with no lines (see
+                // `push_sliced_box_pieces`).
                 root.multicol_fragments = Some(
                     placement
                         .fragments
@@ -4431,13 +4839,24 @@ fn layout_column_group(
         // The boxes inside a wrapper whose boxes joined the flow have their
         // pieces in the columns the flow gave them.
         let wrapped = match group_balance.as_ref() {
-            Some(group)
-                if group.flow.is_some()
-                    && planned.is_some()
-                    && paragraph_group::is_flow_wrapper(tree, child) =>
-            {
+            Some(group) if planned.is_some() && group.wraps(local_order) => {
                 if record_wrapped_fragments(tree, group, local_order, child_fragment, context)
                     .is_none()
+                    || group
+                        .placement_of(local_order)
+                        .zip(group.wrapper_end(local_order))
+                        .is_some_and(|(placement, end)| {
+                            push_wrapper_pieces(
+                                tree,
+                                child,
+                                child_fragment,
+                                (placement.first_column, placement.first_y),
+                                end,
+                                group.height,
+                                context,
+                            )
+                            .is_none()
+                        })
                 {
                     return fallback_height;
                 }
@@ -4482,7 +4901,10 @@ fn layout_column_group(
             origin_y: content_origin.y,
             ..record_context
         };
+        // The pieces of a sliced box whose lines a column end broke between
+        // name the lines they hold.
         if !wrapped
+            && !planned.is_some_and(splits_lines)
             && record_nested_ifc_box_fragments(
                 tree,
                 child,
@@ -6059,8 +6481,9 @@ fn line_ranges_in_columns(
     ranges
 }
 
-/// Move lines between the pieces `ranges` of a paragraph so that each keeps
-/// the `orphans` and `widows` of `context`.
+/// Move lines between the pieces `ranges` of a paragraph so that a piece
+/// after a break holds the `widows` of `context` where the piece before it
+/// keeps its `orphans`. Lines move one break at a time, from the first.
 fn respect_orphans_and_widows(ranges: &mut [(usize, usize, usize)], context: FragmentationContext) {
     // CSS Fragmentation §3.3 constrains each line break. If the final
     // fragment would contain fewer than `widows` lines, move lines from the
@@ -6083,7 +6506,8 @@ fn respect_orphans_and_widows(ranges: &mut [(usize, usize, usize)], context: Fra
 
 /// Find the smallest column height that fits `extents` within the available
 /// columns, with at least `orphans` lines in every column that a break
-/// follows. The returned height is then used to fill each column in source
+/// follows, and no shorter than the first `orphans` and the last `widows`
+/// lines. The returned height is then used to fill each column in source
 /// order, including a partially filled final column.
 ///
 /// A definite `available_height` caps the columns: lines that do not fit
@@ -6124,6 +6548,22 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
         columns_at(cap)?;
         high = cap;
     }
+    // A break leaves at least `orphans` lines before it and `widows` after
+    // it, so the columns are first made tall enough for the first `orphans`
+    // and the last `widows` lines, as in Chromium. The widows give way to
+    // the orphans when the paragraph cannot hold both, and lines taller than
+    // the cap of a definite height are dropped. A break in the middle may
+    // still leave fewer than `widows` lines in a middle column (see
+    // `respect_orphans_and_widows`).
+    let count = extents.len();
+    let orphans = context.orphans.max(1).min(count);
+    let widows = context.widows.max(1).min(count - orphans).max(1);
+    let first = extents[orphans - 1].1 - extents[0].0;
+    let last = extents[count - 1].1 - extents[count - widows].0;
+    low = [first, last]
+        .into_iter()
+        .filter(|&lines| lines <= high)
+        .fold(low, f32::max);
 
     // The columns never need to be taller than `limit`: the cap of a definite
     // height, or all the lines in one column.
@@ -6143,9 +6583,10 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
     // A column that a break follows keeps at least `orphans` lines: a break
     // that leaves fewer lines before it is not an option, so the columns grow,
     // one step at a time to the next height at which a column takes another
-    // line, until every such column does. `widows` is not checked: the columns
-    // after a break give up lines to it when they can, and when they cannot,
-    // the last column keeps the lines it has. When no height below `limit`
+    // line, until every such column does. `widows` is only checked through
+    // the starting height: the columns after a break give up lines to it
+    // when they can, and when they cannot, the last column keeps the lines
+    // it has. When no height below `limit`
     // keeps the `orphans`, the answer is `limit`. After too many steps the
     // `orphans` are given up and the last height stands.
     let orphans = context.orphans.max(1);
@@ -6889,8 +7330,9 @@ impl AncestorFacts {
             // is the fit-content one; a box whose width follows its height
             // through the aspect ratio does not stretch.
             || node.is_html_button()
-            // A fieldset roots its own formatting context, so its `auto`
-            // width is the room the floats beside it leave.
+            // A fieldset, a size query container or a box that spans the
+            // columns roots its own formatting context, so its `auto` width
+            // is the room the floats beside it leave.
             || node.roots_block_context()
             || AuthoredBox::new(doc, cascade, id).is_floated()
             || width_follows_height(doc, cascade, id)

@@ -74,79 +74,80 @@ struct Piece {
     bottom: f32,
 }
 
-fn constrained_line_ranges(
+/// Where the piece of a paragraph of `count` lines that starts at line
+/// `start` ends when `fitting` is the end of the lines its column holds: the
+/// break goes up to where the `widows` follow it, as long as the piece keeps
+/// its `orphans`. Orphans win over widows: a piece too short for both ends
+/// past its orphans, only as far as they need, or at the column end when the
+/// widows begin at or before its start. Only the lines after the last break
+/// count for the widows, so a piece between two breaks may hold fewer lines
+/// than them (Chromium).
+pub(super) fn piece_end(
+    start: usize,
+    fitting: usize,
+    count: usize,
+    (orphans, widows): (usize, usize),
+) -> usize {
+    if fitting >= count {
+        return count;
+    }
+    let cut = count.saturating_sub(widows);
+    let kept = start + orphans;
+    if fitting.min(cut) >= kept {
+        fitting.min(cut)
+    } else if start > 0 && cut <= start || fitting < kept {
+        fitting
+    } else {
+        fitting.min(cut.max(kept))
+    }
+}
+
+/// The height of the balanced columns that hold the lines `extents` from
+/// `start` on, the first column with `top` taken already: the least height,
+/// up to `height`, at which the lines broken one column at a time fit the
+/// columns left. Like Chromium, the columns are first made tall enough to
+/// hold the orphans and the widows of the paragraph, where `height` allows.
+fn balanced_height(
     extents: &[(f32, f32)],
+    (start, top): (usize, f32),
     height: f32,
-    first_top: f32,
-    orphans: usize,
-    widows: usize,
-) -> Option<Vec<(usize, usize)>> {
-    use std::collections::VecDeque;
-
-    #[derive(Clone, Copy)]
-    struct Prefix {
-        count: usize,
-        previous: usize,
-    }
-
-    let length = extents.len();
-    let last_start = length.checked_sub(widows)?;
-    let mut prefixes: Vec<Option<Prefix>> = vec![None; length];
-    let mut candidates: VecDeque<(usize, usize)> = VecDeque::new();
-    let middle_minimum = orphans.max(widows);
-    // Each prefix keeps the fewest preceding slices that satisfy both the
-    // line-count minima and the physical height. The sliding minimum visits
-    // each line once; variable line heights do not require trying every cut.
-    for end in 1..length {
-        if end >= orphans && extents[end - 1].1 - extents[0].0 <= height - first_top + f32::EPSILON
-        {
-            prefixes[end] = Some(Prefix {
-                count: 1,
-                previous: 0,
-            });
-        }
-        if let Some(start) = end.checked_sub(middle_minimum)
-            && let Some(prefix) = prefixes[start]
-        {
-            while candidates
-                .back()
-                .is_some_and(|&(_, count)| count >= prefix.count)
-            {
-                candidates.pop_back();
-            }
-            candidates.push_back((start, prefix.count));
-        }
-        while candidates.front().is_some_and(|&(start, _)| {
-            extents[end - 1].1 - extents[start].0 > height + f32::EPSILON
-        }) {
-            candidates.pop_front();
-        }
-        if let Some(&(start, count)) = candidates.front() {
-            let count = count.checked_add(1)?;
-            if prefixes[end].is_none_or(|prefix| count < prefix.count) {
-                prefixes[end] = Some(Prefix {
-                    count,
-                    previous: start,
-                });
-            }
-        }
-    }
-    let (mut start, _) = prefixes
+    context: FragmentationContext,
+    (orphans, widows): (usize, usize),
+    break_lines: &dyn Fn(usize, f32, f32) -> Vec<(usize, usize, f32)>,
+) -> f32 {
+    let columns = context
+        .column_count
+        .saturating_sub(context.column_index)
+        .max(1);
+    let count = extents.len();
+    let first = (start + orphans.min(count - start)).max(start + 1);
+    let last = count - widows.clamp(1, count - start);
+    // A line never breaks, so the columns are at least as tall as the
+    // tallest of them.
+    let tallest = extents[start..]
         .iter()
-        .enumerate()
-        .take(last_start + 1)
-        .skip(1)
-        .filter_map(|(start, prefix)| prefix.map(|prefix| (start, prefix)))
-        .filter(|&(start, _)| extents[length - 1].1 - extents[start].0 <= height + f32::EPSILON)
-        .min_by_key(|&(start, prefix)| (prefix.count, std::cmp::Reverse(start)))?;
-    let mut ranges = vec![(start, length)];
-    while start > 0 {
-        let prefix = prefixes[start]?;
-        ranges.push((prefix.previous, start));
-        start = prefix.previous;
+        .map(|(line_top, bottom)| bottom - line_top)
+        .fold(top + extents[start].1 - extents[start].0, f32::max);
+    let floor = (top + extents[first - 1].1 - extents[start].0)
+        .max(extents[count - 1].1 - extents[last].0)
+        .max(tallest)
+        .min(height);
+    let fits = |candidate: f32| break_lines(start, top, candidate).len() <= columns;
+    if fits(floor) || !fits(height) {
+        return if fits(floor) { floor } else { height };
     }
-    ranges.reverse();
-    Some(ranges)
+    // The count of columns falls as they grow, so the least height that
+    // fits lies between one that does not and one that does.
+    let (mut low, mut high) = (floor, height);
+    for _ in 0..32 {
+        let middle = (low + high) / 2.0;
+        if fits(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
 }
 
 pub(super) fn layout(
@@ -321,72 +322,61 @@ pub(super) fn layout(
         });
         start = extents.len();
     }
-    while start < extents.len() {
-        let source_top = extents[start].0;
-        let mut end = start
-            + extents[start..]
-                .partition_point(|extent| extent.1 - source_top <= height - top + f32::EPSILON);
-        // A line taller than an empty fragmentainer must make progress.
-        end = end.max(start + 1).min(extents.len());
+    let orphans = tree.nodes[leaf].paragraph_orphans.max(1);
+    let paragraph_widows = tree.nodes[leaf].paragraph_widows;
+    // The lines from `start` on, broken greedily into columns `height` tall,
+    // the first of which has `top` taken already.
+    let break_lines = |start: usize, top: f32, height: f32| {
+        // Widows taller than a column cannot follow a break together, and
+        // are dropped, as Chromium drops them.
+        let widows = paragraph_widows.clamp(1, extents.len().max(1));
+        let widows = if extents.len() >= widows
+            && extents.last().is_some_and(|last| {
+                last.1 - extents[extents.len() - widows].0 <= height + f32::EPSILON
+            }) {
+            widows
+        } else {
+            1
+        };
+        let mut ranges = Vec::new();
+        let (mut start, mut top) = (start, top);
+        while start < extents.len() {
+            let source_top = extents[start].0;
+            let fitting = start
+                + extents[start..]
+                    .partition_point(|extent| extent.1 - source_top <= height - top + f32::EPSILON);
+            let end = piece_end(start, fitting, extents.len(), (orphans, widows));
+            // A line taller than an empty fragmentainer must make progress.
+            let end = end.max(start + 1).min(extents.len());
+            ranges.push((start, end, top));
+            start = end;
+            top = 0.0;
+        }
+        ranges
+    };
+    // Balanced columns break the lines at their own height; the columns
+    // keep the height of the container.
+    let column_height = if context.column_fill == ColumnFillValue::Balance && start < extents.len()
+    {
+        balanced_height(
+            &extents,
+            (start, top),
+            height,
+            context,
+            (orphans, paragraph_widows),
+            &break_lines,
+        )
+    } else {
+        height
+    };
+    for (start, end, top) in break_lines(start, top, column_height) {
         pieces.push(Piece {
             start,
             end,
             column: context.column_index.checked_add(pieces.len())?,
             top,
-            bottom: top + extents[end - 1].1 - source_top,
+            bottom: top + extents[end - 1].1 - extents[start].0,
         });
-        start = end;
-        top = 0.0;
-    }
-    let orphans = tree.nodes[leaf].paragraph_orphans.max(1);
-    let widows = tree.nodes[leaf].paragraph_widows.max(1);
-    let violates_minima = pieces.iter().enumerate().any(|(index, piece)| {
-        let count = piece.end - piece.start;
-        (index > 0 && count < widows) || (index + 1 < pieces.len() && count < orphans)
-    });
-    if violates_minima
-        && let Some(ranges) = constrained_line_ranges(&extents, height, leaf_top, orphans, widows)
-    {
-        let mut constrained = Vec::with_capacity(ranges.len());
-        for (order, (start, end)) in ranges.into_iter().enumerate() {
-            let top = if order == 0 { leaf_top } else { 0.0 };
-            constrained.push(Piece {
-                start,
-                end,
-                column: context.column_index.checked_add(order)?,
-                top,
-                bottom: top + extents[end - 1].1 - extents[start].0,
-            });
-        }
-        pieces = constrained;
-    }
-    // If no complete partition can satisfy the minima, retain progress and
-    // satisfy the remaining boundaries wherever physical space permits.
-    for boundary in (0..pieces.len().saturating_sub(1)).rev() {
-        let minimum = if boundary + 2 == pieces.len() {
-            widows
-        } else {
-            orphans.max(widows)
-        };
-        let needed = minimum.saturating_sub(pieces[boundary + 1].end - pieces[boundary + 1].start);
-        // An intermediate slice can borrow from its predecessor on the next
-        // iteration. Only the first slice must retain its orphans now.
-        let retained = if boundary == 0 { orphans } else { 1 };
-        let movable = (pieces[boundary].end - pieces[boundary].start).saturating_sub(retained);
-        let mut moved = 0;
-        while moved < needed.min(movable) {
-            let new_start = pieces[boundary + 1].start - moved - 1;
-            let bottom = extents[pieces[boundary + 1].end - 1].1 - extents[new_start].0;
-            if bottom > height + f32::EPSILON {
-                break;
-            }
-            moved += 1;
-        }
-        pieces[boundary].end -= moved;
-        pieces[boundary + 1].start -= moved;
-        for piece in &mut pieces[boundary..=boundary + 1] {
-            piece.bottom = piece.top + extents[piece.end - 1].1 - extents[piece.start].0;
-        }
     }
     let required = pieces.len().checked_mul(chain.len())?.checked_add(1)?;
     if required

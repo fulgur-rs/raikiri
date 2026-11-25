@@ -235,6 +235,14 @@ pub(super) fn is_plain_block_holding_lines(tree: &LayoutSession<'_>, child: usiz
     is_plain_block_with_display(tree, child, false, true)
 }
 
+/// [`is_plain_block_holding_lines`] for a list item, whose marker, if any,
+/// sits on its first line.
+pub(super) fn is_plain_list_item_holding_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
+    layout_node(tree, child).display() == DisplayValue::ListItem
+        && block_margins(&style_of(tree, child)).is_some()
+        && is_plain_box_apart_from_display(tree, child, true)
+}
+
 fn is_plain_block_with_display(
     tree: &LayoutSession<'_>,
     child: usize,

@@ -1,21 +1,90 @@
-//! Additional leading contributed by an outside image marker.
+//! Additional leading contributed by an outside marker.
 
 use crate::Document;
-use raikiri_style::CascadeResult;
+use raikiri_style::property::ContentComponent;
+use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
+use shodo::font::FontCollection;
+use shodo::limits::Limits;
 
-/// The replaced marker's ascent, when it participates in horizontal flow.
+/// How far the outside marker of `owner` reaches above the baseline of the
+/// first line, when it participates in horizontal flow: the ascent of an
+/// image, or the room the marker's text takes above its baseline with the
+/// marker's own font and `line-height`. The fonts are the document's.
 pub(crate) fn height(doc: &Document, cascade: &CascadeResult, owner: usize) -> Option<f32> {
-    if !crate::generated_content::marker_is_enabled(cascade, owner)
-        || crate::generated_content::inside_marker_in_flow(cascade, owner)
-        || cascade.computed[owner].writing_mode.is_vertical()
-        || doc
-            .nodes
-            .get(owner)
-            .is_some_and(|node| node.multicol.is_some())
-    {
+    height_in(
+        doc,
+        cascade,
+        doc.ifc.as_ref().map(|state| (&state.fonts, &state.limits)),
+        owner,
+    )
+}
+
+/// [`height`] with the marker's text measured in `shaping`, the fonts and
+/// limits of the document.
+pub(crate) fn height_in(
+    doc: &Document,
+    cascade: &CascadeResult,
+    shaping: Option<(&FontCollection, &Limits)>,
+    owner: usize,
+) -> Option<f32> {
+    if !takes_part(doc, cascade, owner) {
         return None;
     }
-    doc.list_marker_image_size(owner).map(|size| size.height)
+    if let Some(size) = doc.list_marker_image_size(owner) {
+        return Some(size.height);
+    }
+    let fallback;
+    let marker = match cascade
+        .pseudo
+        .get(&(StyleNodeId::new(owner as u64), PseudoElem::Marker))
+    {
+        Some(marker) => &**marker,
+        None => {
+            fallback = ComputedValues::inherit_marker_from(&cascade.computed[owner]);
+            &fallback
+        }
+    };
+    let sample = marker_text(doc, cascade, owner, marker)?;
+    let (fonts, limits) = shaping?;
+    let inline = super::style::inline_style(marker, owner, fonts).ok()?;
+    super::standalone::line_ascent(fonts, limits, &sample, &inline)
+}
+
+/// Whether `owner` has an outside marker in horizontal flow whose leading
+/// this module places.
+fn takes_part(doc: &Document, cascade: &CascadeResult, owner: usize) -> bool {
+    crate::generated_content::marker_is_enabled(cascade, owner)
+        && !crate::generated_content::inside_marker_in_flow(cascade, owner)
+        && !cascade.computed[owner].writing_mode.is_vertical()
+        && doc
+            .nodes
+            .get(owner)
+            .is_none_or(|node| node.multicol.is_none())
+}
+
+/// The text the marker of `owner`, whose values are `marker`, shows, so that
+/// its glyphs pick the fonts that set the marker's line. `None` when it
+/// shows nothing, as an empty string, a quote that inserts nothing or
+/// `list-style-type: none` do, since an empty line takes no room. An image
+/// alone still gives the marker a line, and its strut, in the marker's font.
+fn marker_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    marker: &ComputedValues,
+) -> Option<String> {
+    let snapshots = doc.shared_compact_counter_snapshots(cascade).ok()?;
+    let (_, text) = crate::generated_content::markers::marker_render_info_with_compact_snapshots(
+        doc, cascade, owner, &snapshots,
+    )?;
+    if !text.is_empty() {
+        return Some(text);
+    }
+    marker
+        .content
+        .iter()
+        .any(|part| matches!(part, ContentComponent::Image { .. }))
+        .then(|| " ".to_owned())
 }
 
 /// Chromium places extra leading before the first line or baseline-bearing

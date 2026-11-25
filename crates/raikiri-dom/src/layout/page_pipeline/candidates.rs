@@ -282,6 +282,10 @@ pub(super) struct ElementContext {
     /// has a break to take of its own, and the box stays; one that does not
     /// moves along with the box (see [`super::closing_edges_move`]).
     pub(super) closing_edges_float_reach: f32,
+    /// For a block that holds one box: the room at its end that its set size
+    /// leaves below its content, which is part of `closing_edges_inside` but
+    /// does not follow the box (see [`super::closing_edges_move`]).
+    pub(super) closing_edges_gap: f32,
     /// The block that the box ends, and the bottom padding and border that
     /// close it, when the block's `min-height` leaves room below the box: the
     /// edges follow the box only once pagination moved content in the block
@@ -479,6 +483,11 @@ impl BoxContext {
     pub(super) fn closing_edges_float_reach(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
+    }
+
+    pub(super) fn closing_edges_gap(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges_gap)
     }
 
     pub(super) fn capped_edges_block(self) -> Option<usize> {
@@ -1641,8 +1650,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         .flatten();
                 // A line after a block child keeps nothing whole: the page
                 // breaks between the block and the line, inside a flex or
-                // grid item too, as between the lines of text there.
-                let line_after_block = unplaced_base
+                // grid item, a float or a table cell too, as between the
+                // lines of text there.
+                let line_after_block = (!inside_out_of_flow
+                    && !is_rendered_leaf
+                    && !document.context.pagination_on_transposed_axes)
                     .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(
@@ -1735,8 +1747,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !is_float
                     && !super::is_out_of_flow_positioned(document, node_id)
                     && super::splits_at_forced_breaks(document, node_id);
+                // The same holds in the block flow inside a float.
+                let in_float_flow = inside_float
+                    && !inline_level
+                    && !is_float
+                    && super::in_float_block_flow(
+                        document,
+                        cascade,
+                        node_id,
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let after_forced_break = self.forces_break_after
-                    && (in_any_flow || in_static_positioned_flow)
+                    && (in_any_flow || in_static_positioned_flow || in_float_flow)
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame
@@ -1838,7 +1860,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 })
                 .flatten()
                 .filter(|lone| {
-                    lone.tail + frame.closing_edges > 0.001
+                    let edges = if lone.cut { 0.0 } else { frame.closing_edges };
+                    lone.tail + edges - lone.gap.min(0.0) > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -2124,10 +2147,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // a clip box around it holds the break depends on where
                 // pagination puts that box, so it is judged there (see
                 // `clip_holds_breaks`).
-                let sets_page_flow = deferred_named_break_after
-                    || own_page_name.is_some()
-                    || forces_page_break(document, cascade, node_id, true)
+                let forces_break_here = forces_page_break(document, cascade, node_id, true)
                     || forces_page_break(document, cascade, node_id, false);
+                let sets_page_flow =
+                    deferred_named_break_after || own_page_name.is_some() || forces_break_here;
+                // A box in the block flow of a float is a candidate only for
+                // a break forced before, after or inside it, which splits the
+                // float; page names inside a float name no page.
+                let float_flow_break = in_float_flow
+                    && (after_forced_break
+                        || super::takes_forced_break(document, cascade, body_id, node_id, true)
+                        || super::takes_forced_break(document, cascade, body_id, node_id, false));
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that
@@ -2209,14 +2239,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
-                    .map(|lone| lone.tail.max(0.0));
+                    .map(|lone| lone.inside());
+                // A block whose first box moves with the edges that close it
+                // breaks away from the edges after the block, and from the
+                // blocks of set size around it (see `LoneBox::cut`).
+                let lone_cut = lone_tail
+                    .filter(|_| can_move_nested)
+                    .is_some_and(|lone| lone.cut);
                 // How far the floats beside the box of such a block, and those
                 // of the blocks it ends, reach below the box. Both ends are
                 // measured at their normal-flow positions, as the page fit is.
                 let closing_edges_float_reach =
                     if let Some(lone) = lone_tail.filter(|_| can_move_nested) {
                         let box_end = candidate_raw_y + node.layout.size.height
-                            - lone.tail.max(0.0)
+                            - lone.inside()
                             - accumulated_relative_offset_y(document, cascade, body_id, node_id);
                         lone.float_reach
                             .max((frame.float_bottom - box_end).max(0.0))
@@ -2277,9 +2313,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && break_before_available()
                         && breaks_only_around(document, cascade, node_id, self.has_named_pages)
                 });
-                let is_break_candidate = !is_body
+                // The body is no box to break before, but the line after a
+                // block child of its own takes a break as in any paragraph.
+                let is_break_candidate = (!is_body
+                    || (node_id == body_id && line_after_block.is_some()))
                     && document.nodes[node_id].display() != DisplayValue::Contents
-                    && !inside_float
+                    // Inside a float, only the boxes of its block flow that
+                    // take a break, or whose line follows a block, are
+                    // candidates.
+                    && (!inside_float
+                        || float_flow_break
+                        || (in_float_flow && line_after_block.is_some()))
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
@@ -2374,15 +2418,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 avoided_break_before: avoided_break_passed_on,
-                                closing_edges: if closing_edges_candidate
-                                    || lone_box_candidate.is_some()
-                                {
+                                closing_edges: if lone_cut {
+                                    0.0
+                                } else if closing_edges_candidate || lone_box_candidate.is_some() {
                                     frame.closing_edges
                                 } else {
                                     0.0
                                 },
                                 capped_edges_block: frame.capped_edges_block.filter(|_| {
-                                    closing_edges_candidate || lone_box_candidate.is_some()
+                                    !lone_cut
+                                        && (closing_edges_candidate || lone_box_candidate.is_some())
                                 }),
                                 closing_edges_inside: lone_box_candidate.unwrap_or(0.0),
                                 closing_edges_span: match frame.tie {
@@ -2421,6 +2466,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
                                 closing_edges_float_reach,
+                                closing_edges_gap: lone_tail
+                                    .filter(|_| can_move_nested)
+                                    .map_or(0.0, |lone| lone.gap),
                                 min_height_edges: min_height_edges_candidate,
                             },
                         ),

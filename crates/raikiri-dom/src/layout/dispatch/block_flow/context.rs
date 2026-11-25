@@ -623,6 +623,13 @@ impl BlockContext<'_> {
         self.owner.page_start_floor = self.owner.floats.cleared_threshold(clear);
     }
 
+    /// Notes `top`, in the coordinates of this context, as the floor for the
+    /// box after a float that starts a page at that top beside an earlier
+    /// float running on onto it: the box lines up beside the float there.
+    pub(crate) fn set_page_start_float_floor(&mut self, top: f32) {
+        self.owner.page_start_floor = Some(top + self.origin);
+    }
+
     /// The floor recorded for the last float that started a page.
     pub(crate) fn page_start_float_floor(&self) -> Option<f32> {
         self.owner.page_start_floor.map(|floor| floor - self.origin)
