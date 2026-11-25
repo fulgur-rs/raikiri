@@ -6097,6 +6097,7 @@ impl PaginationState {
             );
             self.float_shifts
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
+            record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
             if line == 0 {
                 // The first line moves, and the text that starts on it with it.
                 text.effective_y += shift;
@@ -7275,4 +7276,40 @@ fn float_flow_extent(document: &LayoutSession<'_>, env: &FlowEnv<'_>, float: usi
     let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, float);
     let (top, bottom) = super::float_extent(document, float);
     (top - relative, bottom - relative)
+}
+
+/// Records how far the lines of the paragraph `block_id`, which holds the
+/// text `candidate` at `text`, moved in all when the walk moves them down by
+/// `shift` to the top of `page`, beside the floats of its formatting context
+/// that the walk grew (see [`super::float_resumption::LineGrowth`]).
+fn record_lines_beside_grown_floats(
+    document: &mut LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    candidate: &PageCandidate,
+    text: &TextPosition,
+    block_id: usize,
+    shift: f32,
+    page: u32,
+) {
+    if document.context.float_line_growth.is_empty()
+        || candidate.context.is_float_descendant()
+        || candidate.context.is_out_of_flow_descendant()
+    {
+        return;
+    }
+    let moved = document
+        .context
+        .paragraph_line_moves
+        .entry(block_id)
+        .or_default();
+    *moved += shift;
+    let lines_shift = *moved;
+    let context = super::float_context_root(document, env.cascade, block_id, env.body_id);
+    let text_shift = text.effective_y - text.first_line_shift - candidate.raw_y;
+    super::raise_beside_shift(
+        document,
+        context,
+        env.page_origins.origin(page),
+        text_shift + lines_shift,
+    );
 }

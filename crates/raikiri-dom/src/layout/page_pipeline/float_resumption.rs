@@ -29,6 +29,27 @@ pub(crate) struct Boundary {
     pub(crate) relative_offset: f32,
 }
 
+/// How a float grew when the page walk moved its content down past page
+/// edges, and how far the walk moved the flow beside it.
+///
+/// Chromium breaks the lines beside the float on each later page against the
+/// part of the float that continues there. The float laid out unbroken ends
+/// higher, by its growth less how much further the walk moved the flow
+/// beside its end than the float's top: the lines that follow, up to the
+/// float's new end, are broken beside it again (see [`Plan::line_extent`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineGrowth {
+    /// How much the float grew.
+    pub(crate) grown: f32,
+    /// How far the walk moved the float's top.
+    pub(crate) start_shift: f32,
+    /// The root of the float's formatting context.
+    pub(crate) context: usize,
+    /// How far the walk moved the last of the in-flow content after the
+    /// float in its formatting context that starts above the float's end.
+    pub(crate) beside_shift: f32,
+}
+
 /// A bounded re-layout's local placements and consumed clearance boundaries.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Plan {
@@ -56,6 +77,10 @@ pub(crate) struct Plan {
     /// margin-box top of a float. Layout places them there in place of the
     /// clearance the break gives them.
     break_tops: HashMap<usize, f32>,
+    /// Floats that the page walk grew past a page edge, each with how far
+    /// below its end laid out unbroken the lines beside it are broken against
+    /// it (see [`LineGrowth`]).
+    line_extents: HashMap<usize, f32>,
 }
 
 impl Plan {
@@ -66,6 +91,15 @@ impl Plan {
             && self.margin_flows.is_empty()
             && self.closed.is_empty()
             && self.break_tops.is_empty()
+            && self.line_extents.is_empty()
+    }
+
+    /// How far below the end of the float `node`, laid out unbroken, the
+    /// lines beside it are broken against it: the part of the float that the
+    /// page walk moved past a page edge and that the lines beside it did not
+    /// move past with it.
+    pub(crate) fn line_extent(&self, node: usize) -> Option<f32> {
+        self.line_extents.get(&node).copied()
     }
 
     /// Where a box after a forced break starts the page the break opens,
@@ -318,6 +352,18 @@ impl Plan {
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
+        // A float keeps the extent first planned for it: the lines broken
+        // against it move as far again, and a new extent would break them
+        // anew.
+        let planned = &document.context.float_resumptions.line_extents;
+        for (&float, growth) in &document.context.float_line_growth {
+            let extent = growth.grown - (growth.beside_shift - growth.start_shift).max(0.0);
+            if let Some(&extent) = planned.get(&float) {
+                plan.line_extents.insert(float, extent);
+            } else if extent > 0.001 {
+                plan.line_extents.insert(float, extent);
+            }
+        }
         plan
     }
 

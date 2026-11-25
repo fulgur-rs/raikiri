@@ -401,6 +401,51 @@ impl BlockContext<'_> {
         local
     }
 
+    /// Breaks the lines below the float placed at `position` with the
+    /// margin-box `size`, down to `extent` below it, against it as if it
+    /// reached that far (see `FloatContext::extend_for_lines`).
+    pub(crate) fn extend_float_for_lines(
+        &mut self,
+        position: Point<f32>,
+        size: Size<f32>,
+        direction: FloatDirection,
+        extent: f32,
+    ) {
+        let absolute = Point {
+            x: position.x + self.border_insets[0],
+            y: position.y + self.origin,
+        };
+        Arc::make_mut(&mut self.owner.floats).extend_for_lines(
+            absolute,
+            size,
+            direction,
+            absolute.y + size.height + extent,
+        );
+    }
+
+    /// The inline edges, from the border-box start, that the bands below
+    /// floats which lines are broken against leave a line from `from` that
+    /// is `height` tall: the start the left bands push it past and the end
+    /// the right bands pull it before.
+    pub(crate) fn line_extension_edges(&self, from: f32, height: f32) -> [Option<f32>; 2] {
+        let top = self.origin + from;
+        let bottom = top + height.max(0.0);
+        let mut edges = [None::<f32>; 2];
+        for band in self.owner.floats.line_extensions() {
+            if band.top >= bottom.max(top + 0.001) || band.bottom <= top {
+                continue;
+            }
+            let edge = band.edge - self.border_insets[0];
+            let slot = &mut edges[band.direction as usize];
+            *slot = Some(match (band.direction, *slot) {
+                (_, None) => edge,
+                (FloatDirection::Left, Some(other)) => other.max(edge),
+                (FloatDirection::Right, Some(other)) => other.min(edge),
+            });
+        }
+        edges
+    }
+
     pub(crate) fn find_content_slot(
         &self,
         from: f32,

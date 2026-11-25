@@ -5767,6 +5767,7 @@ fn paginate_flow(
             } else {
                 state.place_box(document, &env, &candidate, &entry)
             };
+            record_flow_beside_grown_floats(document, cascade, body_id, &candidate);
             if let Err(halt) = placed {
                 halt.finish()?;
                 halted = true;
@@ -20555,6 +20556,34 @@ fn grow_ancestors_walk(
                 bounded = true;
             }
             let grown = size_delta;
+            if grown > 0.001 {
+                let context = float_context_root(document, cascade, child, body_id);
+                let start_shift = document
+                    .context
+                    .float_start_shifts
+                    .get(&child)
+                    .copied()
+                    .unwrap_or(0.0);
+                // Vertical lines run along the page edges: no line is broken
+                // against the part of the float on the next page.
+                let horizontal = [child, context].iter().all(|&id| {
+                    cascade.computed[id].writing_mode
+                        == raikiri_style::property::WritingMode::HorizontalTb
+                });
+                if horizontal {
+                    document
+                        .context
+                        .float_line_growth
+                        .entry(child)
+                        .and_modify(|growth| growth.grown += grown)
+                        .or_insert(float_resumption::LineGrowth {
+                            grown,
+                            start_shift,
+                            context,
+                            beside_shift: start_shift,
+                        });
+                }
+            }
             float_delta = size_delta;
             flow_delta = 0.0;
             size_delta = 0.0;
@@ -24118,4 +24147,56 @@ fn is_block_level_flow_box(display: DisplayValue) -> bool {
                 | DisplayValue::ListItem
                 | DisplayValue::Table
         )
+}
+
+/// Records, for the floats the page walk grew in the formatting context of
+/// the placed `candidate`, how far it moved the candidate when it starts
+/// above a float's end, and how far it moved each float's top (see
+/// [`float_resumption::LineGrowth`]).
+fn record_flow_beside_grown_floats(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+) {
+    if candidate.context.is_float_descendant() || candidate.context.is_out_of_flow_descendant() {
+        return;
+    }
+    let node_id = candidate.node_id;
+    let shift = current_abs_y(document, node_id) - candidate.raw_y;
+    if !candidate.context.is_text() && is_floating_box_for_pagination(document, cascade, node_id) {
+        document.context.float_start_shifts.insert(node_id, shift);
+        return;
+    }
+    if document.context.float_line_growth.is_empty() {
+        return;
+    }
+    let context = float_context_root(document, cascade, node_id, body_id);
+    raise_beside_shift(document, context, current_abs_y(document, node_id), shift);
+}
+
+/// Raises to `shift` how far the flow beside each float grown in the
+/// formatting context `context` moved, when the content moved that far
+/// starts at `top`, above the float's end.
+pub(super) fn raise_beside_shift(
+    document: &mut super::context::LayoutSession<'_>,
+    context: usize,
+    top: f32,
+    shift: f32,
+) {
+    let floats: Vec<usize> = document
+        .context
+        .float_line_growth
+        .iter()
+        .filter(|(_, growth)| growth.context == context)
+        .map(|(&float, _)| float)
+        .collect();
+    for float in floats {
+        let bottom = current_abs_y(document, float) + document.nodes[float].layout.size.height;
+        if top < bottom - 0.001
+            && let Some(growth) = document.context.float_line_growth.get_mut(&float)
+        {
+            growth.beside_shift = growth.beside_shift.max(shift);
+        }
+    }
 }

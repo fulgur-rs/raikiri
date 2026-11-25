@@ -984,6 +984,22 @@ pub(super) fn layout(
                 style.clear,
                 leading && collapse_start,
             );
+            if let Some(extent) = tree
+                .context
+                .float_resumptions
+                .line_extent(usize::from(child))
+            {
+                ctx.extend_float_for_lines(
+                    position,
+                    output.size + margin.sum_axes(),
+                    if style.float == Float::Left {
+                        FloatDirection::Left
+                    } else {
+                        FloatDirection::Right
+                    },
+                    extent,
+                );
+            }
             if track_margin_floats {
                 margin_float_tops.push((usize::from(child), position.y));
             }

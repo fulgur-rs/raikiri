@@ -4865,6 +4865,9 @@ pub(crate) fn commit_float(
     {
         ctx.set_page_start_float_floor(position.y);
     }
+    if let Some(extent) = tree.context.float_resumptions.line_extent(float.node) {
+        ctx.extend_float_for_lines(position, float.margin_box, float.direction, extent);
+    }
     if perform {
         let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
             (position.x, position.y)
