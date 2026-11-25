@@ -179,3 +179,29 @@ fn a_paragraph_beside_a_float_keeps_its_own_orphans_in_its_first_column() {
         assert_eq!(columns(body), expected, "{body}");
     }
 }
+
+/// A line never breaks, so balanced columns are at least as tall as the
+/// tallest line, even when shorter columns would hold the other lines.
+#[test]
+fn balanced_columns_are_as_tall_as_the_tallest_line() {
+    let line =
+        |text: &str, height: u32| format!("<span style='line-height:{height}px'>{text}</span>");
+    let lines = [
+        ("a", 10),
+        ("b", 10),
+        ("c", 10),
+        ("d", 10),
+        ("e", 100),
+        ("f", 10),
+        ("g", 10),
+    ]
+    .map(|(text, height)| line(text, height))
+    .join("<br>");
+    assert_eq!(
+        columns(&format!(
+            "<div style='columns:4;column-gap:0;width:400px;height:100px'>\
+             <div style='width:50px'><p style='margin:0;orphans:1;widows:1'>{lines}</p></div></div>"
+        )),
+        "a b c d | e | f g"
+    );
+}

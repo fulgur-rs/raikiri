@@ -122,8 +122,15 @@ fn balanced_height(
     let count = extents.len();
     let first = (start + orphans.min(count - start)).max(start + 1);
     let last = count - widows.clamp(1, count - start);
+    // A line never breaks, so the columns are at least as tall as the
+    // tallest of them.
+    let tallest = extents[start..]
+        .iter()
+        .map(|(line_top, bottom)| bottom - line_top)
+        .fold(top + extents[start].1 - extents[start].0, f32::max);
     let floor = (top + extents[first - 1].1 - extents[start].0)
         .max(extents[count - 1].1 - extents[last].0)
+        .max(tallest)
         .min(height);
     let fits = |candidate: f32| break_lines(start, top, candidate).len() <= columns;
     if fits(floor) || !fits(height) {
