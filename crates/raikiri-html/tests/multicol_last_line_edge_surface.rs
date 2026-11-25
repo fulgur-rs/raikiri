@@ -204,3 +204,16 @@ fn the_padding_below_a_wrapper_goes_on_alone_in_the_next_column() {
         assert_eq!(layout_of(body), expected, "{body}");
     }
 }
+
+#[test]
+fn padding_below_a_wrapper_taller_than_a_column_stays_whole() {
+    // The padding goes whole to the second column and runs past its end, so
+    // the box after it starts the third.
+    let body = "<div class=m style='columns:3;width:99px'>\
+                <div style='padding-bottom:150px;background:green'><div>Q</div></div>\
+                <div class=z>Z</div></div>";
+    assert_eq!(
+        page_of(body, 0).0,
+        "Q@0,20 Z@66,0 | (0,0,33,50)(33,0,33,100)"
+    );
+}

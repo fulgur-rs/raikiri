@@ -28,6 +28,10 @@ pub(super) struct Placement {
     /// Whether the entry is a box with no lines that the column ends slice:
     /// each piece but the last fills its column to the end.
     pub(super) sliced: bool,
+    /// Whether the entry is the padding below the last box of a wrapper,
+    /// which went whole to the next column, as the rest of its column was
+    /// too short for it.
+    pub(super) moved_whole: bool,
 }
 
 impl Group {
@@ -81,9 +85,7 @@ impl Group {
         // it leaves, as a paragraph broken there does.
         // One whose padding below went whole to a later column ends in the
         // column it leaves where its content does (Chromium).
-        let padding_moved = end.sliced
-            && end.entry_column == first.first_column
-            && end.first_column > end.entry_column;
+        let padding_moved = end.moved_whole && end.entry_column == first.first_column;
         let first_height = if end_column == first.first_column {
             end_y - first.first_y
         } else if padding_moved {
@@ -101,6 +103,7 @@ impl Group {
             entry_column: start.entry_column,
             entry_y: start.entry_y,
             sliced: false,
+            moved_whole: false,
         })
     }
 
@@ -1521,6 +1524,7 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: false,
+                moved_whole: false,
             });
             continue;
         }
@@ -1604,6 +1608,7 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: true,
+                moved_whole: false,
             });
             continue;
         }
@@ -1614,22 +1619,17 @@ fn fill_chunk_with(
             // whole to the next column when the rest of this one is too short
             // for it, as the edge below a paragraph's last line does
             // (Chromium). Balanced columns grow instead.
-            if paragraph.closes
+            // Padding taller than a column stays whole there, overflowing
+            // its end, as the edge below a paragraph's last line does.
+            let moved_whole = paragraph.closes
                 && context.column_count == usize::MAX
                 && column_has_content
-                && top + left > height + f32::EPSILON
-            {
+                && top + left > height + f32::EPSILON;
+            if moved_whole {
+                // These columns go on past the last one, so there is always
+                // a next column.
                 maximum = maximum.max(cursor);
                 column = column.checked_add(1)?;
-                if column >= context.column_count {
-                    return Some(Chunk {
-                        group: finish_group(placements, height),
-                        next: Some(FlowCursor {
-                            paragraph: paragraph_index,
-                            line: 0,
-                        }),
-                    });
-                }
                 top = 0.0;
                 column_has_content = false;
             }
@@ -1658,7 +1658,8 @@ fn fill_chunk_with(
                     if fragments.len() >= MAX_SLICED_PIECES {
                         return None;
                     }
-                    let used = left.min(room);
+                    let used = if moved_whole { left } else { left.min(room) };
+                    overflowed |= used > room + f32::EPSILON;
                     if fragments.is_empty() {
                         (first_column, first_y, first_height) = (column, top, used);
                     }
@@ -1714,6 +1715,7 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: true,
+                moved_whole,
             });
             continue;
         }
@@ -1806,6 +1808,12 @@ fn fill_chunk_with(
                 && !column_has_content
                 && !paragraph.cloned
                 && !strict;
+            // The edge of the paragraph itself may fit below the line, and
+            // only the padding of the wrappers after it not: the edge then
+            // stays with the line.
+            let edge_split = edge_alone
+                && paragraph.extents[line_count - 1].1 - origin + lead + paragraph.edge_end
+                    > available + f32::EPSILON;
             if edge_alone {
                 end = line_count;
             }
@@ -1832,7 +1840,7 @@ fn fill_chunk_with(
                 first_y = top;
                 continue;
             }
-            let trail = if end == line_count && !edge_alone || paragraph.cloned {
+            let trail = if end == line_count && !edge_split || paragraph.cloned {
                 paragraph.edge_end
             } else {
                 0.0
@@ -1861,7 +1869,7 @@ fn fill_chunk_with(
             column_has_content = true;
             maximum = maximum.max(cursor);
             start = end;
-            if edge_alone && paragraph.edge_end > 0.0 {
+            if edge_split {
                 // The piece that holds the edge alone holds no line.
                 column = column
                     .checked_add(1)
@@ -1892,6 +1900,7 @@ fn fill_chunk_with(
                         entry_column,
                         entry_y,
                         sliced: false,
+                        moved_whole: false,
                     });
                     return Some(Chunk {
                         group: finish_group(placements, height),
@@ -1916,6 +1925,7 @@ fn fill_chunk_with(
             entry_column,
             entry_y,
             sliced: false,
+            moved_whole: false,
         });
     }
     let used = maximum.max(if trailing_margin {

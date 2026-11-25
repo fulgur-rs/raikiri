@@ -3010,6 +3010,7 @@ fn sliced_leaf_placement(
         entry_column: column,
         entry_y: top,
         sliced: true,
+        moved_whole: false,
     })
 }
 
