@@ -562,3 +562,50 @@ fn a_box_that_clears_a_float_below_a_cut_margin_follows_it() {
         assert_eq!((words.as_str(), pages), expected, "{body}");
     }
 }
+
+#[test]
+fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
+    let a = "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>";
+    for (before, after, expected) in [
+        // A box that also clears an earlier float on the other side stays
+        // below that float's end.
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,50 X@1:0,60", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:120px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,20 X@1:0,30", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:250px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@2:0,50 X@2:0,60", 3),
+        ),
+        // One that clears only the float below the margin follows it.
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:left'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // The box is found past an out-of-flow box and into a contents
+        // wrapper.
+        (
+            "",
+            "<div style='position:absolute'></div><div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        (
+            "",
+            "<div style='display:contents'><div style='clear:left'>S</div></div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+    ] {
+        let body = format!("{before}{a}{after}");
+        let (words, pages) = words_and_pages(&body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
