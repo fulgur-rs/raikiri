@@ -34,6 +34,12 @@ use crate::node::{
     Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, TextContent,
 };
 
+#[derive(Debug)]
+struct WindowSourceIds {
+    source: Vec<usize>,
+    local: HashMap<usize, usize>,
+}
+
 #[derive(Clone, Copy, Debug)]
 /// Positioning input retained when pagination changes the containing block.
 pub(crate) struct OofPlacement {
@@ -248,6 +254,8 @@ pub struct Document {
     base_url_inputs: base_url::Tracker,
     stylesheet_revision: stylesheet_source::Tracker,
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
+    window_source_ids: Option<Arc<WindowSourceIds>>,
+    pub(crate) window_columns: Option<crate::layout::table::WindowColumns>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
@@ -595,6 +603,8 @@ impl Document {
             base_url_inputs: Default::default(),
             stylesheet_revision: Default::default(),
             stylesheet_sources: HashMap::new(),
+            window_source_ids: None,
+            window_columns: None,
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             inline_svg_cache: Default::default(),
@@ -2094,6 +2104,8 @@ impl Document {
             base_url_inputs: _,
             stylesheet_revision: _,
             stylesheet_sources,
+            window_source_ids: _,
+            window_columns: _,
             table_objects: _,
             page_projection: _,
             inline_svg_cache: _,
@@ -3096,6 +3108,36 @@ impl Document {
     /// as many nodes again; call this once the tree is complete.
     pub fn shrink_node_storage(&mut self) {
         self.nodes.shrink_to_fit();
+    }
+
+    /// Associate a restored window's arena entries with their original source nodes.
+    #[doc(hidden)]
+    pub fn set_window_source_ids(&mut self, source: Vec<usize>) {
+        assert_eq!(source.len(), self.node_count());
+        let local = source
+            .iter()
+            .enumerate()
+            .map(|(local, &id)| (id, local))
+            .collect();
+        self.window_source_ids = Some(Arc::new(WindowSourceIds { source, local }));
+    }
+
+    /// Translate a window arena entry to its original source node.
+    #[doc(hidden)]
+    pub fn source_node_index(&self, local: usize) -> Option<usize> {
+        match &self.window_source_ids {
+            Some(ids) => ids.source.get(local).copied(),
+            None => (local < self.node_count()).then_some(local),
+        }
+    }
+
+    /// Resolve a source node in the current window.
+    #[doc(hidden)]
+    pub fn local_node_index(&self, source: usize) -> Option<usize> {
+        match &self.window_source_ids {
+            Some(ids) => ids.local.get(&source).copied(),
+            None => (source < self.node_count()).then_some(source),
+        }
     }
 
     /// Arena index of the Document root (always 0).

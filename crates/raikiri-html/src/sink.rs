@@ -6,6 +6,8 @@
 //! entry points use a private budget-aware constructor; callers that drive
 //! this sink through `parse_with_sink` own the node-allocation policy.
 
+pub(crate) mod row_store;
+
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell};
 use std::rc::Rc;
@@ -38,6 +40,7 @@ pub struct RaikiriTreeSink {
     pub(crate) snapshot_calls: Cell<usize>,
     #[cfg(test)]
     pub(crate) traced_handle_calls: Cell<usize>,
+    row_capture: RefCell<Option<Rc<RefCell<row_store::RowCapture>>>>,
     document: RefCell<Document>,
     /// Handle → full QualName (namespace + local name). This backs the
     /// `Ref<'_, QualName>` returned by `elem_name()`. On `finish()`, copy only
@@ -156,6 +159,7 @@ impl RaikiriTreeSink {
             snapshot_calls: Cell::new(0),
             #[cfg(test)]
             traced_handle_calls: Cell::new(0),
+            row_capture: RefCell::new(None),
             document: RefCell::new(Document::new()),
             qual_names: RefCell::new({
                 let mut names = FxHashMap::default();
@@ -732,7 +736,10 @@ impl TreeSink for RaikiriTreeSink {
         // Do not create a doctype node yet; a separate callback reports quirks_mode.
     }
 
-    fn pop(&self, _node: &usize) {
+    fn pop(&self, node: &usize) {
+        if let Some(capture) = self.row_capture.borrow().as_ref() {
+            self.record_closed_table_row(*node, capture);
+        }
         if self.max_open_depth.is_some() {
             self.open_depth.set(self.open_depth.get().saturating_sub(1));
         }

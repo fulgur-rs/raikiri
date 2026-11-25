@@ -10,6 +10,26 @@
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StreamingDiagnostics {
+    /// Compact table inputs attempted at the first checkpoint.
+    pub table_inputs: u32,
+    /// Finished inputs with a replayable table structure.
+    pub table_structures: u32,
+    /// Replayable tables accepted by the stylesheet check.
+    pub table_styles: u32,
+    /// Accepted tables with a complete pagination plan.
+    pub table_plans: u32,
+    /// Wall time spent restoring and laying out windows to measure columns.
+    pub table_measure_time: std::time::Duration,
+    /// Wall time spent validating page boundaries, including any tentative painting.
+    pub table_plan_time: std::time::Duration,
+    /// Portion of planning spent assembling and laying out the document windows.
+    pub table_window_layout_time: std::time::Duration,
+    /// Portion of planning spent in the sink's tentative painting callback.
+    pub table_stage_time: std::time::Duration,
+    /// Wall time spent restoring, laying out, and delivering planned windows.
+    pub table_delivery_time: std::time::Duration,
+    /// Pages delivered from a table whose body rows were spooled to disk.
+    pub table_window_pages: u32,
     /// Nodes retained by the parser when parsing finished.
     pub parser_nodes: u64,
     /// Checkpoint snapshots taken after a body candidate was created.

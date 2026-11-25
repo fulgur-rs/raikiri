@@ -387,6 +387,8 @@ impl DocumentLayout {
             self.out.page_styles.get(i + 1)
         };
         Page {
+            window_node_ids: false,
+            document_index: page_index,
             slice: &self.out.slices[i],
             geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],

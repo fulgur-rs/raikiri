@@ -47,6 +47,7 @@ pub struct OverflowClip {
 #[derive(Debug, Clone, Copy)]
 pub struct Fragment<'a> {
     item: &'a PageFragmentItem,
+    source: NodeId,
     origin: (f32, f32),
     overflow_clip: Option<PaintClip>,
 }
@@ -55,6 +56,7 @@ impl<'a> Fragment<'a> {
     pub(crate) fn new(item: &'a PageFragmentItem, content_box: PageFragmentRect) -> Self {
         Self {
             item,
+            source: item.node_id,
             origin: (content_box.x, content_box.y),
             overflow_clip: None,
         }
@@ -91,7 +93,14 @@ impl<'a> Fragment<'a> {
 
     /// The source node.
     pub fn node(&self) -> NodeId {
-        self.item.node_id
+        self.source
+    }
+
+    /// Present this placement with the original document's source node.
+    #[doc(hidden)]
+    pub fn with_source_node(mut self, source: NodeId) -> Self {
+        self.source = source;
+        self
     }
 
     /// What this fragment places.

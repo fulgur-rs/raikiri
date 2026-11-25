@@ -27,6 +27,10 @@ struct Record {
     pages: Vec<(u32, Vec<NodeId>)>,
     events: Vec<Vec<NodeId>>,
     finished: bool,
+    expected_document: Option<crate::HtmlDocument>,
+    stage_before: Option<u32>,
+    staged: Vec<u32>,
+    discarded: usize,
     fail_on_page: Option<u32>,
     abort_on_page: Option<(u32, AbortController)>,
 }
@@ -42,6 +46,23 @@ impl PageSink for &mut Record {
         if self.fail_on_page == Some(page.index()) {
             return Err(std::io::Error::other("sink failed"));
         }
+        if let Some(expected) = &self.expected_document {
+            let view = page.page().dom();
+            for fragment in page.page().fragments() {
+                let id = fragment.node();
+                let source = expected.dom().get_node(id.0 as usize).unwrap();
+                assert_eq!(view.local_name(id), source.tag_name());
+                assert_eq!(view.text(id), source.text_content());
+                if source.tag_name() == Some("td") {
+                    assert!(page.page().computed(id).is_some());
+                    assert!(page.page().paint_transform(id).is_some());
+                    assert_eq!(
+                        view.parent(id).map(|p| p.0 as usize),
+                        expected.dom().parent_of(id.0 as usize)
+                    );
+                }
+            }
+        }
         let nodes = page.page().fragments().map(|f| f.node()).collect();
         self.pages.push((page.index(), nodes));
         self.events
@@ -52,6 +73,23 @@ impl PageSink for &mut Record {
             controller.abort();
         }
         Ok(())
+    }
+
+    fn stage_table_page(&mut self, page: StreamPage<'_>) -> std::io::Result<bool> {
+        if self.stage_before.is_some_and(|limit| page.index() < limit) {
+            self.staged.push(page.index());
+            if self.fail_on_page == Some(page.index()) {
+                return Err(std::io::Error::other("failed after staging"));
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn discard_staged_table_pages(&mut self) {
+        self.discarded += self.staged.len();
+        self.staged.clear();
     }
 
     fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
@@ -1176,4 +1214,350 @@ fn text_events_of_open_elements_wait_for_their_content() {
         panic!("text value: {event:?}");
     };
     assert!(text.ends_with("last words"), "{text:?}");
+}
+
+#[test]
+fn rejected_table_prefix_replays_with_original_page_and_consumer_events() {
+    use crate::sink::row_store::TableInput;
+    let html = format!("<table><tr><td>一<tr><td rowspan=2>b</tr></table>{PAGED}");
+    let mut direct = Record::default();
+    let expected = completed(stream(&html, 7, &mut direct, LayoutConfig::default()).unwrap());
+    let mut probe = TableInput::new(&Default::default()).unwrap();
+    let mut chunks = html.as_bytes().chunks(7);
+    assert!(chunks.by_ref().any(|chunk| !probe.feed(chunk).unwrap()));
+    let resources = RenderResources::new();
+    let mut recovered = Record::default();
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let mut fallback = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut recovered,
+    )
+    .consumer_properties(&registrations);
+    std::io::copy(&mut probe.into_replay().unwrap(), &mut fallback).unwrap();
+    for chunk in chunks {
+        fallback.feed(chunk).unwrap();
+    }
+    let actual = completed(fallback.finish().unwrap());
+    assert_eq!(actual.page_count, expected.page_count);
+    assert_eq!(recovered.pages, direct.pages);
+    assert_eq!(recovered.events, direct.events);
+    assert_eq!(
+        actual.anchors.get("c").unwrap().page_index,
+        expected.anchors.get("c").unwrap().page_index
+    );
+}
+
+#[test]
+fn table_window_delivery_observes_document_limit_abort_and_sink_failure() {
+    use crate::sink::row_store::TableInput;
+    let css = "<style>@page{size:240px 150px;margin:0}body{margin:0}table{border-spacing:0}tr{break-inside:avoid}td{height:22px}</style>";
+    let html = format!("{css}<table>{}</table>", "<tr><td>x".repeat(47));
+    let limits = RenderLimits::default();
+    let options = Default::default();
+    let mut input = TableInput::new(&limits).unwrap();
+    input.feed(html.as_bytes()).unwrap();
+    let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
+    let assemble =
+        |shell| crate::document_parse::assemble_document(shell, &options, &limits, None, None);
+    let render = |doc: &crate::HtmlDocument| {
+        layout(
+            doc,
+            Default::default(),
+            Default::default(),
+            LayoutOptions::new(),
+        )
+    };
+    let plan = windows
+        .plan_pages(std::num::NonZeroUsize::new(14).unwrap(), |shell| {
+            let doc = assemble(shell)?;
+            let LayoutStatus::Completed(result) = render(&doc)? else {
+                panic!("unexpected abort")
+            };
+            Ok((doc, result))
+        })
+        .unwrap()
+        .unwrap();
+    assert!(plan.len() > 1);
+    let mut output =
+        |record: &mut Record, max_pages, signal: Option<&raikiri_traits::AbortSignal>| {
+            deliver_table_windows(
+                &mut &mut *record,
+                &mut windows,
+                &plan,
+                max_pages,
+                signal,
+                |shell| render(&assemble(shell)?),
+            )
+        };
+    let mut record = Record::default();
+    assert!(matches!(
+        output(&mut record, Some(1), None),
+        Err(RenderError::LimitExceeded {
+            kind: LimitKind::Pages,
+            ..
+        })
+    ));
+    assert!(record.pages.is_empty());
+    let controller = AbortController::new();
+    let signal = controller.signal.clone();
+    record.abort_on_page = Some((1, controller));
+    assert!(matches!(
+        output(&mut record, None, Some(&signal)),
+        Ok(StreamStatus::Aborted)
+    ));
+    assert_eq!(record.pages.len(), 2);
+    let mut record = Record {
+        fail_on_page: Some(2),
+        ..Default::default()
+    };
+    assert!(matches!(
+        output(&mut record, None, None),
+        Err(RenderError::Io(_))
+    ));
+    assert_eq!(record.pages.len(), 2);
+    let mut record = Record::default();
+    let Ok(StreamStatus::Completed(count)) = output(&mut record, None, None) else {
+        panic!("delivery failed")
+    };
+    assert_eq!(
+        record.pages.iter().map(|page| page.0).collect::<Vec<_>>(),
+        (0..count).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn staged_table_windows_can_be_retained_or_replayed_from_page_zero() {
+    let html = format!("<!doctype html><table>{}</table>", "<tr><td>row".repeat(53));
+    let css = "@page{size:240px 150px;margin:0}body{margin:0}table{border-spacing:0}tr{break-inside:avoid}td{height:23px}";
+    let resources = RenderResources::new().stylesheet(css);
+    for limit in [3, u32::MAX] {
+        let mut record = Record {
+            stage_before: Some(limit),
+            ..Default::default()
+        };
+        let mut stream = StreamingLayout::new(
+            &resources,
+            Default::default(),
+            Default::default(),
+            &mut record,
+        );
+        let mut input = crate::sink::row_store::TableInput::new(&resources.parse_limits()).unwrap();
+        input.feed(html.as_bytes()).unwrap();
+        let extra = resources.extra_stylesheets();
+        let options = resources.parse_options(&extra, None);
+        let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
+        let StreamStatus::Completed(Some(count)) = stream_table_windows(
+            &stream.settings,
+            &mut windows,
+            std::num::NonZeroUsize::new(18).unwrap(),
+            &mut stream.sink,
+        )
+        .unwrap() else {
+            panic!("window plan was rejected")
+        };
+        assert!(count > 3);
+        let expected: Vec<_> = (0..count).collect();
+        if limit < count {
+            assert_eq!(record.discarded, limit as usize);
+            assert!(record.staged.is_empty());
+            assert_eq!(
+                record.pages.iter().map(|entry| entry.0).collect::<Vec<_>>(),
+                expected
+            );
+        } else {
+            assert_eq!(record.staged, expected);
+            assert!(record.pages.is_empty());
+        }
+    }
+}
+
+#[test]
+fn an_io_error_on_the_first_staged_page_discards_partial_sink_state() {
+    let html = format!(
+        "<!doctype html><style>td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
+        " ".repeat(54000),
+        "<tr><td>short</td></tr>".repeat(600)
+    );
+    let mut record = Record {
+        stage_before: Some(u32::MAX),
+        fail_on_page: Some(0),
+        ..Default::default()
+    };
+    assert!(matches!(
+        stream(&html, 8192, &mut record, Default::default()),
+        Err(RenderError::Io(_))
+    ));
+    assert_eq!(record.discarded, 1);
+    assert!(record.staged.is_empty());
+    assert!(record.pages.is_empty());
+    assert!(!record.finished);
+}
+
+#[test]
+fn a_late_split_row_discards_staged_pages_before_public_stream_replay() {
+    let html = format!(
+        "<!doctype html><style>@page{{size:180px 140px;margin:0}}body{{margin:0}}table{{width:120px;border-spacing:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}<tr><td>{}</table>",
+        " ".repeat(54000),
+        "<tr><td>short</td></tr>".repeat(600),
+        "word ".repeat(400)
+    );
+    let expected = batch_pages(&html);
+    let mut record = Record {
+        stage_before: Some(u32::MAX),
+        ..Default::default()
+    };
+    let summary = completed(stream(&html, 8192, &mut record, Default::default()).unwrap());
+    assert!(record.discarded > 0);
+    assert!(record.staged.is_empty());
+    assert_eq!(record.pages, expected);
+    assert_eq!(summary.page_count as usize, expected.len());
+}
+
+#[test]
+fn window_passes_use_the_streams_configured_stylesheet() {
+    let html = format!("<!doctype html><table>{}</table>", "<tr><td>row".repeat(53));
+    let css = "@page{size:240px 150px;margin:0}body{margin:0}table{border-spacing:0}tr{break-inside:avoid}td{height:23px}";
+    let resources = RenderResources::new().stylesheet(css);
+    let mut ordinary = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut ordinary,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    let reference = completed(stream.finish().unwrap());
+    assert!(reference.page_count > 3);
+
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    let mut input = crate::sink::row_store::TableInput::new(&resources.parse_limits()).unwrap();
+    input.feed(html.as_bytes()).unwrap();
+    let extra = resources.extra_stylesheets();
+    let options = resources.parse_options(&extra, None);
+    let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
+    let result = stream_table_windows(
+        &stream.settings,
+        &mut windows,
+        std::num::NonZeroUsize::new(18).unwrap(),
+        &mut stream.sink,
+    )
+    .unwrap();
+    assert!(
+        matches!(result, StreamStatus::Completed(Some(count)) if count == reference.page_count)
+    );
+    assert_eq!(record.pages.len(), ordinary.pages.len());
+}
+
+#[cfg(feature = "streaming-diagnostics")]
+#[test]
+fn public_html_stream_automatically_delivers_large_table_windows() {
+    let mut html = String::from(
+        "<!doctype html><style>@page{size:320px 420px;margin:0}body{margin:0}table{border-spacing:0}td{height:20px}tr{break-inside:avoid}</style><table>",
+    );
+    for row in 0..1400 {
+        use std::fmt::Write;
+        write!(html, "<tr><td>{row}</td><td>table window content</td></tr>").unwrap();
+    }
+    html.push_str("</table>");
+    let resources = RenderResources::new()
+        .stylesheet("@layer { :where(html) { font-family: sans-serif } } h1 { bookmark-level: 1 }");
+    let mut record = Record {
+        expected_document: Some(
+            crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap(),
+        ),
+        ..Default::default()
+    };
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    stream = stream.consumer_properties(&registrations);
+    for chunk in html.as_bytes().chunks(3001) {
+        stream.feed(chunk).unwrap();
+    }
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    assert!(summary.page_count > 2);
+    assert_eq!(
+        summary.diagnostics.table_window_pages, summary.page_count,
+        "{:?}",
+        summary.warnings
+    );
+    assert_eq!(record.pages.len(), summary.page_count as usize);
+    let document = record.expected_document.take().unwrap();
+    let LayoutStatus::Completed(reference) = layout(
+        &document,
+        Default::default(),
+        Default::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("reference layout aborted")
+    };
+    assert_eq!(reference.pages().len(), record.pages.len());
+    for (page, (index, actual)) in reference.pages().zip(&record.pages) {
+        assert_eq!(page.index(), *index);
+        let expected: Vec<_> = page.fragments().map(|fragment| fragment.node()).collect();
+        assert_eq!(expected.len(), actual.len(), "page {index}");
+        for (position, (expected, actual)) in expected.iter().zip(actual).enumerate() {
+            assert_eq!(expected, actual, "page {index}, fragment {position}");
+        }
+    }
+}
+
+#[cfg(feature = "streaming-diagnostics")]
+#[test]
+fn failing_public_table_sink_does_not_interrupt_another_document() {
+    let ready = std::sync::Barrier::new(2);
+    std::thread::scope(|threads| {
+        let run = |fail: bool| {
+            let text = if fail { "discarded" } else { "retained" };
+            let html = format!(
+                "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}table{{border-spacing:0}}tr{{break-inside:avoid}}td{{height:21px}}</style><!--{}--><table>{}</table>",
+                " ".repeat(54000),
+                format!("<tr><td>{text}</td><td>{text}</td></tr>").repeat(600)
+            );
+            let resources = RenderResources::new();
+            let mut record = Record {
+                fail_on_page: fail.then_some(1),
+                ..Default::default()
+            };
+            let mut stream = StreamingLayout::new(
+                &resources,
+                Default::default(),
+                Default::default(),
+                &mut record,
+            );
+            stream.feed(html.as_bytes()).unwrap();
+            let selected = stream.table_input.is_some();
+            ready.wait();
+            assert!(selected);
+            let result = stream.finish();
+            if fail {
+                assert!(matches!(result, Err(RenderError::Io(_))));
+                assert_eq!(record.pages.len(), 1);
+                assert!(!record.finished);
+            } else {
+                let summary = completed(result.unwrap());
+                assert!(record.finished);
+                assert!(summary.page_count > 2);
+                assert_eq!(summary.diagnostics.table_window_pages, summary.page_count);
+                assert_eq!(record.pages.len(), summary.page_count as usize);
+            }
+        };
+        let failing = threads.spawn(move || run(true));
+        run(false);
+        failing.join().unwrap();
+    });
 }
