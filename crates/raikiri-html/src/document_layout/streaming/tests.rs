@@ -1806,3 +1806,86 @@ fn document_page_limit_discards_staged_table_pages_before_returning_error() {
     assert!(record.staged.is_empty());
     assert!(!record.finished);
 }
+
+#[test]
+fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+            ))
+            .to_vec(),
+        )
+        .build()
+        .unwrap();
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![0, 0, 0, 255],
+            )))
+        }
+    }
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .image_pixel_source(&Pixels);
+    let mut doc = crate::parse_html_with_resources(b"<!doctype html><style>body{font:20px/20px Ahem}div::before{content:'B';background:red}div::after{content:url(https://example.test/x.png) / 'label'}</style><div>A</div>".as_slice(), &resources).unwrap();
+    let source_ids = (0..doc.dom().node_count()).map(|id| id + 1000).collect();
+    doc.uncascaded.dom.set_window_source_ids(source_ids);
+    let LayoutStatus::Completed(layout) = layout(
+        &doc,
+        Default::default(),
+        Default::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("layout aborted")
+    };
+    let owners = |page: crate::Page<'_>| {
+        page.paint_order_for_text_runs(&page.text_runs())
+            .into_iter()
+            .find_map(|event| match event {
+                crate::PaintEvent::GeneratedBox(piece) => {
+                    Some([piece.owner.0, piece.clip_owner.0, piece.line.root.0])
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let local = owners(layout.page(0).unwrap());
+    let source = owners(StreamPage::from_window(&layout, 0, 0, 1).page());
+    assert_eq!(source, local.map(|id| id + 1000));
+    let image_owners = |page: crate::Page<'_>| {
+        let image = page
+            .paint_order_for_text_runs(&page.text_runs())
+            .into_iter()
+            .find_map(|event| match event {
+                crate::PaintEvent::GeneratedImage(image) => Some(image),
+                _ => None,
+            })
+            .unwrap();
+        let (line, _) = page.generated_image_text_position(image).unwrap();
+        let raster = page.raster_generated_image(image, &Pixels).unwrap();
+        assert_eq!(
+            page.generated_alt_text(image.owner, image.kind).as_deref(),
+            Some("label")
+        );
+        [
+            image.owner.0,
+            line.root.0,
+            raster.node.0,
+            raster.clip_owner.unwrap().0,
+        ]
+    };
+    assert_eq!(
+        image_owners(StreamPage::from_window(&layout, 0, 0, 1).page()),
+        image_owners(layout.page(0).unwrap()).map(|id| id + 1000)
+    );
+}

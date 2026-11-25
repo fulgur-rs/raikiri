@@ -229,10 +229,12 @@ impl<'a> Page<'a> {
                         line.root = self.source_id(line.root);
                         *group = self.source_id(*group);
                     }
+                    PaintEvent::GeneratedImage(image) => image.owner = self.source_id(image.owner),
                     PaintEvent::MarkerImage(owner) => *owner = self.source_id(*owner),
                     PaintEvent::ColumnRule(rule) => rule.owner = self.source_id(rule.owner),
                     PaintEvent::GeneratedBox(b) => {
                         b.owner = self.source_id(b.owner);
+                        b.clip_owner = self.source_id(b.clip_owner);
                         b.line.root = self.source_id(b.line.root);
                     }
                     PaintEvent::LineBox(b) => {
@@ -518,8 +520,14 @@ impl<'a> Page<'a> {
         &self,
         image: GeneratedImageId,
     ) -> Option<(TextLineId, Option<usize>)> {
-        self.document
-            .page_generated_image_text_position(self.slice.page_index, image)
+        let (mut line, offset) = self.document.page_generated_image_text_position(
+            self.slice.page_index,
+            self.local_generated_image(image),
+        )?;
+        if self.window_node_ids {
+            line.root = self.source_id(line.root);
+        }
+        Some((line, offset))
     }
 
     /// The alternative text of the `content` of the `kind` pseudo-element of
@@ -537,6 +545,11 @@ impl<'a> Page<'a> {
             crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
             crate::GeneratedKind::Marker => raikiri_style::PseudoElem::Marker,
             _ => return None,
+        };
+        let owner = if self.window_node_ids {
+            self.local_id(owner)
+        } else {
+            owner
         };
         let element = usize::try_from(owner.0).ok()?;
         let snapshots = self
@@ -578,11 +591,19 @@ impl<'a> Page<'a> {
         self.place(placement, source)
     }
 
+    fn local_generated_image(&self, mut image: GeneratedImageId) -> GeneratedImageId {
+        if self.window_node_ids {
+            image.owner = self.local_id(image.owner);
+        }
+        image
+    }
+
     fn generated_image_placement(&self, image: GeneratedImageId) -> Option<Placement> {
+        let local = self.local_generated_image(image);
         let (url, content) = self
             .document
-            .page_generated_image(self.slice.page_index, image)?;
-        let owner = usize::try_from(image.owner.0).ok();
+            .page_generated_image(self.slice.page_index, local)?;
+        let owner = usize::try_from(local.owner.0).ok();
         let pseudo = match image.kind {
             crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
             _ => raikiri_style::PseudoElem::Before,
