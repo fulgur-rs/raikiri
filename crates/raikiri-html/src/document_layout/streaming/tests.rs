@@ -82,6 +82,11 @@ impl PageSink for &mut Record {
         self.offered_table_pages += 1;
         if self.stage_before.is_some_and(|limit| page.index() < limit) {
             self.staged.push(page.index());
+            if let Some((index, controller)) = &self.abort_on_page
+                && *index == page.index()
+            {
+                controller.abort();
+            }
             if self.fail_on_page == Some(page.index()) {
                 return Err(std::io::Error::other("failed after staging"));
             }
@@ -1584,4 +1589,34 @@ fn failing_public_table_sink_does_not_interrupt_another_document() {
         run(false);
         failing.join().unwrap();
     });
+}
+
+#[test]
+fn aborting_on_first_or_last_staged_page_discards_all_pending_output() {
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let pages = batch_pages(&html);
+    let last = pages.last().unwrap().0;
+    assert!(last > 1);
+    for index in [0, last] {
+        let controller = AbortController::new();
+        let mut config = LayoutConfig::default();
+        config.signal = Some(controller.signal.clone());
+        let mut record = Record {
+            stage_before: Some(u32::MAX),
+            abort_on_page: Some((index, controller)),
+            ..Default::default()
+        };
+        assert!(matches!(
+            stream(&html, 8192, &mut record, config).unwrap(),
+            StreamStatus::Aborted
+        ));
+        assert_eq!(record.discarded, index as usize + 1);
+        assert!(record.staged.is_empty());
+        assert!(record.pages.is_empty());
+        assert!(!record.finished);
+    }
 }
