@@ -321,3 +321,25 @@ pages at each lookahead of 14, 18 and 31. Poppler pdftoppm at 72 dpi
 produced identical PPM bytes per page in all four runs. SHA-256 over
 the concatenated binary SHA-256 digests of those PPM files in page order
 was 29b8796d2ef49b620a0289dfba4a7e3669dc00f13fea8aaa090ebe57f6eee9e5.
+
+After the staging-limit and source-ID changes (Raikiri 927abda1e), paired
+20,000-row PDF generation runs took 5.160 and 5.125 seconds at 91,276 and
+91,020 KiB peak RSS. At 40,000 rows the Fulgur
+runs took 10.273 and 10.271 seconds at 96,948 and 98,796 KiB.
+Fulgur diagnostics counted 318 and 635 window pages and zero snapshots.
+
+For RAIKIRI-1505, the same Fulgur release table_probe binary processed the
+same 20,000-row input and font in streaming, batch, batch, streaming order.
+Streaming took 5.389 and 5.146 seconds at 89,856 and 89,892 KiB peak RSS.
+Batch took 14.172 and 13.978 seconds at 1,187,644 and 1,189,104 KiB.
+These paired runs shared the machine with the workspace gate.
+The Fulgur checkout was 1ce46bc1, with Raikiri pinned at 927abda1e.
+Build the probe in the Fulgur checkout and supply the input, output and
+Ahem font paths as its first three arguments:
+
+```sh
+cargo build --locked --release -p fulgur-raikiri --example table_probe --features streaming-diagnostics
+for mode in streaming batch batch streaming; do
+    /usr/bin/time -f '%e s, %M KiB' "${CARGO_TARGET_DIR:-target}/release/examples/table_probe" "$input" "$output" "$font" "$mode"
+done
+```
