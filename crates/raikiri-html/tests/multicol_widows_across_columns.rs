@@ -3,6 +3,8 @@
 //! lines, and keeps the orphans before each break. The widows and orphans are
 //! those of the paragraph, which may differ from the container's. Orphans
 //! win when both cannot hold, and widows taller than a column are dropped.
+//! Balanced columns grow until the last piece of a paragraph holds its
+//! widows, or as many of them as the orphans leave.
 //!
 //! The lines are the ones Chromium lays out for the same documents (10px
 //! Ahem), shown per column, top to bottom, with `|` between the columns.
@@ -204,4 +206,78 @@ fn balanced_columns_are_as_tall_as_the_tallest_line() {
         )),
         "a b c d | e | f g"
     );
+}
+
+#[test]
+fn balanced_columns_grow_to_hold_the_orphans_and_the_widows() {
+    for (body, expected) in [
+        // The columns grow from 30px to 40px for the four widows.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl mn",
+        ),
+        // Widows that would leave fewer than the orphans give way to them.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij</div></div>"#,
+            "ab cd | ef gh ij",
+        ),
+        // A middle column may still hold fewer lines than the widows.
+        (
+            r#"<div style="columns:4;column-gap:0;width:400px"><div style="width:20px;orphans:2;widows:3">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij | kl mn",
+        ),
+        (
+            r#"<div style="columns:4;column-gap:0;width:400px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn op qr st</div></div>"#,
+            "ab cd ef gh | ij kl | mn op qr st",
+        ),
+        (
+            r#"<div style="columns:4;column-gap:0;width:400px"><div style="width:20px;orphans:3;widows:4">ab cd ef gh ij kl mn op qr st</div></div>"#,
+            "ab cd ef gh | ij kl mn | op qr st",
+        ),
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div style="width:20px;orphans:3;widows:5">ab cd ef gh ij kl mn op qr st</div></div>"#,
+            "ab cd ef gh ij | kl mn op qr st",
+        ),
+    ] {
+        assert_eq!(columns(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn balanced_columns_with_other_boxes_grow_to_hold_the_widows() {
+    for (body, expected) in [
+        // A box of set height whose lines the columns break between.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;height:70px;orphans:1;widows:4">ab cd ef gh ij kl mn</div><div>Y</div></div>"#,
+            "X ab cd ef | gh ij kl mn | Y",
+        ),
+        // Columns of a container of definite height balance below it.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;height:45px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl mn",
+        ),
+        // Widows taller than the container are dropped.
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px;height:35px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl mn</div></div>"#,
+            "ab cd ef | gh ij kl | mn",
+        ),
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;orphans:1;widows:4">ab cd ef gh ij kl mn</div><div>Y</div></div>"#,
+            "X ab cd ef | gh ij kl mn | Y",
+        ),
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;orphans:1;widows:6">ab cd ef gh ij kl mn</div><div>Y</div></div>"#,
+            "X ab | cd ef gh ij kl mn | Y",
+        ),
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl</div><div>Y</div></div>"#,
+            "ab cd | ef gh ij kl | Y",
+        ),
+        (
+            r#"<div style="columns:3;column-gap:0;width:300px"><div>X</div><div style="width:20px;orphans:2;widows:4">ab cd ef gh ij kl</div></div>"#,
+            "X ab cd | ef gh ij kl",
+        ),
+    ] {
+        assert_eq!(columns(body), expected, "{body}");
+    }
 }

@@ -650,9 +650,39 @@ fn balanced(
         .filter(|paragraph| paragraph.overflows)
         .map(|paragraph| paragraph.extents[0].1)
         .fold(0.0, f32::max);
+    // A break between the lines of a paragraph leaves at least its `orphans`
+    // before it and its `widows` after it, so the columns are at least as
+    // tall as those lines, as Chromium balances them. The widows give way to
+    // the orphans when the paragraph cannot hold both.
+    let breaks = paragraphs
+        .iter()
+        .flatten()
+        .filter_map(|paragraph| {
+            // The lines of a sliced box that a column end may break between.
+            let lines = if paragraph.held_extents.is_empty() {
+                &paragraph.extents
+            } else {
+                &paragraph.held_extents
+            };
+            (lines.len() > 1).then_some((paragraph, lines))
+        })
+        .map(|(paragraph, lines)| {
+            let count = lines.len();
+            let orphans = paragraph.orphans.clamp(1, count);
+            let widows = paragraph.widows.min(count - orphans).max(1);
+            (lines[orphans - 1].1 - lines[0].0).max(lines[count - 1].1 - lines[count - widows].0)
+        })
+        .fold(0.0, f32::max);
+    // When the lines a break needs already fit, the columns are that tall;
+    // otherwise the search starts from the monolithic boxes.
+    let floor = monolithic.max(breaks).min(ceiling);
+    let fits_floor = breaks > monolithic && fill_strictly(paragraphs, context, floor).is_some();
     // Trial work and storage depend on shaped lines, never the declared count.
-    let mut low = monolithic.min(ceiling);
-    let mut high = ceiling;
+    let (mut low, mut high) = if fits_floor {
+        (floor, floor)
+    } else {
+        (monolithic.min(ceiling), ceiling)
+    };
     for _ in 0..32 {
         if high - low <= 0.001 {
             break;
