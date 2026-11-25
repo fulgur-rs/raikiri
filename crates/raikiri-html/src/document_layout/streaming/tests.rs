@@ -1642,3 +1642,61 @@ fn aborting_on_first_or_last_staged_page_discards_all_pending_output() {
         assert!(!record.finished);
     }
 }
+
+#[test]
+fn unsupported_row_after_table_selection_replays_before_reading_the_suffix() {
+    let prefix = format!(
+        "<!doctype html><!--{}--><table>{}",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let suffix = "<tr class=late><td>終</td></tr></table><p id=end>after</p>";
+    let resources = RenderResources::new();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(prefix.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    for byte in suffix.as_bytes() {
+        stream.feed(std::slice::from_ref(byte)).unwrap();
+    }
+    assert!(stream.table_input.is_none());
+    let summary = completed(stream.finish().unwrap());
+    let expected = batch_pages(&format!("{prefix}{suffix}"));
+    assert_eq!(record.pages, expected);
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(
+        summary.anchors.get("end").unwrap().page_index,
+        expected.last().unwrap().0
+    );
+}
+
+#[test]
+fn sinks_without_staging_receive_final_table_pages_once_in_order() {
+    for rule in ["", "tr:nth-child(odd) td {height:32px}"] {
+        let html = format!(
+            "<!doctype html><style>@page{{size:200px 150px;margin:0}}td{{height:18px}}{rule}</style><!--{}--><table>{}</table>",
+            " ".repeat(54000),
+            "<tr><td>row</td></tr>".repeat(600),
+        );
+        let resources = RenderResources::new();
+        let sink = Shared::default();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            Default::default(),
+            Default::default(),
+            sink.clone(),
+        );
+        stream.feed(html.as_bytes()).unwrap();
+        assert!(stream.table_input.is_some());
+        assert!(sink.0.borrow().is_empty());
+        let summary = completed(stream.finish().unwrap());
+        let reference = batch_pages(&html);
+        assert_eq!(summary.page_count as usize, reference.len());
+        assert_eq!(*sink.0.borrow(), reference, "{rule}");
+    }
+}

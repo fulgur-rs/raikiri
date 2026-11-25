@@ -20,3 +20,16 @@ fn placing_table_row_at_exact_page_offset_preserves_target() {
         assert_eq!(current_abs_y(&document, cell), target);
     }
 }
+
+#[test]
+fn window_column_measurement_rejects_non_table_and_missing_nodes() {
+    use raikiri_style::{build_rule_tree, cascade};
+    for target in [1, usize::MAX] {
+        let mut doc = Document::new();
+        doc.append_element(Some(0), "div", None::<&str>);
+        let styles = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert!(
+            matches!(measure_window_columns(doc, &styles, PageBox::A4, target), Err(LayoutError::Internal { message }) if message.contains(&target.to_string()))
+        );
+    }
+}
