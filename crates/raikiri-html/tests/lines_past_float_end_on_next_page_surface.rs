@@ -109,3 +109,33 @@ fn the_lines_a_page_end_moves_past_a_float_on_a_later_page_take_the_full_width()
         assert_eq!(words(&body), expected, "{body}");
     }
 }
+
+#[test]
+fn a_long_paragraph_below_a_short_float_breaks_across_many_pages() {
+    // Only the line that the float narrowed takes a gap: the page edges the
+    // full-width lines after it cross move them with the room they have, so
+    // a paragraph many pages long still lays out. Chromium puts three lines
+    // of two words on each page, keeps two of them for the last page, and
+    // ends with three words.
+    let text = vec!["XX"; 100].join(" ");
+    let mut expected = vec![
+        "XX@0:40,0".to_string(),
+        "XX@0:40,30".to_string(),
+        "XX@0:40,60".to_string(),
+    ];
+    for page in 1..=17 {
+        let words: &[(u32, u32)] = match page {
+            16 => &[(0, 0), (60, 0), (0, 30), (60, 30)],
+            17 => &[(0, 0), (60, 0), (0, 30)],
+            _ => &[(0, 0), (60, 0), (0, 30), (60, 30), (0, 60), (60, 60)],
+        };
+        expected.extend(words.iter().map(|(x, y)| format!("XX@{page}:{x},{y}")));
+    }
+    expected.sort();
+    assert_eq!(
+        words(&format!(
+            "<div style='float:left;width:40px;height:95px'></div>{text}"
+        )),
+        expected.join(" ")
+    );
+}

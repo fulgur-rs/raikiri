@@ -20189,7 +20189,13 @@ fn note_line_gap(
     let floats_above = floats
         .into_iter()
         .all(|float| current_abs_y(document, float) < content_top + walked - 0.01);
-    if floats_above {
+    // Only a line that floats narrowed, or one after it, breaks differently
+    // where it lands: once the floats end above the lines, a page edge they
+    // cross moves them with the room they already have.
+    let narrowed = lines.lines[line..]
+        .iter()
+        .any(|line| line.inline_size() + line.remaining_inline_size() < lines.width - 0.5);
+    if floats_above && narrowed {
         document.context.line_gaps.push((root, top, delta));
     }
 }
