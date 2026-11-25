@@ -85,10 +85,9 @@ pub(crate) struct LayoutContext {
     /// Blocks the page walk moved whole to a later page with their lines,
     /// but not away from floats beside them.
     pub(crate) flows_moved_otherwise: Vec<usize>,
-    /// Paragraphs whose lines the page walk moved down past a page edge
-    /// while they were broken beside floats, each with the block offset of
-    /// the first line it moved, from the paragraph's content-box top, and
-    /// how far it moved it.
+    /// Each line the page walk moved down past a page edge while its
+    /// paragraph was broken beside floats: the paragraph, the line's block
+    /// offset from the paragraph's content-box top, and how far it moved.
     pub(crate) line_gaps: Vec<(usize, f32, f32)>,
     /// Where the content box of each paragraph the page walk judged starts
     /// on its page, from the page's origin.

@@ -4856,6 +4856,11 @@ fn resolve_document_images(
 /// does not lay the document out once for each box.
 const MAX_BREAK_TOP_ATTEMPTS: usize = 6;
 
+/// How many more page attempts the gaps above lines moved past page edges,
+/// away from the floats beside them, take at most, so that a document with
+/// many such lines is not laid out once for each.
+const MAX_LINE_GAP_ATTEMPTS: usize = 8;
+
 fn layout_pages_core(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -4896,8 +4901,9 @@ fn layout_pages_core(
     let mut line_extent_floats = HashSet::new();
     // Each gap left above a line that the walk moved past a page edge, away
     // from the floats beside it, takes one more attempt to break the lines
-    // after it where they land.
-    let mut line_gap_count = 0;
+    // after it where they land, up to a bound: a gap dropped and planned
+    // again counts once.
+    let mut line_gaps = HashSet::new();
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
     let mut break_top_settled = None;
@@ -4908,7 +4914,7 @@ fn layout_pages_core(
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
             + line_extent_floats.len()
-            + line_gap_count
+            + line_gaps.len().min(MAX_LINE_GAP_ATTEMPTS)
     {
         attempts += 1;
         let next = layout_pages_attempt(
@@ -4933,7 +4939,7 @@ fn layout_pages_core(
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
         line_extent_floats.extend(next.resumptions.line_extent_floats());
-        line_gap_count = line_gap_count.max(next.resumptions.line_gap_count());
+        line_gaps.extend(next.resumptions.planned_line_gaps());
         let known_break_tops = break_top_nodes.len();
         break_top_nodes.extend(next.resumptions.break_top_nodes());
         let break_tops_grew = break_top_nodes.len() > known_break_tops;
@@ -20136,7 +20142,9 @@ fn note_lines_left_beside_floats(
 /// there on are broken against the floats beside them where they land, as
 /// Chromium breaks them. A float the walk grew past a page edge already has
 /// the lines beside its continuation broken against it (see
-/// [`float_resumption::LineGrowth`]); its lines are left as they are. So are
+/// [`float_resumption::LineGrowth`]); the lines of its formatting context are
+/// left as they are, as are those beside a float planned to break them below
+/// its end. So are
 /// those of a paragraph with a float of its own below the gap, which the walk
 /// places in turn.
 fn note_line_gap(
@@ -20146,13 +20154,17 @@ fn note_line_gap(
     line: usize,
     delta: f32,
 ) {
-    if !document.context.float_line_growth.is_empty()
+    let floats = own_floats(document, cascade, root);
+    if document
+        .context
+        .float_line_growth
+        .iter()
+        .any(|(float, growth)| growth.context == root || floats.contains(float))
         || document
             .context
             .float_resumptions
             .line_extent_floats()
-            .next()
-            .is_some()
+            .any(|float| floats.contains(&float))
         || !std::iter::once(root)
             .chain(document.layout_ancestors(root).take_while(|&id| id != 0))
             .all(|id| lays_out_at_planned_top(document, cascade, id))
@@ -20170,11 +20182,14 @@ fn note_line_gap(
     let Some(top) = lines.lines.get(line).map(|line| line.block_offset()) else {
         return;
     };
+    // Where the walk had the line before this move: the floats it moved
+    // earlier are there too.
+    let walked = lines.line_top(line) - delta;
     let layout = &document.nodes[root].layout;
     let content_top = current_abs_y(document, root) + layout.border.top + layout.padding.top;
-    let floats_above = own_floats(document, cascade, root)
+    let floats_above = floats
         .into_iter()
-        .all(|float| current_abs_y(document, float) < content_top + top - 0.01);
+        .all(|float| current_abs_y(document, float) < content_top + walked - 0.01);
     if floats_above {
         document.context.line_gaps.push((root, top, delta));
     }

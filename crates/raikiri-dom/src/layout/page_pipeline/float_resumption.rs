@@ -103,10 +103,12 @@ impl Plan {
             && self.line_gaps.is_empty()
     }
 
-    /// The paragraphs that layout breaks with a gap above a line moved past
-    /// a page edge (see [`Self::line_gaps`]), each with how many gaps.
-    pub(crate) fn line_gap_count(&self) -> usize {
-        self.line_gaps.values().map(|(_, gaps)| gaps.len()).sum()
+    /// The gaps that layout leaves above lines moved past a page edge (see
+    /// [`Self::line_gaps`]), each as its paragraph and its block offset.
+    pub(crate) fn planned_line_gaps(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.line_gaps
+            .iter()
+            .flat_map(|(&root, (_, gaps))| gaps.iter().map(move |&(top, _)| (root, top.to_bits())))
     }
 
     /// The gaps that layout leaves in the paragraph `root`: the block offset
@@ -397,10 +399,14 @@ impl Plan {
         // where they did, and a move of that line itself is no new gap.
         plan.line_gaps
             .clone_from(&document.context.float_resumptions.line_gaps);
-        for root in &document.context.stale_line_gaps {
-            plan.line_gaps.remove(root);
+        // A paragraph whose gaps went stale takes no new one from the same
+        // walk: its lines were measured with the stale gaps above them, so it
+        // is judged again laid out without them.
+        let mut gapped: HashSet<usize> = HashSet::new();
+        for &root in &document.context.stale_line_gaps {
+            plan.line_gaps.remove(&root);
+            gapped.insert(root);
         }
-        let mut gapped = HashSet::new();
         for &(root, top, delta) in &document.context.line_gaps {
             let Some(&page_top) = document.context.paragraph_page_tops.get(&root) else {
                 continue;
