@@ -625,6 +625,11 @@ fn page_context_and_stateful_declarations_require_document_layout() {
             true,
         ),
         ("td, th {border:1px solid; padding:2px}", true),
+        ("body {font:12px/16px Ahem}", false),
+        (
+            "body {font-family:Ahem;font-size:12px;line-height:16px}",
+            true,
+        ),
         ("td {border-image-source:url(border.png)}", false),
         ("@page :first {size: A4}", false),
         ("@page :left {margin-left:32px}", false),
@@ -887,5 +892,66 @@ fn malformed_stored_cells_return_invalid_data_without_affecting_other_rows() {
             panic!("incomplete header was accepted")
         };
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+}
+
+#[test]
+fn implicit_eof_nodes_count_towards_the_parser_limit() {
+    let mut limits = raikiri_traits::RenderLimits::default();
+    limits.max_dom_nodes = Some(1);
+    let mut input = TableInput::new(&limits).unwrap();
+    assert!(input.feed(b"").unwrap());
+    assert!(matches!(
+        input.finish(),
+        Err(raikiri_traits::ParseError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::DomNodes,
+            limit: 1,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn table_style_eligibility_propagates_the_selector_budget() {
+    let mut limits = raikiri_traits::RenderLimits::default();
+    limits.max_style_selectors = Some(0);
+    let mut input = TableInput::new(&limits).unwrap();
+    input
+        .feed(b"<style>td {color:red}</style><table><tr><td>x</table>")
+        .unwrap();
+    let windows = input
+        .finish_windows(&Default::default())
+        .unwrap()
+        .0
+        .unwrap();
+    assert!(matches!(
+        windows.permits_window_styles(&[], &limits),
+        Err(raikiri_traits::RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::StyleSelectors,
+            limit: 0,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn complex_rows_discard_prior_record_counts_and_preserve_source_for_replay() {
+    for row in [
+        "<tr class=keep><td>b</tr>",
+        "<tr><td>a<!--note-->b</td></tr>",
+    ] {
+        let mut input = TableInput::new(&Default::default()).unwrap();
+        let prefix = "<table><tr><td>first</td></tr>";
+        assert!(input.feed(prefix.as_bytes()).unwrap());
+        assert_eq!(input.recorded_rows(), 1);
+        assert!(!input.feed(row.as_bytes()).unwrap());
+        assert_eq!(input.recorded_rows(), 0);
+        let mut replay = String::new();
+        input
+            .into_replay()
+            .unwrap()
+            .read_to_string(&mut replay)
+            .unwrap();
+        assert_eq!(replay, format!("{prefix}{row}"));
     }
 }

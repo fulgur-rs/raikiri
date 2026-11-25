@@ -30,6 +30,7 @@ struct Record {
     expected_document: Option<crate::HtmlDocument>,
     offered_table_pages: usize,
     paint_lines: Vec<Vec<NodeId>>,
+    fragment_rects: Vec<Vec<raikiri_traits::PaintRect>>,
     stage_before: Option<u32>,
     staged: Vec<u32>,
     discarded: usize,
@@ -50,6 +51,8 @@ impl PageSink for &mut Record {
         }
         if let Some(expected) = &self.expected_document {
             self.paint_lines.push(painted_line_roots(page.page()));
+            self.fragment_rects
+                .push(page.page().fragments().map(|f| f.rect()).collect());
             let view = page.page().dom();
             for fragment in page.page().fragments() {
                 let id = fragment.node();
@@ -1463,42 +1466,74 @@ fn a_late_split_row_discards_staged_pages_before_public_stream_replay() {
 #[test]
 fn window_passes_use_the_streams_configured_stylesheet() {
     let html = format!("<!doctype html><table>{}</table>", "<tr><td>row".repeat(53));
-    let css = "@page{size:240px 150px;margin:0}body{margin:0}table{border-spacing:0}tr{break-inside:avoid}td{height:23px}";
-    let resources = RenderResources::new().stylesheet(css);
-    let mut ordinary = Record::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
+    let css = "@page{size:240px 150px;margin:0}body{margin:0;font-family:Ahem;font-size:12px;line-height:16px}table{border-spacing:0}tr{break-inside:avoid}td{height:23px}";
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+            ))
+            .to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts).stylesheet(css);
+    let new_record = || Record {
+        expected_document: Some(
+            crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap(),
+        ),
+        ..Default::default()
+    };
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(reference) = layout(
+        &document,
         Default::default(),
         Default::default(),
-        &mut ordinary,
-    );
-    stream.feed(html.as_bytes()).unwrap();
-    let reference = completed(stream.finish().unwrap());
-    assert!(reference.page_count > 3);
-
-    let mut record = Record::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
-        Default::default(),
-        Default::default(),
-        &mut record,
-    );
-    let mut input = crate::sink::row_store::TableInput::new(&resources.parse_limits()).unwrap();
-    input.feed(html.as_bytes()).unwrap();
-    let extra = resources.extra_stylesheets();
-    let options = resources.parse_options(&extra, None);
-    let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
-    let result = stream_table_windows(
-        &stream.settings,
-        &mut windows,
-        std::num::NonZeroUsize::new(18).unwrap(),
-        &mut stream.sink,
+        LayoutOptions::new().resources(&resources),
     )
-    .unwrap();
-    assert!(
-        matches!(result, StreamStatus::Completed(Some(count)) if count == reference.page_count)
-    );
-    assert_eq!(record.pages.len(), ordinary.pages.len());
+    .unwrap() else {
+        panic!("batch layout aborted")
+    };
+    let pages: PageLog = reference
+        .pages()
+        .map(|p| (p.index(), p.fragments().map(|f| f.node()).collect()))
+        .collect();
+    let rects: Vec<Vec<_>> = reference
+        .pages()
+        .map(|p| p.fragments().map(|f| f.rect()).collect())
+        .collect();
+    let paint_lines: Vec<_> = reference.pages().map(painted_line_roots).collect();
+    assert!(pages.len() > 3);
+    assert_eq!(paint_lines.iter().map(Vec::len).sum::<usize>(), 53);
+
+    for width in [14, 18, 31] {
+        let mut record = new_record();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            Default::default(),
+            Default::default(),
+            &mut record,
+        );
+        let mut input = crate::sink::row_store::TableInput::new(&resources.parse_limits()).unwrap();
+        input.feed(html.as_bytes()).unwrap();
+        let extra = resources.extra_stylesheets();
+        let options = resources.parse_options(&extra, None);
+        let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
+        let result = stream_table_windows(
+            &stream.settings,
+            &mut windows,
+            std::num::NonZeroUsize::new(width).unwrap(),
+            &mut stream.sink,
+        )
+        .unwrap();
+        assert!(
+            matches!(result, StreamStatus::Completed(Some(count)) if count as usize == pages.len())
+        );
+        assert_eq!(record.fragment_rects, rects, "window width {width}");
+        assert_eq!(record.pages, pages, "window width {width}");
+        assert_eq!(record.paint_lines, paint_lines, "window width {width}");
+    }
 }
 
 #[test]
