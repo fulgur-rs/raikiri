@@ -4061,7 +4061,11 @@ impl PaginationState {
         if gap <= 0.0 || edge >= flow_y - 0.001 {
             return None;
         }
-        let delta = edge - flow_y;
+        // The earlier floats that run on past the edge keep their place.
+        let delta = float_top_at_edge(document, env, node_id, edge) - flow_y;
+        if delta >= -0.001 {
+            return None;
+        }
         // A block-level box after it that clears its side, a float among
         // them, keeps its clearance: it follows the float to the page edge,
         // as far as the other floats it clears let it.
@@ -7429,6 +7433,20 @@ fn other_float_bottoms(
     node_id: usize,
     clear: raikiri_style::property::ClearValue,
 ) -> Option<f32> {
+    earlier_floats(document, env, node_id)
+        .into_iter()
+        .filter(|&(_, side)| super::clears_float_side(clear, side))
+        .map(|(id, _)| float_flow_extent(document, env, id).1)
+        .reduce(f32::max)
+}
+
+/// The left and right floats shown before `node_id` in its formatting
+/// context, each with its side.
+fn earlier_floats(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+) -> Vec<(usize, FloatValue)> {
     let root = super::float_context_root(document, env.cascade, node_id, env.body_id);
     let mut stack: Vec<usize> = document.nodes[root]
         .children
@@ -7436,7 +7454,7 @@ fn other_float_bottoms(
         .rev()
         .copied()
         .collect();
-    let mut lowest = None::<f32>;
+    let mut floats = Vec::new();
     while let Some(id) = stack.pop() {
         if id == node_id {
             break;
@@ -7446,12 +7464,9 @@ fn other_float_bottoms(
             continue;
         }
         if is_floating_box_for_pagination(document, env.cascade, id) {
-            let float = env.cascade.computed[id].float;
-            if matches!(float, FloatValue::Left | FloatValue::Right)
-                && super::clears_float_side(clear, float)
-            {
-                let (_, bottom) = float_flow_extent(document, env, id);
-                lowest = Some(lowest.map_or(bottom, |lowest| lowest.max(bottom)));
+            let side = env.cascade.computed[id].float;
+            if matches!(side, FloatValue::Left | FloatValue::Right) {
+                floats.push((id, side));
             }
             continue;
         }
@@ -7463,5 +7478,51 @@ fn other_float_bottoms(
         }
         stack.extend(node.children.iter().rev().copied());
     }
-    lowest
+    floats
+}
+
+/// Where the float `node_id` starts when it moves up to the page edge
+/// `edge`: there, beside the earlier floats that run on past the edge when
+/// they leave it room where it stands, or else below them and below those
+/// it clears. One that would stand beside an earlier float on its own side,
+/// further in, starts below it too, as only its block position moves here.
+fn float_top_at_edge(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    edge: f32,
+) -> f32 {
+    let clear = env.cascade.computed[node_id].clear;
+    let root = super::float_context_root(document, env.cascade, node_id, env.body_id);
+    // The outer left and right of a float in its formatting context.
+    let span = |id: usize| {
+        let mut left = 0.0;
+        let mut current = id;
+        while current != root {
+            left += document.nodes[current].layout.location.x;
+            match document.layout_parent_of(current) {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        }
+        let layout = &document.nodes[id].layout;
+        (
+            left - layout.margin.left,
+            left + layout.size.width + layout.margin.right,
+        )
+    };
+    let (start, end) = span(node_id);
+    let mut top = edge;
+    for (id, other) in earlier_floats(document, env, node_id) {
+        let bottom = float_flow_extent(document, env, id).1;
+        if bottom <= edge + 0.001 {
+            continue;
+        }
+        let (other_start, other_end) = span(id);
+        let meets = other_start < end - 0.001 && start < other_end - 0.001;
+        if meets || super::clears_float_side(clear, other) {
+            top = top.max(bottom);
+        }
+    }
+    top
 }

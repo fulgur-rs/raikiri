@@ -648,3 +648,38 @@ fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
         "{body}"
     );
 }
+
+#[test]
+fn a_float_below_a_cut_margin_keeps_clear_of_the_floats_that_run_past_the_edge() {
+    for (body, expected) in [
+        // One that clears an earlier float, or does not fit beside it,
+        // starts below it.
+        (
+            "<div style='float:right;width:90px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px;clear:right'>F</div>",
+            "R@0:10,0 A@0:0,0 F@1:0,50",
+        ),
+        (
+            "<div style='float:right;width:90px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "R@0:10,0 A@0:0,0 F@1:0,50",
+        ),
+        (
+            "<div style='float:left;width:90px;height:150px'>L</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "L@0:0,0 A@0:90,0 F@1:0,50",
+        ),
+        // One that fits beside it starts at the edge.
+        (
+            "<div style='float:right;width:50px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "R@0:50,0 A@0:0,0 F@1:0,0",
+        ),
+    ] {
+        assert_eq!(words(body), expected, "{body}");
+    }
+}
