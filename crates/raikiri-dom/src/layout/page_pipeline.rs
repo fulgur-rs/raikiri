@@ -20176,12 +20176,11 @@ fn note_line_gap(
         .and_then(|node| node.ifc.as_ref())
         .and_then(|ifc| ifc.lines.as_ref())
         .filter(|lines| lines.beside_floats)
+        .filter(|lines| line < lines.lines.len())
     else {
         return;
     };
-    let Some(top) = lines.lines.get(line).map(|line| line.block_offset()) else {
-        return;
-    };
+    let top = lines.lines[line].block_offset();
     // Where the walk had the line before this move: the floats it moved
     // earlier are there too.
     let walked = lines.line_top(line) - delta;

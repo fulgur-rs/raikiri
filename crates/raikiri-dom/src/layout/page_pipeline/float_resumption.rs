@@ -408,15 +408,16 @@ impl Plan {
             gapped.insert(root);
         }
         for &(root, top, delta) in &document.context.line_gaps {
-            let Some(&page_top) = document.context.paragraph_page_tops.get(&root) else {
-                continue;
-            };
+            let page_top = document.context.paragraph_page_tops.get(&root);
             let below_gaps = plan
                 .line_gaps
                 .get(&root)
                 .and_then(|(_, gaps)| gaps.last())
                 .is_none_or(|&(last, moved)| top > last + moved + 0.01);
-            if below_gaps && gapped.insert(root) {
+            if let Some(&page_top) = page_top
+                && below_gaps
+                && gapped.insert(root)
+            {
                 plan.line_gaps
                     .entry(root)
                     .or_insert_with(|| (page_top, Vec::new()))
