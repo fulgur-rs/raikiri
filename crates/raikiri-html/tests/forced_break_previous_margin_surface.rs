@@ -597,8 +597,19 @@ fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
             "<div style='clear:both'>S</div><div>X</div>",
             ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
         ),
-        // The box is found past an out-of-flow box and into a contents
-        // wrapper.
+        // Nor does a float inside a box that holds its own floats.
+        (
+            "<div style='overflow:hidden'></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // The box is found past white space, a box that is not shown, an
+        // out-of-flow box and into a contents wrapper.
+        (
+            "",
+            " <div style='display:none'></div> <div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
         (
             "",
             "<div style='position:absolute'></div><div style='clear:left'>S</div><div>X</div>",
@@ -614,4 +625,14 @@ fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
         let (words, pages) = words_and_pages(&body);
         assert_eq!((words.as_str(), pages), expected, "{body}");
     }
+    // The box after a float at the end of a contents wrapper follows the
+    // wrapper.
+    let body = "<div style='height:50px;margin-bottom:150px'>A</div>\
+                <div style='display:contents'><div style='float:left;width:10px;height:10px'>F</div></div>\
+                <div style='clear:left'>S</div><div>X</div>";
+    assert_eq!(
+        words_and_pages(body),
+        ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20".to_string(), 2),
+        "{body}"
+    );
 }
