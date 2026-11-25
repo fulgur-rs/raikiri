@@ -88,6 +88,12 @@ fn the_lines_after_a_first_line_that_floats_put_on_a_later_page_start_the_next_p
             "SS@2:60,30 TT@2:0,30 UU@2:60,0 VV@2:0,0 WWWW@1:0,60 XX@0:40,60 \
              YY@0:40,30 ZZ@0:40,0",
         ),
+        // `break-inside: avoid` does not take the lines to the page after.
+        (
+            format!("{FLOAT}ZZ YY XX<div style='break-inside:avoid'>WWWW VV UU TT SS</div>"),
+            "SS@2:60,30 TT@2:0,30 UU@2:60,0 VV@2:0,0 WWWW@1:0,60 XX@0:40,60 \
+             YY@0:40,30 ZZ@0:40,0",
+        ),
         // A line that crosses the page end lower down.
         (
             "<div style='float:left;width:40px;height:150px'></div>ZZ YY XX\
