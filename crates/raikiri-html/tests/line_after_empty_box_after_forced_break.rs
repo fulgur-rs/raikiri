@@ -315,3 +315,29 @@ fn the_margins_of_empty_generated_blocks_of_contents_elements_join_those_kept() 
         ),
     ]);
 }
+
+/// Percentage margins of a generated block resolve against the content width
+/// of the block whose paragraph lays it out, and `position` and `float` do
+/// not apply to a `display: contents` element, whose generated blocks stay
+/// in the flow.
+#[test]
+fn generated_block_margins_resolve_against_the_content_box() {
+    assert_pages(&[
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:50%}</style><div style="width:20px;padding:0 40px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=g style="display:contents"></div></div><div>Z</div>"#,
+            &["T@40,0", "Z@0,20"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:40px}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=g style="display:contents;position:absolute"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,40"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:200%}</style><div class=g style="width:20px;padding:0 10px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div></div><div>Z</div>"#,
+            &["T@10,0", "Z@0,40"],
+        ),
+        (
+            r#"<style>.g::after{content:"";display:block;height:0;margin-bottom:40px}</style><div style="width:20px"><div style="break-after:page">T</div><div style="height:0;margin-bottom:20px"></div><div class=g style="display:contents;float:left"></div></div><div>Z</div>"#,
+            &["T@0,0", "Z@0,40"],
+        ),
+    ]);
+}

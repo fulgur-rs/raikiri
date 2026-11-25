@@ -9365,7 +9365,9 @@ fn forced_margin_reaches(
 /// `last`, when `last` ends each of them with no padding, border or used
 /// height to keep its block-end margin from theirs (CSS 2 §8.3.1). A line
 /// after `last` or a block `::after` with height keeps them apart too; an
-/// empty `::after` lets its own margins join them.
+/// empty block `::after`, and the empty generated blocks of the
+/// `display: contents` elements after `last`, let their own margins join
+/// them.
 fn ends_with_bottom_margin_of(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -9426,7 +9428,7 @@ fn generated_margins_after(
         .ifc_layout_node(node)
         .into_iter()
         .flat_map(|layout_node| {
-            let width = layout_node.layout.size.width;
+            let width = content_width(&layout_node.layout);
             layout_node
                 .ifc
                 .iter()
@@ -9457,14 +9459,12 @@ fn generated_boxes_after(
         .iter()
         .rev()
         .copied()
-        .filter(|&child| takes_part_in_flow(document, cascade, child))
+        .filter(|&child| flows_or_is_contents(document, cascade, child))
         .any(|child| {
             if child == last {
                 return true;
             }
-            let contents = document.nodes[child].kind() == NodeKind::Element
-                && document.nodes[child].display() == DisplayValue::Contents;
-            contents && {
+            is_contents_element(document, child) && {
                 ids.push(crate::generated_content::generated_node_id(
                     child,
                     PseudoElem::After,
@@ -9494,7 +9494,7 @@ fn last_box_past_phantom_lines(
         .iter()
         .rev()
         .copied()
-        .filter(|&child| takes_part_in_flow(document, cascade, child))
+        .filter(|&child| flows_or_is_contents(document, cascade, child))
         .find_map(
             |child| match sibling_adjacency::flow_box(document, cascade, child) {
                 sibling_adjacency::FlowBox::Phantom => None,
@@ -9514,6 +9514,17 @@ fn last_box_past_phantom_lines(
                 _ => Some(child),
             },
         )
+}
+
+/// The content-box width of a block laid out as `layout`: the containing
+/// block width that the percentage margins of its generated blocks resolve
+/// against (CSS 2 §8.3).
+fn content_width(layout: &raikiri_layout_geometry::BoxLayout) -> f32 {
+    layout.size.width
+        - layout.padding.left
+        - layout.padding.right
+        - layout.border.left
+        - layout.border.right
 }
 
 /// Whether the paragraph `root` lays out a line after its block child
@@ -9569,7 +9580,7 @@ fn generated_box_in_keeps_margins_apart(
     let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
     let vertical = document.context.pagination_on_transposed_axes;
     document.ifc_layout_node(paragraph).is_some_and(|node| {
-        let width = node.layout.size.width;
+        let width = content_width(&node.layout);
         // A block box the line loop placed holds lines or clearance, and
         // inline content puts text on a line; either keeps the margins
         // apart, like the content that `has_in_flow_content` counts.
@@ -13625,6 +13636,22 @@ fn last_flow_child(document: &Document, cascade: &CascadeResult, node_id: usize)
 
 /// Whether `node_id` is an element that takes part in the flow of its
 /// parent: neither floated nor absolutely positioned.
+/// Whether `node_id` is a `display: contents` element in the document: it
+/// has no box, so `position` and `float` do not apply to it, and its
+/// children and generated boxes take part in the flow of its box parent.
+fn is_contents_element(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.is_in_document()
+        && node.kind() == NodeKind::Element
+        && node.display() == DisplayValue::Contents
+}
+
+/// [`takes_part_in_flow`], or a `display: contents` element, whatever its
+/// `position` and `float`.
+fn flows_or_is_contents(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    is_contents_element(document, node_id) || takes_part_in_flow(document, cascade, node_id)
+}
+
 fn takes_part_in_flow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     node.is_in_document()
