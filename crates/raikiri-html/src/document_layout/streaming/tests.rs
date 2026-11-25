@@ -1741,3 +1741,68 @@ fn sinks_without_staging_receive_final_table_pages_once_in_order() {
         assert_eq!(*sink.0.borrow(), reference, "{rule}");
     }
 }
+
+#[test]
+fn registered_row_events_require_replay_before_any_table_page_is_staged() {
+    let html = format!(
+        "<!doctype html><style>tr{{bookmark-level:2}}</style><!--{}--><table>{}</table>",
+        " ".repeat(56000),
+        "<tr><td>x</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let mut record = Record {
+        stage_before: Some(u32::MAX),
+        ..Default::default()
+    };
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    )
+    .consumer_properties(&registrations);
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    assert_eq!(record.offered_table_pages, 0);
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let dom = document.dom();
+    let rows: Vec<_> = dom
+        .preorder(dom.root_index())
+        .filter(|&id| dom.get_node(id).unwrap().tag_name() == Some("tr"))
+        .map(|id| NodeId(id as u64))
+        .collect();
+    assert_eq!(rows.len(), 600);
+    assert_eq!(
+        record.events.into_iter().flatten().collect::<Vec<_>>(),
+        rows
+    );
+    assert_eq!(record.pages.len(), summary.page_count as usize);
+}
+
+#[test]
+fn document_page_limit_discards_staged_table_pages_before_returning_error() {
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let mut config = LayoutConfig::default();
+    let total = batch_pages(&html).len();
+    let limit = u32::try_from(total - 1).unwrap();
+    config.limits.max_document_pages = Some(limit);
+    let mut record = Record {
+        stage_before: Some(u32::MAX),
+        ..Default::default()
+    };
+    let result = stream(&html, 8192, &mut record, config);
+    assert!(
+        matches!(result, Err(RenderError::LimitExceeded { kind: LimitKind::Pages, limit: reported, actual }) if reported == u64::from(limit) && actual == total as u64)
+    );
+    assert_eq!(record.offered_table_pages, limit as usize);
+    assert_eq!(record.discarded, limit as usize);
+    assert!(record.pages.is_empty());
+    assert!(record.staged.is_empty());
+    assert!(!record.finished);
+}
