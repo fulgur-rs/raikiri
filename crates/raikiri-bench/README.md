@@ -343,3 +343,16 @@ for mode in streaming batch batch streaming; do
     /usr/bin/time -f '%e s, %M KiB' "${CARGO_TARGET_DIR:-target}/release/examples/table_probe" "$input" "$output" "$font" "$mode"
 done
 ```
+
+A fresh run of this Fulgur binary rendered the 20,000-row input through
+both public entry points. Each produced 318 pages. The SHA-256 of all PPM
+files concatenated in page order after rendering with `pdftoppm -r 72`
+was `6c3d892b17ed849f733620e14da7fed7acfea3c437873ad56d87d17a65f3594f`
+for both PDFs. Streaming diagnostics reported 318 window pages and zero
+parser snapshots.
+
+After the workspace gate finished, three fresh 20,000-row processes took
+5.103, 5.091 and 5.288 seconds at 89,380, 89,388 and 89,704 KiB peak RSS.
+The median was 5.103 seconds, 2.1% above five seconds. The workspace gate
+passed at a1eaffa8a against origin/main with zero uncovered added lines
+after its coverage exemptions (11 added lines exempt across the patch).
