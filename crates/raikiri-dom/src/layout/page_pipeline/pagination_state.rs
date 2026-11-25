@@ -4377,7 +4377,7 @@ impl PaginationState {
             };
             // The room that floats leave at the top of the paragraph, above
             // its first line: the content box holds it, but no line does.
-            let float_lead = {
+            let (float_lead, content_top) = {
                 let layout = &document.nodes[block_id].layout;
                 let content_top = block_effective_y(
                     document,
@@ -4389,11 +4389,14 @@ impl PaginationState {
                 ) + layout.border.top
                     + layout.padding.top;
                 let gap = text.effective_y + line_metrics[0].0 - content_top;
-                if floats_put_first_line_down(document, block_id, text_lines.get(node_id), gap) {
-                    gap
-                } else {
-                    0.0
-                }
+                let lead =
+                    if floats_put_first_line_down(document, block_id, text_lines.get(node_id), gap)
+                    {
+                        gap
+                    } else {
+                        0.0
+                    };
+                (lead, content_top)
             };
             // A paragraph that avoids a break inside it moves whole with the
             // edges when they fit a page together, along with the blocks it
@@ -4555,6 +4558,23 @@ impl PaginationState {
             // A block moved whole to the next page is judged once more from
             // there, for the lines that break again on the pages after it.
             let mut moved_whole = false;
+            // Floats that put the first line down past the end of the page
+            // the block's content starts on leave that top on its page, with
+            // the room above the line. The lines open a later fragment of
+            // the block, on the page the first of them is on, and break from
+            // there, as in Chromium: that fragment does not move the block
+            // whole, which keeps its top where it is, and its first line need
+            // not keep `orphans` with it, nor does `break-inside: avoid` take
+            // the lines to the page after.
+            let first_line_page =
+                page_origins.page_index_for_y(text.effective_y + line_metrics[0].0 + 0.001);
+            if lines_can_move
+                && float_lead > 0.0
+                && first_line_page > page_origins.page_index_for_y(content_top + 0.001)
+            {
+                page = page.max(first_line_page);
+                moved_whole = true;
+            }
             // Lines a clip hides after a move are left where they are.
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
