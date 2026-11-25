@@ -631,6 +631,10 @@ fn page_context_and_stateful_declarations_require_document_layout() {
         ("@page chapter {size: A4}", false),
         ("@page {counter-increment:page 3}", false),
         ("@page {@top-left {content:string(chapter)}}", false),
+        (
+            "@page {@bottom-center {content:counter(page); color:red}}",
+            false,
+        ),
         ("td {counter-increment: row}", false),
         ("table {position:fixed}", false),
         ("tr {page:chapter}", false),
@@ -686,5 +690,110 @@ fn spooled_row_ids_match_batch_after_repeated_compaction() {
             .parent_of(local)
             .and_then(|p| window.dom.source_node_index(p));
         assert_eq!(parent, dom.parent_of(source));
+    }
+}
+
+#[test]
+fn template_contents_survive_replay_after_row_compaction_is_declined() {
+    let mut input = String::from("<!doctype html><template><b>saved</b></template><table>");
+    input.push_str(&"<tr><td>x</td></tr>".repeat(80));
+    input.push_str("</table>");
+    let mut probe = TableInput::new(&Default::default()).unwrap();
+    assert!(!probe.feed(input.as_bytes()).unwrap());
+    let mut original = String::new();
+    probe
+        .into_replay()
+        .unwrap()
+        .read_to_string(&mut original)
+        .unwrap();
+    assert_eq!(original, input);
+    let parsed = crate::parse(original.as_bytes(), &Default::default()).unwrap();
+    let dom = &parsed.dom;
+    let contents = dom
+        .preorder(dom.root_index())
+        .find_map(|id| dom.get_node(id)?.template_contents())
+        .unwrap();
+    assert!(
+        dom.preorder(contents)
+            .any(|id| dom.get_node(id).unwrap().text_content() == Some("saved"))
+    );
+    assert_eq!(
+        dom.preorder(dom.root_index())
+            .filter(|&id| dom.get_node(id).unwrap().tag_name() == Some("tr"))
+            .count(),
+        80
+    );
+}
+
+#[test]
+fn table_input_reports_io_failure_while_recording_a_closed_row() {
+    let mut probe = TableInput::new(&Default::default()).unwrap();
+    let file = tempfile::NamedTempFile::new().unwrap();
+    if let RowCapture::Recording(store) = &mut *probe.capture.borrow_mut() {
+        store.file = BufWriter::with_capacity(1, File::open(file.path()).unwrap());
+    }
+    let result = probe.feed(b"<table><tr><td>first</td></tr><tr><td>second</td></tr>");
+    assert!(matches!(result, Err(raikiri_traits::ParseError::Io(_))));
+}
+
+#[test]
+fn truncated_row_storage_reports_an_incomplete_read() {
+    let mut store = RowStore::new().unwrap();
+    store.append(b"first").unwrap();
+    store.append(b"second").unwrap();
+    store.file.flush().unwrap();
+    store.file.get_ref().set_len(7).unwrap();
+    assert_eq!(
+        store.read_rows(1..2).unwrap_err().kind(),
+        io::ErrorKind::UnexpectedEof
+    );
+    assert_eq!(store.read_rows(0..1).unwrap(), b"first");
+}
+
+#[test]
+fn parser_repairs_survive_compaction_of_preceding_rows() {
+    for suffix in [
+        "misplaced text</table>",
+        "<div>fostered</div></table>",
+        "</table><b><p>one</b>two</p>",
+        "</table><html lang=ja><body id=late><math><annotation-xml encoding='text/html'><p>nested</p></annotation-xml></math>",
+    ] {
+        let prefix = format!(
+            "<!doctype html><table><tbody>{}",
+            "<tr><td>x</td></tr>".repeat(80)
+        );
+        let mut probe = TableInput::new(&Default::default()).unwrap();
+        assert!(probe.feed(prefix.as_bytes()).unwrap());
+        assert!(probe.feed(suffix.as_bytes()).unwrap());
+        let (shell, rows, _) = probe.finish().unwrap();
+        assert_eq!(rows.unwrap().row_source_ids.len(), 80);
+
+        let reference =
+            crate::parse(format!("{prefix}{suffix}").as_bytes(), &Default::default()).unwrap();
+        let retained = |doc: &crate::types::UncascadedDocument| {
+            let dom = &doc.dom;
+            let mut nodes = Vec::new();
+            for id in dom.preorder(dom.root_index()) {
+                let mut path = Vec::new();
+                let mut next = Some(id);
+                while let Some(i) = next {
+                    let node = dom.get_node(i).unwrap();
+                    path.push(node.tag_name().unwrap_or("").to_owned());
+                    next = dom.parent_of(i);
+                }
+                if path.iter().any(|tag| tag == "tr") {
+                    continue;
+                }
+                let node = dom.get_node(id).unwrap();
+                nodes.push((
+                    path,
+                    node.text_content().map(str::to_owned),
+                    node.attribute("id").map(str::to_owned),
+                    node.attribute("lang").map(str::to_owned),
+                ));
+            }
+            nodes
+        };
+        assert_eq!(retained(&shell), retained(&reference), "{suffix}");
     }
 }
