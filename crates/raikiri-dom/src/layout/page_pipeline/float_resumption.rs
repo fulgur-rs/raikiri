@@ -81,6 +81,13 @@ pub(crate) struct Plan {
     /// below its end laid out unbroken the lines beside it are broken against
     /// it (see [`LineGrowth`]).
     line_extents: HashMap<usize, f32>,
+    /// Paragraphs whose lines the page walk moved down past a page edge,
+    /// away from the floats beside them, each with the block offsets, from
+    /// the content-box top, of the lines it moved and how far it moved each:
+    /// layout leaves that gap above the line, so that the lines from there on
+    /// are broken against the floats beside them where they land, as Chromium
+    /// breaks them (see [`Self::line_gaps`]).
+    line_gaps: HashMap<usize, Vec<(f32, f32)>>,
 }
 
 impl Plan {
@@ -92,6 +99,21 @@ impl Plan {
             && self.closed.is_empty()
             && self.break_tops.is_empty()
             && self.line_extents.is_empty()
+            && self.line_gaps.is_empty()
+    }
+
+    /// The paragraphs that layout breaks with a gap above a line moved past
+    /// a page edge (see [`Self::line_gaps`]), each with how many gaps.
+    pub(crate) fn line_gap_count(&self) -> usize {
+        self.line_gaps.values().map(Vec::len).sum()
+    }
+
+    /// The gaps that layout leaves in the paragraph `root`: the block offset
+    /// of each line the page walk moved past a page edge, from the content-box
+    /// top as layout put it with the gaps before it, and how far the walk
+    /// moved it, in order.
+    pub(crate) fn line_gaps(&self, root: usize) -> &[(f32, f32)] {
+        self.line_gaps.get(&root).map_or(&[], Vec::as_slice)
     }
 
     /// The floats whose lines are broken against them below their end laid
@@ -362,6 +384,23 @@ impl Plan {
         // longer grows: the lines broken against it move as far again, and a
         // new extent, or none, would break them anew, so that the plan would
         // not settle.
+        // A paragraph keeps the gaps planned for it, and takes the first new
+        // move the walk makes below the line after its last gap: a gap moves
+        // the lines after it, so the later moves of the same walk no longer
+        // fall where they did, and a move of that line itself is no new gap.
+        plan.line_gaps
+            .clone_from(&document.context.float_resumptions.line_gaps);
+        let mut gapped = HashSet::new();
+        for &(root, top, delta) in &document.context.line_gaps {
+            let below_gaps = plan
+                .line_gaps
+                .get(&root)
+                .and_then(|gaps| gaps.last())
+                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
+            if below_gaps && gapped.insert(root) {
+                plan.line_gaps.entry(root).or_default().push((top, delta));
+            }
+        }
         plan.line_extents
             .clone_from(&document.context.float_resumptions.line_extents);
         for (&float, growth) in &document.context.float_line_growth {

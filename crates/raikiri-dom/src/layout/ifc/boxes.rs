@@ -867,6 +867,15 @@ fn run_boxes_segment(
     let mut cursor: Option<FloatCursor> = None;
     let mut first_late: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
+    // The gaps the page walk asks for above the lines it moved past a page
+    // edge, away from the floats beside them: the lines from each gap on are
+    // broken against the floats where they land (see
+    // `float_resumption::Plan::line_gaps`).
+    let line_gaps = owner
+        .filter(|_| fragmentainer.is_none() && root.writing_mode == WritingMode::HorizontalTb)
+        .map_or(&[][..], |owner| tree.context.float_resumptions.line_gaps(owner))
+        .to_vec();
+    let mut gap_cursor = 0;
     let mut lines: Vec<shodo::Line> = Vec::new();
     let mut tentative: Vec<TentativeFloat> = Vec::new();
     let mut deferred: Vec<TentativeFloat> = Vec::new();
@@ -956,11 +965,18 @@ fn run_boxes_segment(
         }
         // Where the next line starts if it is a line: below the margins
         // still pending.
-        let line_y = if top_margin_escapes && leading_margin_open {
+        let mut line_y = if top_margin_escapes && leading_margin_open {
             y
         } else {
             y + pending.resolve()
         };
+        if let Some(&(top, gap)) = line_gaps.get(gap_cursor)
+            && line_y >= top - 0.01
+        {
+            gap_cursor += 1;
+            y += gap;
+            line_y += gap;
+        }
         let base = line_space(
             ctx,
             inline_insets.0,

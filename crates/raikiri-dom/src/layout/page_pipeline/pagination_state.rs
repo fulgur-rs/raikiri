@@ -16,7 +16,7 @@ use super::{
     break_margins, closing_edges_line_move, closing_edges_move, collapsed_start_margin_gain,
     collapses_through, collapses_with_previous_block, content_end_above, content_overflow,
     current_abs_y, first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
+    fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y, note_line_gap,
     follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
     forced_target_page, generated_content_runs_past, grow_ancestors_below,
     grow_ancestors_for_shift, grow_container_beside_item, has_explicit_positioned_block_ancestor,
@@ -6230,6 +6230,7 @@ impl PaginationState {
             self.float_shifts
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
             record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
+            note_line_gap(document, cascade, block_id, line, shift);
             if line == 0 {
                 // The first line moves, and the text that starts on it with it.
                 text.effective_y += shift;

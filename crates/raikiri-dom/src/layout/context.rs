@@ -85,6 +85,11 @@ pub(crate) struct LayoutContext {
     /// Blocks the page walk moved whole to a later page with their lines,
     /// but not away from floats beside them.
     pub(crate) flows_moved_otherwise: Vec<usize>,
+    /// Paragraphs whose lines the page walk moved down past a page edge
+    /// while they were broken beside floats, each with the block offset of
+    /// the first line it moved, from the paragraph's content-box top, and
+    /// how far it moved it.
+    pub(crate) line_gaps: Vec<(usize, f32, f32)>,
     /// Page origins chosen when a float takes a pending forced break.
     pub(crate) float_resumption_boundaries:
         HashMap<usize, super::page_pipeline::float_resumption::Boundary>,
