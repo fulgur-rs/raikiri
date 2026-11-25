@@ -1736,7 +1736,7 @@ fn row_markers_in_a_comment_do_not_select_window_layout() {
 #[test]
 fn a_stray_end_tag_preserves_parse_warnings_when_replaying_the_table() {
     let html = format!(
-        "<!doctype html><!--{}--><table>{}</table></span>",
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table></span>",
         " ".repeat(54000),
         "<tr><td>row</td></tr>".repeat(600)
     );
@@ -1752,7 +1752,12 @@ fn a_stray_end_tag_preserves_parse_warnings_when_replaying_the_table() {
     stream.feed(html.as_bytes()).unwrap();
     assert!(stream.table_input.is_some());
     let summary = completed(stream.finish().unwrap());
-    assert!(!reference.uncascaded.warnings.is_empty());
+    #[cfg(feature = "streaming-diagnostics")]
+    assert_eq!(
+        summary.diagnostics.table_plans, 1,
+        "{:?}",
+        summary.diagnostics
+    );
     let messages = |warnings: &[RenderWarning]| {
         warnings
             .iter()

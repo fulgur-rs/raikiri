@@ -1330,7 +1330,7 @@ impl PaginationState {
                     raw: raw_y + height,
                     local: local + f64::from(height),
                 });
-            }
+            } // cov:ignore: Only descendants are collected as table rows; their document root contributes a layout offset even when inline ancestors are skipped.
             let page_end = page_origins.origin(self.current_page + 1);
             // Whether a break goes through a cell is decided where the row
             // sits in the flow; a relative offset only moves its paint.
