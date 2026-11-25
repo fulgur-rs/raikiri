@@ -10244,6 +10244,30 @@ fn escaped_end_margin_shift(
     }
 }
 
+/// The collapsed block-end margins of the block `node`: its own and those
+/// of the last box in its flow, and so on down, while no padding, border or
+/// set height keeps them apart (CSS 2 §8.3.1).
+fn bottom_margins_of(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node: usize,
+) -> f32 {
+    let (mut positive, mut negative) = (0.0f32, 0.0f32);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        let layout = &document.nodes[id].layout;
+        let margin = layout.margin.bottom;
+        (positive, negative) = (positive.max(margin), negative.min(margin));
+        current = (layout.padding.bottom + layout.border.bottom <= 0.0
+            && document.block_axis(id).height().is_auto())
+        .then(|| last_flow_box(document, cascade, id))
+        .flatten()
+        // The margins of an inline-level box stay in its line.
+        .filter(|&last| !document.nodes[last].display().is_inline_level());
+    }
+    positive + negative
+}
+
 /// The gap after the block `previous`, `gap` in the layout, once a `min-height`
 /// holds the end of its content above its bottom: the bottom margin of its
 /// last box, which the layout let through when the content reached that
@@ -20059,6 +20083,11 @@ fn move_box_for_transition(
     } else if forced_transition
         && node_delta < 0.0
         && !is_floating_box_for_pagination(document, cascade, node_id)
+        && !candidate.context.is_float_descendant()
+        && !candidate.context.is_out_of_flow_descendant()
+        && !candidate.context.is_flex_item()
+        && !candidate.context.is_grid_item()
+        && !candidate.context.is_table_row()
     {
         // A forced break that opens a page above the one the box reached,
         // where the margin before it crossed a page edge, takes the box up,

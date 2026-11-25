@@ -474,6 +474,13 @@ fn a_cut_margin_leaves_no_page_after_the_content() {
              <div style='break-before:page'>S</div>",
             ("A@0:10,0 S@1:0,0", 2),
         ),
+        // A box of set height around the box that the break takes up keeps
+        // its height, and a later break opens the page after.
+        (
+            "<div style='height:120px'><div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div></div><div style='break-before:page'>Y</div>",
+            ("A@0:0,0 S@1:0,0 Y@2:0,0", 3),
+        ),
     ] {
         let (words, pages) = words_and_pages(body);
         assert_eq!((words.as_str(), pages), expected, "{body}");
@@ -494,6 +501,18 @@ fn a_float_below_a_cut_margin_starts_the_page_with_the_box_after_it() {
             "<div style='height:50px;margin-bottom:250px'>A</div>\
              <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
             ("A@0:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // The margin may be that of the last box in the block before it.
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // A float at the end of the flow lands there too.
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>",
+            ("A@0:0,0 F@1:0,0", 2),
         ),
         // A float in the margin above a box that ends it keeps its place.
         (

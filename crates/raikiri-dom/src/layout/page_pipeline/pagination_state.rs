@@ -3949,7 +3949,7 @@ impl PaginationState {
             && let Some(delta) = self.float_in_cut_margin(document, env, candidate, flow_y)
         {
             document.translate_pagination_y(node_id, delta);
-            super::shrink_ancestors_after_content_change(
+            let held = super::shrink_ancestors_after_content_change(
                 document,
                 cascade,
                 node_id,
@@ -3964,6 +3964,10 @@ impl PaginationState {
             self.subtree_shifts
                 .bounded
                 .push((node_id, delta, self.current_page));
+            self.subtree_shifts.bounded.extend(
+                held.into_iter()
+                    .map(|(ancestor, held)| (ancestor, held, self.current_page)),
+            );
             position.effective_y += delta;
             natural_page = page_origins.page_index_for_y(flow_y + delta);
             float_landed = true;
@@ -4030,13 +4034,36 @@ impl PaginationState {
         {
             return None;
         }
+        // A box after it that clears it keeps its clearance, which the cut
+        // margin does not shorten.
+        let clears = document
+            .parent_of(node_id)
+            .into_iter()
+            .flat_map(|parent| document.nodes[parent].children.iter().copied())
+            .skip_while(|&id| id != node_id)
+            .skip(1)
+            .find(|&id| {
+                document.nodes[id].kind() == NodeKind::Element
+                    && !document.nodes[id].is_display_none()
+                    && !is_floating_box_for_pagination(document, env.cascade, id)
+            })
+            .is_some_and(|next| {
+                !matches!(
+                    env.cascade.computed[next].clear,
+                    raikiri_style::property::ClearValue::None
+                )
+            });
+        if clears {
+            return None;
+        }
         let raw_y = flow_raw_y(document, env.cascade, env.body_id, candidate);
         let (previous, gap) =
             self.sibling_margins
                 .previous_and_gap(document, env.cascade, node_id, raw_y)?;
-        // Only the margin below the box before it: an earlier float may have
+        // Only the margins below the box before it, its own and those of
+        // the last boxes in it that end with it: an earlier float may have
         // taken the float further down.
-        if gap > document.nodes[previous].layout.margin.bottom + 0.001 {
+        if gap > super::bottom_margins_of(document, env.cascade, previous) + 0.001 {
             return None;
         }
         let previous_bottom = flow_y - gap;
