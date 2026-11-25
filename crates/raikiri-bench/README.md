@@ -359,3 +359,14 @@ after its coverage exemptions (11 added lines exempt across the patch).
 With the same Fulgur revision rebuilt without the streaming-diagnostics
 feature, the same input took 5.253, 5.188 and 5.212 seconds at 93,124,
 94,648 and 93,124 KiB in three fresh processes.
+
+On the same Linux host, user-space CPU sampling at 199 Hz attributed 6.14%
+of samples to glibc private lock wake/wait functions. To measure allocator
+sensitivity, four fresh production-release probe processes ran in glibc,
+jemalloc, jemalloc, glibc order. Set `LD_PRELOAD=/usr/lib/libjemalloc.so.2`
+on the probe invocation only for the jemalloc runs. At 20,000 rows glibc
+took 5.215 and 5.268 seconds at 91,704 and 92,120 KiB. jemalloc took
+4.756 and 4.732 seconds at 96,860 and 98,088 KiB. A third jemalloc run
+took 4.747 seconds at 100,048 KiB and reproduced the 318-page reference
+raster digest above. At 40,000 rows jemalloc took 9.363 and 9.609 seconds
+at 105,816 and 107,796 KiB. The library leaves allocator choice to its host.
