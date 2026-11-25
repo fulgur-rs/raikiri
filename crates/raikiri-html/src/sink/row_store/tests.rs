@@ -955,3 +955,39 @@ fn complex_rows_discard_prior_record_counts_and_preserve_source_for_replay() {
         assert_eq!(replay, format!("{prefix}{row}"));
     }
 }
+
+#[test]
+fn windows_without_a_confirmable_row_boundary_require_replay() {
+    for (css, width) in [("", 1), ("tr { display:none }", 8)] {
+        let html = format!(
+            "<!doctype html><style>{css}</style><table>{}</table>",
+            "<tr><td>x</td></tr>".repeat(8)
+        );
+        let limits = Default::default();
+        let options = Default::default();
+        let mut input = TableInput::new(&limits).unwrap();
+        input.feed(html.as_bytes()).unwrap();
+        let (windows, mut source) = input.finish_windows(&options).unwrap();
+        let plan = windows
+            .unwrap()
+            .plan_pages(std::num::NonZeroUsize::new(width).unwrap(), |shell| {
+                let doc =
+                    crate::document_parse::assemble_document(shell, &options, &limits, None, None)?;
+                let crate::LayoutStatus::Completed(layout) = crate::layout(
+                    &doc,
+                    Default::default(),
+                    Default::default(),
+                    crate::LayoutOptions::new(),
+                )?
+                else {
+                    panic!("layout aborted")
+                };
+                Ok((doc, layout))
+            })
+            .unwrap();
+        assert!(plan.is_none());
+        let mut original = String::new();
+        source.read_to_string(&mut original).unwrap();
+        assert_eq!(original, html);
+    }
+}
