@@ -477,13 +477,18 @@ impl<'a> Page<'a> {
     }
 
     fn marker_placement(&self, owner: NodeId) -> Option<Placement> {
+        let local = if self.window_node_ids {
+            self.local_id(owner)
+        } else {
+            owner
+        };
         let (url, rect) = self
             .document
-            .page_marker_image(self.slice.page_index, owner)?;
+            .page_marker_image(self.slice.page_index, local)?;
         if !is_drawable_rect(&rect) {
             return None;
         }
-        let element = usize::try_from(owner.0).ok()?;
+        let element = usize::try_from(local.0).ok()?;
         let clip_owner =
             if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
                 && self

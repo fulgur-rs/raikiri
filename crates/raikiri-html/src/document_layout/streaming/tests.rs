@@ -1840,7 +1840,7 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
     let resources = RenderResources::new()
         .fonts(fonts)
         .image_pixel_source(&Pixels);
-    let mut doc = crate::parse_html_with_resources(b"<!doctype html><style>body{font:20px/20px Ahem}div::before{content:'B';background:red}div::after{content:url(https://example.test/x.png) / 'label'}</style><div>A</div>".as_slice(), &resources).unwrap();
+    let mut doc = crate::parse_html_with_resources(b"<!doctype html><style>body{font:20px/20px Ahem}div::before{content:'B';background:red}div::after{content:url(https://example.test/x.png) / 'label'}p::first-line{color:red}span{border:1px solid currentColor}em{opacity:.5}li{list-style-image:url(https://example.test/marker.png)}article{width:100px;column-count:2;column-gap:20px;column-rule:2px solid red;orphans:1;widows:1}</style><div>A</div><p><span>B</span></p><section><em>C</em></section><ul><li>D</li></ul><article>A<br>B<br>C<br>D</article>".as_slice(), &resources).unwrap();
     let source_ids = (0..doc.dom().node_count()).map(|id| id + 1000).collect();
     doc.uncascaded.dom.set_window_source_ids(source_ids);
     let LayoutStatus::Completed(layout) = layout(
@@ -1866,6 +1866,53 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
     let local = owners(layout.page(0).unwrap());
     let source = owners(StreamPage::from_window(&layout, 0, 0, 1).page());
     assert_eq!(source, local.map(|id| id + 1000));
+    let inline_owners = |page: crate::Page<'_>| {
+        let mut pieces = Vec::new();
+        let mut groups = Vec::new();
+        for event in page.paint_order_for_text_runs(&page.text_runs()) {
+            match event {
+                crate::PaintEvent::LineBox(piece) => {
+                    pieces.push([piece.fragment.node().0, piece.line.root.0])
+                }
+                crate::PaintEvent::GroupTextLine(line, owner) => {
+                    groups.push([line.root.0, owner.0])
+                }
+                _ => {}
+            }
+        }
+        [pieces, groups]
+    };
+    let expected = inline_owners(layout.page(0).unwrap()).map(|items| {
+        assert!(!items.is_empty());
+        items
+            .into_iter()
+            .map(|ids| ids.map(|id| id + 1000))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        inline_owners(StreamPage::from_window(&layout, 0, 0, 1).page()),
+        expected
+    );
+    let decoration_owners = |page: crate::Page<'_>| {
+        let mut marker = None;
+        let mut column = None;
+        for event in page.paint_order() {
+            match event {
+                crate::PaintEvent::MarkerImage(owner) => {
+                    let raster = page.raster_marker(owner, &Pixels).expect("marker pixels");
+                    marker = Some([owner.0, raster.node.0, raster.clip_owner.unwrap().0]);
+                }
+                crate::PaintEvent::ColumnRule(rule) => column = Some(rule.owner.0),
+                _ => {}
+            }
+        }
+        let [owner, image, clip] = marker.unwrap();
+        [owner, image, clip, column.unwrap()]
+    };
+    assert_eq!(
+        decoration_owners(StreamPage::from_window(&layout, 0, 0, 1).page()),
+        decoration_owners(layout.page(0).unwrap()).map(|id| id + 1000)
+    );
     let image_owners = |page: crate::Page<'_>| {
         let image = page
             .paint_order_for_text_runs(&page.text_runs())
