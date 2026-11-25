@@ -20031,6 +20031,29 @@ fn kept_negative_margins(
 /// the move, recorded in `shifts` with `flow_page` as for
 /// [`grow_ancestors_for_shift`].
 #[allow(clippy::too_many_arguments)]
+/// Notes the float whose content starts with the block `moved`, at `from`,
+/// when the page walk moves that block down whole: nothing of the float is
+/// left where it starts, and Chromium moves the float whole to the later
+/// page, so the lines beside it are not broken against its growth.
+fn note_float_content_moved_whole(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: usize,
+    from: f32,
+) {
+    let Some(float) = std::iter::once(moved)
+        .chain(document.layout_ancestors(moved))
+        .find(|&id| is_floating_box_for_pagination(document, cascade, id))
+    else {
+        return;
+    };
+    let layout = &document.nodes[float].layout;
+    let content_top = current_abs_y(document, float) + layout.border.top + layout.padding.top;
+    if from <= content_top + 0.001 {
+        document.context.floats_moved_whole.insert(float);
+    }
+}
+
 fn move_line_block(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -20060,6 +20083,7 @@ fn move_line_block(
         // again where it lands (see `float_resumption`).
         let from = current_abs_y(document, moved);
         note_lines_left_beside_floats(document, cascade, moved, block_id, delta, from);
+        note_float_content_moved_whole(document, cascade, moved, from);
         let moved_y = from + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         shifts.take_back_floats_ahead(document, cascade, body_id, moved, delta);
@@ -20572,7 +20596,9 @@ fn grow_ancestors_walk(
                     cascade.computed[id].writing_mode
                         == raikiri_style::property::WritingMode::HorizontalTb
                 });
-                if let Some(start_shift) = start_shift.filter(|_| horizontal) {
+                if let Some(start_shift) = start_shift
+                    .filter(|_| horizontal && !document.context.floats_moved_whole.contains(&child))
+                {
                     document
                         .context
                         .float_line_growth

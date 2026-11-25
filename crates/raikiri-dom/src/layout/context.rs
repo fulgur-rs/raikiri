@@ -54,6 +54,9 @@ pub(crate) struct LayoutContext {
     /// How far the page walk moved the lines of each paragraph past page
     /// edges, in all, for `float_line_growth`.
     pub(crate) paragraph_line_moves: HashMap<usize, f32>,
+    /// The floats whose content the page walk moved whole to a later page by
+    /// moving their first lines: they get no line extent.
+    pub(crate) floats_moved_whole: HashSet<usize>,
     /// Floats that a forced break at the end of the content of the boxes
     /// around them sends to the next page, each with the outermost of those
     /// boxes: only floats follow the break inside that box.
