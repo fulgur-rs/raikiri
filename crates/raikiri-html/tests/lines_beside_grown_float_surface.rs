@@ -76,6 +76,12 @@ fn the_lines_on_the_next_page_wrap_beside_the_float_that_continues_there() {
             "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 TT@1:60,60 UU@1:0,60 VV@1:40,30 \
              WW@1:40,0 XX@0:40,60 YY@0:40,30 ZZ@0:40,0",
         ),
+        // So do those of a paragraph that holds the float.
+        (
+            format!("<div style='display:flow-root'>{FLOAT}ZZ YY XX WW VV UU TT</div>"),
+            "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 TT@1:60,60 UU@1:0,60 VV@1:40,30 \
+             WW@1:40,0 XX@0:40,60 YY@0:40,30 ZZ@0:40,0",
+        ),
         // The lines of a block after the paragraph wrap beside it too.
         (
             format!("{FLOAT}ZZ YY XX<div>WW VV</div>"),

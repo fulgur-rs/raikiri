@@ -7306,7 +7306,13 @@ fn record_lines_beside_grown_floats(
     if document.context.float_line_growth.is_empty() {
         return;
     }
-    let context = super::float_context_root(document, env.cascade, block_id, env.body_id);
+    // A paragraph that holds floats is the context of the floats in it.
+    let context = if block_id != env.body_id && super::holds_floats(document, env.cascade, block_id)
+    {
+        block_id
+    } else {
+        super::float_context_root(document, env.cascade, block_id, env.body_id)
+    };
     let text_shift = text.effective_y - text.first_line_shift - candidate.raw_y;
     super::raise_beside_shift(
         document,
