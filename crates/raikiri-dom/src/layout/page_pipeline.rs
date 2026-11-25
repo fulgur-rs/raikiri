@@ -9408,19 +9408,20 @@ fn ends_with_bottom_margin_of(
 fn generated_after_margins(document: &super::context::LayoutSession<'_>, node: usize) -> Vec<f32> {
     let id =
         crate::generated_content::generated_node_id(node, raikiri_style::PseudoElem::After) as u64;
-    let Some(layout_node) = document.ifc_layout_node(node) else {
-        return Vec::new();
-    };
-    let width = layout_node.layout.size.width;
-    layout_node
-        .ifc
-        .as_ref()
+    document
+        .ifc_layout_node(node)
         .into_iter()
-        .flat_map(|ifc| ifc.generated_blocks.iter())
-        .filter(|block| block.start == id && !block.on_root_axes)
-        .flat_map(|block| {
-            let margins = block.margins(width);
-            [margins.top, margins.bottom]
+        .flat_map(|layout_node| {
+            let width = layout_node.layout.size.width;
+            layout_node
+                .ifc
+                .iter()
+                .flat_map(|ifc| ifc.generated_blocks.iter())
+                .filter(|block| block.start == id && !block.on_root_axes)
+                .flat_map(move |block| {
+                    let margins = block.margins(width);
+                    [margins.top, margins.bottom]
+                })
         })
         .collect()
 }
