@@ -1348,6 +1348,28 @@ fn table_window_delivery_observes_document_limit_abort_and_sink_failure() {
         record.pages.iter().map(|page| page.0).collect::<Vec<_>>(),
         (0..count).collect::<Vec<_>>()
     );
+
+    let mut record = Record::default();
+    let interrupted =
+        deliver_table_windows(&mut &mut record, &mut windows, &plan, None, None, |_| {
+            Ok(LayoutStatus::Aborted)
+        })
+        .unwrap();
+    assert!(matches!(interrupted, StreamStatus::Aborted));
+    assert!(record.pages.is_empty());
+
+    let mut invalid_plan = plan;
+    invalid_plan[0].pages.end += 10;
+    let result = deliver_table_windows(
+        &mut &mut record,
+        &mut windows,
+        &invalid_plan,
+        None,
+        None,
+        |shell| render(&assemble(shell)?),
+    );
+    assert!(matches!(result, Err(RenderError::Configuration(_))));
+    assert!(record.pages.is_empty());
 }
 
 #[test]

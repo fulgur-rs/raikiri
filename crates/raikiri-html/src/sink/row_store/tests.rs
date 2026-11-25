@@ -797,3 +797,95 @@ fn parser_repairs_survive_compaction_of_preceding_rows() {
         assert_eq!(retained(&shell), retained(&reference), "{suffix}");
     }
 }
+
+#[test]
+fn page_prefix_rejects_displaced_rows_and_misaligned_continuations() {
+    let html = b"<!doctype html><table><tr><td>a<tr><td>b</table>";
+    let limits = Default::default();
+    let options = Default::default();
+    let mut input = TableInput::new(&limits).unwrap();
+    input.feed(html).unwrap();
+    let mut windows = input.finish_windows(&options).unwrap().0.unwrap();
+    let shell = windows.document(0..2).unwrap();
+    let doc =
+        crate::document_parse::assemble_document(shell, &options, &limits, None, None).unwrap();
+    let crate::LayoutStatus::Completed(layout) = crate::layout(
+        &doc,
+        Default::default(),
+        Default::default(),
+        crate::LayoutOptions::new(),
+    )
+    .unwrap() else {
+        panic!("layout aborted")
+    };
+    let row = doc.dom().get_node(windows.group).unwrap().children[0];
+    let mut rect = layout
+        .page(0)
+        .unwrap()
+        .fragments()
+        .find(|f| f.node().0 as usize == row)
+        .unwrap()
+        .rect();
+    assert!(
+        windows
+            .page_prefix(0..2, &doc, &layout, 0, 0, &mut vec![rect])
+            .is_some()
+    );
+    rect.y += 0.25;
+    assert!(
+        windows
+            .page_prefix(0..2, &doc, &layout, 0, 0, &mut vec![rect])
+            .is_none()
+    );
+    assert!(
+        windows
+            .page_prefix(0..2, &doc, &layout, 1, 0, &mut Vec::new())
+            .is_none()
+    );
+    assert!(
+        windows
+            .page_prefix(0..1, &doc, &layout, 0, 0, &mut Vec::new())
+            .is_none()
+    );
+}
+
+#[test]
+fn malformed_stored_cells_return_invalid_data_without_affecting_other_rows() {
+    let mut input = TableInput::new(&Default::default()).unwrap();
+    input.feed(b"<table><tr><td>a<tr><td>b</table>").unwrap();
+    let mut windows = input
+        .finish_windows(&Default::default())
+        .unwrap()
+        .0
+        .unwrap();
+    let second = windows.rows.ends[1];
+    for (offset, replacement) in [(24, &[0xff][..]), (16, &u64::MAX.to_le_bytes()[..])] {
+        windows
+            .rows
+            .file
+            .seek(SeekFrom::Start(second + offset))
+            .unwrap();
+        windows.rows.file.write_all(replacement).unwrap();
+        windows.rows.file.flush().unwrap();
+        let Err(error) = windows.document(1..2) else {
+            panic!("invalid cell was accepted")
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let first = windows.document(0..1).unwrap();
+        assert!(
+            first.dom.preorder(first.dom.root_index()).any(|id| first
+                .dom
+                .get_node(id)
+                .unwrap()
+                .text_content()
+                == Some("a"))
+        );
+    }
+    for header_len in [1, 8, 16] {
+        windows.rows.ends[2] = second + header_len;
+        let Err(error) = windows.document(1..2) else {
+            panic!("incomplete header was accepted")
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+}

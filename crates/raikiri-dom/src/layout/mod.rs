@@ -44,6 +44,7 @@ pub(crate) mod dispatch;
 pub(crate) mod protocol;
 pub(crate) mod style_views;
 pub(crate) mod table;
+#[doc(hidden)]
 pub use table::{MeasuredTableColumns, TableColumnMeasurements};
 pub(crate) mod taffy_adapter;
 
