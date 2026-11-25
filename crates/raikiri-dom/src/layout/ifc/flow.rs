@@ -218,6 +218,16 @@ pub(crate) fn line_space(
         }
         slot = next;
     }
+    // A float that the page walk grew past a page edge narrows the lines
+    // below its end laid out unbroken, down to where it ends on the page
+    // after.
+    let [left, right] = ctx.line_extension_edges(y, height);
+    if let Some(edge) = left {
+        start = start.max(edge - content_inline_start);
+    }
+    if let Some(edge) = right {
+        end = end.min(edge - content_inline_start);
+    }
     LineSpace {
         inline_start: start,
         inline_size: (end - start).max(0.0),
