@@ -366,7 +366,9 @@ impl Plan {
             .clone_from(&document.context.float_resumptions.line_extents);
         for (&float, growth) in &document.context.float_line_growth {
             let extent = growth.grown - (growth.beside_shift - growth.start_shift).max(0.0);
-            if extent > 0.001 {
+            // Rounding leaves a float that does not grow a few thousandths
+            // of a pixel taller; that is no extent to break lines against.
+            if extent > 0.01 {
                 plan.line_extents.entry(float).or_insert(extent);
             }
         }
