@@ -3960,8 +3960,10 @@ impl PaginationState {
                 &super::IfcBoxShifts::default(),
                 None,
             );
-            // Its content moves with it. The flow after it does not, unless
-            // the box after it clears it and so follows it.
+            // Its content moves with it. The flow after it follows it by
+            // `follow`: as far as the other floats that the box after it
+            // clears let it, when that box clears it, and not at all
+            // otherwise.
             self.flow_shift += delta;
             if (delta - follow).abs() > 0.001 {
                 self.subtree_shifts
@@ -4074,8 +4076,11 @@ impl PaginationState {
             .map_or(0.0, |next| {
                 let clear = env.cascade.computed[next].clear;
                 let others = other_float_bottoms(document, env, node_id, clear);
-                let top = current_abs_y(document, next) + self.flow_shift;
-                others.map_or(delta, |bottom| delta.max(bottom - top)).min(0.0)
+                // Where the flow puts it, as `flow_y` is for the float.
+                let top = flow_y + current_abs_y(document, next) - current_abs_y(document, node_id);
+                others
+                    .map_or(delta, |bottom| delta.max(bottom - top))
+                    .min(0.0)
             });
         Some((delta, follow))
     }
@@ -7420,16 +7425,29 @@ fn other_float_bottoms(
     clear: raikiri_style::property::ClearValue,
 ) -> Option<f32> {
     let root = super::float_context_root(document, env.cascade, node_id, env.body_id);
-    let mut stack: Vec<usize> = document.nodes[root].children.iter().rev().copied().collect();
+    let mut stack: Vec<usize> = document.nodes[root]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
     let mut lowest = None::<f32>;
     while let Some(id) = stack.pop() {
         if id == node_id {
             break;
         }
+        let node = &document.nodes[id];
+        if node.kind() != NodeKind::Element || node.is_display_none() {
+            continue;
+        }
         if is_floating_box_for_pagination(document, env.cascade, id) {
-            if super::clears_float_side(clear, env.cascade.computed[id].float) {
+            let float = env.cascade.computed[id].float;
+            if matches!(float, FloatValue::Left | FloatValue::Right)
+                && super::clears_float_side(clear, float)
+            {
                 let layout = &document.nodes[id].layout;
-                let bottom = current_abs_y(document, id) + layout.size.height + layout.margin.bottom;
+                let bottom =
+                    current_abs_y(document, id) + layout.size.height + layout.margin.bottom;
                 lowest = Some(lowest.map_or(bottom, |lowest| lowest.max(bottom)));
             }
             continue;

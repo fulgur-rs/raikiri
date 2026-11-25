@@ -591,6 +591,12 @@ fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
             "<div style='clear:left'>S</div><div>X</div>",
             ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
         ),
+        // A float that is not shown does not hold it down.
+        (
+            "<div style='display:none'><div style='float:right;height:500px'>H</div></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
         // The box is found past an out-of-flow box and into a contents
         // wrapper.
         (
