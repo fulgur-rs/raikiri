@@ -20021,16 +20021,6 @@ fn kept_negative_margins(
     kept
 }
 
-/// Moves `block_id`, which the flow puts at `from_y`, so that the box it
-/// moves with starts at `target_y` in the flow, and returns how far it moved.
-/// Both are measured without the relative offsets of the block and its
-/// ancestors, which move along with it. A `nested` block that begins its ancestors takes the
-/// ancestors along rather than leaving them empty on this page, or leaving
-/// their padding and border alone there when they start below `page_start`
-/// (see [`first_box_ancestor_at_start`]); the ancestors above them grow to hold
-/// the move, recorded in `shifts` with `flow_page` as for
-/// [`grow_ancestors_for_shift`].
-#[allow(clippy::too_many_arguments)]
 /// Notes the float whose content starts with the block `moved`, at `from`,
 /// when the page walk moves that block down whole: nothing of the float is
 /// left where it starts, and Chromium moves the float whole to the later
@@ -20054,6 +20044,16 @@ fn note_float_content_moved_whole(
     }
 }
 
+/// Moves `block_id`, which the flow puts at `from_y`, so that the box it
+/// moves with starts at `target_y` in the flow, and returns how far it moved.
+/// Both are measured without the relative offsets of the block and its
+/// ancestors, which move along with it. A `nested` block that begins its ancestors takes the
+/// ancestors along rather than leaving them empty on this page, or leaving
+/// their padding and border alone there when they start below `page_start`
+/// (see [`first_box_ancestor_at_start`]); the ancestors above them grow to hold
+/// the move, recorded in `shifts` with `flow_page` as for
+/// [`grow_ancestors_for_shift`].
+#[allow(clippy::too_many_arguments)]
 fn move_line_block(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -20585,32 +20585,37 @@ fn grow_ancestors_walk(
                 bounded = true;
             }
             let grown = size_delta;
-            if grown > 0.001 {
-                let context = float_context_root(document, cascade, child, body_id);
-                // Only a float the walk placed itself has its top's move: one
-                // inside another float or a positioned box moves with it.
-                let start_shift = document.context.float_start_shifts.get(&child).copied();
-                // Vertical lines run along the page edges: no line is broken
-                // against the part of the float on the next page.
-                let horizontal = [child, context].iter().all(|&id| {
-                    cascade.computed[id].writing_mode
-                        == raikiri_style::property::WritingMode::HorizontalTb
-                });
-                if let Some(start_shift) = start_shift
-                    .filter(|_| horizontal && !document.context.floats_moved_whole.contains(&child))
-                {
-                    document
-                        .context
-                        .float_line_growth
-                        .entry(child)
-                        .and_modify(|growth| growth.grown += grown)
-                        .or_insert(float_resumption::LineGrowth {
-                            grown,
-                            start_shift,
-                            context,
-                            beside_shift: start_shift,
-                        });
-                }
+            let context = float_context_root(document, cascade, child, body_id);
+            // Vertical lines run along the page edges: no line is broken
+            // against the part of the float on the next page.
+            let horizontal = [child, context].iter().all(|&id| {
+                cascade.computed[id].writing_mode
+                    == raikiri_style::property::WritingMode::HorizontalTb
+            });
+            // Only a float the walk placed itself has its top's move: one
+            // inside another float or a positioned box moves with it.
+            if let Some(start_shift) = document
+                .context
+                .float_start_shifts
+                .get(&child)
+                .copied()
+                .filter(|_| {
+                    grown > 0.001
+                        && horizontal
+                        && !document.context.floats_moved_whole.contains(&child)
+                })
+            {
+                document
+                    .context
+                    .float_line_growth
+                    .entry(child)
+                    .and_modify(|growth| growth.grown += grown)
+                    .or_insert(float_resumption::LineGrowth {
+                        grown,
+                        start_shift,
+                        context,
+                        beside_shift: start_shift,
+                    });
             }
             float_delta = size_delta;
             flow_delta = 0.0;

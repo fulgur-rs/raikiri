@@ -61,9 +61,6 @@ impl FloatContext {
         bottom: f32,
     ) {
         let top = position.y + size.height;
-        if bottom <= top {
-            return;
-        }
         let edge = match direction {
             FloatDirection::Left => position.x + size.width,
             FloatDirection::Right => position.x,

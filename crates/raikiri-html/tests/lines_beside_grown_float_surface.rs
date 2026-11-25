@@ -185,3 +185,27 @@ fn what_the_float_growth_already_moves_keeps_its_place() {
         assert_eq!(words(&body), expected, "{body}");
     }
 }
+
+#[test]
+fn the_lines_wrap_beside_each_float_that_continues_on_the_next_page() {
+    for (body, expected) in [
+        // A float before a block, on the right.
+        (
+            "<div style='float:right;width:40px'>F G G G</div><div>ZZ YY XX WW VV</div>",
+            "F@0:60,0 G@0:60,30 G@1:60,0 G@1:60,30 VV@1:0,30 WW@1:0,0 XX@0:0,60 YY@0:0,30 ZZ@0:0,0",
+        ),
+        // Two floats on the same side that both run on.
+        (
+            "<div style='float:left;width:40px'>F G G G</div>\
+             <div style='float:left;width:20px'>H I I I</div>ZZ YY XX WW VV",
+            "F@0:0,0 G@0:0,30 G@1:0,0 G@1:0,30 H@0:40,0 I@0:40,30 I@1:40,0 I@1:40,30 VV@1:60,30 WW@1:60,0 XX@0:60,60 YY@0:60,30 ZZ@0:60,0",
+        ),
+        (
+            "<div style='float:right;width:40px'>F G G G</div>\
+             <div style='float:right;width:20px'>H I I I</div>ZZ YY XX WW VV",
+            "F@0:60,0 G@0:60,30 G@1:60,0 G@1:60,30 H@0:40,0 I@0:40,30 I@1:40,0 I@1:40,30 VV@1:0,30 WW@1:0,0 XX@0:0,60 YY@0:0,30 ZZ@0:0,0",
+        ),
+    ] {
+        assert_eq!(words(body), expected, "{body}");
+    }
+}
