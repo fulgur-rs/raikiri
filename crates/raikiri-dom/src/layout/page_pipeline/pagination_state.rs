@@ -3946,24 +3946,28 @@ impl PaginationState {
         let mut float_landed = false;
         if truncation.is_none()
             && !forced_before
-            && let Some(delta) = self.float_in_cut_margin(document, env, candidate, flow_y)
+            && let Some((delta, cleared)) =
+                self.float_in_cut_margin(document, env, candidate, flow_y)
         {
             document.translate_pagination_y(node_id, delta);
             let held = super::shrink_ancestors_after_content_change(
                 document,
                 cascade,
                 node_id,
-                0.0,
+                if cleared { delta } else { 0.0 },
                 delta,
                 body_id,
                 &super::IfcBoxShifts::default(),
                 None,
             );
-            // Its content moves with it, and the flow after it does not.
+            // Its content moves with it. The flow after it does not, unless
+            // the box after it clears it and so follows it.
             self.flow_shift += delta;
-            self.subtree_shifts
-                .bounded
-                .push((node_id, delta, self.current_page));
+            if !cleared {
+                self.subtree_shifts
+                    .bounded
+                    .push((node_id, delta, self.current_page));
+            }
             self.subtree_shifts.bounded.extend(
                 held.into_iter()
                     .map(|(ancestor, held)| (ancestor, held, self.current_page)),
@@ -4018,42 +4022,20 @@ impl PaginationState {
     /// How far up the float `candidate`, at `flow_y` in the flow, moves when
     /// it lies below the block-end margin of the box before it and a page
     /// edge cuts that margin: to the first page edge in the margin, where
-    /// Chromium places it, as the box after it starts there. `None` for any
-    /// other box.
+    /// Chromium places it, as the box after it starts there, and whether the
+    /// box after it clears it. `None` for any other box.
     fn float_in_cut_margin(
         &self,
         document: &LayoutSession<'_>,
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         flow_y: f32,
-    ) -> Option<f32> {
+    ) -> Option<(f32, bool)> {
         let node_id = candidate.node_id;
         if !is_floating_box_for_pagination(document, env.cascade, node_id)
             || candidate.context.is_float_descendant()
             || candidate.context.is_out_of_flow_descendant()
         {
-            return None;
-        }
-        // A box after it that clears it keeps its clearance, which the cut
-        // margin does not shorten.
-        let clears = document
-            .parent_of(node_id)
-            .into_iter()
-            .flat_map(|parent| document.nodes[parent].children.iter().copied())
-            .skip_while(|&id| id != node_id)
-            .skip(1)
-            .find(|&id| {
-                document.nodes[id].kind() == NodeKind::Element
-                    && !document.nodes[id].is_display_none()
-                    && !is_floating_box_for_pagination(document, env.cascade, id)
-            })
-            .is_some_and(|next| {
-                !matches!(
-                    env.cascade.computed[next].clear,
-                    raikiri_style::property::ClearValue::None
-                )
-            });
-        if clears {
             return None;
         }
         let raw_y = flow_raw_y(document, env.cascade, env.body_id, candidate);
@@ -4072,7 +4054,28 @@ impl PaginationState {
                 .page_index_for_y(previous_bottom)
                 .saturating_add(1),
         );
-        (gap > 0.0 && edge < flow_y - 0.001).then_some(edge - flow_y)
+        if gap <= 0.0 || edge >= flow_y - 0.001 {
+            return None;
+        }
+        // A block-level box after it that clears its side, a float among
+        // them, keeps its clearance: it follows the float to the page edge.
+        let side = env.cascade.computed[node_id].float;
+        let clears = document
+            .parent_of(node_id)
+            .into_iter()
+            .flat_map(|parent| document.nodes[parent].children.iter().copied())
+            .skip_while(|&id| id != node_id)
+            .skip(1)
+            .find(|&id| {
+                document.nodes[id].kind() == NodeKind::Element
+                    && !document.nodes[id].is_display_none()
+            })
+            .is_some_and(|next| {
+                !document.nodes[next].display().is_inline_level()
+                    && !super::is_out_of_flow_positioned(document, next)
+                    && super::clears_float_side(env.cascade.computed[next].clear, side)
+            });
+        Some((edge - flow_y, clears))
     }
 
     /// Whether the lines of the paragraph `block_id` move down inside it, to

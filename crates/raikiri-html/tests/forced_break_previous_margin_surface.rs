@@ -525,3 +525,40 @@ fn a_float_below_a_cut_margin_starts_the_page_with_the_box_after_it() {
         assert_eq!((words.as_str(), pages), expected, "{body}");
     }
 }
+
+#[test]
+fn a_box_that_clears_a_float_below_a_cut_margin_follows_it() {
+    // A box after the float that clears it keeps its clearance, so it
+    // follows the float to the top of the page, and the flow after it too.
+    let a = "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>";
+    for (after, expected) in [
+        (
+            "<div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // A box that clears only the other side sits beside it.
+        (
+            "<div style='clear:right'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // A float that clears it follows it too.
+        (
+            "<div style='float:left;clear:left;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:0,10 S@1:10,0", 2),
+        ),
+        (
+            "<div style='float:right;clear:left;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:90,10 S@1:10,0", 2),
+        ),
+        // A float that clears only the other side sits beside it.
+        (
+            "<div style='float:right;clear:right;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:90,0 S@1:10,0", 2),
+        ),
+    ] {
+        let body = format!("{a}{after}");
+        let (words, pages) = words_and_pages(&body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
