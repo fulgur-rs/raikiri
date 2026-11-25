@@ -200,8 +200,8 @@ pub(crate) struct IfcLines {
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
-    /// True when floats moved some line down below them, to where it fits
-    /// the room they leave.
+    /// True when floats from outside the paragraph moved some line down
+    /// below them, to where it fits the room they leave.
     pub(crate) below_floats: bool,
     /// Empty content-start space below inherited floats, with no owned
     /// content above their exclusion end. Pagination may consume it once.

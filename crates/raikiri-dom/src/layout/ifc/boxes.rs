@@ -879,8 +879,11 @@ fn run_boxes_segment(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
-    // Whether floats moved some line down below them, to where it fits.
+    // Whether floats from outside the paragraph moved some line it keeps
+    // down below them, to where it fits, and whether they moved the line
+    // being laid out.
     let mut below = false;
+    let mut moving_below = false;
     // The floats met at the start of the line being laid out, one after the
     // other. Each narrows the space of the line, and the engine keeps what it
     // scanned of the line only for the space it scanned it in, so a line that
@@ -1353,7 +1356,7 @@ fn run_boxes_segment(
                     y = next;
                     pending = CollapsibleMarginSet::ZERO;
                     moves += 1;
-                    below = true;
+                    moving_below |= line_y < inherited_float_end;
                     assumed_height = 0.0;
                     retries = 0;
                     calls = 0;
@@ -1410,6 +1413,7 @@ fn run_boxes_segment(
                 leading_margin_open = false;
                 ctx.commit_strut();
                 lines.push(line);
+                below |= std::mem::take(&mut moving_below);
                 // Floats that did not fit beside the line they are anchored
                 // in go at the start of the next line, before it is measured.
                 // Placing them any earlier would narrow the line that is

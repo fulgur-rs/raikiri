@@ -746,9 +746,18 @@ fn an_avoiding_box_lays_its_content_out_again_on_the_page_it_moves_to() {
         ),
     ];
     for (spacer, float, rest, words) in cases {
-        let document = lay_out(&after_left_float(spacer, float, &rest));
+        let body = after_left_float(spacer, float, &rest);
+        let document = lay_out(&body);
         for &(word, x, top) in words {
-            assert_word_on_page(&document, word, 1, x, top);
+            let run = document
+                .page(1)
+                .and_then(|page| {
+                    page.text_runs()
+                        .into_iter()
+                        .find(|run| run.text.trim() == word)
+                })
+                .map(|run| (run.origin.0, run.origin.1 - BASELINE_BELOW_LINE_TOP));
+            assert_eq!(run, Some((x, top)), "{word} in {body}");
         }
     }
 }
