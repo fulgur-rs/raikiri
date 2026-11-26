@@ -84,7 +84,8 @@ fn supported_with_wrapped_blocks(
         }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
-        let monolithic = is_monolithic_scroll_box(tree, child);
+        let monolithic =
+            is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -293,6 +294,32 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
         && node.multicol.is_none()
         && !is_right_aligned_in_parent(tree, child)
         && holds_no_fragmenting_box(tree, child)
+}
+
+/// Whether `child` is a column container of plain blocks that the stream
+/// places whole in one column, at the height its own columns balance to.
+/// Chromium breaks such a container across the outer columns only when its
+/// balanced height does not fit them; whole, it lands where Chromium puts it
+/// whenever the outer columns balance to at least that height, and the
+/// stream keeps the boxes after it in the columns that follow.
+fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    node.multicol.is_some()
+        && block_margins(&style).is_some()
+        && style.inset() == Edges::splat(LengthPercentageAuto::auto())
+        && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+        && is_horizontal(node)
+        && matches!(
+            node.layout_position(),
+            Position::Relative | Position::Static
+        )
+        && !style.float().is_floated()
+        && style.clear() == Clear::None
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
+        && !is_right_aligned_in_parent(tree, child)
+        && supported(tree, child, false).is_some()
 }
 
 /// Whether nothing inside `child` takes part in the fragmentation of the
@@ -591,7 +618,10 @@ fn wrapped_block_tree(
         node.display() == DisplayValue::FlowRoot || node.roots_block_context();
     let children_in_multicol_context = in_multicol_context && !independent_context;
     let has_edges = has_block_edge_decorations(&style);
-    if independent_context && !allow_sliced_wrappers
+    // A column container lays its blocks out in columns of its own, not
+    // stacked in the stream (see `is_unbroken_column_container`).
+    if node.multicol.is_some()
+        || independent_context && !allow_sliced_wrappers
         || has_edges
             && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
         || node.paints_whole_box_effects
@@ -2162,7 +2192,8 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
                 )
             }
         });
-    let monolithic = is_monolithic_scroll_box(tree, child);
+    let monolithic =
+        is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
     let splittable = !monolithic
         && !matches!(
             node.break_inside,
@@ -2768,6 +2799,11 @@ pub(super) fn layout(
                 line_start: None,
                 line_end: None,
             })?;
+            // A nested column container is not cut, so the fragments its own
+            // layout placed hang under its single piece.
+            if pieces.len() == 1 && tree.nodes[child].multicol.is_some() {
+                tree.fragment_tree.reparent_roots(child, record);
+            }
             records.push(record);
             taken += consumed[index];
         }
