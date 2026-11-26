@@ -145,7 +145,8 @@ pub(super) fn assign(
 }
 
 /// The first atomic inline of each line of the paragraph `root`, when it
-/// has more lines than one and no text places any of them: no text
+/// has more lines than one, no block among them, and no text places any of
+/// them: no text
 /// candidate moves those lines, so each of them moves with its first atomic
 /// inline, as a line of text does. Empty for any other paragraph.
 pub(super) fn textless_first_atoms(document: &Document, root: usize) -> HashSet<usize> {
@@ -154,7 +155,7 @@ pub(super) fn textless_first_atoms(document: &Document, root: usize) -> HashSet<
         .and_then(|node| node.ifc.as_ref())
         .filter(|ifc| ifc.multicol_fragments.is_none())
         .and_then(|ifc| ifc.lines.as_ref())
-        .filter(|lines| lines.lines.len() > 1)
+        .filter(|lines| lines.lines.len() > 1 && lines.block_line_starts.is_empty())
     else {
         return HashSet::new();
     };
@@ -174,12 +175,12 @@ pub(super) fn textless_first_atoms(document: &Document, root: usize) -> HashSet<
 }
 
 /// Whether some glyph on `line`, a ruby annotation's included, belongs to
-/// text that is not blank.
+/// text that is not blank, or to generated content.
 fn places_text(document: &Document, line: &shodo::Line) -> bool {
     line.fragments().any(|fragment| match fragment {
         shodo::Fragment::GlyphRun(run) => run.node().is_some_and(|node| {
             document.nodes.get(node.0 as usize).is_some_and(|node| {
-                matches!(&node.data, crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty())
+                !matches!(&node.data, crate::node::NodeData::Text(text) if text.text_content.trim().is_empty())
             })
         }),
         shodo::Fragment::RubyAnnotation(annotation) => places_text(document, annotation.line()),

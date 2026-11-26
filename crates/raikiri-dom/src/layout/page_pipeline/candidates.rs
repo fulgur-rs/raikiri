@@ -1110,8 +1110,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     fn first_on_textless_line(&mut self, node: usize) -> bool {
         let document = self.document;
         let display = document.nodes[node].display();
-        if !display.is_atomic_inline_level()
-            && !(display.is_inline_level()
+        if !(display.is_atomic_inline_level()
+            || display.is_inline_level()
                 && crate::layout::is_replaced_for_pagination(document, node))
         {
             return false;
