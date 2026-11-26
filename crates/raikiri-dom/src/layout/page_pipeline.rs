@@ -20284,14 +20284,11 @@ fn gaps_keep_line_breaks(
     };
     // The walk notes the lines of a paragraph in order; any other order
     // leaves no gap above the next to plan it with.
-    if !earlier
+    let ordered = earlier
         .iter()
         .map(|&(noted, _)| noted)
         .chain(std::iter::once(line))
-        .is_sorted_by(|a, b| a < b)
-    {
-        return false;
-    }
+        .is_sorted_by(|a, b| a < b);
     let context = std::iter::once(root)
         .chain(document.layout_ancestors(root))
         .find(|&id| id == 0 || holds_floats(document, cascade, id))
@@ -20314,9 +20311,6 @@ fn gaps_keep_line_breaks(
             )
         })
         .collect();
-    if extents.is_empty() {
-        return false;
-    }
     let beside = |top: f32, bottom: f32| {
         extents
             .iter()
@@ -20336,21 +20330,19 @@ fn gaps_keep_line_breaks(
     };
     // What the walk moved every line by before the noted moves.
     let base = lines.shift_of(0);
-    (0..=line).all(|index| {
-        if (lines.shift_of(index) - noted(index) - base).abs() > 0.01 {
-            return false;
-        }
-        let current = &lines.lines[index];
-        let top = current.block_offset() + base;
-        let bottom = top + current.block_size();
-        let here = beside(top, bottom);
-        if here.iter().any(|&by| by) != line_is_narrowed(ifc, lines, index) {
-            return false;
-        }
-        // The line lands below the gaps of the noted moves above it.
-        let shift = noted(index) - if index == line { delta } else { 0.0 };
-        index < first || here == beside(top + shift, bottom + shift)
-    })
+    ordered
+        && !extents.is_empty()
+        && (0..=line).all(|index| {
+            let current = &lines.lines[index];
+            let top = current.block_offset() + base;
+            let bottom = top + current.block_size();
+            let here = beside(top, bottom);
+            // The line lands below the gaps of the noted moves above it.
+            let shift = noted(index) - if index == line { delta } else { 0.0 };
+            (lines.shift_of(index) - noted(index) - base).abs() <= 0.01
+                && here.iter().any(|&by| by) == line_is_narrowed(ifc, lines, index)
+                && (index < first || here == beside(top + shift, bottom + shift))
+        })
 }
 
 /// Notes where the content box of the paragraph `root` starts on its page

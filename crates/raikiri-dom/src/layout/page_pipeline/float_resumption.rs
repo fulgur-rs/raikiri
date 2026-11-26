@@ -450,9 +450,8 @@ impl Plan {
                 .get(&root)
                 .and_then(|(_, gaps)| gaps.last())
                 .is_none_or(|&(last, moved)| note.top > last + moved + 0.01);
-            if let Some(&page_top) = page_top
-                && below_gaps
-            {
+            let taken = page_top.filter(|_| below_gaps);
+            if let Some(&page_top) = taken {
                 // A later move follows the gaps of the moves before it, so
                 // one passed over leaves no later move to follow this gap.
                 let follows = (!passed_over.contains(&root)).then_some(note.delta);
@@ -462,9 +461,8 @@ impl Plan {
                     .or_insert_with(|| (page_top, Vec::new()))
                     .1
                     .push((note.top, note.delta));
-            } else {
-                passed_over.insert(root);
             }
+            passed_over.extend(taken.is_none().then_some(root));
         }
         // A float keeps the extent first planned for it, even once it no
         // longer grows: the lines broken against it move as far again, and a
