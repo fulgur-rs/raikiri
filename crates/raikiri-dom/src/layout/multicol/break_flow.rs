@@ -278,17 +278,25 @@ struct FlowBox {
 
 impl FlowBox {
     /// The room above the box: the top margins and edges of the wrappers
-    /// that start at it, collapsed with the `margins` before it. A top edge
-    /// takes the margins above it; the rest stay in `margins`.
+    /// that start at it, collapsed with the `margins` before it. It takes
+    /// those margins, unless the box is empty and they collapse through it.
     fn lead(&self, margins: &mut Margins) -> f32 {
         let mut lead = 0.0;
+        let mut edged = false;
         for wrapper in &self.ancestors[self.ancestors.len() - self.opens..] {
             margins.add(wrapper.edges.margin_top);
             if wrapper.edges.top > 0.0 {
                 lead += margins.take() + wrapper.edges.top;
+                edged = true;
             }
         }
-        lead + margins.take()
+        // The margins next to an empty box collapse through it (CSS 2,
+        // 8.3.1), so they stay for the box after it.
+        if self.height > 0.0 || edged {
+            lead + margins.take()
+        } else {
+            lead
+        }
     }
 
     /// The room below the box taken by the bottom edges of the wrappers that

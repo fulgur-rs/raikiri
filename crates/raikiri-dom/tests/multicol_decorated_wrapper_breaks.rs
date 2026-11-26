@@ -614,6 +614,30 @@ const EDGE_CASES: &[(&str, Expected)] = &[
             ("n", &[[8.0, 58.0, 50.0, 10.0]]),
         ],
     ),
+    (
+        "<div id=p style='height:30px'></div><div id=w style='margin-bottom:20px;break-after:avoid'><div id=a style='height:10px'></div></div><div id=e style='break-after:avoid'></div><div id=v style='margin-top:30px;break-after:avoid'><div id=b style='height:10px'></div></div><div id=n style='height:10px'></div>",
+        &[
+            ("p", &[[8.0, 8.0, 50.0, 30.0]]),
+            ("w", &[[8.0, 38.0, 50.0, 10.0]]),
+            ("a", &[[8.0, 38.0, 50.0, 10.0]]),
+            ("e", &[[8.0, 68.0, 50.0, 0.0]]),
+            ("v", &[[8.0, 78.0, 50.0, 10.0]]),
+            ("b", &[[8.0, 78.0, 50.0, 10.0]]),
+            ("n", &[[8.0, 88.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=p style='height:50px'></div><div id=w style='margin-bottom:20px;break-after:avoid'><div id=a style='height:10px'></div></div><div id=e style='break-after:avoid'></div><div id=v style='margin-top:30px;break-after:avoid'><div id=b style='height:10px'></div></div><div id=n style='height:10px'></div>",
+        &[
+            ("p", &[[8.0, 8.0, 50.0, 50.0]]),
+            ("w", &[[58.0, 8.0, 50.0, 10.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 10.0]]),
+            ("e", &[[58.0, 38.0, 50.0, 0.0]]),
+            ("v", &[[58.0, 48.0, 50.0, 10.0]]),
+            ("b", &[[58.0, 48.0, 50.0, 10.0]]),
+            ("n", &[[58.0, 58.0, 50.0, 10.0]]),
+        ],
+    ),
 ];
 
 #[test]
