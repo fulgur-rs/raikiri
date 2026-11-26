@@ -69,6 +69,7 @@ pub struct TableTextCell {
 /// Sequential access to plain body rows. Each read holds at most 128 rows.
 pub struct TableTextRows<'a> {
     windows: &'a mut crate::sink::row_store::TableWindows,
+    signal: Option<&'a raikiri_traits::AbortSignal>,
     next: usize,
 }
 
@@ -80,6 +81,12 @@ impl TableTextRows<'_> {
 
     /// Read the next batch, or an empty vector at the end.
     pub fn read_batch(&mut self) -> std::io::Result<Vec<Vec<TableTextCell>>> {
+        if self.signal.is_some_and(|signal| signal.is_aborted()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "table read aborted",
+            ));
+        }
         let end = self.next.saturating_add(128).min(self.row_count());
         let rows = self.windows.read_text_rows(self.next..end)?;
         self.next = end;
@@ -1620,7 +1627,11 @@ fn stream_table_windows<S: PageSink>(
                 && body_rows(ending.page_at(0)) == first
                 && body_rows(ending.page_at(1)) == last
             {
-                let mut rows = TableTextRows { windows, next: 0 };
+                let mut rows = TableTextRows {
+                    windows,
+                    signal: config.signal.as_ref(),
+                    next: 0,
+                };
                 let result = sink.stage_table_sample(&sample, &ending, &mut rows);
                 let aborted = config
                     .signal
@@ -1635,10 +1646,10 @@ fn stream_table_windows<S: PageSink>(
                     return Ok(StreamStatus::Completed(Some(count)));
                 }
                 sink.discard_staged_table_pages();
-                result.map_err(RenderError::Io)?;
                 if aborted {
                     return Ok(StreamStatus::Aborted);
                 }
+                result.map_err(RenderError::Io)?;
             }
         }
     }

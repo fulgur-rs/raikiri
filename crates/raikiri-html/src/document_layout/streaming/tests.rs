@@ -112,6 +112,11 @@ impl PageSink for &mut Record {
             }
         }
         self.staged.push(0);
+        if let Some((_, controller)) = &self.abort_on_page {
+            controller.abort();
+            rows.read_batch()?;
+            panic!("read continued after cancellation");
+        }
         // A page count offered before the input is exhausted must be discarded.
         Ok(Some(1))
     }
@@ -2097,4 +2102,31 @@ fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
     assert!(record.staged.is_empty());
     assert_eq!(record.pages, batch_pages(&html));
     assert_eq!(summary.page_count as usize, record.pages.len());
+}
+
+#[test]
+fn cancelling_a_table_sample_stops_row_reads_and_discards_staged_output() {
+    let rows: String = (0..600)
+        .map(|i| format!("<tr><td>row &amp; {i}</td></tr>"))
+        .collect();
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}</style><!--{}--><table>{rows}</table>",
+        " ".repeat(55000)
+    );
+    let controller = AbortController::new();
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let mut record = Record {
+        inspect_sample: true,
+        abort_on_page: Some((0, controller)),
+        ..Default::default()
+    };
+    assert!(matches!(
+        stream(&html, 8192, &mut record, config).unwrap(),
+        StreamStatus::Aborted
+    ));
+    assert_eq!(record.sample_rows, 256);
+    assert_eq!(record.discarded, 1);
+    assert!(record.staged.is_empty() && record.pages.is_empty() && !record.finished);
 }
