@@ -168,3 +168,25 @@ fn gaps_and_more_outer_columns_place_the_nested_container_the_same_way() {
         "m:0,0,220,40 n:0,0,100,40 a:0,0,45,40 b:55,0,45,40 c:120,0,100,40"
     );
 }
+
+#[test]
+fn a_display_contents_box_leaves_the_nested_container_in_the_stream() {
+    assert_eq!(
+        boxes(&format!(
+            "<div id=m style='columns:2;column-gap:0;width:200px'><div style='display:contents'>{}</div>",
+            &nested("", (40, 40), 40)
+                ["<div id=m style='columns:2;column-gap:0;width:200px'>".len()..]
+        )),
+        "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
+    );
+}
+
+#[test]
+fn columns_a_height_limits_still_cut_the_nested_container() {
+    // The outer columns cannot grow past 30px, so the nested container
+    // continues into the next outer column.
+    assert_eq!(
+        boxes(&nested("", (40, 40), 40).replace("width:200px", "width:200px;height:30px")),
+        "m:0,0,200,30 n:0,0,200,30 a:0,0,100,30 b:50,0,150,30 c:100,0,200,30"
+    );
+}

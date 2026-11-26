@@ -29,7 +29,8 @@ pub(super) use paged::{PagedPiece, paginate};
 /// their own handling at a break, so containers with them keep the other
 /// strategies. A scroll container with a height of its own is no such
 /// box: it is monolithic, so the stream places it whole in one column (see
-/// [`is_monolithic_scroll_box`]). A `position: relative` box with insets is
+/// [`is_monolithic_scroll_box`]), and so is a column container that the
+/// columns around it grow to fit (see [`is_unbroken_column_container`]). A `position: relative` box with insets is
 /// sliced like any other: its column location carries no offset, which the
 /// painter adds. That holds only for a box with nothing rendered inside it, so
 /// one that holds blocks or absolutely positioned boxes keeps the other
@@ -302,10 +303,16 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// balanced height does not fit them; whole, it lands where Chromium puts it
 /// whenever the outer columns balance to at least that height, and the
 /// stream keeps the boxes after it in the columns that follow.
+///
+/// Only the columns of an outermost container that balance with nothing to
+/// limit their height grow to fit it, so only such a container holds it
+/// whole. Columns that a height or the page fills in turn, and columns nested
+/// in other columns, cut it, which their own strategies do.
 fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     node.multicol.is_some()
+        && column_owner(tree, child).is_some_and(|owner| balances_without_limit(tree, owner))
         && block_margins(&style).is_some()
         && style.inset() == Edges::splat(LengthPercentageAuto::auto())
         && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
@@ -320,6 +327,30 @@ fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool 
         && !sets_break_in_columns(node.break_after)
         && !is_right_aligned_in_parent(tree, child)
         && supported(tree, child, false).is_some()
+}
+
+/// The multicol container whose stream holds `child`: its nearest ancestor
+/// that is not `display: contents`, when that ancestor is a column container.
+fn column_owner(tree: &LayoutSession<'_>, child: usize) -> Option<usize> {
+    let mut owner = tree.nodes[child].parent?;
+    while layout_node(tree, owner).display() == DisplayValue::Contents {
+        owner = tree.nodes[owner].parent?;
+    }
+    tree.nodes[owner].multicol.is_some().then_some(owner)
+}
+
+/// Whether the columns of `owner` balance with no height, maximum or outer
+/// column to stop them, so they grow to fit a box that is never cut.
+fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let style = style_of(tree, owner);
+    tree.nodes[owner]
+        .multicol
+        .as_ref()
+        .is_some_and(|columns| columns.column_fill != ColumnFillValue::Auto)
+        && style.size().height == Dimension::auto()
+        && style.max_size().height.is_auto()
+        && std::iter::successors(tree.nodes[owner].parent, |&id| tree.nodes[id].parent)
+            .all(|id| tree.nodes[id].multicol.is_none())
 }
 
 /// Whether nothing inside `child` takes part in the fragmentation of the
@@ -1181,7 +1212,8 @@ struct Item {
     whole: bool,
     /// A box a column end never cuts and that stays in a column only where it
     /// starts it, with no margin before it either: a scroll container (see
-    /// [`is_monolithic_scroll_box`]).
+    /// [`is_monolithic_scroll_box`]) or a nested column container (see
+    /// [`is_unbroken_column_container`]).
     monolithic: bool,
     /// The block-start and block-end border and padding of a box whose
     /// pieces slice them: it is cut where it is taller than a column, but
@@ -2139,6 +2171,7 @@ pub(super) fn slices_sized_leaf(tree: &LayoutSession<'_>, idx: usize) -> bool {
     ) && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Whether a box cut at a column end slices its block-axis borders and
@@ -2152,6 +2185,7 @@ pub(super) fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Where the block-axis border and padding of a box whose pieces slice them
