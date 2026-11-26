@@ -1731,3 +1731,21 @@ fn justify_self_places_wrappers_and_monolithic_boxes_in_their_column() {
     assert_eq!(boxes(&doc, "wrapper"), vec![(0, 30.0, 0.0, 20.0, 150.0)]);
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 65.0, 0.0, 20.0, 50.0)]);
 }
+
+#[test]
+fn grid_rows_split_only_for_grids_this_strategy_can_settle() {
+    for (grid, item, rows) in [
+        ("row-gap:10px", "", true),
+        ("row-gap:0%", "", true),
+        ("row-gap:10%", "", false),
+        ("row-gap:calc(10% + 1px)", "", false),
+        ("", "x", false),
+        ("", "<div></div>", false),
+        ("", "<div style=\"break-inside:avoid\"></div>", false),
+    ] {
+        let doc = laid_out(&format!(
+            r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px"><div id="grid" style="display:grid;{grid}"><div style="height:60px">{item}</div><div style="height:50px;break-inside:avoid"></div></div></div>"#
+        ));
+        assert_eq!(boxes(&doc, "grid").len() == 2, rows, "{grid} {item}");
+    }
+}

@@ -303,8 +303,8 @@ struct RowItem {
 /// Whether the box `id` breaks between columns like a box without
 /// descendants, which this strategy cuts where the column ends.
 fn splits_as_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
-    !(tree.nodes[id].display().is_block_flex_or_grid_container()
-        || tree.nodes[id].display() == DisplayValue::InlineBlock)
+    !tree.nodes[id].display().is_block_flex_or_grid_container()
+        && tree.nodes[id].display() != DisplayValue::InlineBlock
         // Replaced content has no internal break points. Painting a
         // continuation would rescale and replay the entire source.
         && !tree.nodes[id].tag_name().is_some_and(|tag| {
@@ -312,18 +312,23 @@ fn splits_as_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
         })
         // Descendants keep their measured subtree; this seam has no
         // translated child continuations to replay in later columns.
-        && !has_rendered_element_child(tree, id)
-        && !tree.nodes[id].has_before_or_after_content
-        && !flow_children(tree, id).into_iter().any(|child| {
+        && !has_content(tree, id)
+        && !matches!(
+            tree.nodes[id].break_inside,
+            BreakInside::Avoid | BreakInside::AvoidColumn
+        )
+}
+
+/// Whether `id` holds rendered children, generated content, or text.
+fn has_content(tree: &LayoutSession<'_>, id: usize) -> bool {
+    has_rendered_element_child(tree, id)
+        || tree.nodes[id].has_before_or_after_content
+        || flow_children(tree, id).into_iter().any(|child| {
             let child = layout_node(tree, child);
             child.is_in_document()
                 && !child.is_display_none()
                 && matches!(&child.data, NodeData::Text(text) if !text.text_content.trim().is_empty())
         })
-        && !matches!(
-            tree.nodes[id].break_inside,
-            BreakInside::Avoid | BreakInside::AvoidColumn
-        )
 }
 
 /// Whether the grid `id` is placed row by row: an item of it has a break
@@ -357,24 +362,36 @@ fn row_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
     {
         return false;
     }
-    let mut items = 0;
-    let mut breaks = false;
-    for child in flow_children(tree, id) {
-        let child = layout_node(tree, child);
-        if !child.is_in_document() || child.is_display_none() {
-            continue;
-        }
-        match &child.data {
-            NodeData::Text(text) if text.text_content.trim().is_empty() => continue,
-            NodeData::Element(_) if child.layout_position() != Position::Absolute => {}
-            _ => return false,
-        }
-        items += 1;
-        breaks |= child.break_before != BreakBetween::Auto
-            || child.break_after != BreakBetween::Auto
-            || child.break_inside != BreakInside::Auto;
-    }
-    breaks && items == node.grid_item_rows.len()
+    let items: Vec<_> = flow_children(tree, id)
+        .into_iter()
+        .filter(|&child| {
+            let child = layout_node(tree, child);
+            child.is_in_document()
+                && !child.is_display_none()
+                && !matches!(&child.data, NodeData::Text(text) if text.text_content.trim().is_empty())
+        })
+        .collect();
+    // Items with content keep the old path unless they avoid breaks inside:
+    // their lines and children have break points inside the row that this
+    // strategy does not split at.
+    items.len() == node.grid_item_rows.len()
+        && items.iter().all(|&item| {
+            matches!(layout_node(tree, item).data, NodeData::Element(_))
+                && layout_node(tree, item).layout_position() != Position::Absolute
+                && (!has_content(tree, item)
+                    || matches!(
+                        layout_node(tree, item).break_inside,
+                        BreakInside::Avoid | BreakInside::AvoidColumn
+                    ))
+        })
+        && items
+            .iter()
+            .map(|&item| layout_node(tree, item))
+            .any(|item| {
+                item.break_before != BreakBetween::Auto
+                    || item.break_after != BreakBetween::Auto
+                    || item.break_inside != BreakInside::Auto
+            })
 }
 
 /// The row gap of the grid `id`, when it is a length: a percentage resolves
@@ -391,10 +408,10 @@ fn row_gap(tree: &LayoutSession<'_>, id: usize) -> Option<f32> {
 /// their items. The gap above a row goes before it like a margin, which a
 /// break between columns truncates (CSS Grid 1, 12). Each row reaches down
 /// to the gap below it; the first one starts at the top of the grid. `None`
-/// when the layout reports a row position that is not a number.
+/// when the grid has no rows or its row gap is not a length.
 fn grid_row_boxes(tree: &LayoutSession<'_>, id: usize, height: f32) -> Option<Vec<FlowBox>> {
     let gap = row_gap(tree, id)?;
-    let mut items: Vec<_> = tree.nodes[id].grid_item_rows.iter().copied().collect();
+    let mut items = tree.nodes[id].grid_item_rows.to_vec();
     items.sort_by_key(|row| row.start);
     let mut boxes: Vec<FlowBox> = Vec::new();
     let mut tops: Vec<f32> = Vec::new();
@@ -406,9 +423,6 @@ fn grid_row_boxes(tree: &LayoutSession<'_>, id: usize, height: f32) -> Option<Ve
         } else {
             items[index].block_start
         };
-        if !top.is_finite() {
-            return None;
-        }
         let mut row = Vec::new();
         let (mut before, mut after) = (BreakBetween::Auto, BreakBetween::Auto);
         while index < items.len() && items[index].start == start {
@@ -762,41 +776,41 @@ fn collect(
         .is_some_and(|parent| style_of(tree, parent).direction() == Direction::Rtl);
     // A grid whose items have break properties is placed row by row, in a
     // wrapper as wide as the grid (CSS Grid 1, 12).
-    if !floated && row_grid(tree, id) {
-        if let Some(mut rows) = grid_row_boxes(tree, id, output.size.height.max(0.0)) {
-            let offset = content.start
-                + crate::layout::dispatch::block_flow::justified_offset(
-                    tree,
-                    id,
-                    parent_rtl,
-                    content.width - output.size.width,
-                )
-                .unwrap_or(if parent_rtl {
-                    content.width - output.size.width
-                } else {
-                    0.0
-                });
-            ancestors.push(Wrapper {
-                node: id,
-                offset,
-                width: output.size.width,
-                edges: BlockEdges::default(),
+    if let Some(mut rows) = (!floated && row_grid(tree, id))
+        .then(|| grid_row_boxes(tree, id, output.size.height.max(0.0)))
+        .flatten()
+    {
+        let offset = content.start
+            + crate::layout::dispatch::block_flow::justified_offset(
+                tree,
+                id,
+                parent_rtl,
+                content.width - output.size.width,
+            )
+            .unwrap_or(if parent_rtl {
+                content.width - output.size.width
+            } else {
+                0.0
             });
-            let start = out.len();
-            for row in &mut rows {
-                row.ancestors = ancestors.clone();
-            }
-            out.append(&mut rows);
-            ancestors.pop();
-            if out.len() > start {
-                out[start].before = propagated(before, out[start].before);
-                let last = out.len() - 1;
-                out[last].after = propagated(after, out[last].after);
-                out[start].opens = 1;
-                out[last].closes = 1;
-            }
-            return;
+        ancestors.push(Wrapper {
+            node: id,
+            offset,
+            width: output.size.width,
+            edges: BlockEdges::default(),
+        });
+        let start = out.len();
+        for row in &mut rows {
+            row.ancestors = ancestors.clone();
         }
+        out.append(&mut rows);
+        ancestors.pop();
+        // A grid in rows has an item, so it has a row.
+        let last = out.len() - 1;
+        out[start].before = propagated(before, out[start].before);
+        out[last].after = propagated(after, out[last].after);
+        out[start].opens = 1;
+        out[last].closes = 1;
+        return;
     }
     if monolithic {
         out.push(FlowBox {
@@ -1261,7 +1275,8 @@ pub(super) fn layout(
                     if (*placed && bottom <= top) || (!*placed && row_item.y >= end) {
                         continue;
                     }
-                    let Some(id) = tree.fragment_tree.try_push(fragment(
+                    // Past the fragment limit, the layout stops at the next box.
+                    let pushed = tree.fragment_tree.try_push(fragment(
                         row_item.node,
                         Some(parent_fragment),
                         column,
@@ -1271,10 +1286,8 @@ pub(super) fn layout(
                             width: row_item.width,
                             height: (bottom - top).max(0.0),
                         },
-                    )) else {
-                        return fallback.height;
-                    };
-                    if !*placed {
+                    ));
+                    if let Some(id) = pushed.filter(|_| !*placed) {
                         *placed = true;
                         let mut layout = tree.nodes[row_item.node].layout;
                         layout.location = Point {
