@@ -5823,6 +5823,24 @@ fn paginate_flow(
         )
         .collect();
     let roots = candidates::FlowRoots::new(document, body_id);
+    let mut table_headers = HeaderRepeats::prepare(
+        document,
+        cascade,
+        roots.contents,
+        page_step,
+        |id| root_flow_offset + current_abs_y(document, id),
+        |id| {
+            super::page::is_monolithic_for_pagination_with_transposed_axes(
+                document,
+                cascade,
+                id,
+                document.context.pagination_on_transposed_axes,
+            )
+        },
+    );
+    // The boxes tied to a table's first row tell a repeated header group
+    // from the rows of the table (see `first_table_row`).
+    document.context.repeated_table_groups = table_headers.headers.keys().copied().collect();
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
     let mut collector = CandidateCollector::new(
@@ -5850,21 +5868,6 @@ fn paginate_flow(
                 .or_insert(tail_end);
         }
     }
-    let mut table_headers = HeaderRepeats::prepare(
-        document,
-        cascade,
-        roots.contents,
-        page_step,
-        |id| root_flow_offset + current_abs_y(document, id),
-        |id| {
-            super::page::is_monolithic_for_pagination_with_transposed_axes(
-                document,
-                cascade,
-                id,
-                document.context.pagination_on_transposed_axes,
-            )
-        },
-    );
     for (owner, tail_end) in footer_tail_ends {
         if let Some(footer) = table_headers.headers.get_mut(&owner) {
             // An avoided group may be represented by its first row. Both
@@ -6238,12 +6241,23 @@ fn starts_with_loose_cells(document: &Document, table: usize) -> bool {
 /// Whether the rows of `table` start the table's grid: nothing comes before
 /// the first row.
 ///
-/// A caption above the grid stays on the current page, one inside a
-/// `display: contents` child of the table included; an absolutely positioned
-/// one is out of the table's flow. Content outside the rows, wrapped in an
-/// anonymous row, may come before the first row.
+/// A caption above the grid stays on the current page (see
+/// [`has_top_caption`]). Content outside the rows, wrapped in an anonymous
+/// row, may come before the first row.
 fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usize) -> bool {
-    let top_caption = document
+    !(has_top_caption(document, cascade, table)
+        || document.nodes[table].children.iter().any(|&child| {
+            document.nodes[child].display() != DisplayValue::TableRow
+                && document.anonymous_table_cells(child).next().is_some()
+        })
+        || document.anonymous_table_cells(table).next().is_some())
+}
+
+/// Whether the table `table` has a caption above its grid, which stays on
+/// the current page, one inside a `display: contents` child of the table
+/// included; an absolutely positioned one is out of the table's flow.
+fn has_top_caption(document: &Document, cascade: &CascadeResult, table: usize) -> bool {
+    document
         .children_through_contents(table)
         .iter()
         .any(|&child| {
@@ -6251,13 +6265,42 @@ fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usiz
                 && cascade.computed[child].caption_side
                     == raikiri_style::property::CaptionSideValue::Top
                 && document.nodes[child].layout_position() != Position::Absolute
-        });
-    !(top_caption
-        || document.nodes[table].children.iter().any(|&child| {
-            document.nodes[child].display() != DisplayValue::TableRow
-                && document.anonymous_table_cells(child).next().is_some()
         })
-        || document.anonymous_table_cells(table).next().is_some())
+}
+
+/// Where the anonymous row that opens the grid of the table `table` ends,
+/// before pagination, when it comes before the row `first_row`: content of
+/// the table or of one of its row groups outside the rows, its generated
+/// content included, which table fixup wraps in anonymous cells of a row of
+/// their own. That row is the table's first row.
+fn leading_anonymous_row_end(
+    document: &Document,
+    table: usize,
+    first_row: Option<usize>,
+) -> Option<f32> {
+    let cells: Vec<(f32, f32)> = std::iter::once(table)
+        .chain(
+            document.nodes[table]
+                .children
+                .iter()
+                .copied()
+                .filter(|&child| document.nodes[child].display() != DisplayValue::TableRow),
+        )
+        .flat_map(|owner| document.anonymous_table_cells(owner))
+        .map(|(cell, node)| {
+            let top = current_abs_y(document, cell);
+            (top, top + node.layout.size.height)
+        })
+        .collect();
+    let top = cells.iter().map(|&(top, _)| top).min_by(f32::total_cmp)?;
+    if first_row.is_some_and(|row| current_abs_y(document, row) <= top + 0.001) {
+        return None;
+    }
+    cells
+        .iter()
+        .filter(|&&(cell_top, _)| (cell_top - top).abs() <= 0.001)
+        .map(|&(_, bottom)| bottom)
+        .max_by(f32::total_cmp)
 }
 
 /// The block end, before pagination, of the first row of each plain block
@@ -6332,12 +6375,29 @@ fn first_row_ends(
     first_rows
         .into_iter()
         .filter(|&(table, (row, end))| {
+            // An anonymous table has no content of its own outside its parts;
+            // anonymous cells before the first row of any other table make
+            // the row they share the first one (see
+            // `leading_anonymous_row_end`).
+            let grid_start = if document.anonymous_table_parts(table).is_some() {
+                rows_start_the_grid(document, cascade, table)
+            } else {
+                !has_top_caption(document, cascade, table)
+            };
             end.is_finite()
                 && is_plain_table_box(document, table)
-                && rows_start_the_grid(document, cascade, table)
+                && grid_start
                 && !forced_break_before_first_row(document, cascade, table, row)
         })
         .map(|(table, (row, end))| {
+            // An anonymous row before the first row holds the whole of
+            // itself, where the row's candidate places it.
+            if document.anonymous_table_parts(table).is_none()
+                && let Some(&top) = row_tops.get(&row)
+                && let Some(leading) = leading_anonymous_row_end(document, table, Some(row))
+            {
+                return (table, leading + top - current_abs_y(document, row));
+            }
             // A row that a break can split holds only its part before the
             // first such break (see `table_cell_fragments::first_split_end`).
             // A table that repeats its footer keeps its rows whole.
@@ -7505,8 +7565,10 @@ fn held_step(
     {
         return HeldStep::End { end, firm: true };
     }
+    // The generated content of a table sits in anonymous cells of its grid
+    // (see `held_table_end`).
     if node.multicol.is_some()
-        || node.has_before_or_after_content
+        || (node.has_before_or_after_content && !is_table)
         || !(is_table || is_plain_block_box(document, current))
     {
         return HeldStep::Whole { firm: false };
@@ -7658,12 +7720,20 @@ fn held_lines_end(
 /// [`first_row_split_end`]). `None` when the table is held whole, which
 /// is also the case when it may repeat a header group or something comes
 /// before its first row.
-fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) -> Option<f32> {
-    let children = document.children_through_contents(table);
-    if !rows_start_the_grid(document, cascade, table) {
+fn held_table_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    table: usize,
+) -> Option<f32> {
+    if has_top_caption(document, cascade, table) {
         return None;
     }
-    let row = first_table_row(document, &children)?;
+    let children = document.children_through_contents(table);
+    let row = first_table_row(document, &children);
+    if let Some(end) = leading_anonymous_row_end(document, table, row) {
+        return Some(end - current_abs_y(document, table));
+    }
+    let row = row?;
     if forced_break_before_first_row(document, cascade, table, row) {
         return None;
     }
@@ -7706,15 +7776,25 @@ fn has_footer_group(document: &Document, table: usize) -> bool {
 }
 
 /// The row of the table whose children are `children` that comes first in
-/// the flow, in or out of a row group.
-fn first_table_row(document: &Document, children: &[usize]) -> Option<usize> {
+/// the flow, in or out of a row group. The rows of a header or footer group
+/// that repeats on each page of the table are left out: a repeated header
+/// goes along with the first body row below it. Those of a header group
+/// that does not repeat are rows like any other, the first ones of the
+/// table.
+fn first_table_row(
+    document: &super::context::LayoutSession<'_>,
+    children: &[usize],
+) -> Option<usize> {
     children
         .iter()
         .flat_map(|&child| {
-            let in_group = matches!(
-                document.nodes[child].display(),
-                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-            );
+            let in_group = match document.nodes[child].display() {
+                DisplayValue::TableRowGroup => true,
+                DisplayValue::TableHeaderGroup | DisplayValue::TableFooterGroup => {
+                    !document.context.repeated_table_groups.contains(&child)
+                }
+                _ => false,
+            };
             let inside = if in_group {
                 document.children_through_contents(child)
             } else {
@@ -7753,7 +7833,11 @@ fn first_row_split_end(
 /// Whether `node_id` is a table that ends a run of boxes tied by avoided
 /// breaks: one whose first row is the part the page holds with the box before
 /// it (see [`held_table_end`]). Any other table is left out of the run.
-fn ends_a_run_as_table(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+fn ends_a_run_as_table(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     is_plain_table_box(document, node_id) && held_table_end(document, cascade, node_id).is_some()
 }
 
