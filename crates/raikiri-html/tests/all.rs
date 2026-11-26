@@ -123,6 +123,7 @@ mod multicol_widows_across_columns;
 mod multicol_wrapped_paragraphs_surface;
 mod multicol_wrapper_padding_surface;
 mod named_page_flex_item_surface;
+mod named_page_size_orphans_widows_surface;
 mod nested_forced_break_after_surface;
 mod nested_table_repeat_surface;
 mod one_line_paragraph_closing_edges_page_break_surface;
