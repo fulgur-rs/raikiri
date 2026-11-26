@@ -171,6 +171,26 @@ const CASES: &[(&str, Expected)] = &[
             ("c", &[[58.0, 68.0, 50.0, 40.0]]),
         ],
     ),
+    // A short item of a split row ends before the break and has no part in
+    // the next column.
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;grid-template-columns:25px 25px'><div id=x style='height:60px;grid-column:1/3;break-inside:avoid'></div><div id=a style='height:30px'></div><div id=b style='height:100px'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 60.0]]),
+            ("x", &[[8.0, 8.0, 50.0, 60.0]]),
+            ("a", &[[8.0, 68.0, 25.0, 30.0]]),
+            ("b", &[[33.0, 68.0, 25.0, 40.0], [83.0, 8.0, 25.0, 60.0]]),
+        ],
+    ),
+    // A narrow grid in right-to-left columns sits at the right of each one.
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto;direction:rtl'><div id=g style='display:grid;width:30px'><div id=a style='height:60px'></div><div id=b style='height:50px;break-inside:avoid'></div></div></div>",
+        &[
+            ("g", &[[78.0, 8.0, 30.0, 100.0], [28.0, 8.0, 30.0, 50.0]]),
+            ("a", &[[78.0, 8.0, 30.0, 60.0]]),
+            ("b", &[[28.0, 8.0, 30.0, 50.0]]),
+        ],
+    ),
 ];
 
 #[test]
