@@ -21,6 +21,7 @@ mod avoided_box_page_break_surface;
 mod baseline_content_alignment_surface;
 mod bidi_isolate_surface;
 mod border_image_surface;
+mod break_after_block_in_fixed_height_box_surface;
 mod break_inside_avoid_in_table_cell_surface;
 mod button_defaults_surface;
 mod clipped_lines_after_forced_break_surface;
