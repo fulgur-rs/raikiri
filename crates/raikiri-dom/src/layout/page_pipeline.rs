@@ -4875,8 +4875,8 @@ fn layout_pages_core(
     // after it below the growth, and one more when that plan moves what
     // comes before it.
     let mut attempts = 0;
-    // Every block ever moved away from the floats beside its lines, laid
-    // out again, can move the content after it, and a move that no longer
+    // Every block ever moved away from the floats beside or above its
+    // lines, laid out again, can move the content after it, and a move that no longer
     // fits the flow above it is judged again: each takes up to two more
     // attempts. Once those are spent, the pages laid out stand, though the
     // lines of some such block keep the room they were broken for.
@@ -20079,10 +20079,10 @@ fn move_line_block(
         .unwrap_or(0.0);
     let consumed = gaps.discard_in_holder(document, cascade, moved, delta, body_id);
     if delta > 0.0 {
-        // Lines broken beside floats that the block leaves behind lay out
-        // again where it lands (see `float_resumption`).
+        // Lines broken beside floats, or moved below them, that the block
+        // leaves behind lay out again where it lands (see `float_resumption`).
         let from = current_abs_y(document, moved);
-        note_lines_left_beside_floats(document, cascade, moved, block_id, delta, from);
+        note_lines_left_by_floats(document, cascade, moved, block_id, delta, from);
         note_float_content_moved_whole(document, cascade, moved, from);
         let moved_y = from + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
@@ -20103,12 +20103,12 @@ fn move_line_block(
 
 /// Notes the block `moved`, which the page walk is about to move `delta`
 /// down to a later page with the block `block_id` it holds, when the lines of
-/// `block_id` were broken beside floats: moved away from them, its lines keep
-/// the wrong room, and Chromium breaks them afresh where the block lands (see
-/// `float_resumption`). The block is noted with `delta` and its top `from` in
+/// `block_id` were broken beside floats or moved down below them: moved away
+/// from them, its lines keep the wrong room, and Chromium breaks them afresh
+/// where the block lands (see `float_resumption`). The block is noted with `delta` and its top `from` in
 /// the page flow before the move: the flow above it takes the same shifts in
 /// the next walk, which `from` checks.
-fn note_lines_left_beside_floats(
+fn note_lines_left_by_floats(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     moved: usize,
@@ -20139,11 +20139,16 @@ fn note_lines_left_beside_floats(
             .ifc_layout_node(block_id)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
-            .is_some_and(|lines| lines.beside_floats)
-        // Floats inside the block move with it, and its lines stay beside
-        // them. A box that holds its own floats keeps them out of view of
-        // that search, and its lines beside only them.
-        && own_floats(document, cascade, moved).is_empty()
+            .is_some_and(|lines| {
+                // Floats inside the block move with it, and lines beside
+                // only them keep their room; lines that floats from before
+                // the block moved down below them do not, and the block's
+                // own floats are laid out again with them where it lands.
+                lines.below_floats
+                    || (lines.beside_floats && own_floats(document, cascade, moved).is_empty())
+            })
+        // A box that holds its own floats keeps the floats outside it out
+        // of view of its lines, which are then beside only its own.
         && !std::iter::once(block_id)
             .chain(
                 document
