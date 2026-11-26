@@ -546,6 +546,7 @@ impl LayoutSession<'_> {
     /// that shift or scale an already stored layout in place (page breaking,
     /// out-of-flow placement, table cell offsets) write the field directly.
     pub(crate) fn store_layout(&mut self, idx: usize, layout: &BoxLayout) {
+        self.context.arena_writes += 1;
         let mut layout = *layout;
         if self.nodes[idx].formatting_context == crate::node::FormattingContext::Table
             && let Some(edges) = self

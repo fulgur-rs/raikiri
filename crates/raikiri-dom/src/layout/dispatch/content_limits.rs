@@ -171,16 +171,64 @@ fn push_size_overrides(
     tree.push_overrides(entries.into_iter().map(|entry| (key, entry)).collect());
 }
 
+/// Forget the measures that an override of the boxes `changed`, pushed or
+/// undone outside every layout that resolves keyword sizes, may change.
+///
+/// A measure of a box is a layout of the box and what it holds, so it reads
+/// the styles of the box and of the boxes inside it, and some of the style of
+/// the box it is laid out in. A change of `changed` reaches the measures of
+/// the boxes it is in or is, and of the boxes laid out in it.
+pub(crate) fn forget_measures_around(tree: &mut LayoutSession<'_>, changed: &[usize]) {
+    if tree.context.content_limit_depth != 0
+        || tree.context.content_limit_measures.is_empty()
+        || changed.is_empty()
+    {
+        return;
+    }
+    let mut containing = HashSet::new();
+    for &node in changed {
+        containing.extend(tree.inclusive_ancestors(node));
+        let mut layout_parent = tree.taffy_parent_of(node);
+        while let Some(parent) = layout_parent {
+            containing.insert(parent);
+            layout_parent = tree.taffy_parent_of(parent);
+        }
+    }
+    let changed: HashSet<usize> = changed.iter().copied().collect();
+    let mut measures = std::mem::take(&mut tree.context.content_limit_measures);
+    measures.retain(|key, _| {
+        if containing.contains(&key.node) {
+            return false;
+        }
+        // The box it is laid out in, and any box between the two that lends
+        // it no box of its own (`display: contents`).
+        let parent = tree.taffy_parent_of(key.node);
+        !tree
+            .ancestors(key.node)
+            .take_while(|&ancestor| Some(ancestor) != parent)
+            .chain(parent)
+            .any(|ancestor| changed.contains(&ancestor))
+    });
+    tree.context.content_limit_measures = measures;
+}
+
 /// Run `f`, a layout that resolves keyword sizes, with the measures of the
-/// boxes inside it remembered for as long as the outermost such layout runs.
+/// boxes inside it remembered.
 ///
 /// A box measured for its keyword sizes lays its contents out again for each
 /// measure, and the boxes inside it do the same, so without the memory the
 /// work doubles with every level of boxes that carry keyword sizes.
+///
+/// The measures outlive the layout: every layout of a container with such
+/// items measures them again, and a chain of nested containers would measure
+/// the innermost boxes once for each container above them. A measure stays
+/// for as long as nothing it depends on changes outside these layouts, see
+/// [`forget_measures_around`], and until the root is laid out again. A
+/// measure taken while one of these layouts overrides a style for something
+/// other than a measure, or inside a fragmentainer or a percentage-basis
+/// scope, holds a state the next layout may not set up again, so it lasts
+/// only until the outermost of these layouts ends.
 fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>) -> R) -> R {
-    if tree.context.content_limit_depth == 0 {
-        tree.context.content_limit_measures.clear();
-    }
     tree.context.content_limit_depth += 1;
     let checkpoint = tree.override_checkpoint();
     let probe_depth = tree.context.content_limit_probes.len();
@@ -196,6 +244,11 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.context.content_limit_measures.clear();
     }
     tree.context.content_limit_depth -= 1;
+    if tree.context.content_limit_depth == 0 {
+        for key in std::mem::take(&mut tree.context.content_limit_transient_measures) {
+            tree.context.content_limit_measures.remove(&key);
+        }
+    }
     match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
@@ -3172,7 +3225,16 @@ fn probe(
         return size;
     }
     let idx = usize::from(node_id);
-    let output = with_size_overrides(tree, idx, neutral, |tree| {
+    #[cfg(test)]
+    {
+        tree.context.content_limit_measure_runs += 1;
+    }
+    let key_of_box = tree.nodes.box_key(idx).expect("live content-limit box");
+    let neutral = neutral
+        .into_iter()
+        .map(|entry| (key_of_box, entry))
+        .collect();
+    let output = tree.with_measure_overrides(neutral, |tree| {
         tree.context.content_limit_probes.push(idx);
         let cache = tree.take_layout_cache(idx);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3190,6 +3252,14 @@ fn probe(
     } else {
         output.size.height
     };
+    // A measure taken under a style or a fragmentainer that only this layout
+    // sets up is good only until the outermost keyword-size layout ends.
+    if tree.transient_overrides_active()
+        || !tree.context.fragmentation_stack.is_empty()
+        || !tree.context.resolved_edge_bases.is_empty()
+    {
+        tree.context.content_limit_transient_measures.push(key);
+    }
     tree.context.content_limit_measures.insert(key, size);
     size
 }
@@ -3435,53 +3505,46 @@ fn width_bounds(
 ) -> Bounds {
     let idx = usize::from(node_id);
     let flex_grid_container = is_flex_grid_container(tree, idx);
-    let mut measures: Option<(f32, f32)> = None;
-    let mut measure_contents = |tree: &mut LayoutSession<'_>| {
-        *measures.get_or_insert_with(|| {
-            let mut measure = |space| {
-                let along = LayoutInput {
-                    run_mode: RunMode::ComputeSize,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Both,
-                    known_dimensions: Size::NONE,
-                    known_dimensions_are_definite: Size {
-                        width: false,
-                        height: false,
-                    },
-                    parent_size: inputs.parent_size,
-                    available_space: Size {
-                        width: space,
-                        height: AvailableSpace::MaxContent,
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                };
-                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
-                use LengthProperty::*;
-                let vertical_ratio = flex_grid_container
-                    && super::block_right_to_left(tree, idx).is_some()
-                    && tree.physical_style(idx).stated_aspect_ratio().is_some();
-                // The physical height is the inline size of a vertical box.
-                // Keep its effective value while measuring its block size.
-                let properties: &[LengthProperty] = if vertical_ratio {
-                    &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
-                } else if flex_grid_container {
-                    &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
-                } else {
-                    &[Width, MinWidth, MaxWidth]
-                };
-                probe(
-                    tree,
-                    node_id,
-                    key,
-                    along,
-                    neutral_size_overrides(properties),
-                )
-            };
-            (
-                measure(AvailableSpace::MinContent),
-                measure(AvailableSpace::MaxContent),
-            )
-        })
+    // Each width is measured only when a keyword asks for it: a `min-content`
+    // limit alone does not lay the box out at its max-content width too.
+    let measure = |tree: &mut LayoutSession<'_>, space| {
+        let along = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            parent_size: inputs.parent_size,
+            available_space: Size {
+                width: space,
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+        use LengthProperty::*;
+        let vertical_ratio = flex_grid_container
+            && super::block_right_to_left(tree, idx).is_some()
+            && tree.physical_style(idx).stated_aspect_ratio().is_some();
+        // The physical height is the inline size of a vertical box.
+        // Keep its effective value while measuring its block size.
+        let properties: &[LengthProperty] = if vertical_ratio {
+            &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
+        } else if flex_grid_container {
+            &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+        } else {
+            &[Width, MinWidth, MaxWidth]
+        };
+        probe(
+            tree,
+            node_id,
+            key,
+            along,
+            neutral_size_overrides(properties),
+        )
     };
     let mut resolved = [None, None];
     for (slot, keyword) in resolved
@@ -3504,17 +3567,27 @@ fn width_bounds(
         ) {
             continue;
         }
-        let (min_content, max_content) = measure_contents(tree);
+        match expanded {
+            ExpandedDimension::MinContent => {
+                *slot = Some(measure(tree, AvailableSpace::MinContent));
+                continue;
+            }
+            ExpandedDimension::MaxContent => {
+                *slot = Some(measure(tree, AvailableSpace::MaxContent));
+                continue;
+            }
+            _ => {}
+        }
+        let min_content = measure(tree, AvailableSpace::MinContent);
+        let max_content = measure(tree, AvailableSpace::MaxContent);
         let fit = |room: f32| max_content.min(room).max(min_content);
         // The limit of `fit-content(<length-percentage>)` stands in for the
         // room the parent offers; one that cannot resolve leaves the box
         // sized by the room, as `fit-content` is.
         let limit = fit_content_room(tree, idx, expanded, inputs.parent_size.width, true);
-        *slot = Some(match (expanded, limit) {
-            (ExpandedDimension::MinContent, _) => min_content,
-            (ExpandedDimension::MaxContent, _) => max_content,
-            (_, Some(limit)) => fit(limit),
-            (_, None) => match inputs.available_space.width {
+        *slot = Some(match limit {
+            Some(limit) => fit(limit),
+            None => match inputs.available_space.width {
                 AvailableSpace::MinContent => min_content,
                 AvailableSpace::MaxContent => max_content,
                 AvailableSpace::Definite(room) => fit(stretch_fit_width(tree, idx, inputs, room)),

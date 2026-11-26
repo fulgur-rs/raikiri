@@ -133,6 +133,12 @@ pub(crate) struct LayoutContext {
     /// follows (see `compute_multicol_layout`). A layout that moves it is not
     /// kept in the caches.
     pub(crate) columns_deferred_layouts: usize,
+    /// How many layouts have been written into the arena so far. A measure
+    /// during which it moves has laid out boxes inside the measured box again
+    /// (a paragraph lays out its inline-blocks at each width it is measured
+    /// at), so the final layout held for that box no longer stands for them
+    /// (see `compute_child_layout_with_block_ctx`).
+    pub(crate) arena_writes: u64,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical
@@ -219,12 +225,20 @@ pub(crate) struct LayoutContext {
     /// parent holds in, which a `stretch` height limit leaves out of its room
     /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
     pub(crate) held_margins: Vec<crate::layout::dispatch::content_limits::HeldMargins>,
-    /// The width or height each box measured for its keyword sizes, while the
-    /// outermost box laying out with them runs, and how many such layouts are
+    /// The width or height each box measured for its keyword sizes, kept until
+    /// a style the measure reads changes, and how many such layouts are
     /// running (see `dispatch::content_limits`).
     pub(crate) content_limit_measures:
         HashMap<crate::layout::dispatch::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
+    /// The measures that hold a state only the running keyword-size layouts
+    /// set up, dropped when the outermost of them ends.
+    pub(crate) content_limit_transient_measures:
+        Vec<crate::layout::dispatch::content_limits::MeasureKey>,
+    /// How many keyword-size measures were laid out, for tests that check a
+    /// box is not measured again.
+    #[cfg(test)]
+    pub(crate) content_limit_measure_runs: usize,
     /// The final layout inputs observed for out-of-flow candidates during a
     /// preliminary positioning pass, before their intrinsic limits are
     /// installed.
@@ -456,6 +470,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.safe_static_positions.clear();
             self.context.vertical_block_size_seeds.clear();
             self.context.variant_caches.clear();
+            self.context.content_limit_measures.clear();
             self.document.layout_dirty = false;
         }
     }
