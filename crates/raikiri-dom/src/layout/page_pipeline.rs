@@ -19868,7 +19868,7 @@ fn shift_paragraph_lines(
 /// compared without the offsets of relatively positioned inlines. Lines that move up
 /// leave the floats to their caller.
 fn floats_on_moved_lines(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     moved: &LineMove,
     went_ahead: Option<&[usize]>,
 ) -> Vec<usize> {
@@ -19903,7 +19903,16 @@ fn floats_on_moved_lines(
             let margin_top = document.pagination_local_y(float)
                 - relative
                 - document.nodes[float].layout.margin.top;
-            margin_top >= top - 0.01
+            // A float placed with an earlier line stays, even where other
+            // floats or clearance put it below the moved lines.
+            let on_moved_line = document
+                .context
+                .float_anchors
+                .get(&float)
+                .filter(|&&(paragraph, _)| paragraph == moved.block_id)
+                .is_none_or(|&(_, line)| line >= moved.line);
+            on_moved_line
+                && margin_top >= top - 0.01
                 && went_ahead.map_or(margin_top < moved_top - 0.01, |ahead| {
                     !ahead.contains(&float)
                 })
@@ -20282,9 +20291,17 @@ fn note_line_gap(
     let walked = lines.line_top(line) - delta;
     let layout = &document.nodes[root].layout;
     let content_top = current_abs_y(document, root) + layout.border.top + layout.padding.top;
-    let floats_above = floats
-        .iter()
-        .all(|&float| current_abs_y(document, float) < content_top + walked - 0.01);
+    // A float of the paragraph that comes in with an earlier line stays
+    // where layout put it, below the gap too: other floats or clearance put
+    // it there.
+    let floats_above = floats.iter().all(|&float| {
+        current_abs_y(document, float) < content_top + walked - 0.01
+            || document
+                .context
+                .float_anchors
+                .get(&float)
+                .is_some_and(|&(paragraph, anchor)| paragraph == root && anchor < line)
+    });
     // Only a line that floats narrowed, or one after it, breaks differently
     // where it lands: once the floats end above the lines, a page edge they
     // cross moves them with the room they already have.

@@ -4077,7 +4077,11 @@ impl PaginationState {
                     .add_to_pending(node_id, 0.0, self.current_page);
             }
         }
-        if !float_landed {
+        // A float that comes in with a line of a paragraph takes the flow to
+        // no page of its own: the line, which the walk places in turn, is
+        // where the flow is, whatever puts the float below it.
+        let on_line = !forced_before && document.context.float_anchors.contains_key(&node_id);
+        if !float_landed && !on_line {
             self.current_page = self.current_page.max(natural_page);
         }
         Ok(())

@@ -94,6 +94,10 @@ pub(crate) struct LayoutContext {
     /// Floats the page walk moved whole to a later page without a forced
     /// break, in the order it moved them.
     pub(crate) pushed_floats: Vec<usize>,
+    /// Each float of a paragraph with that paragraph and the index of the
+    /// line it comes in with: the line it is placed on or below, or the line
+    /// it waits for. A paragraph broken into fragmentainers keeps none.
+    pub(crate) float_anchors: HashMap<usize, (usize, usize)>,
     /// Boxes after a forced break that clearance took past the top of the
     /// page the break opens, below an earlier float that runs on onto that
     /// page, each with the top the walk found for it there: the border-box
