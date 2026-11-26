@@ -3,7 +3,9 @@
 //! flexes to, as an item of a horizontal container does. In a `vertical-rl`
 //! row of 100px, `height: 20px; aspect-ratio: 1/1; flex-grow: 1` grows to
 //! 100px high and is 100px wide. A cross size the item states keeps the size
-//! it has, whatever limits of the main axis the ratio would carry across.
+//! it has, whatever limits of the main axis the ratio would carry across. The
+//! content of the item raises that width, as it raises the height of an item
+//! of a horizontal row, unless the item scrolls or states its `min-width`.
 //!
 //! The expected border boxes were recorded from Chromium for the same markup in
 //! an 800px by 600px viewport, with the body margin of 8px.
@@ -744,6 +746,90 @@ const UNCHANGED: &[Case] = &[
     ),
 ];
 
+#[rustfmt::skip]
+const CONTENT_MINIMUM: &[Case] = &[
+    (
+        "vertical-rl-text",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 120.0, 100.0)), ("t", (8.0, 8.0, 120.0, 100.0))],
+    ),
+    (
+        "vertical-rl-textmw",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;min-width:0'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0))],
+    ),
+    (
+        "vertical-rl-textov",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;overflow:hidden'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0))],
+    ),
+    (
+        "vertical-rl-textmax",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;max-width:110px'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 110.0, 100.0)), ("t", (8.0, 8.0, 110.0, 100.0))],
+    ),
+    (
+        "vertical-rl-flexchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='display:flex;height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-rl-blockchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-rl-gridchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-rl;flex-direction:row;height:100px'><div id=t style='display:grid;height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-rl-wrap",
+        "<div style='width:300px'><div id=p style='display:flex;flex-wrap:wrap;writing-mode:vertical-rl;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:50%;height:10px' id=c></div></div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0)), ("c", (58.0, 8.0, 50.0, 10.0))],
+    ),
+    (
+        "vertical-lr-text",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 120.0, 100.0)), ("t", (8.0, 8.0, 120.0, 100.0))],
+    ),
+    (
+        "vertical-lr-textmw",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;min-width:0'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0))],
+    ),
+    (
+        "vertical-lr-textov",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;overflow:hidden'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0))],
+    ),
+    (
+        "vertical-lr-textmax",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1;max-width:110px'>XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX XXXXXXXX </div></div></div>",
+        &[("p", (8.0, 8.0, 110.0, 100.0)), ("t", (8.0, 8.0, 110.0, 100.0))],
+    ),
+    (
+        "vertical-lr-flexchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='display:flex;height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-lr-blockchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-lr-gridchild",
+        "<div style='width:300px'><div id=p style='display:flex;writing-mode:vertical-lr;flex-direction:row;height:100px'><div id=t style='display:grid;height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:150px;height:10px'></div></div></div></div>",
+        &[("p", (8.0, 8.0, 150.0, 100.0)), ("t", (8.0, 8.0, 150.0, 100.0))],
+    ),
+    (
+        "vertical-lr-wrap",
+        "<div style='width:300px'><div id=p style='display:flex;flex-wrap:wrap;writing-mode:vertical-lr;height:100px'><div id=t style='height:20px;aspect-ratio:1/1;flex-grow:1'><div style='width:50%;height:10px' id=c></div></div></div></div>",
+        &[("p", (8.0, 8.0, 100.0, 100.0)), ("t", (8.0, 8.0, 100.0, 100.0)), ("c", (8.0, 8.0, 50.0, 10.0))],
+    ),
+];
+
 #[test]
 fn ratio_items_of_a_vertical_row_take_the_cross_size_of_their_flexed_main_size() {
     for &(name, body, expected) in FOLLOWS_MAIN {
@@ -754,6 +840,13 @@ fn ratio_items_of_a_vertical_row_take_the_cross_size_of_their_flexed_main_size()
 #[test]
 fn other_ratio_items_of_a_vertical_container_keep_their_size() {
     for &(name, body, expected) in UNCHANGED {
+        check(name, body, expected);
+    }
+}
+
+#[test]
+fn ratio_items_of_a_vertical_row_are_as_wide_as_their_content() {
+    for &(name, body, expected) in CONTENT_MINIMUM {
         check(name, body, expected);
     }
 }
