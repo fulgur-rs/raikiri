@@ -425,7 +425,10 @@ fn a_forced_break_in_text_before_the_rows_ends_the_first_row() {
             r#"<div style="display:table"><div style="break-after:page">A</div><div>C</div>{row}</div>"#
         ),
     ];
-    for table in &tables {
+    // Text before the block that breaks is content of the row before it.
+    let text =
+        format!(r#"<div style="display:table">A<div style="break-before:page">C</div>{row}</div>"#);
+    for table in tables.iter().chain([&text]) {
         for (open, close) in WRAPPERS {
             assert_eq!(
                 glyph_tops(&document(20, open, table, close), &[]),
