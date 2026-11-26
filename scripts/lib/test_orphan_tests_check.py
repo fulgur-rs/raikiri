@@ -25,7 +25,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from orphan_tests_check import find_orphans, main
+from orphan_tests_check import find_orphans, find_untargeted_integration_tests, main
 
 
 def _write(root: Path, rel_path: str, content: str) -> None:
@@ -173,6 +173,64 @@ class MainExitCodeTests(unittest.TestCase):
             _write(root, "crates/foo/src/widget.rs", "pub struct Widget;\n")
             exit_code = main(["--repo-root", str(root)])
             self.assertEqual(exit_code, 0)
+
+
+_AUTOTESTS_OFF = """[package]
+name = "foo"
+autotests = false
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "alone"
+path = "tests/alone.rs"
+"""
+
+
+class IntegrationTestTargetTests(unittest.TestCase):
+    def test_files_compiled_by_a_target_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "crates/foo/Cargo.toml", _AUTOTESTS_OFF)
+            _write(root, "crates/foo/tests/all.rs", "//! Docs.\n\nmod listed;\n")
+            _write(root, "crates/foo/tests/listed.rs", "#[test]\nfn t() {}\n")
+            _write(root, "crates/foo/tests/alone.rs", "#[test]\nfn t() {}\n")
+            self.assertEqual(find_untargeted_integration_tests(root), [])
+
+    def test_unlisted_file_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "crates/foo/Cargo.toml", _AUTOTESTS_OFF)
+            _write(root, "crates/foo/tests/all.rs", "mod listed;\n// mod forgotten;\n")
+            _write(root, "crates/foo/tests/listed.rs", "")
+            _write(root, "crates/foo/tests/alone.rs", "")
+            _write(root, "crates/foo/tests/forgotten.rs", "#[test]\nfn t() {}\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                exit_code = main(["--repo-root", str(root)])
+            self.assertEqual(exit_code, 1)
+            self.assertIn("tests/forgotten.rs", buf.getvalue())
+            self.assertIn("autotests = false", buf.getvalue())
+
+    def test_crate_with_automatic_discovery_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "crates/foo/Cargo.toml", '[package]\nname = "foo"\n')
+            _write(root, "crates/foo/tests/anything.rs", "#[test]\nfn t() {}\n")
+            self.assertEqual(find_untargeted_integration_tests(root), [])
+
+    def test_crate_without_test_targets_reports_every_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(root, "crates/foo/Cargo.toml", '[package]\nname = "foo"\nautotests = false\n')
+            _write(root, "crates/foo/tests/lost.rs", "#[test]\nfn t() {}\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                exit_code = main(["--repo-root", str(root)])
+            self.assertEqual(exit_code, 1)
+            self.assertIn("(no [[test]] target)", buf.getvalue())
 
 
 if __name__ == "__main__":
