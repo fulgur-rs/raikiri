@@ -423,6 +423,12 @@ impl TableWindows {
         Ok((windows, windows && tree.permits_table_page_templates()))
     }
 
+    pub(crate) fn preferred_width(&self) -> Option<f32> {
+        self.columns
+            .as_ref()
+            .map(|columns| columns.preferred_width())
+    }
+
     pub(crate) fn table(&self) -> usize {
         self.shell
             .dom

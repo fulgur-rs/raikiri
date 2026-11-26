@@ -1618,7 +1618,19 @@ fn stream_table_windows<S: PageSink>(
             .document(0..window_size.get())
             .map_err(ParseError::Io)?;
         let (_, sample) = render(shell)?;
+        // All windows contributed to the preferred widths. A table narrower than
+        // their sum may wrap even when its first and last pages have uniform rows.
+        let table_width = sample.page(0).and_then(|page| {
+            let dom = page.dom();
+            page.fragments()
+                .find(|fragment| dom.local_name(fragment.node()) == Some("table"))
+                .map(|fragment| fragment.rect().width)
+        });
         if !needs_replay.get()
+            && windows
+                .preferred_width()
+                .zip(table_width)
+                .is_some_and(|(preferred, available)| preferred <= available)
             && sample.pages().all(|page| page.margin_boxes().is_empty())
             && sample.pages().map(body_rows).sum::<usize>() == window_size.get()
             && let Some((start, first, last, expected_pages)) =
