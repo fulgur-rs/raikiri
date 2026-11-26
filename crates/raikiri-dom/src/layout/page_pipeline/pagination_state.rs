@@ -1264,13 +1264,8 @@ impl PaginationState {
         entry: &CandidateEntry,
         owner: super::leading_inline::LeadingInlineLine,
     ) -> Result<(), Halt> {
-        let (top, height) = super::leading_inline::bounds(document, owner);
         let relative =
             accumulated_relative_offset_y(document, env.cascade, env.body_id, owner.root);
-        let flow_top = top - relative;
-        let natural = env.page_origins.page_index_for_y(flow_top);
-        let start = env.page_origins.origin(natural);
-        let end = start + env.page_origins.step_at(natural);
         let pending = self.pending_break.applies_to(document, candidate.node_id);
         let named_page_change = box_changes_page_name(
             entry.name_context_seen,
@@ -1279,6 +1274,33 @@ impl PaginationState {
             self.last_named.joins_transition(candidate),
         );
         let page_transition = (pending || named_page_change) && self.saw_child;
+        let requested = owner;
+        // A forced or named-page break falls before the line of the box
+        // itself, not before the blank lines above it.
+        let textless = candidate.context.textless_line();
+        // A line that crosses the end of the page a blank line above it
+        // starts or lies on breaks there itself.
+        let crosses_after = |blank: super::leading_inline::LeadingInlineLine| {
+            let (top, height) = super::leading_inline::bounds(document, owner);
+            let flow_top = top - relative;
+            let page = env.page_origins.page_index_for_y(flow_top);
+            let end = env.page_origins.origin(page) + env.page_origins.step_at(page);
+            flow_top + height > end + 0.001
+                && super::leading_inline::bounds(document, blank).0 - relative
+                    >= env.page_origins.origin(page) - 0.001
+        };
+        let owner = if page_transition || !textless {
+            owner
+        } else {
+            super::leading_inline::crossing_blank_line(document, owner, relative, env.page_origins)
+                .filter(|&blank| !crosses_after(blank))
+                .unwrap_or(owner)
+        };
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let flow_top = top - relative;
+        let natural = env.page_origins.page_index_for_y(flow_top);
+        let start = env.page_origins.origin(natural);
+        let end = start + env.page_origins.step_at(natural);
         let target = if page_transition {
             forced_target_page(self.current_page, natural)
         } else if flow_top > start + 0.001
@@ -1309,6 +1331,81 @@ impl PaginationState {
             flow_top
         };
         let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
+        // In a paragraph that no text places, the lines before the moved one
+        // go with it when the widows ask for them, unless that leaves fewer
+        // lines than the orphans on the page; then all its lines on the page
+        // go, as a paragraph of text breaks. A line that starts its page
+        // exactly ends the lines of the page before in the same way.
+        let kept_break = if page_transition || !textless {
+            None
+        } else if target > natural && shift > 0.0 {
+            Some((start, target))
+        } else if target == natural && natural > 0 && (flow_top - start).abs() <= 0.001 {
+            Some((env.page_origins.origin(natural - 1), natural))
+        } else {
+            None
+        };
+        let kept = kept_break
+            .and_then(|(page_start, next)| {
+                super::leading_inline::kept_lines_break(
+                    document,
+                    env.cascade,
+                    owner,
+                    page_start,
+                    relative,
+                    env.page_origins.origin(next),
+                )
+                .map(|kept| (kept, page_start, next))
+            })
+            // Below nothing but margins, or the edges of the boxes it begins, a
+            // paragraph has no break before it: its natural break stays.
+            .filter(|(kept, page_start, _)| {
+                kept.shift > 0.0
+                    && (!kept.whole
+                        || follows_box_on_page(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            kept.line.root,
+                            *page_start,
+                        ))
+            });
+        let (owner, shift) = kept
+            .as_ref()
+            .map_or((owner, shift), |(kept, _, _)| (kept.line, kept.shift));
+        // A paragraph that moves whole takes its box along, with the padding
+        // and border above its first line and the boxes it begins, as a
+        // paragraph of text moves as a unit.
+        let mut moved_whole = 0.0;
+        if let Some((kept, page_start, next)) = kept
+            && kept.whole
+        {
+            reach_page(env.control, next)?;
+            let root = owner.root;
+            let nested = document.layout_parent_of(root) != Some(env.roots.contents_box);
+            let from_y = current_abs_y(document, root) - relative;
+            let (delta, consumed) = move_line_block(
+                document,
+                env.cascade,
+                env.body_id,
+                root,
+                nested,
+                from_y,
+                env.page_origins.origin(next),
+                page_start,
+                &mut self.subtree_shifts,
+                entry.page_before_candidate,
+                &mut self.float_gaps,
+            );
+            self.flow_shift += delta;
+            self.queue_prefixes(consumed, next);
+            moved_whole = delta;
+        }
+        // Its lines are judged again where they landed, as a later fragment,
+        // as they may break on the page after it in turn.
+        if moved_whole > 0.0 {
+            return self.place_leading_atomic_line(document, env, candidate, entry, requested);
+        }
         if shift > 0.0 {
             self.move_delegated_line(
                 document,
@@ -1318,6 +1415,12 @@ impl PaginationState {
                 shift,
                 None,
             );
+            // The line that crossed the page end went down with a line before
+            // it, a blank one or one the widows took along, and may cross the
+            // end of the page after it in turn.
+            if owner.line != requested.line {
+                return self.place_leading_atomic_line(document, env, candidate, entry, requested);
+            }
         }
         if pending {
             self.pending_break.take(document, candidate.node_id);
@@ -4150,13 +4253,17 @@ impl PaginationState {
                     .add_to_pending(node_id, 0.0, self.current_page);
             }
         }
+        // A float that comes in with a line of a paragraph takes the flow to
+        // no page of its own: the line, which the walk places in turn, is
+        // where the flow is, whatever puts the float below it.
+        let on_line = !forced_before && document.context.float_anchors.contains_key(&node_id);
         // A box that starts below the end of a clip around it paints
         // nothing there, and the flow does not reach its page.
         let hidden = candidate.context.clip_box().is_some_and(|owner| {
             super::moved_clip_end(document, cascade, body_id, owner, env.root_flow_offset)
                 <= position.effective_y + 0.001
         });
-        if !float_landed && !hidden {
+        if !float_landed && !on_line && !hidden {
             self.current_page = self.current_page.max(natural_page);
         }
         Ok(())
@@ -4480,6 +4587,15 @@ impl PaginationState {
                 block_id,
                 run.as_ref().map(|run| run.lines.end),
             );
+            // A relayout that resumes a page at a line of the paragraph
+            // breaks before that line whatever lines it leaves around it.
+            let free_break = text_lines
+                .get(node_id)
+                .and_then(|owned| super::continuation_break_line(document, owned.root))
+                .and_then(|line| match &run {
+                    Some(run) => run.lines.contains(&line).then(|| line - run.lines.start),
+                    None => Some(line),
+                });
             if let Some(run) = run {
                 all_line_metrics = all_line_metrics.get(run.lines).unwrap_or_default().to_vec();
             }
@@ -4735,7 +4851,8 @@ impl PaginationState {
                     } else {
                         0.0
                     },
-                );
+                )
+                .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
@@ -5303,6 +5420,11 @@ impl PaginationState {
                 cascade.computed[root].orphans,
                 widows,
                 closing_edges,
+            )
+            .with_free_break(
+                super::continuation_break_line(document, root)
+                    .filter(|line| run.contains(line))
+                    .map(|line| line - run.start + lines_before),
             );
             // With lines ahead of the run, the widows the paragraph cannot
             // have are relaxed only on the page it opens on.

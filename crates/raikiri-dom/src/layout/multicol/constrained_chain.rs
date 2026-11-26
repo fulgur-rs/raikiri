@@ -82,7 +82,7 @@ struct Piece {
 /// widows begin at or before its start. Only the lines after the last break
 /// count for the widows, so a piece between two breaks may hold fewer lines
 /// than them (Chromium).
-pub(super) fn piece_end(
+pub(crate) fn piece_end(
     start: usize,
     fitting: usize,
     count: usize,

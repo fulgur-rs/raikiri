@@ -122,6 +122,9 @@ struct FragmentedFloatOutput<'a> {
     oof_candidates: &'a mut OofCandidates,
     /// The floats kept for the lines of out-of-flow boxes, if any are.
     float_views: &'a mut Option<FloatSnapshots>,
+    /// The paragraph whose lines the float comes in with and the index of
+    /// its line, to keep for the page walk; `None` when not kept.
+    anchor: Option<(usize, usize)>,
 }
 
 /// Resolve what the root's percentages refer to before its lines are laid
@@ -855,6 +858,25 @@ fn run_boxes_segment(
     let FlowGeometry {
         width, top_edge, ..
     } = geometry;
+    // The page walk keeps the line each float of the paragraph comes in
+    // with, from the layout that places it; a paragraph broken into
+    // fragmentainers keeps none.
+    if perform
+        && let Some(owner) = owner
+        && let Some(floats) = tree.context.anchored_floats.remove(&owner)
+    {
+        for float in floats {
+            if tree
+                .context
+                .float_anchors
+                .get(&float)
+                .is_some_and(|&(paragraph, _)| paragraph == owner)
+            {
+                tree.context.float_anchors.remove(&float);
+            }
+        }
+    }
+    let anchor_root = owner.filter(|_| perform && fragmentainer.is_none());
     let mut marker_pending = if start.marker_pending {
         root.outside_marker_height
     } else {
@@ -1131,6 +1153,7 @@ fn run_boxes_segment(
                                 earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
                                 float_views: &mut float_views,
+                                anchor: anchor_root.map(|root| (root, lines.len())),
                             },
                         );
                         ceiling = ceiling.max(top);
@@ -1371,6 +1394,7 @@ fn run_boxes_segment(
                                 earliest_float_top: &mut earliest_float_top,
                                 oof_candidates: &mut oof_candidates,
                                 float_views: &mut float_views,
+                                anchor: anchor_root.map(|root| (root, lines.len())),
                             },
                         ));
                     }
@@ -1410,6 +1434,7 @@ fn run_boxes_segment(
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                             float_views: &mut float_views,
+                            anchor: anchor_root.map(|root| (root, lines.len())),
                         },
                     ));
                 }
@@ -1463,6 +1488,7 @@ fn run_boxes_segment(
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                             float_views: &mut float_views,
+                            anchor: anchor_root.map(|root| (root, lines.len())),
                         },
                     ));
                 }
@@ -1487,6 +1513,7 @@ fn run_boxes_segment(
                             earliest_float_top: &mut earliest_float_top,
                             oof_candidates: &mut oof_candidates,
                             float_views: &mut float_views,
+                            anchor: anchor_root.map(|root| (root, lines.len())),
                         },
                     ));
                 }
@@ -1782,6 +1809,7 @@ fn run_boxes_segment(
                     earliest_float_top: &mut earliest_float_top,
                     oof_candidates: &mut oof_candidates,
                     float_views: &mut float_views,
+                    anchor: anchor_root.map(|root| (root, lines.len())),
                 },
             );
         }
@@ -1892,8 +1920,17 @@ fn commit_fragmented_float(
         earliest_float_top,
         oof_candidates,
         float_views,
+        anchor,
     } = output;
     let node = float.node;
+    if let Some(anchor) = anchor {
+        tree.context.float_anchors.insert(node, anchor);
+        tree.context
+            .anchored_floats
+            .entry(anchor.0)
+            .or_default()
+            .push(node);
+    }
     if let Some(views) = float_views {
         views.record(node, ctx);
     }
