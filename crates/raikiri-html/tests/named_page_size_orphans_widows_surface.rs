@@ -1,6 +1,6 @@
 //! A page whose size differs from the page before it, because its page
-//! name differs, lays the content after its start out again at its own
-//! width. The paragraphs that start on it, or after a box that starts it,
+//! name or its `:first` rule differs, lays the content after its start out
+//! again at its own width. The paragraphs that start on it, or after a box that starts it,
 //! keep their `orphans` and `widows` at the breaks after its start, as in
 //! Chromium. Where each glyph falls is what Chromium prints for the same
 //! documents, on default pages 100px square, pages named `foo` 200px wide,
@@ -137,6 +137,27 @@ fn orphans_hold_in_lines_of_the_body_after_a_page_name_change() {
             (2, 'Y', 0, 35),
             (2, 'Z', 0, 5),
             (3, 'W', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn lines_after_a_block_that_starts_a_page_of_another_size_keep_their_widows() {
+    // The block among the lines of the paragraph starts the second page, of
+    // another size than the wider first; the lines after it break at the end
+    // of that page with the widows of the paragraph.
+    assert_eq!(
+        glyphs(
+            r#"<style>@page :first{size:200px 100px}</style><div style="orphans:3;widows:3">Z<br>Y<br>X<div style="height:40px">B</div>W<br>V<br>U</div>"#
+        ),
+        [
+            (0, 'X', 0, 65),
+            (0, 'Y', 0, 35),
+            (0, 'Z', 0, 5),
+            (1, 'B', 0, 5),
+            (2, 'U', 0, 65),
+            (2, 'V', 0, 35),
+            (2, 'W', 0, 5),
         ]
     );
 }
