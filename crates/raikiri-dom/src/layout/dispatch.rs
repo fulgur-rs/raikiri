@@ -6823,9 +6823,15 @@ fn with_ratio_width(
         && inputs.axis != RequestedAxis::Vertical
         && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
         && style.size.width.is_auto();
-    let vertical_content_size = (intrinsic_contribution || flex_cross_measure)
+    let vertical_content_size = ((intrinsic_contribution || flex_cross_measure)
         && inputs.known_dimensions.height.is_some()
-        && inputs.known_dimensions_are_definite.height;
+        && inputs.known_dimensions_are_definite.height)
+        // An item of a row of a container on vertical axes is given the height
+        // it flexed to, and the ratio gives its width from that height.
+        || (vertical
+            && tree.container_is_vertical(idx)
+            && inputs.known_dimensions.height.is_some()
+            && flex_item_follows_main_size(tree, idx, &inputs));
     if style.aspect_ratio.is_none()
         || (vertical && inputs.sizing_mode != SizingMode::InherentSize && !vertical_content_size)
     {
