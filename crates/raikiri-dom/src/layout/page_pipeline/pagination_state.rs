@@ -1314,6 +1314,7 @@ impl PaginationState {
         let (owner, shift) = kept
             .as_ref()
             .map_or((owner, shift), |(kept, _, _)| (kept.line, kept.shift));
+        let moves_widows = kept.as_ref().is_some_and(|(kept, _, _)| !kept.whole);
         // A paragraph that moves whole takes its box along, with the padding
         // and border above its first line and the boxes it begins, as a
         // paragraph of text moves as a unit.
@@ -1356,6 +1357,12 @@ impl PaginationState {
                 shift,
                 None,
             );
+            // The line that crossed the page end went down with the lines
+            // before it, which the widows took along, and may cross the end
+            // of the page after it in turn.
+            if moves_widows {
+                return self.place_leading_atomic_line(document, env, candidate, entry, requested);
+            }
         }
         if pending {
             self.pending_break.take(document, candidate.node_id);

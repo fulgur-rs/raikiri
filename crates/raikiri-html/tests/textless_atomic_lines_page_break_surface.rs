@@ -312,3 +312,15 @@ fn a_ruby_annotation_is_text_on_its_line() {
         ]
     );
 }
+
+#[test]
+fn a_line_moved_down_with_its_widows_breaks_again_at_the_next_page_end() {
+    // The widows take the second line along to the second page, and the
+    // third line, below it, then crosses the end of that page in turn.
+    assert_eq!(
+        glyphs(
+            r#"<style>i{vertical-align:top}</style><div style="font:0/0 Ahem;orphans:1;widows:2"><i style="height:30px;font:20px/30px Ahem">A</i><br><i style="height:60px;font:20px/30px Ahem">B</i><br><i style="height:60px;font:20px/30px Ahem">C</i></div>"#
+        ),
+        [(0, 'A', 0, 5), (1, 'B', 0, 5), (2, 'C', 0, 5)]
+    );
+}
