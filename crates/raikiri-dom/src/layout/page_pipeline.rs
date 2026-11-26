@@ -6272,34 +6272,54 @@ fn has_top_caption(document: &Document, cascade: &CascadeResult, table: usize) -
 /// before pagination, when it comes before the row `first_row`: content of
 /// the table or of one of its row groups outside the rows, its generated
 /// content included, which table fixup wraps in anonymous cells of a row of
-/// their own. That row is the table's first row.
+/// their own. That row is the table's first row. A row group that avoids
+/// breaks inside it is held whole with it, and the groups that repeat on
+/// each page are left out, as for the explicit rows (see
+/// [`first_table_row`]).
 fn leading_anonymous_row_end(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
     table: usize,
-    first_row: Option<usize>,
+    first_row: usize,
 ) -> Option<f32> {
-    let cells: Vec<(f32, f32)> = std::iter::once(table)
+    let cells: Vec<(usize, f32, f32)> = std::iter::once(table)
         .chain(
-            document.nodes[table]
-                .children
-                .iter()
-                .copied()
-                .filter(|&child| document.nodes[child].display() != DisplayValue::TableRow),
+            document
+                .children_through_contents(table)
+                .into_iter()
+                .filter(|&child| {
+                    document.nodes[child].display() != DisplayValue::TableRow
+                        && !document.context.repeated_table_groups.contains(&child)
+                }),
         )
-        .flat_map(|owner| document.anonymous_table_cells(owner))
-        .map(|(cell, node)| {
+        .flat_map(|owner| {
+            document
+                .anonymous_table_cells(owner)
+                .map(move |(cell, node)| (owner, cell, node.layout.size.height))
+        })
+        .map(|(owner, cell, height)| {
             let top = current_abs_y(document, cell);
-            (top, top + node.layout.size.height)
+            let end = if owner != table
+                && avoids_page_break_inside(cascade.computed[owner].break_inside)
+            {
+                current_abs_y(document, owner) + document.nodes[owner].layout.size.height
+            } else {
+                top + height
+            };
+            (owner, top, end)
         })
         .collect();
-    let top = cells.iter().map(|&(top, _)| top).min_by(f32::total_cmp)?;
-    if first_row.is_some_and(|row| current_abs_y(document, row) <= top + 0.001) {
+    let top = cells
+        .iter()
+        .map(|&(_, top, _)| top)
+        .min_by(f32::total_cmp)?;
+    if current_abs_y(document, first_row) <= top + 0.001 {
         return None;
     }
     cells
         .iter()
-        .filter(|&&(cell_top, _)| (cell_top - top).abs() <= 0.001)
-        .map(|&(_, bottom)| bottom)
+        .filter(|&&(_, cell_top, _)| (cell_top - top).abs() <= 0.001)
+        .map(|&(_, _, end)| end)
         .max_by(f32::total_cmp)
 }
 
@@ -6372,6 +6392,16 @@ fn first_row_ends(
             first_rows.insert(table, (parts[0], end));
         }
     }
+    // The end of an anonymous row before the first row of a table that is
+    // not anonymous, where the row's candidate places it.
+    let leading_row_end = |table: usize, row: usize| {
+        if document.anonymous_table_parts(table).is_some() {
+            return None;
+        }
+        let top = *row_tops.get(&row)?;
+        leading_anonymous_row_end(document, cascade, table, row)
+            .map(|leading| leading + top - current_abs_y(document, row))
+    };
     first_rows
         .into_iter()
         .filter(|&(table, (row, end))| {
@@ -6384,19 +6414,19 @@ fn first_row_ends(
             } else {
                 !has_top_caption(document, cascade, table)
             };
+            // A forced break before the first explicit row does not part the
+            // anonymous row before it from the box before the table.
             end.is_finite()
                 && is_plain_table_box(document, table)
                 && grid_start
-                && !forced_break_before_first_row(document, cascade, table, row)
+                && (leading_row_end(table, row).is_some()
+                    || !forced_break_before_first_row(document, cascade, table, row))
         })
         .map(|(table, (row, end))| {
             // An anonymous row before the first row holds the whole of
             // itself, where the row's candidate places it.
-            if document.anonymous_table_parts(table).is_none()
-                && let Some(&top) = row_tops.get(&row)
-                && let Some(leading) = leading_anonymous_row_end(document, table, Some(row))
-            {
-                return (table, leading + top - current_abs_y(document, row));
+            if let Some(leading) = leading_row_end(table, row) {
+                return (table, leading);
             }
             // A row that a break can split holds only its part before the
             // first such break (see `table_cell_fragments::first_split_end`).
@@ -7717,9 +7747,13 @@ fn held_lines_end(
 /// of it ends that the page cannot break away from the box before it: its
 /// first row, or the row group around that row when the group avoids breaks
 /// inside it. A row that a break can split holds less (see
-/// [`first_row_split_end`]). `None` when the table is held whole, which
-/// is also the case when it may repeat a header group or something comes
-/// before its first row.
+/// [`first_row_split_end`]). A header group that does not repeat holds the
+/// first row, and a repeated one goes along with the first body row below
+/// it (see [`first_table_row`]); an anonymous row before the explicit rows,
+/// such as the table's `::before` content, is the first row (see
+/// [`leading_anonymous_row_end`]). `None` when the table is held whole: it
+/// has no explicit row, a caption above its grid, or a forced break before
+/// its first row.
 fn held_table_end(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7729,11 +7763,10 @@ fn held_table_end(
         return None;
     }
     let children = document.children_through_contents(table);
-    let row = first_table_row(document, &children);
-    if let Some(end) = leading_anonymous_row_end(document, table, row) {
+    let row = first_table_row(document, &children)?;
+    if let Some(end) = leading_anonymous_row_end(document, cascade, table, row) {
         return Some(end - current_abs_y(document, table));
     }
-    let row = row?;
     if forced_break_before_first_row(document, cascade, table, row) {
         return None;
     }

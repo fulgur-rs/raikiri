@@ -232,3 +232,71 @@ fn generated_content_after_the_rows_leaves_the_first_row_first() {
         }
     }
 }
+
+const ROW: &str = r#"<div style="display:table-row"><div style="display:table-cell">R</div></div>"#;
+const LAST_ROW: &str =
+    r#"<div style="display:table-row"><div style="display:table-cell">S</div></div>"#;
+
+#[test]
+fn text_in_a_repeated_header_goes_with_the_first_body_row() {
+    let table = format!(
+        r#"<div style="display:table"><div style="display:table-header-group;break-inside:avoid;line-height:20px">T</div>{ROW}{LAST_ROW}</div>"#
+    );
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(30, open, &table, close), &[]),
+            [
+                (0, 'Y', 5),
+                (1, 'H', 5),
+                (1, 'R', 55),
+                (1, 'T', 30),
+                (2, 'S', 25),
+                (2, 'T', 0),
+                (2, 'Z', 55)
+            ],
+            "{open}"
+        );
+    }
+}
+
+#[test]
+fn text_in_a_group_that_avoids_breaks_holds_the_group() {
+    let table = format!(
+        r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">A{ROW}</div>{LAST_ROW}</div>"#
+    );
+    for (open, close) in WRAPPERS {
+        for height in [20, 40] {
+            assert_eq!(
+                glyph_tops(&document(height, open, &table, close), &[]),
+                [
+                    (0, 'Y', 5),
+                    (1, 'A', 35),
+                    (1, 'H', 5),
+                    (1, 'R', 65),
+                    (2, 'S', 5),
+                    (2, 'Z', 35)
+                ],
+                "{open} {height}"
+            );
+        }
+    }
+}
+
+#[test]
+fn generated_content_stays_tied_across_a_forced_break_before_the_rows() {
+    let table = r#"<table class="b"><tr style="break-before:page"><td>R</td></tr><tr><td>S</td></tr></table>"#;
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(50, open, table, close), &[]),
+            [
+                (0, 'Y', 5),
+                (1, 'B', 35),
+                (1, 'H', 5),
+                (2, 'R', 5),
+                (2, 'S', 35),
+                (2, 'Z', 65)
+            ],
+            "{open}"
+        );
+    }
+}
