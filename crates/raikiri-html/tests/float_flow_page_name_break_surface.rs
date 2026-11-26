@@ -220,3 +220,28 @@ fn the_text_after_a_float_that_opens_a_page_stays_beside_it_when_it_splits() {
         ],
     );
 }
+
+#[test]
+fn a_multicol_container_in_a_float_passes_only_its_own_page_value() {
+    // A page value inside the multicol container falls in its columns,
+    // which take no change of page type, so the float stays whole.
+    let columns = "<div style='columns:1'><div style='page:foo'>H</div></div>";
+    expect(
+        &format!("{FLOAT}'>F{columns}</div>Z"),
+        &["100: F@0,0 H@0,30 Z@40,0"],
+    );
+    expect(
+        &format!("{FLOAT}'>{columns}K</div>Z"),
+        &["100: H@0,0 K@0,30 Z@40,0"],
+    );
+    // The container's own value still changes the page type.
+    let columns = "<div style='columns:1;page:foo'>H</div>";
+    expect(
+        &format!("{FLOAT}'>F{columns}</div>Z"),
+        &["100: F@0,0 Z@40,0", "100: H@0,0"],
+    );
+    expect(
+        &format!("{FLOAT}'>{columns}K</div>Z"),
+        &["100: H@0,0 Z@40,0", "100: K@0,0"],
+    );
+}

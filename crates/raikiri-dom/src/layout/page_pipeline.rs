@@ -3838,12 +3838,15 @@ fn clear_floats_at_forced_breaks<'name>(
     };
     // The page value a box ends with: that of its last in-flow content, down
     // to the deepest box, or `inherited` without one. A monolithic box does
-    // not pass up a descendant's. `trailing` keeps each box's own result, so
-    // nested boxes are each looked at once.
+    // not pass up a descendant's, nor does a multicol container where
+    // `multicol_ends` is set. `trailing` keeps each box's own result, so
+    // nested boxes are each looked at once; each `multicol_ends` setting
+    // takes its own map.
     let end_page_name = |document: &Document,
                          trailing: &mut HashMap<usize, Option<&'name str>>,
                          id: usize,
-                         inherited: Option<&'name str>| {
+                         inherited: Option<&'name str>,
+                         multicol_ends: bool| {
         if !has_named_pages {
             return inherited;
         }
@@ -3854,12 +3857,14 @@ fn clear_floats_at_forced_breaks<'name>(
                 break *name;
             }
             chain.push(id);
-            if is_monolithic_for_pagination_with_transposed_axes(
-                document,
-                cascade,
-                id,
-                pagination_on_transposed_axes,
-            ) {
+            if (multicol_ends && document.nodes[id].multicol.is_some())
+                || is_monolithic_for_pagination_with_transposed_axes(
+                    document,
+                    cascade,
+                    id,
+                    pagination_on_transposed_axes,
+                )
+            {
                 break None;
             }
             let last = child_boxes(document, id, false)
@@ -3995,7 +4000,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 .flatten()
                 .flatten();
                 if let Some(last) = last {
-                    let name = end_page_name(document, &mut trailing, last, inherited);
+                    let name = end_page_name(document, &mut trailing, last, inherited, false);
                     if name != inherited {
                         previous_page_name = Some(name);
                     }
@@ -4136,7 +4141,13 @@ fn clear_floats_at_forced_breaks<'name>(
                     .entry(float)
                     .or_insert(child);
             }
-            previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
+            previous_page_name = Some(end_page_name(
+                document,
+                &mut trailing,
+                child,
+                inherited,
+                false,
+            ));
             // child_boxes represents inline content as None; floats and static-position
             // absolute boxes have already been handled above.
             let own_page_name = selected_page_name(cascade, child).or(inherited);
@@ -4198,6 +4209,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // there to differ from, as in the page flow. The floats inside a float
     // are walked the same way.
     let mut float_flow_named_breaks = Vec::new();
+    let mut float_trailing = HashMap::new();
     while let Some((parent, inherited)) = float_flows.pop() {
         let mut previous_page_name =
             crate::generated_content::has_page_flow_generated_prefix(cascade, parent)
@@ -4220,7 +4232,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
                 continue;
             }
-            let (_, start_page_name) = propagated_start_page_name_with_transposed_axes(
+            let start_page_name = super::page::float_flow_start_page_name(
                 document,
                 cascade,
                 child,
@@ -4231,7 +4243,13 @@ fn clear_floats_at_forced_breaks<'name>(
                 float_flow_named_breaks.push((child, true));
             }
             last_block = Some(child);
-            previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
+            previous_page_name = Some(end_page_name(
+                document,
+                &mut float_trailing,
+                child,
+                inherited,
+                true,
+            ));
             if splits_at_page_names(document, child) {
                 float_flows.push((child, own_page_name));
             }
