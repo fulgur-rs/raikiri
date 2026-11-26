@@ -2664,8 +2664,7 @@ fn record_wrapped_fragments(
                     tree,
                     wrapped.node,
                     fragment,
-                    (placement.first_column, placement.first_y),
-                    placement.first_height,
+                    placement,
                     end,
                     group.height,
                     context,
@@ -2774,9 +2773,10 @@ fn record_wrapped_fragments(
 }
 
 /// Give `wrapper`, a wrapper whose boxes joined the flow, a piece in each
-/// column its border box reaches, from `start`, the column and block offset
-/// where it starts, to `end`, where it ends, in columns `column_height` tall:
-/// its first piece `first_fragment`, `first_height` tall, which holds its
+/// column its border box reaches, from where `placement` starts it, its
+/// first column and block offset, to `end`, where it ends, in columns
+/// `column_height` tall: its first piece `first_fragment`, as tall as
+/// `placement` makes it, which holds its
 /// boxes, and one more for each column after it, which paint its background
 /// and borders there. The first piece ends above the end of its column when
 /// the padding below the wrapper went whole to a later column. A
@@ -2788,12 +2788,13 @@ fn push_wrapper_pieces(
     tree: &mut LayoutSession<'_>,
     wrapper: usize,
     first_fragment: usize,
-    start: (usize, f32),
-    first_height: f32,
+    placement: &paragraph_group::Placement,
     end: (usize, f32),
     column_height: f32,
     context: FragmentationContext,
 ) -> Option<()> {
+    let start = (placement.first_column, placement.first_y);
+    let first_height = placement.first_height;
     if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
         return Some(());
     }
@@ -4863,8 +4864,7 @@ fn layout_column_group(
                                 tree,
                                 child,
                                 child_fragment,
-                                (placement.first_column, placement.first_y),
-                                placement.first_height,
+                                &placement,
                                 end,
                                 group.height,
                                 context,
