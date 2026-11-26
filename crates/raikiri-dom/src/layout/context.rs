@@ -98,6 +98,9 @@ pub(crate) struct LayoutContext {
     /// line it comes in with: the line it is placed on or below, or the line
     /// it waits for. A paragraph broken into fragmentainers keeps none.
     pub(crate) float_anchors: HashMap<usize, (usize, usize)>,
+    /// The floats in `float_anchors` by their paragraph, so a paragraph laid
+    /// out again drops only its own.
+    pub(crate) anchored_floats: HashMap<usize, Vec<usize>>,
     /// Boxes after a forced break that clearance took past the top of the
     /// page the break opens, below an earlier float that runs on onto that
     /// page, each with the top the walk found for it there: the border-box

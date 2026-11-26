@@ -861,10 +861,20 @@ fn run_boxes_segment(
     // The page walk keeps the line each float of the paragraph comes in
     // with, from the layout that places it; a paragraph broken into
     // fragmentainers keeps none.
-    if perform && let Some(owner) = owner {
-        tree.context
-            .float_anchors
-            .retain(|_, &mut (paragraph, _)| paragraph != owner);
+    if perform
+        && let Some(owner) = owner
+        && let Some(floats) = tree.context.anchored_floats.remove(&owner)
+    {
+        for float in floats {
+            if tree
+                .context
+                .float_anchors
+                .get(&float)
+                .is_some_and(|&(paragraph, _)| paragraph == owner)
+            {
+                tree.context.float_anchors.remove(&float);
+            }
+        }
     }
     let anchor_root = owner.filter(|_| perform && fragmentainer.is_none());
     let mut marker_pending = if start.marker_pending {
@@ -1915,6 +1925,11 @@ fn commit_fragmented_float(
     let node = float.node;
     if let Some(anchor) = anchor {
         tree.context.float_anchors.insert(node, anchor);
+        tree.context
+            .anchored_floats
+            .entry(anchor.0)
+            .or_default()
+            .push(node);
     }
     if let Some(views) = float_views {
         views.record(node, ctx);
