@@ -2673,13 +2673,15 @@ struct LinePiece {
 /// end of the one before or not: `(line, page)`. The last line carries
 /// `tail_edges`, the padding and border that close the paragraph below it: it
 /// crosses a page end when they do, and starts the next page with them.
+/// `insets` are the block sizes at the top and the bottom of each page that
+/// the lines leave to other content (see `ParagraphLineFit::page_insets`).
 fn line_pieces(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     current_page: u32,
     page_origins: &PageOrigins,
     forced: &[(usize, u32)],
-    tail_edges: f32,
+    (tail_edges, (head, foot)): (f32, (f32, f32)),
 ) -> Vec<LinePiece> {
     let mut pieces: Vec<LinePiece> = Vec::new();
     let mut shift = 0.0_f32;
@@ -2697,17 +2699,22 @@ fn line_pieces(
         let mut push = None;
         if line > 0 {
             let next = page.saturating_add(1);
-            let crosses = top > page_origins.origin(page) + 0.001
-                && bottom > page_origins.origin(next) + 0.001;
+            let crosses = top > page_origins.origin(page) + head + 0.001
+                && bottom > page_origins.origin(next) - foot + 0.001;
+            // A line that the flow already carries onto a later page goes
+            // below the header's copy there.
+            let under_header =
+                page > current_page && top < page_origins.origin(page) + head - 0.001;
             let target = match forced.iter().find(|&&(first, _)| first == line) {
                 Some(&(_, forced_page)) => {
-                    (page_origins.origin(forced_page) - top > 0.001).then_some(forced_page)
+                    (page_origins.origin(forced_page) + head - top > 0.001).then_some(forced_page)
                 }
+                None if under_header => Some(page),
                 None => crosses.then_some(next),
             };
             if let Some(target) = target {
                 page = target;
-                let delta = page_origins.origin(page) - top;
+                let delta = page_origins.origin(page) + head - top;
                 shift += delta;
                 push = Some(delta);
             }
@@ -2771,13 +2778,14 @@ fn paragraph_line_moves(
         current_page,
         page_origins,
         &[],
-        0.0,
+        (0.0, fit.page_insets),
     );
     // Judge the declared widows, not the reduced count a short paragraph can
     // spare. An impossible count is relaxed only at the opening fragment.
     let widows_fit = pieces.last().is_some_and(|last| {
         let first_widow = total - widows.clamp(1, total);
-        last_bottom - line_metrics[first_widow].0 <= page_origins.step_at(last.page) + 0.001
+        last_bottom - line_metrics[first_widow].0
+            <= page_origins.step_at(last.page) - fit.page_insets.0 - fit.page_insets.1 + 0.001
     });
     let mut breaks: Vec<(usize, u32)> = pieces
         .iter()
@@ -2800,7 +2808,7 @@ fn paragraph_line_moves(
             current_page,
             page_origins,
             &breaks,
-            0.0,
+            (0.0, fit.page_insets),
         );
     }
     if tail_edges > 0.0 {
@@ -2810,7 +2818,7 @@ fn paragraph_line_moves(
             current_page,
             page_origins,
             &breaks,
-            tail_edges,
+            (tail_edges, fit.page_insets),
         );
         // The edges start a page of their own when they do not fit under the
         // last line.
@@ -2823,7 +2831,7 @@ fn paragraph_line_moves(
                 current_page,
                 page_origins,
                 &breaks,
-                tail_edges,
+                (tail_edges, fit.page_insets),
             );
         } else {
             pieces = closed;
@@ -6430,7 +6438,7 @@ fn first_row_ends(
             }
             // A row that a break can split holds only its part before the
             // first such break (see `table_cell_fragments::first_split_end`).
-            // A table that repeats its footer keeps its rows whole.
+            // A table that repeats its footer holds its first row whole.
             let split = (!row_groups.contains_key(&row)
                 && document.nodes[row].display() == DisplayValue::TableRow
                 && !has_footer_group(document, table))
@@ -7799,13 +7807,18 @@ fn held_table_end(
     )
 }
 
-/// Whether the table `table` has a footer group, whose copy it may repeat
-/// below a row that breaks: such a table keeps its rows whole.
-fn has_footer_group(document: &Document, table: usize) -> bool {
+/// Whether the table `table` repeats a footer group, whose copy goes below a
+/// row that breaks: a run of boxes tied by avoided breaks holds such a
+/// table's first row whole. A footer group that does not repeat is a group
+/// of rows like any other.
+fn has_footer_group(document: &super::context::LayoutSession<'_>, table: usize) -> bool {
     document
         .children_through_contents(table)
         .iter()
-        .any(|&child| document.nodes[child].display() == DisplayValue::TableFooterGroup)
+        .any(|&child| {
+            document.nodes[child].display() == DisplayValue::TableFooterGroup
+                && document.context.repeated_table_groups.contains(&child)
+        })
 }
 
 /// The row of the table whose children are `children` that comes first in
@@ -8498,9 +8511,10 @@ impl AvoidedBreaks {
         // An ordinary table row that would cross the current page moves to
         // the next one whole when a cell of it breaks before its content, as
         // Chromium does; otherwise it breaks there with its cells (see
-        // `table_cell_fragments::row_splits`). A row whose cells would need
-        // lines moved that cannot move inside them, or one of a table that
-        // repeats a header or footer, still moves whole.
+        // `table_cell_fragments::row_splits`), above the copy of any footer
+        // the table repeats. A row whose cells would need lines moved that
+        // cannot move inside them still moves whole, and so does a row taller
+        // than a page that a cell breaks before its content.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
         // A row of a table that repeats its footer leaves room for the
@@ -8535,10 +8549,40 @@ impl AvoidedBreaks {
                         page_end,
                         next_page_step,
                     )
-                    && !(repeated_header_height + repeated_footer_height <= 0.001
-                        && table_cell_fragments::row_splits(
-                            document, cascade, body_id, node_id, flow_y, page_end,
-                        )))
+                    && !(table_cell_fragments::row_splits(
+                        document,
+                        cascade,
+                        body_id,
+                        node_id,
+                        flow_y,
+                        page_end - repeated_footer_height,
+                    ) && (repeated_header_height + repeated_footer_height <= 0.001
+                        || table_cell_fragments::lines_carry_row_break(
+                            document,
+                            cascade,
+                            body_id,
+                            node_id,
+                            flow_y,
+                            page_end - repeated_footer_height,
+                        ))))
+                || (height + repeated_header_height > next_page_step + 0.001
+                    && flow_y > page_start + 0.001
+                    && starts_on_page_and_runs_past_it(
+                        flow_y,
+                        flow_y + height,
+                        page_start,
+                        page_end,
+                    )
+                    && table_cell_fragments::row_breaks_before_content(
+                        document,
+                        cascade,
+                        node_id,
+                        flow_y,
+                        (
+                            page_end - repeated_footer_height,
+                            next_page_step - repeated_header_height,
+                        ),
+                    ))
                 || spanned_row_restarts(
                     document,
                     cascade,
@@ -16565,9 +16609,10 @@ fn line_block_parent(
 ///
 /// Every box from the paragraph up to the cell stays in its flow, keeps the
 /// moved lines in view (none clips at a set height or ignores its content),
-/// and the table is placed in plain block flow up to the body. A table that
-/// repeats a header or footer group on each page leaves no room for its
-/// copies here, and pagination on transposed axes moves no lines this way.
+/// and the table is placed in plain block flow up to the body. Moved lines
+/// go between the copies of any header or footer group the table repeats
+/// (see `ParagraphLineFit::page_insets`). Pagination on transposed axes
+/// moves no lines this way.
 pub(super) fn cell_flow_inline(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -16602,14 +16647,7 @@ pub(super) fn cell_flow_inline(
                     PositionValue::Absolute | PositionValue::Fixed
                 )
         });
-    let repeats_groups = document.nodes[table].children.iter().any(|&child| {
-        matches!(
-            document.nodes[child].display(),
-            DisplayValue::TableHeaderGroup | DisplayValue::TableFooterGroup
-        )
-    });
     if !in_view
-        || repeats_groups
         || document.nodes[cell].size_containment.height
         || !placed_in_block_flow(document, cascade, table, body_id)
     {
@@ -18040,6 +18078,12 @@ struct ParagraphLineFit {
     /// Whether every line fits the page but the last does not with the edges
     /// below it, a paragraph of one line included.
     edges_overflow: bool,
+    /// The block size that copies of a table's repeated header and footer
+    /// groups take at the top and the bottom of each page the lines go on
+    /// to, for the lines of a paragraph in a cell of that table: a moved line
+    /// starts below the header's copy, and a line that runs into the
+    /// footer's copy moves on.
+    page_insets: (f32, f32),
 }
 
 impl ParagraphLineFit {
@@ -18161,6 +18205,7 @@ impl ParagraphLineFit {
             tail_edges,
             tail_overflows,
             edges_overflow,
+            page_insets: (0.0, 0.0),
         }
     }
 }
@@ -19835,8 +19880,12 @@ fn make_room_for_header_copy(
         }
         header.body_started = true;
     }
+    // A row taller than the page breaks below the copy on the pages it
+    // runs over, as Chromium does.
+    let step = page_origins.step_at(current_page);
     if !header.placements.contains_key(&current_page)
-        && header.height + header.gap + height <= page_origins.step_at(current_page) + 0.001
+        && (header.height + header.gap + height <= step + 0.001
+            || height > step + 0.001 && header.height + header.gap < step)
     {
         let origin = page_origins.origin(current_page);
         let delta = (origin + header.height + header.gap - row_y).max(0.0);

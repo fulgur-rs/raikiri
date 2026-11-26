@@ -408,6 +408,37 @@ impl HeaderRepeats {
             .map_or(0.0, |footer| footer.height + footer.gap)
     }
 
+    /// Places copies of the repeated header and footer groups of the table
+    /// of body row `row` around a break inside the row: the footer's at the
+    /// end of the page `left`, which starts at `left_origin` and ends at
+    /// `left_end`, and the header's at the top of the page `next`, which
+    /// starts at `next_origin`. The row's last body row leaves the footer to
+    /// its source, which follows it.
+    pub(crate) fn place_copies_around_row_break(
+        &mut self,
+        row: usize,
+        (left, left_origin, left_end): (u32, f32, f32),
+        (next, next_origin): (u32, f32),
+    ) {
+        if let Some(header) = self.rows.get(&row).and_then(|id| self.headers.get_mut(id)) {
+            header
+                .placements
+                .entry(next)
+                .or_insert((next_origin, next_origin));
+        }
+        if !self.last_rows.contains(&row)
+            && let Some(footer) = self
+                .footer_rows
+                .get(&row)
+                .and_then(|id| self.headers.get_mut(id))
+        {
+            footer
+                .placements
+                .entry(left)
+                .or_insert((left_origin, left_end - footer.height));
+        }
+    }
+
     /// Whether `source` belongs to a repeated footer group.
     pub(crate) fn is_footer_source(&self, source: usize) -> bool {
         self.owner(source)

@@ -4806,9 +4806,17 @@ impl PaginationState {
                 moved_whole = true;
             }
             // Lines a clip hides after a move are left where they are.
+            // The lines of a cell of a table that repeats a header or footer
+            // group go between the copies of the groups on each page.
+            let page_insets = if cell_paragraph {
+                self.cell_page_insets(document, block_id)
+            } else {
+                (0.0, 0.0)
+            };
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
-                let page_step = page_origins.step_at(page);
+                // The page ends above the copy of a repeated footer.
+                let page_step = page_origins.step_at(page) - page_insets.1;
                 let lines_fit = line_metrics.last().is_some_and(|(_, bottom)| {
                     text.effective_y + bottom <= page_start + page_step + 0.001
                 });
@@ -4826,6 +4834,7 @@ impl PaginationState {
                     },
                 );
                 line_fit.first_fragment = !moved_whole;
+                line_fit.page_insets = page_insets;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
@@ -4951,7 +4960,7 @@ impl PaginationState {
                         ))
                 {
                     page = page.saturating_add(1);
-                    let shift = page_origins.origin(page) - first_line_top;
+                    let shift = page_origins.origin(page) + page_insets.0 - first_line_top;
                     let moved = self.move_lines(
                         document,
                         env,
@@ -5082,7 +5091,7 @@ impl PaginationState {
                                         text_lines.get(node_id),
                                         first_line_top - (block_effective_y + block_edges),
                                     )))
-                        .then(|| page_origins.origin(page) - first_line_top)
+                        .then(|| page_origins.origin(page) + page_insets.0 - first_line_top)
                         .filter(|shift| *shift > 0.0);
                         if let Some(shift) = below_floats {
                             self.move_lines(
@@ -6416,6 +6425,18 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The block sizes that the copies of the repeated header and footer
+    /// groups of the table around the cell paragraph `block_id` take at the
+    /// top and the bottom of the pages its row goes on to.
+    fn cell_page_insets(&self, document: &LayoutSession<'_>, block_id: usize) -> (f32, f32) {
+        cell_row(document, block_id).map_or((0.0, 0.0), |row| {
+            (
+                self.table_headers.repeated_height_before(row),
+                self.table_headers.repeated_height_after(row),
+            )
+        })
+    }
+
     /// Moves lines of the paragraph `block_id`, which holds the text
     /// `candidate`, down to the pages `moves` name: see [`LineBreakMove`].
     /// Each shift is also taken by the flow after the paragraph, and by the
@@ -6439,8 +6460,26 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
+        let row = (blocks.cell_paragraph == Some(block_id))
+            .then(|| cell_row(document, block_id))
+            .flatten();
         for (line, shift, page) in moves {
             reach_page(control, page)?;
+            if let Some(row) = row {
+                // Each page the lines leave closes with the footer's copy,
+                // and each page they go on to opens with the header's.
+                let origins = env.page_origins;
+                let head = self.table_headers.repeated_height_before(row);
+                let left = origins.page_index_for_y(origins.origin(page) + head - shift + 0.001);
+                for left in left.min(page.saturating_sub(1))..page {
+                    let next = left + 1;
+                    self.table_headers.place_copies_around_row_break(
+                        row,
+                        (left, origins.origin(left), origins.origin(next)),
+                        (next, origins.origin(next)),
+                    );
+                }
+            }
             let growth = move_paragraph_lines(
                 document,
                 cascade,
@@ -7885,4 +7924,14 @@ fn break_holders(
         }
     }
     holders
+}
+
+/// The row of the table cell around the paragraph `block_id`.
+fn cell_row(document: &LayoutSession<'_>, block_id: usize) -> Option<usize> {
+    let cell = document
+        .inclusive_ancestors(block_id)
+        .find(|&id| document.nodes[id].display() == raikiri_style::DisplayValue::TableCell)?;
+    document
+        .ancestors(cell)
+        .find(|&id| document.nodes[id].display() != raikiri_style::DisplayValue::Contents)
 }

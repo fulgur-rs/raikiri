@@ -196,6 +196,7 @@ mod table_empty_cells_surface;
 mod table_footer_header_avoided_break_surface;
 mod table_header_repeat_surface;
 mod table_last_row_avoided_break_surface;
+mod table_row_breaks_with_header_groups_surface;
 mod table_rowspan_surface;
 mod tall_line_page_break_surface;
 mod text_after_block_page_break_surface;
