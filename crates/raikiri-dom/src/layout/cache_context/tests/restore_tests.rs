@@ -293,3 +293,44 @@ fn dirty_saved_cache_is_discarded_without_publishing_inside_an_override() {
         assert!(!tree.layout_dirty);
     });
 }
+
+#[test]
+fn restored_final_layout_is_forgotten_when_the_cache_in_use_forgot_its_own() {
+    let mut doc = Document::new();
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
+    let id = protocol::NodeId::from(0usize);
+    let performed = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        ..layout_input(10.0)
+    };
+    let measured = layout_input(20.0);
+    tree.with_cache_frame(0, ViewContext::default(), |tree| {
+        tree.cache_store(id, &performed, LayoutOutput::HIDDEN);
+        tree.cache_store(id, &measured, LayoutOutput::HIDDEN);
+    });
+    let saved = tree.take_layout_cache(0);
+    tree.forget_final_layout(id);
+    tree.restore_layout_cache(0, saved);
+    assert!(tree.cache_get(id, &performed).is_none());
+    assert!(tree.cache_get(id, &measured).is_some());
+}
+
+#[test]
+fn restored_final_layout_is_kept_when_the_cache_in_use_did_not_forget_its_own() {
+    let mut doc = Document::new();
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
+    let id = protocol::NodeId::from(0usize);
+    let performed = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        ..layout_input(10.0)
+    };
+    tree.with_cache_frame(0, ViewContext::default(), |tree| {
+        tree.cache_store(id, &performed, LayoutOutput::HIDDEN)
+    });
+    let saved = tree.take_layout_cache(0);
+    tree.context.arena_writes += 1;
+    tree.restore_layout_cache(0, saved);
+    assert!(tree.cache_get(id, &performed).is_some());
+}
