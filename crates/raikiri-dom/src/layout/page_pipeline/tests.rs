@@ -13270,12 +13270,13 @@ fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
             "tfoot",
             Some("display:table-footer-group;break-inside:avoid"),
         );
-        footer_cell = append_row(doc, footer, "", 20.0).1;
+        footer_cell = append_row(doc, footer, "", 30.0).1;
         let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         append_row(doc, group, "", 20.0);
     });
     // The footer is laid out after the body, so the body row is the table's
-    // first row and the footer moves to the top of the next page alone.
+    // first row and the footer moves to the top of the next page alone. It
+    // is taller than a quarter of the page, so it does not repeat.
     assert_eq!(page_flow_y(&doc, footer_cell), 100.0);
 }
 

@@ -412,8 +412,8 @@ impl HeaderRepeats {
     /// of body row `row` around a break inside the row: the footer's at the
     /// end of the page `left`, which starts at `left_origin` and ends at
     /// `left_end`, and the header's at the top of the page `next`, which
-    /// starts at `next_origin`. The row's last body row leaves the footer to
-    /// its source, which follows it.
+    /// starts at `next_origin`. The source of the footer follows only the
+    /// last fragment of the table's last body row.
     pub(crate) fn place_copies_around_row_break(
         &mut self,
         row: usize,
@@ -426,17 +426,42 @@ impl HeaderRepeats {
                 .entry(next)
                 .or_insert((next_origin, next_origin));
         }
-        if !self.last_rows.contains(&row)
-            && let Some(footer) = self
-                .footer_rows
-                .get(&row)
-                .and_then(|id| self.headers.get_mut(id))
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
         {
             footer
                 .placements
                 .entry(left)
                 .or_insert((left_origin, left_end - footer.height));
         }
+    }
+
+    /// Moves the end of body row `row`, the last body row placed so far, down
+    /// by `shift` when lines inside it move: the footer's copy on the page
+    /// the row ends on goes below it. `page_of` gives the page of a position.
+    pub(crate) fn grow_last_row(&mut self, row: usize, shift: f32, page_of: impl Fn(f32) -> u32) {
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
+            && let Some((_, bottom)) = footer.last_row
+        {
+            let bottom = bottom + shift;
+            footer.last_row = Some((page_of(bottom - 0.001), bottom));
+        }
+    }
+
+    /// The block size of the copy of the repeated footer below body row
+    /// `row`, including its gap to the row, on each page the row leaves when
+    /// it breaks, the last body row's included; zero when the row's table
+    /// repeats no footer.
+    pub(crate) fn footer_copy_height(&self, row: usize) -> f32 {
+        self.footer_rows
+            .get(&row)
+            .and_then(|footer_id| self.headers.get(footer_id))
+            .map_or(0.0, |footer| footer.height + footer.gap)
     }
 
     /// Whether `source` belongs to a repeated footer group.

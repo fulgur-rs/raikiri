@@ -8521,6 +8521,10 @@ impl AvoidedBreaks {
         // footer's copy below it, on this page and on the next.
         let repeated_header_height = table_headers.repeated_height_before(node_id);
         let repeated_footer_height = table_headers.repeated_height_after(node_id);
+        // A row that breaks leaves room for the footer's copy on the page it
+        // leaves, the last body row too: the footer's source follows only its
+        // last fragment.
+        let footer_copy = table_headers.footer_copy_height(node_id);
         let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
@@ -8543,7 +8547,7 @@ impl AvoidedBreaks {
                 || (!cell_text_fits
                     && table_row_moves(
                         flow_y,
-                        height + repeated_footer_height,
+                        height + footer_copy,
                         table_row_lead + height + repeated_header_height + repeated_footer_height,
                         page_start,
                         page_end,
@@ -8555,7 +8559,7 @@ impl AvoidedBreaks {
                         body_id,
                         node_id,
                         flow_y,
-                        page_end - repeated_footer_height,
+                        page_end - footer_copy,
                     ) && (repeated_header_height + repeated_footer_height <= 0.001
                         || table_cell_fragments::lines_carry_row_break(
                             document,
@@ -8563,7 +8567,7 @@ impl AvoidedBreaks {
                             body_id,
                             node_id,
                             flow_y,
-                            page_end - repeated_footer_height,
+                            page_end - footer_copy,
                         ))))
                 || (height + repeated_header_height > next_page_step + 0.001
                     && flow_y > page_start + 0.001
@@ -8579,7 +8583,7 @@ impl AvoidedBreaks {
                         node_id,
                         flow_y,
                         (
-                            page_end - repeated_footer_height,
+                            page_end - footer_copy,
                             next_page_step - repeated_header_height,
                         ),
                     ))

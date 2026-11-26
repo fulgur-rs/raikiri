@@ -129,6 +129,40 @@ fn the_page_a_row_leaves_ends_above_the_footer_copy() {
 }
 
 #[test]
+fn the_last_row_leaves_room_for_the_footer_copy() {
+    // The last row splits, and the page it leaves still ends with a copy.
+    expect(
+        &format!("{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>A<br>B</td></tr></table>"),
+        &["100: A@1,33 F@0,75 X@1,1", "100: B@1,0 F@0,26"],
+    );
+    // A last row that cannot fit above the copy moves whole.
+    expect(
+        &format!(
+            "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>Y</td></tr><tr><td>Z</td></tr></table>"
+        ),
+        &["100: F@0,59 X@1,1 Y@1,33", "100: F@0,27 Z@1,1"],
+    );
+    expect(
+        &format!(
+            "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>Y</td></tr><tr><td>A<br>B</td></tr></table>"
+        ),
+        &["100: F@0,59 X@1,1 Y@1,33", "100: A@1,1 B@1,31 F@0,57"],
+    );
+    // With a header too, every page the row crosses keeps both copies.
+    expect(
+        &format!(
+            "{TABLE}{HEADER}{FOOTER}<tr><td>A<br>B<br>C<br>D</td></tr><tr><td>Z</td></tr></table>"
+        ),
+        &[
+            "100: A@1,21 F@0,75 H@0,-5",
+            "100: B@1,20 C@1,50 F@0,75 H@0,-5",
+            "100: D@1,20 F@0,46 H@0,-5",
+            "100: F@0,47 H@0,-5 Z@1,21",
+        ],
+    );
+}
+
+#[test]
 fn a_tall_row_whose_first_line_does_not_fit_starts_the_next_page() {
     expect(
         &format!(
