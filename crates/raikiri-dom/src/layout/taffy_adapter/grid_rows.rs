@@ -26,6 +26,22 @@ pub(crate) fn rows_size_to_content(style: &LayoutStyleView<'_>) -> bool {
     }) && style.grid_auto_rows().all(auto)
 }
 
+/// Whether the rows of the grid laid out with `style` repeat to fill its
+/// height (`repeat(auto-fill, ...)` or `repeat(auto-fit, ...)`): how many
+/// there are depends on whether that height is known.
+pub(crate) fn rows_repeat_to_fill(style: &LayoutStyleView<'_>) -> bool {
+    let style = TaffyStyle::new(*style);
+    style.grid_template_rows().is_some_and(|mut components| {
+        components.any(|component| {
+            matches!(
+                component,
+                GenericGridTemplateComponent::Repeat(repeat)
+                    if matches!(repeat.count(), RepetitionCount::AutoFill | RepetitionCount::AutoFit)
+            )
+        })
+    })
+}
+
 /// Whether no column of the grid laid out with `style`, explicit or implicit,
 /// has a `min-content` or `max-content` minimum track size.
 ///

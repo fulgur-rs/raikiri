@@ -510,6 +510,26 @@ const CASES: &[Case] = &[
         "<div id=g style='display:grid;width:200px;position:relative'><div id=i style='position:absolute;height:50%;width:10px'></div><div id=c style='height:75px'></div></div><div id=after style='height:5px'></div>",
         &[("g", (8.0, 8.0, 200.0, 75.0)), ("i", (8.0, 8.0, 10.0, 37.5)), ("c", (8.0, 8.0, 200.0, 75.0)), ("after", (8.0, 83.0, 784.0, 5.0))],
     ),
+    (
+        "x-word",
+        "<div id=g style='display:grid;width:300px'><div id=i style='aspect-ratio:2/1;height:50%'>WWWWWWWWWWWWWWWWWWWW</div><div id=c style='height:40px'></div></div><div id=after style='height:5px'></div>",
+        &[("g", (8.0, 8.0, 300.0, 190.0)), ("i", (8.0, 8.0, 200.0, 75.0)), ("c", (8.0, 158.0, 300.0, 40.0)), ("after", (8.0, 198.0, 784.0, 5.0))],
+    ),
+    (
+        "x-word2",
+        "<div id=g style='display:grid;width:100px'><div id=i style='aspect-ratio:2/1;height:50%'>WWWWWWWWWWWW</div><div id=c style='height:40px'></div></div><div id=after style='height:5px'></div>",
+        &[("g", (8.0, 8.0, 100.0, 100.0)), ("i", (8.0, 8.0, 120.0, 30.0)), ("c", (8.0, 68.0, 120.0, 40.0)), ("after", (8.0, 108.0, 784.0, 5.0))],
+    ),
+    (
+        "x-accenter",
+        "<div id=g style='display:grid;width:100px;align-content:center'><div id=i style='aspect-ratio:2/1;box-sizing:content-box;border:25px solid;height:50%'><div style='height:10px'></div></div><div id=c style='height:75px'></div></div><div id=after style='height:5px'></div>",
+        &[("g", (8.0, 8.0, 100.0, 150.0)), ("i", (8.0, 1.75, 137.5, 93.75)), ("c", (8.0, 89.25, 125.0, 75.0)), ("after", (8.0, 158.0, 784.0, 5.0))],
+    ),
+    (
+        "x-autofill",
+        "<div id=g style='display:grid;width:100px;grid-template-rows:repeat(auto-fill,10px)'><div id=i style='aspect-ratio:2/1;height:100%'></div><div id=c style='height:20px'>X</div><div id=d style='height:20px'>X</div></div><div id=after style='height:5px'></div>",
+        &[("g", (8.0, 8.0, 100.0, 50.0)), ("i", (8.0, 8.0, 20.0, 10.0)), ("c", (8.0, 18.0, 100.0, 20.0)), ("d", (8.0, 38.0, 100.0, 20.0)), ("after", (8.0, 58.0, 784.0, 5.0))],
+    ),
 ];
 
 /// Run every case whose name satisfies `select`, and make sure some do.
@@ -536,10 +556,17 @@ fn ratio_items_in_definite_rows_take_the_width_of_their_area_height() {
 }
 
 #[test]
+fn content_alignment_and_repeated_rows_follow_the_first_pass() {
+    check_group(|name| name.starts_with("x-"));
+}
+
+#[test]
 fn items_filling_their_area_leave_the_grid_as_the_first_pass_sized_it() {
     check_group(|name| {
-        ["minh-", "cols-", "pad-", "maxh-", "prow-", "frrow-", "gap-", "ac-", "nest", "abs"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
+        [
+            "minh-", "cols-", "pad-", "maxh-", "prow-", "frrow-", "gap-", "ac-", "nest", "abs",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
     });
 }

@@ -6356,6 +6356,8 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
                 ..inputs
             },
         );
+        // The height stays indefinite for the items, as it is for an `auto`
+        // container.
         let mut sized = inputs;
         sized.known_dimensions.height = Some(measured.size.height);
         return grid_layout(tree, node_id, sized);
@@ -6397,8 +6399,9 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     )
 }
 
-/// Whether the horizontal grid container `idx` has an in-flow item whose
-/// `height`, `min-height` or `max-height` is a percentage of its grid area.
+/// Whether the horizontal grid container `idx` has an in-flow item with an
+/// aspect ratio whose `height`, `min-height` or `max-height` is a percentage
+/// of its grid area.
 ///
 /// Such an item contributes to the rows once at the height an unknown area
 /// gives it, and again, with its percentage resolved, after the columns are
@@ -6408,10 +6411,13 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 /// 25px borders above a 75px item makes a 100px grid 150px tall, though its
 /// rows come to 87.5px and 75px. The size the library reports when only asked
 /// for the size of the container is that first height, so the container is
-/// laid out at it.
+/// laid out at it. Only the ratio carries the resolved height over to a new
+/// width, and rows that repeat to fill the height would be counted again for
+/// one that is known.
 fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
     if grid_oof::right_to_left(tree, idx).is_some()
         || tree.nodes[idx].used_writing_mode.is_vertical()
+        || crate::layout::taffy_adapter::rows_repeat_to_fill(&tree.physical_style(idx))
     {
         return false;
     }
@@ -6423,6 +6429,9 @@ fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
             return false;
         }
         let style = tree.physical_style(child);
+        if style.stated_aspect_ratio().is_none() {
+            return false;
+        }
         let depends = |basis: f32| {
             let basis = Some(basis);
             [
