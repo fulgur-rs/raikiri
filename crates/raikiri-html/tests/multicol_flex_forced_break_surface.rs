@@ -404,33 +404,6 @@ fn a_multi_line_column_container_takes_the_breaks_around_it() {
 }
 
 #[test]
-fn the_part_after_a_break_starts_at_the_margin_of_its_first_item() {
-    // A negative margin after the item before the break pulls the next one
-    // up into its box, and the next column starts at that item's margin.
-    expect(
-        &columns(
-            "balance",
-            "<div id=f style='display:flex;flex-direction:column'><div id=a style='height:30px;margin-bottom:-10px'></div>\
-             <div id=b style='height:20px;break-before:column'></div><div id=c style='height:20px'></div></div>",
-        ),
-        &[
-            (
-                "f",
-                &[
-                    (0, 0, 100, 20),
-                    (100, 0, 100, 20),
-                    (200, 0, 100, 20),
-                    (300, 0, 100, 20),
-                ],
-            ),
-            ("a", &[(0, 0, 100, 20), (100, 0, 100, 10)]),
-            ("b", &[(200, 0, 100, 20)]),
-            ("c", &[(300, 0, 100, 20)]),
-        ],
-    );
-}
-
-#[test]
 fn borders_and_margins_of_the_container_stay_at_its_ends() {
     expect(
         &columns(

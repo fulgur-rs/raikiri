@@ -467,8 +467,9 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// Boxes that need handling at a break of their own keep the other
 /// strategies: avoided breaks, forced breaks other than column breaks at the
 /// container or between its items (see [`flex_breaks`]), forced breaks
-/// between items of a container that does not grow with them or that holds
-/// absolutely positioned boxes, absolutely positioned or floated
+/// between items of a container that does not grow with them, that holds
+/// absolutely positioned boxes, or whose boxes a negative margin pulls
+/// across the break, absolutely positioned or floated
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, boxes that paint past their own box (a
 /// transform, shadow, outline or filter) or as a whole group, boxes whose
@@ -514,6 +515,10 @@ fn sliceable_flex_container(
     // items that a break moves down.
     let mut inner_breaks = false;
     let mut holds_absolute = false;
+    // Whether a negative block margin pulls a box inside the container up
+    // over the one before it, which a break between them would leave on the
+    // wrong side of the break.
+    let mut pulled = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
         if boxes > MAX_SLICED_FLEX_BOXES
@@ -532,6 +537,8 @@ fn sliceable_flex_container(
         inner_breaks |= id != child
             && (node.break_before == BreakBetween::Column
                 || node.break_after == BreakBetween::Column);
+        let margin = &tree.nodes[id].layout.margin;
+        pulled |= id != child && (margin.top < -EPSILON || margin.bottom < -EPSILON);
         holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
@@ -574,16 +581,17 @@ fn sliceable_flex_container(
     }
     // The parts after a break between items move down to the next column,
     // which a container sized apart from its content would not grow to
-    // hold, and neither the absolutely positioned boxes it holds nor the
-    // paint of an item that a relative offset moves would follow them.
+    // hold, and neither the absolutely positioned boxes it holds, nor the
+    // paint of an item that a relative offset moves, nor a box that a
+    // negative margin pulls up over the start of its part would follow them.
     let style = style_of(tree, child);
     if inner_breaks
         && (has_block_size(&style)
             || style_dimension_length(style.max_size().height.into()).is_some()
             || holds_absolute
+            || pulled
             || in_flow_elements(tree, child).into_iter().any(|item| {
                 style_of(tree, item).inset() != Edges::splat(LengthPercentageAuto::auto())
-                    || tree.nodes[item].layout.margin.top < -EPSILON
             }))
     {
         return None;
@@ -597,6 +605,10 @@ fn sliceable_flex_container(
 /// the order of the tree. `id` is a box that the stream can slice (see
 /// [`is_sliceable_flex_box`]): a block container or a flex container.
 fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
+    debug_assert!(matches!(
+        layout_node(tree, id).display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+    ));
     let style = style_of(tree, id);
     let cascade = tree.style_views.cascade();
     layout_node(tree, id).display() != DisplayValue::Flex
