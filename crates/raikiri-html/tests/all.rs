@@ -66,6 +66,7 @@ mod forced_break_in_sized_table_cell_surface;
 mod forced_break_margin_surface;
 mod forced_break_previous_margin_surface;
 mod frameset_document;
+mod generated_after_page_name_surface;
 mod generated_block_surface;
 mod generated_box_surface;
 mod generated_line_after_forced_break_in_cell_or_float;
