@@ -79,6 +79,43 @@ def _metadata(*targets: dict) -> dict:
 
 
 class StructurallyUnreportedPathsTests(unittest.TestCase):
+    def test_modules_of_a_test_target_in_tests_are_included(self) -> None:
+        # One test binary per crate: `tests/all.rs` declares the crate's
+        # integration-test files as modules, which cargo-llvm-cov lists no
+        # SF: record for, as for the entry file itself.
+        with tempfile.TemporaryDirectory() as root:
+            tests = os.path.join(root, "crates", "raikiri-html", "tests")
+            os.makedirs(os.path.join(tests, "nested"))
+            with open(os.path.join(tests, "all.rs"), "w", encoding="utf-8") as handle:
+                handle.write("//! One binary.\n\nmod flat_surface;\nmod nested;\n#[cfg(test)]\nmod gated;\n")
+            for name in ("flat_surface.rs", "gated.rs", os.path.join("nested", "mod.rs")):
+                open(os.path.join(tests, name), "w", encoding="utf-8").close()
+            metadata = _metadata(_target(["test"], os.path.join(tests, "all.rs")))
+            paths = structurally_unreported_paths(metadata, root)
+        self.assertEqual(
+            paths,
+            {
+                "crates/raikiri-html/tests/all.rs",
+                "crates/raikiri-html/tests/flat_surface.rs",
+                "crates/raikiri-html/tests/gated.rs",
+                "crates/raikiri-html/tests/nested/mod.rs",
+            },
+        )
+
+    def test_modules_of_a_target_outside_tests_or_unreadable_are_not_listed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            src = os.path.join(root, "crates", "raikiri", "src")
+            os.makedirs(src)
+            with open(os.path.join(src, "main.rs"), "w", encoding="utf-8") as handle:
+                handle.write("mod helper;\n")
+            missing = os.path.join(root, "crates", "raikiri", "tests", "gone.rs")
+            metadata = _metadata(
+                _target(["test"], os.path.join(src, "main.rs")),
+                _target(["test"], missing),
+            )
+            paths = structurally_unreported_paths(metadata, root)
+        self.assertEqual(paths, {"crates/raikiri/src/main.rs", "crates/raikiri/tests/gone.rs"})
+
     def test_test_target_entry_file_is_included(self) -> None:
         metadata = _metadata(
             _target(["test"], f"{REPO_ROOT}/crates/raikiri/tests/parse_html_limits.rs"),

@@ -201,7 +201,7 @@ raikiri_net::ssrf_guard::is_globally_routable
   `PageGeometry`, `PageMode`, `PageSize`, `PageSizeKeyword`, `PageOrientation`,
   `PageRotation`, `PageBleed`, `PageMarks`, `RootBox`, `NodeId`, `NodeKind`.
 - Streaming: `StreamingLayout`, `StreamPage`, `StreamStatus`, `StreamSummary`,
-  `PageSink`, `PageCountRunningElement`.
+  `PageSink`, `PageCountRunningElement`, `TableTextRows`, `TableTextCell`.
 - What a painter draws: `Fragment`, `FragmentKind`, `PaintEvent`, `ClipKind`,
   `OverflowClip`, `RepeatKind`, `GeneratedBox`, `GeneratedKind`,
   `GeneratedImageId`, `LineBox`, `PositionedGlyphRun`, `Glyph`, `FontBlob`,

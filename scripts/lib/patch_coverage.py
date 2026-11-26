@@ -126,6 +126,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import posixpath
 import re
 import subprocess
@@ -582,6 +583,13 @@ def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
             else:
                 mismatched += 1
                 paths.add(src_path)
+            # A test target under `tests/` that gathers the crate's
+            # integration-test files as `mod <stem>;` modules (one test binary
+            # per crate): cargo-llvm-cov lists no SF: record for those files
+            # either, as for any file under `tests/`.
+            if "test" in kinds:
+                for module in declared_test_modules(src_path):
+                    paths.add(module[len(prefix):] if module.startswith(prefix) else module)
     if mismatched:
         print(
             f"patch_coverage.py: WARNING: cargo-metadata src_path prefix "
@@ -594,6 +602,30 @@ def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
             file=sys.stderr,
         )
     return paths
+
+
+MOD_DECLARATION_RE = re.compile(r"^mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.MULTILINE)
+
+
+def declared_test_modules(src_path: str) -> list[str]:
+    """The files of the `mod <stem>;` modules that the test target entry
+    file `src_path` declares, when that file lies in a `tests/` directory:
+    `<dir>/<stem>.rs`, or `<dir>/<stem>/mod.rs` when only that exists. Empty
+    for an entry file elsewhere or one that cannot be read."""
+    directory = os.path.dirname(src_path)
+    if os.path.basename(directory) != "tests":
+        return []
+    try:
+        with open(src_path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return []
+    modules = []
+    for stem in MOD_DECLARATION_RE.findall(text):
+        flat = os.path.join(directory, f"{stem}.rs")
+        nested = os.path.join(directory, stem, "mod.rs")
+        modules.append(nested if not os.path.exists(flat) and os.path.exists(nested) else flat)
+    return modules
 
 
 def is_structurally_unreported(path: str, unreported_paths: set[str]) -> bool:

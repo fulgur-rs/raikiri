@@ -610,7 +610,7 @@ fn selectors_that_depend_on_rows_outside_a_window_require_replay() {
             .0
             .unwrap();
         assert_eq!(
-            windows.permits_window_styles(&[], &limits).unwrap(),
+            windows.permits_window_styles(&[], &limits).unwrap().0,
             expected,
             "{selector}"
         );
@@ -654,7 +654,7 @@ fn page_context_and_stateful_declarations_require_document_layout() {
             .0
             .unwrap();
         assert_eq!(
-            windows.permits_window_styles(&[], &limits).unwrap(),
+            windows.permits_window_styles(&[], &limits).unwrap().0,
             expected,
             "{css}"
         );
@@ -989,5 +989,63 @@ fn windows_without_a_confirmable_row_boundary_require_replay() {
         let mut original = String::new();
         source.read_to_string(&mut original).unwrap();
         assert_eq!(original, html);
+    }
+}
+
+#[test]
+fn stored_cells_can_be_visited_before_layout_including_empty_and_decoded_text() {
+    let mut input = TableInput::new(&Default::default()).unwrap();
+    input
+        .feed("<table><tr><td>first<tr><td><td>二 &amp; three</table>".as_bytes())
+        .unwrap();
+    let mut windows = input
+        .finish_windows(&Default::default())
+        .unwrap()
+        .0
+        .unwrap();
+    let mut observed = Vec::new();
+    windows
+        .rows
+        .visit_rows(1..2, |row_id, mut row| {
+            while let Some(cell) = row.next_cell()? {
+                observed.push((row_id, cell.source_id, cell.text_id, cell.text.to_owned()));
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(observed.len(), 2);
+    let (row, empty, absent_text, empty_value) = &observed[0];
+    let (same_row, filled, text_id, value) = &observed[1];
+    assert_eq!(row, same_row);
+    assert!(row < empty && empty < filled && Some(*filled) < *text_id);
+    assert_eq!(*absent_text, None);
+    assert!(empty_value.is_empty());
+    assert_eq!(value, "二 & three");
+}
+
+#[test]
+fn page_templates_only_reuse_geometry_with_supported_size_rules() {
+    let limits = Default::default();
+    for (css, reusable) in [
+        ("table { width: 100% } td, th { padding: 2px }", true),
+        ("td { height: 18px } tr { break-inside: avoid }", true),
+        ("table { height: 90% }", false),
+        ("tbody { padding-bottom: 8px }", false),
+        ("body { margin-bottom: 10% }", false),
+        ("@media print { table { height: 80% } }", false),
+    ] {
+        let mut probe = TableInput::new(&limits).unwrap();
+        let html = format!("<style>{css}</style><table><tr><td>x</table>");
+        probe.feed(html.as_bytes()).unwrap();
+        let windows = probe
+            .finish_windows(&Default::default())
+            .unwrap()
+            .0
+            .unwrap();
+        assert_eq!(
+            windows.permits_window_styles(&[], &limits).unwrap(),
+            (true, reusable),
+            "{css}"
+        );
     }
 }
