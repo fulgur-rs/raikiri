@@ -196,6 +196,7 @@ mod tall_line_page_break_surface;
 mod text_after_block_page_break_surface;
 mod text_runs_surface;
 mod text_shadow_surface;
+mod textless_atomic_lines_page_break_surface;
 mod trailing_block_after_moved_lines_surface;
 mod vertical_box_in_horizontal_multicol_surface;
 mod vertical_flex_content_keyword_height_surface;
