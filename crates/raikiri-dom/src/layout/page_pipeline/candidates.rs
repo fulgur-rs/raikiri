@@ -1519,7 +1519,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     propagated_page_name
                 };
-                let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
+                // A float is no part of the page flow: neither its own page
+                // value nor those of the boxes in it name the pages it
+                // reaches, which take the type of the flow around it.
+                let page_name = if is_float {
+                    frame.inherited_page_name
+                } else if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
                     own_page_name.or(frame.inherited_page_name)
@@ -2327,7 +2332,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
-                            && (explicit_page_name.is_none() || inline_level))
+                            // A float's own page value is no part of the
+                            // page flow (see `own_page_name`).
+                            && (explicit_page_name.is_none() || inline_level || is_float))
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate

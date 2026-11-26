@@ -755,6 +755,10 @@ impl PaginationState {
             return float.page_name;
         }
         if candidate.page_name == comparison_page_name {
+            // The page the float opened keeps the type of the flow, and the
+            // pages after it that only the float reaches take its own.
+            self.page_names
+                .name_pages_from(float.first_page_of_its_own, &float.page_name);
             return comparison_page_name;
         }
         let continued_box =
@@ -6549,6 +6553,13 @@ impl PaginationState {
         let names_end = control.capped_page_index(self.reach.max);
         self.page_names
             .continue_onto(self.reach.flow_max, names_end, true);
+        // A float that took a forced break with no in-flow content after it
+        // opened its page alone: that page and the ones after it that only
+        // the float reaches take the float's type (Chromium).
+        if let Some(float) = self.float_break_page.take() {
+            self.page_names
+                .name_pages_from(float.page, &float.page_name);
+        }
         Ok(())
     }
 
