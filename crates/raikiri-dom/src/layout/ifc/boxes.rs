@@ -188,6 +188,7 @@ pub(crate) fn layout_with_boxes_in(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            below_floats: false,
             external_float_gap: 0.0,
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -220,6 +221,7 @@ pub(crate) fn layout_with_boxes_in(
             if own_group {
                 root.options.group_padding = own_group_padding(
                     tree,
+                    idx,
                     &root,
                     geometry,
                     ctx,
@@ -250,6 +252,7 @@ pub(crate) fn layout_with_boxes_in(
             if own_group {
                 root.options.group_padding = own_group_padding(
                     tree,
+                    idx,
                     &root,
                     geometry,
                     &mut ctx,
@@ -309,6 +312,7 @@ fn shortest_remaining(lines: &IfcLines, other: Option<f32>) -> Option<f32> {
 /// it is laid out once, unpadded, and its descendants do not join anything.
 fn own_group_padding(
     tree: &mut LayoutSession<'_>,
+    owner: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -321,6 +325,7 @@ fn own_group_padding(
     } else {
         group_padding(
             tree,
+            owner,
             root,
             geometry,
             ctx,
@@ -334,15 +339,18 @@ fn own_group_padding(
 /// The padding `text-group-align` takes from every line of the root: the
 /// shortest space a line leaves unfilled (CSS Text 4, group alignment). The
 /// lines are laid out once without it to find that space, against a copy of
-/// the float context; group padding only takes space a line leaves, so the
-/// lines break the same with it.
+/// the float context, and with the gaps planned above the lines of `owner`,
+/// the root's node, as the real layout leaves them; group padding only takes
+/// space a line leaves, so the lines break the same with it.
 ///
 /// The lines of descendant blocks in the same block formatting context take
 /// part too, through the group scope of the layout context; a root split
 /// across fragmentainers is not group-aligned. The scope is left applying
 /// the padding for the real layout of the root's block children.
+#[allow(clippy::too_many_arguments)]
 fn group_padding(
     tree: &mut LayoutSession<'_>,
+    owner: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -359,7 +367,7 @@ fn group_padding(
     let saved = ctx.snapshot();
     let probe = run_boxes_segment(
         tree,
-        None,
+        Some(owner),
         root,
         geometry,
         ctx,
@@ -408,6 +416,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
+            below_floats: false,
             external_float_gap: 0.0,
             discarded_float_gap: 0.0,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -445,6 +454,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut oof_candidates = OofCandidates::new();
     let mut max_height = 0.0_f32;
     let mut beside_floats = false;
+    let mut below_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
 
     let fragmentainer_height = context.available_height.filter(|height| *height > 0.0);
@@ -580,6 +590,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
         max_height = max_height.max(outcome.lines.height);
         beside_floats |= outcome.lines.beside_floats;
+        below_floats |= outcome.lines.below_floats;
         escaping_margin = outcome.lines.escaping_margin;
         remember_source_placements(
             &mut source_float_placements,
@@ -614,6 +625,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         oof_candidates,
         height: max_height,
         beside_floats,
+        below_floats,
         external_float_gap: 0.0,
         discarded_float_gap: 0.0,
         escaping_margin,
@@ -867,6 +879,21 @@ fn run_boxes_segment(
     let mut cursor: Option<FloatCursor> = None;
     let mut first_late: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
+    // The gaps the page walk asks for above the lines it moved past a page
+    // edge, away from the floats beside them: the lines from each gap on are
+    // broken against the floats where they land (see
+    // `float_resumption::Plan::line_gaps`).
+    let line_gaps = owner
+        .filter(|_| fragmentainer.is_none() && root.writing_mode == WritingMode::HorizontalTb)
+        .map_or(&[][..], |owner| {
+            tree.context.float_resumptions.line_gaps(owner)
+        })
+        .to_vec();
+    let mut gap_cursor = 0;
+    // Where the last gap left the flow, and how tall it is: a gap that no
+    // line or block follows, as when the paragraph now ends above it, is
+    // taken back.
+    let mut last_gap: Option<(f32, f32)> = None;
     let mut lines: Vec<shodo::Line> = Vec::new();
     let mut tentative: Vec<TentativeFloat> = Vec::new();
     let mut deferred: Vec<TentativeFloat> = Vec::new();
@@ -874,6 +901,11 @@ fn run_boxes_segment(
     let mut assumed_height = 0.0_f32;
     let mut retries = 0;
     let mut beside = false;
+    // Whether floats from outside the paragraph moved some line it keeps
+    // down below them, to where it fits, and whether they moved the line
+    // being laid out.
+    let mut below = false;
+    let mut moving_below = false;
     // The floats met at the start of the line being laid out, one after the
     // other. Each narrows the space of the line, and the engine keeps what it
     // scanned of the line only for the space it scanned it in, so a line that
@@ -956,11 +988,19 @@ fn run_boxes_segment(
         }
         // Where the next line starts if it is a line: below the margins
         // still pending.
-        let line_y = if top_margin_escapes && leading_margin_open {
+        let mut line_y = if top_margin_escapes && leading_margin_open {
             y
         } else {
             y + pending.resolve()
         };
+        if let Some(&(top, gap)) = line_gaps.get(gap_cursor)
+            && line_y >= top - 0.01
+        {
+            gap_cursor += 1;
+            y += gap;
+            line_y += gap;
+            last_gap = Some((y, gap));
+        }
         let base = line_space(
             ctx,
             inline_insets.0,
@@ -1076,7 +1116,8 @@ fn run_boxes_segment(
                     && !withdrawn.contains(&node)
                 {
                     for float in tentative.drain(..).chain(std::iter::once(float)) {
-                        ceiling = ceiling.max(commit_fragmented_float(
+                        let node = float.node;
+                        let top = commit_fragmented_float(
                             tree,
                             ctx,
                             float,
@@ -1091,7 +1132,18 @@ fn run_boxes_segment(
                                 oof_candidates: &mut oof_candidates,
                                 float_views: &mut float_views,
                             },
-                        ));
+                        );
+                        ceiling = ceiling.max(top);
+                        // A float that goes on to the page the text after it
+                        // opens starts that page, and the lines come after
+                        // it: none goes above it beside the floats left on
+                        // the earlier page.
+                        if top > line_y && tree.named_break_floats.binary_search(&node).is_ok() {
+                            y = top;
+                            pending = CollapsibleMarginSet::ZERO;
+                            assumed_height = 0.0;
+                            retries = 0;
+                        }
                     }
                     continue;
                 }
@@ -1195,7 +1247,14 @@ fn run_boxes_segment(
                 let baseline = open_block
                     .as_ref()
                     .map_or(baseline, |open| open.first_baseline(line_y, baseline));
-                let wanted = super::outside_marker::leading(marker_pending, baseline);
+                // A line that takes no room, as a line of a margin alone in
+                // quirks mode, is not one the marker sits on.
+                let holds_marker = height > 0.0 || baseline > 0.0;
+                let wanted = if holds_marker {
+                    super::outside_marker::leading(marker_pending, baseline)
+                } else {
+                    0.0
+                };
                 if candidate_leading != wanted {
                     candidate_leading = wanted;
                     continue;
@@ -1327,6 +1386,7 @@ fn run_boxes_segment(
                     y = next;
                     pending = CollapsibleMarginSet::ZERO;
                     moves += 1;
+                    moving_below |= line_y < inherited_float_end;
                     assumed_height = 0.0;
                     retries = 0;
                     calls = 0;
@@ -1360,12 +1420,14 @@ fn run_boxes_segment(
                 calls = 0;
                 moves = 0;
                 y = line_y + height;
-                if marker_pending.is_some()
-                    && let Some(open) = open_block.as_mut()
-                {
-                    open.apply_marker_leading(line.block_start_leading());
+                if holds_marker {
+                    if marker_pending.is_some()
+                        && let Some(open) = open_block.as_mut()
+                    {
+                        open.apply_marker_leading(line.block_start_leading());
+                    }
+                    marker_pending = None;
                 }
-                marker_pending = None;
                 candidate_leading = 0.0;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
@@ -1381,6 +1443,7 @@ fn run_boxes_segment(
                 leading_margin_open = false;
                 ctx.commit_strut();
                 lines.push(line);
+                below |= std::mem::take(&mut moving_below);
                 // Floats that did not fit beside the line they are anchored
                 // in go at the start of the next line, before it is measured.
                 // Placing them any earlier would narrow the line that is
@@ -1629,11 +1692,36 @@ fn run_boxes_segment(
                 // it on a new page, which the floats before the break do not
                 // reach: the lines get clearance past them, as a block after
                 // the break does (CSS Fragmentation 3, 3.1).
-                if tree
+                // When the block ends with a float that took the break and
+                // starts the new page, the lines line up beside that float,
+                // below the floats before it only.
+                let block_id = node.0 as usize;
+                // A float after the break that starts the new page beside an
+                // earlier float running on onto it takes the lines along to
+                // its top there.
+                let line_break_top = tree
+                    .context
+                    .line_break_floats
+                    .get(&block_id)
+                    .and_then(|&float| tree.context.float_resumptions.break_top(float));
+                let threshold = if let Some(top) = line_break_top {
+                    Some(top)
+                } else if tree
                     .forced_break_line_clearance
-                    .binary_search(&(node.0 as usize))
+                    .binary_search(&block_id)
                     .is_ok()
-                    && let Some(threshold) = ctx.cleared_threshold(Clear::Both)
+                {
+                    ctx.cleared_threshold(Clear::Both)
+                } else if tree
+                    .forced_break_line_float_floor
+                    .binary_search(&block_id)
+                    .is_ok()
+                {
+                    ctx.page_start_float_floor()
+                } else {
+                    None
+                };
+                if let Some(threshold) = threshold
                     && threshold - top_edge > y + pending.resolve()
                 {
                     y = threshold - top_edge;
@@ -1658,6 +1746,9 @@ fn run_boxes_segment(
             }
         }
     }
+    y -= last_gap
+        .filter(|&(after_gap, _)| y == after_gap)
+        .map_or(0.0, |(_, gap)| gap);
     // The margins below a last block child collapse through the root's
     // bottom edge when nothing separates them from the root's own; otherwise
     // the paragraph contains them.
@@ -1750,6 +1841,7 @@ fn run_boxes_segment(
             object_text_prefixes: Default::default(),
             oof_candidates,
             beside_floats: beside,
+            below_floats: below,
             external_float_gap,
             discarded_float_gap: 0.0,
             escaping_margin,
@@ -1922,17 +2014,29 @@ fn clears(clear: Clear, side: FloatDirection) -> bool {
 
 /// The next block offset below `y` (both from the content-box top) where the
 /// floats beside a line change: the start of the next float segment, else the
-/// bottom of the floats. `None` when no float is beside `y`.
+/// bottom of the floats, or the end of a band below a float that lines are
+/// broken against when that comes first. `None` when neither is beside `y`.
 fn next_float_edge(ctx: &BlockContext<'_>, top_edge: f32, y: f32) -> Option<f32> {
     let at = top_edge + y;
-    let segment = ctx.find_content_slot(at, Clear::None, None).segment_id?;
-    let next = ctx.find_content_slot(at, Clear::None, Some(segment));
-    let edge = if next.segment_id.is_some() && next.y > at {
-        next.y
-    } else {
-        ctx.cleared_threshold(Clear::Both)?
-    };
-    (edge > at).then_some(edge - top_edge)
+    let float_edge = ctx
+        .find_content_slot(at, Clear::None, None)
+        .segment_id
+        .and_then(|segment| {
+            let next = ctx.find_content_slot(at, Clear::None, Some(segment));
+            if next.segment_id.is_some() && next.y > at {
+                Some(next.y)
+            } else {
+                ctx.cleared_threshold(Clear::Both)
+            }
+        });
+    // The bands below floats that lines are broken against end where those
+    // floats end on the page after; a line moves past them as well.
+    [float_edge, ctx.next_line_extension_end(at)]
+        .into_iter()
+        .flatten()
+        .filter(|&edge| edge > at)
+        .min_by(f32::total_cmp)
+        .map(|edge| edge - top_edge)
 }
 
 /// The space of a line of the generated block `open`, if one is open, set
@@ -3082,6 +3186,9 @@ fn layout_block_child(
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     // The box after the float that starts a page is held below the floats
     // before that float as well.
     let floor = page_start_float_floor(tree, ctx, node);
@@ -3444,6 +3551,9 @@ fn layout_vertical_block_child_with_edges(
             }
         });
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
@@ -3897,6 +4007,9 @@ fn layout_formatting_context_child(
     let margin = resolved_margins(tree, node, geometry.width);
     let style_margin = tree.physical_style(node).margin();
     let clear = tree.physical_style(node).clear();
+    if tree.forced_break_clearance.binary_search(&node).is_err() {
+        ctx.clear_line_extensions(clear);
+    }
     let x_margins = margin.left + margin.right;
     let top_margin = pending.collapse_with_margin(margin.top);
     let hypothetical = if collapse_top {
@@ -4802,11 +4915,26 @@ pub(crate) fn commit_float(
         tree.context
             .float_resumptions
             .pushed_float_top(float.node)
-            .map_or(line_top, |top| top.max(line_top)),
+            .into_iter()
+            .chain(tree.context.float_resumptions.break_top(float.node))
+            .fold(line_top, f32::max),
         float.direction,
         float.clear,
         adjoins_top_margin,
     );
+    // The boxes after a float that starts a page beside an earlier float
+    // running on onto it line up beside it there.
+    if tree
+        .context
+        .float_resumptions
+        .break_top(float.node)
+        .is_some()
+    {
+        ctx.set_page_start_float_floor(position.y);
+    }
+    if let Some(extent) = tree.context.float_resumptions.line_extent(float.node) {
+        ctx.extend_float_for_lines(position, float.margin_box, float.direction, extent);
+    }
     if perform {
         let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
             (position.x, position.y)

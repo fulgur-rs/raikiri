@@ -29,6 +29,27 @@ pub(crate) struct Boundary {
     pub(crate) relative_offset: f32,
 }
 
+/// How a float grew when the page walk moved its content down past page
+/// edges, and how far the walk moved the flow beside it.
+///
+/// Chromium breaks the lines beside the float on each later page against the
+/// part of the float that continues there. The float laid out unbroken ends
+/// higher, by its growth less how much further the walk moved the flow
+/// beside its end than the float's top: the lines that follow, up to the
+/// float's new end, are broken beside it again (see [`Plan::line_extent`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineGrowth {
+    /// How much the float grew.
+    pub(crate) grown: f32,
+    /// How far the walk moved the float's top.
+    pub(crate) start_shift: f32,
+    /// The root of the float's formatting context.
+    pub(crate) context: usize,
+    /// How far the walk moved the last of the in-flow content after the
+    /// float in its formatting context that starts above the float's end.
+    pub(crate) beside_shift: f32,
+}
+
 /// A bounded re-layout's local placements and consumed clearance boundaries.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Plan {
@@ -36,14 +57,123 @@ pub(crate) struct Plan {
     floats: HashMap<usize, f32>,
     pushed: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
+    /// Blocks the page walk moved whole to a later page, away from the
+    /// floats their lines were broken beside or moved below, each with how far it moved
+    /// them and where their top was in the page flow before: layout places
+    /// them as far below their place in the flow, so that their lines are
+    /// broken against the floats that are there, as Chromium lays them out.
+    pushed_flows: HashMap<usize, (f32, f32)>,
     margin_flows: HashMap<usize, (usize, f32)>,
     completed: HashMap<usize, f32>,
     completed_containers: HashMap<usize, f32>,
+    /// Floats after a forced break at the end of the content of a box whose
+    /// block-end edges close on the page the break leaves, each with the
+    /// lowest top it takes: where the box closes, as the flow after the box
+    /// starts the next page beside the float.
+    closed: HashMap<usize, f32>,
+    /// Boxes after a forced break that start the page the break opens
+    /// beside an earlier float that runs on onto it, each with its top
+    /// there, local to its parent: the border-box top of a block, or the
+    /// margin-box top of a float. Layout places them there in place of the
+    /// clearance the break gives them.
+    break_tops: HashMap<usize, f32>,
+    /// Floats that the page walk grew past a page edge, each with how far
+    /// below its end laid out unbroken the lines beside it are broken against
+    /// it (see [`LineGrowth`]).
+    line_extents: HashMap<usize, f32>,
+    /// Paragraphs whose lines the page walk moved down past a page edge,
+    /// away from the floats beside them, each with the block offsets, from
+    /// the content-box top, of the lines it moved and how far it moved each:
+    /// layout leaves that gap above the line, so that the lines from there on
+    /// are broken against the floats beside them where they land, as Chromium
+    /// breaks them (see [`Self::line_gaps`]). Each paragraph also has where
+    /// its content box started on its page when the walk moved them.
+    line_gaps: HashMap<usize, (f32, Vec<(f32, f32)>)>,
 }
 
 impl Plan {
     pub(crate) fn is_empty(&self) -> bool {
-        self.floats.is_empty() && self.pushed.is_empty() && self.margin_flows.is_empty()
+        self.floats.is_empty()
+            && self.pushed.is_empty()
+            && self.pushed_flows.is_empty()
+            && self.margin_flows.is_empty()
+            && self.closed.is_empty()
+            && self.break_tops.is_empty()
+            && self.line_extents.is_empty()
+            && self.line_gaps.is_empty()
+    }
+
+    /// The gaps that layout leaves above lines moved past a page edge (see
+    /// [`Self::line_gaps`]), each as its paragraph and its block offset.
+    pub(crate) fn planned_line_gaps(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.line_gaps
+            .iter()
+            .flat_map(|(&root, (_, gaps))| gaps.iter().map(move |&(top, _)| (root, top.to_bits())))
+    }
+
+    /// Keeps the gaps planned above lines as `previous` has them, in place
+    /// of the ones this plan found.
+    pub(crate) fn keep_line_gaps_of(&mut self, previous: &Self) {
+        self.line_gaps.clone_from(&previous.line_gaps);
+    }
+
+    /// The gaps that layout leaves in the paragraph `root`: the block offset
+    /// of each line the page walk moved past a page edge, from the content-box
+    /// top as layout put it with the gaps before it, and how far the walk
+    /// moved it, in order.
+    pub(crate) fn line_gaps(&self, root: usize) -> &[(f32, f32)] {
+        self.line_gaps
+            .get(&root)
+            .map_or(&[], |(_, gaps)| gaps.as_slice())
+    }
+
+    /// Where the content box of the paragraph `root` started on its page,
+    /// from the page's origin, when the page walk moved the lines that the
+    /// gaps planned for it are left above, if any are.
+    pub(crate) fn line_gaps_page_top(&self, root: usize) -> Option<f32> {
+        self.line_gaps.get(&root).map(|&(page_top, _)| page_top)
+    }
+
+    /// The floats whose lines are broken against them below their end laid
+    /// out unbroken (see [`Self::line_extent`]).
+    pub(crate) fn line_extent_floats(&self) -> impl Iterator<Item = usize> + '_ {
+        self.line_extents.keys().copied()
+    }
+
+    /// How far below the end of the float `node`, laid out unbroken, the
+    /// lines beside it are broken against it: the part of the float that the
+    /// page walk moved past a page edge and that the lines beside it did not
+    /// move past with it.
+    pub(crate) fn line_extent(&self, node: usize) -> Option<f32> {
+        self.line_extents.get(&node).copied()
+    }
+
+    /// Where a box after a forced break starts the page the break opens,
+    /// beside an earlier float that runs on onto that page.
+    pub(crate) fn break_top(&self, node: usize) -> Option<f32> {
+        self.break_tops.get(&node).copied()
+    }
+
+    /// The boxes after a forced break that the plan starts beside an earlier
+    /// float that runs on onto the page the break opens.
+    pub(crate) fn break_top_nodes(&self) -> impl Iterator<Item = usize> + '_ {
+        self.break_tops.keys().copied()
+    }
+
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines and the boxes started beside an
+    /// earlier float after a forced break.
+    pub(crate) fn same_apart_from_flows_and_break_tops(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this.break_tops.clone_from(&other.break_tops);
+        this == *other
+    }
+
+    /// The lowest top of a float after a box that closed on the page the
+    /// forced break before the float leaves.
+    pub(crate) fn closed_float_top(&self, node: usize) -> Option<f32> {
+        self.closed.get(&node).copied()
     }
 
     pub(crate) fn float_top(&self, node: usize) -> Option<f32> {
@@ -62,6 +192,26 @@ impl Plan {
 
     pub(crate) fn has_pushed_floats(&self) -> bool {
         !self.pushed.is_empty()
+    }
+
+    /// Whether `other` plans the same as this, but for the blocks moved away
+    /// from the floats beside their lines.
+    pub(crate) fn same_apart_from_pushed_flows(&self, other: &Self) -> bool {
+        let mut this = self.clone();
+        this.pushed_flows.clone_from(&other.pushed_flows);
+        this == *other
+    }
+
+    /// The blocks the page walk moved whole to a later page away from the
+    /// floats beside their lines.
+    pub(crate) fn pushed_flows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.pushed_flows.keys().copied()
+    }
+
+    /// How far below its place in the flow a block that the page walk moved
+    /// whole to a later page, away from the floats beside its lines, goes.
+    pub(crate) fn pushed_flow_delta(&self, node: usize) -> Option<f32> {
+        self.pushed_flows.get(&node).map(|&(delta, _)| delta)
     }
 
     pub(crate) fn flow_top(&self, node: usize) -> Option<f32> {
@@ -193,6 +343,9 @@ impl Plan {
                 origins.insert(float, border_top);
             }
         }
+        for &(node, top) in &document.context.forced_break_tops {
+            plan.break_tops.insert(node, top);
+        }
         // Convert only after every planned parent has its final origin.
         // A nested completed chain then has local zeroes, independent of depth.
         for placements in [
@@ -201,6 +354,7 @@ impl Plan {
             &mut plan.flows,
             &mut plan.completed,
             &mut plan.completed_containers,
+            &mut plan.break_tops,
         ] {
             for (&id, top) in placements {
                 let parent_top = document.layout_parent_of(id).map_or(0.0, |parent| {
@@ -213,6 +367,84 @@ impl Plan {
             }
         }
         plan.pushed.extend(kept);
+        // A block the walk moved whole to a later page, away from the floats
+        // its lines were broken beside, goes as far down again, so that its
+        // lines take the room the floats leave there (Chromium).
+        let previous = &document.context.float_resumptions.pushed_flows;
+        // One that a planned move already put lower and that the walk moves
+        // again no longer sits where the move was planned for: the next walk
+        // judges it afresh.
+        for &(flow, delta, from) in &document.context.pushed_flows {
+            if !previous.contains_key(&flow) {
+                plan.pushed_flows.entry(flow).or_insert((delta, from));
+            }
+        }
+        // One that the walk no longer moves keeps its move while the flow
+        // above it still puts it where it started: then the move is still
+        // what takes it to the later page. Otherwise, or when the walk moves
+        // it on with its lines for another reason, the next walk judges it
+        // afresh.
+        let moved: HashSet<usize> = (document.context.pushed_flows.iter())
+            .map(|&(moved, ..)| moved)
+            .chain(document.context.flows_moved_otherwise.iter().copied())
+            .collect();
+        for (&flow, &(delta, from)) in previous {
+            let moved = moved.contains(&flow);
+            // Far down a long flow, f32 keeps fewer fractions of a pixel.
+            let tolerance = 0.01_f32.max(from.abs() * 1e-6);
+            if !moved && (current_abs_y(document, flow) - delta - from).abs() <= tolerance {
+                plan.pushed_flows.insert(flow, (delta, from));
+            }
+        }
+        plan.closed
+            .extend(document.context.floats_after_closed_edges.iter().copied());
+        // A paragraph keeps the gaps planned for it while it starts where it
+        // did on its page when they were found, and takes the first new move
+        // the walk makes below the line after its last gap: a gap moves the
+        // lines after it, so the later moves of the same walk no longer fall
+        // where they did, and a move of that line itself is no new gap.
+        plan.line_gaps
+            .clone_from(&document.context.float_resumptions.line_gaps);
+        // A paragraph whose gaps went stale takes no new one from the same
+        // walk: its lines were measured with the stale gaps above them, so it
+        // is judged again laid out without them.
+        let mut gapped: HashSet<usize> = HashSet::new();
+        for &root in &document.context.stale_line_gaps {
+            plan.line_gaps.remove(&root);
+            gapped.insert(root);
+        }
+        for &(root, top, delta) in &document.context.line_gaps {
+            let page_top = document.context.paragraph_page_tops.get(&root);
+            let below_gaps = plan
+                .line_gaps
+                .get(&root)
+                .and_then(|(_, gaps)| gaps.last())
+                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
+            if let Some(&page_top) = page_top
+                && below_gaps
+                && gapped.insert(root)
+            {
+                plan.line_gaps
+                    .entry(root)
+                    .or_insert_with(|| (page_top, Vec::new()))
+                    .1
+                    .push((top, delta));
+            }
+        }
+        // A float keeps the extent first planned for it, even once it no
+        // longer grows: the lines broken against it move as far again, and a
+        // new extent, or none, would break them anew, so that the plan would
+        // not settle.
+        plan.line_extents
+            .clone_from(&document.context.float_resumptions.line_extents);
+        for (&float, growth) in &document.context.float_line_growth {
+            let extent = growth.grown - (growth.beside_shift - growth.start_shift).max(0.0);
+            // Rounding leaves a float that does not grow a few thousandths
+            // of a pixel taller; that is no extent to break lines against.
+            if extent > 0.01 {
+                plan.line_extents.entry(float).or_insert(extent);
+            }
+        }
         plan
     }
 

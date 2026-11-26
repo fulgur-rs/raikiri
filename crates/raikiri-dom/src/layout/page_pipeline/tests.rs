@@ -14192,13 +14192,13 @@ fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
             "display:block;height:10px;break-before:page",
             true,
         ),
-        // A float that took a break of its own starts the page by that
-        // break, and a break before the box is another one.
+        // A float's own break does not apply, so a break before the box
+        // still coincides with the one the float started the page after.
         (
             "display:block",
             "break-before:page",
             "display:block;height:10px;break-before:page",
-            false,
+            true,
         ),
         (
             "display:block",
@@ -15120,8 +15120,8 @@ fn text_after_a_forced_break_starts_below_the_earlier_floats() {
 fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        // The lines after the first block come before the break, and the
-        // float that carries it is not a block of the paragraph.
+        // The lines after the first block come before no break: a float's
+        // own break does not apply, and a float is no block of the paragraph.
         ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
         doc.append_text(body, "a");
         doc.append_element(
@@ -15130,7 +15130,7 @@ fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
             Some("float:left;width:10px;height:10px;break-before:page"),
         );
         doc.append_text(body, "b");
-        // Nor does a float's own break after it.
+        // Nor does its break after it.
         doc.append_element(Some(body), "div", Some("display:block;height:10px"));
         doc.append_element(
             Some(body),
@@ -21688,6 +21688,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             shift: 12.0,
             page: 0,
             with_block_before: false,
+            growth: None,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21765,6 +21766,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         shift: 12.0,
         page: 0,
         with_block_before: false,
+        growth: None,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),

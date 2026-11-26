@@ -52,6 +52,7 @@ pub(super) fn discard(
             shift: -removed,
             page: 0,
             with_block_before: false,
+            growth: None,
         },
         None,
     );

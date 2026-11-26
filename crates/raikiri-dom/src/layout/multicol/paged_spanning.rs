@@ -124,6 +124,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     };
     let mut groups = Vec::<MulticolGroup>::new();
     let mut replacements = Vec::<(usize, Vec<LayoutFragment>)>::new();
+    let mut wrapped_children = HashSet::new();
     // Fragment shifts are applied in one pass after the walk: scanning every
     // fragment for each shifted child is quadratic in the group's children.
     let mut shifts = HashMap::<usize, f32>::new();
@@ -148,6 +149,15 @@ pub(in crate::layout) fn paginate_spanning_columns(
             .iter()
             .any(|&id| spanning::holds_column_content(tree, id));
         if segment_has_content {
+            // Where the content after a spanner starts before the pages place
+            // it, to tell how far they pushed it down.
+            let first_content = previous_spanner.and_then(|spanner| {
+                let first = segment
+                    .iter()
+                    .copied()
+                    .find(|&id| spanning::holds_column_content(tree, id))?;
+                Some((spanner, first, tree.nodes[first].layout.location.y + delta))
+            });
             let old = &old_groups[group_index];
             group_index += 1;
             let context = FragmentationContext {
@@ -194,6 +204,16 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
                 let new_end = planned.end;
+                if let Some((spanner, first, natural)) = first_content
+                    && let Some(top) = planned
+                        .fragments
+                        .iter()
+                        .filter(|fragment| fragment.child == first && fragment.wrapper.is_none())
+                        .map(|fragment| fragment.rect.y)
+                        .reduce(f32::min)
+                {
+                    note_slack(tree, spanner, top - natural);
+                }
                 groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
                     run_start: old.run_start,
                     ..group
@@ -254,6 +274,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 for fragment in planned.fragments {
                     if fragment.wrapper.is_some() && !per_child.contains_key(&fragment.child) {
                         wrapped.push(fragment.child);
+                        wrapped_children.insert(fragment.child);
                     }
                     per_child.entry(fragment.child).or_default().push(fragment);
                 }
@@ -337,6 +358,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
             }
         }
         if let Some(id) = spanner {
+            tree.context.planned_spanners.insert(id);
             shift_child(tree, &mut shifts, id, delta);
             let layout = tree.nodes[id].layout;
             let y = owner_y + layout.location.y;
@@ -384,11 +406,23 @@ pub(in crate::layout) fn paginate_spanning_columns(
             } else if layout.size.height <= height
                 && y > origin + 0.001
                 && y + layout.size.height > origin + height + 0.001
-                && !breaks_at_every_page_end(tree, id, y, origin + height, page_for, work)?
+                && y + first_piece_end(tree, id, work)? > origin + height + EPSILON
             {
+                // The page breaks inside the spanner as inside any block of
+                // the flow (see the page walk), unless it ends inside the
+                // first piece of the spanner, which leaves no place to break
+                // before it but the spanner's own top.
                 let shift = origin + height - y;
                 shift_child(tree, &mut shifts, id, shift);
                 delta += shift;
+            }
+            // The breaks inside the spanner grow it, as an earlier attempt
+            // found: the columns after it are planned below what it grows to,
+            // and it grows into that space without moving them.
+            let growth = tree.context.spanner_growth.get(&id).copied().unwrap_or(0.0);
+            if growth > 0.0 {
+                delta += growth;
+                note_slack(tree, id, growth);
             }
         }
         content_before |= segment_has_content;
@@ -397,7 +431,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
     edits.shift_children(container, &shifts);
     let refilled = refilled_lineless || !replacements.is_empty();
     for (id, fragments) in replacements {
-        edits.replace(id, fragments);
+        // A box in a wrapper that had no records of its own was drawn
+        // through the wrapper's; its pieces now say which column each of
+        // its lines is in.
+        if wrapped_children.contains(&id) {
+            edits.replace_or_add(id, fragments);
+        } else {
+            edits.replace(id, fragments);
+        }
     }
     if spanner_free {
         if refilled {
@@ -411,6 +452,20 @@ pub(in crate::layout) fn paginate_spanning_columns(
     tree.nodes[owner].layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
+}
+
+/// Notes that the pages pushed the column content after the spanner
+/// `spanner` `pushed` below where it would start: the spanner may grow that
+/// far into the space above it without moving it (see
+/// `shift_columns_after_spanner` in the page walk).
+fn note_slack(tree: &mut LayoutSession<'_>, spanner: usize, pushed: f32) {
+    if pushed > EPSILON {
+        *tree
+            .context
+            .spanner_column_slack
+            .entry(spanner)
+            .or_default() += pushed;
+    }
 }
 
 /// Whether a page break is forced before the spanner `id`: by its own
@@ -438,138 +493,100 @@ fn forced_page_break_before_spanner(
     })
 }
 
-/// Whether the spanner `id`, whose border box starts at `y` on a page that
-/// ends at `page_end`, may be cut at each page end it crosses. Pages differ in
-/// height when a page rule or a named page sizes them, so a spanner that fits
-/// the page it starts on may cross more than one page end. Each one visited
-/// is charged to `work`, which bounds their number and checks for an abort.
-///
-/// The walk stops at the page limit: past the last page there is nothing to
-/// cut. A control that truncates there ends it with the spanner cut as far as
-/// the pages go, and any other control reports the limit as exceeded.
-fn breaks_at_every_page_end(
+/// How far below the border-box top of the spanner `id` its first piece
+/// ends: the part at its start that a page does not end inside. That is its
+/// top border and padding with the first piece of its first box, down to the
+/// end of the first `orphans` lines of the first paragraph. A box that is not
+/// a plain block or avoids a break inside it is one piece, and so is a box
+/// with no content but its border and padding, which no page cuts; a box with
+/// content and nothing in it breaks anywhere below its top edges. Each box
+/// visited is charged to `work`.
+fn first_piece_end(
     tree: &LayoutSession<'_>,
     id: usize,
-    y: f32,
-    mut page_end: f32,
-    page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
-) -> Result<bool, LayoutError> {
-    let Some(limits) = CutLimits::of(tree, id, work)? else {
-        return Ok(false);
-    };
-    let bottom = y + tree.nodes[id].layout.size.height;
-    while page_end < bottom - EPSILON {
-        if !limits.allows(page_end - y) {
-            return Ok(false);
-        }
+) -> Result<f32, LayoutError> {
+    let mut top = 0.0;
+    let mut current = id;
+    loop {
         work.charge(1)?;
-        let (page_index, origin, height) = page_for(page_end + EPSILON);
-        if !work.page_available(page_index)? {
-            break;
+        let node = layout_node(tree, current);
+        let layout = node.layout;
+        let bottom = top + layout.size.height;
+        let content_top = top + layout.border.top + layout.padding.top;
+        if node.break_inside != raikiri_style::property::BreakInside::Auto {
+            return Ok(bottom);
         }
-        page_end = origin + height;
-    }
-    Ok(true)
-}
-
-/// What keeps a page from ending inside a spanner, found once for all the page
-/// ends the spanner crosses. A page may end inside a plain block of the flow
-/// where only empty space is cut: the spanner and every box inside it are
-/// plain blocks that allow a break inside them, no box holds anything but
-/// lines of text, every line ends above the cut, and the cut lies in the
-/// content of each box it crosses. The part of the spanner past the end of the
-/// page continues on the next one then.
-///
-/// A box whose last line meets the cut would leave nothing but empty space
-/// for the next page, so it does not break there.
-struct CutLimits {
-    /// The lowest cut, below the top of the spanner, that leaves every line
-    /// above it.
-    text_bottom: f32,
-    /// The ranges, ascending and apart from each other, in which a cut would
-    /// split a border or a padding. A cut at either end is outside the range.
-    bands: Vec<(f32, f32)>,
-}
-
-impl CutLimits {
-    /// The limits of the spanner `id`, or `None` when it holds something a page
-    /// may not end inside. Each box visited is charged to `work`.
-    fn of(
-        tree: &LayoutSession<'_>,
-        id: usize,
-        work: &mut ProjectionWork<'_, '_>,
-    ) -> Result<Option<Self>, LayoutError> {
-        let mut text_bottom = f32::NEG_INFINITY;
-        let mut bands = Vec::new();
-        let mut pending = vec![(id, 0.0_f32)];
-        while let Some((current, top)) = pending.pop() {
-            work.charge(1)?;
-            let node = layout_node(tree, current);
-            if !lineless::is_plain_block_holding_lines(tree, current)
-                || node.break_inside != raikiri_style::property::BreakInside::Auto
+        // An inline box that holds blocks wraps them in the flow, which
+        // starts with the first of them.
+        let wraps_blocks = node.display() == DisplayValue::Inline && node.ifc.is_none();
+        // The columns of a multicol container start with its first box, as
+        // a block's flow does, when they flow on with the page rather than
+        // fill a box of a size of its own. An orthogonal flow is monolithic
+        // in the page's block axis.
+        let style = style_of(tree, current);
+        let columns = node.is_multicol_container()
+            && node.ifc.is_none()
+            && !node.used_writing_mode.is_vertical()
+            && !node.size_containment.height
+            && style.size().height.is_auto()
+            && style.max_size().height.is_auto();
+        if !wraps_blocks && !columns && !lineless::is_plain_block_holding_lines(tree, current) {
+            // A flex container, a grid or a table breaks between its items
+            // or rows as the page walk finds them, below its top edges.
+            let breaks_inside = matches!(
+                node.display(),
+                DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
+            ) && lineless::is_plain_box_apart_from_display(tree, current, true);
+            return Ok(if breaks_inside { content_top } else { bottom });
+        }
+        let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
+        let lines = node.ifc.as_ref().and_then(|root| root.lines.as_ref());
+        // The lines of a paragraph before the first block among them, and that
+        // block when it comes first.
+        let lines_before = lines.map_or(0, |lines| {
+            lines
+                .block_line_starts
+                .iter()
+                .map(|&(_, after)| after)
+                .min()
+                .unwrap_or(lines.lines.len())
+                .min(lines.lines.len())
+        });
+        if let Some(lines) = lines.filter(|_| lines_before > 0) {
+            // A block among the lines counts as one of them, so fewer lines
+            // before it than the orphans need take it along whole.
+            if lines_before < node.paragraph_orphans.max(1)
+                && let Some(&(block, _)) = lines
+                    .block_line_starts
+                    .iter()
+                    .min_by_key(|&&(_, after)| after)
             {
-                return Ok(None);
+                let block = &tree.nodes[block].layout;
+                return Ok(top + block.location.y + block.size.height);
             }
-            let layout = node.layout;
-            let bottom = top + layout.size.height;
-            let content_top = top + layout.border.top + layout.padding.top;
-            let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
-            // A border or padding is not split by the page, so no cut may fall
-            // in one of the box.
-            bands.extend(
-                [
-                    (top + EPSILON, (content_top - EPSILON).min(bottom - EPSILON)),
-                    (
-                        (content_bottom + EPSILON).max(top + EPSILON),
-                        bottom - EPSILON,
-                    ),
-                ]
-                .into_iter()
-                .filter(|(low, high)| low < high),
-            );
-            // The lines hold all that a paragraph has, up to the boxes among
-            // them.
-            if let Some(root) = &node.ifc {
-                if !root.boxes.is_empty() || root.multicol_fragments.is_some() {
-                    return Ok(None);
-                }
-                if let Some(lines) = &root.lines
-                    && let Some(last) = lines.lines.last()
-                {
-                    let last_end =
-                        content_top + lines.line_top(lines.lines.len() - 1) + last.block_size();
-                    text_bottom = text_bottom.max(last_end);
-                }
-                continue;
-            }
-            pending.extend(
-                lineless::rendered_elements(tree, current)
-                    .map(|child| (child, top + tree.nodes[child].layout.location.y)),
-            );
+            let last = node.paragraph_orphans.clamp(1, lines_before) - 1;
+            return Ok(content_top + lines.line_top(last) + lines.lines[last].block_size());
         }
-        bands.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut apart = Vec::<(f32, f32)>::with_capacity(bands.len());
-        for (low, high) in bands {
-            match apart.last_mut() {
-                Some(last) if low < last.1 => last.1 = last.1.max(high),
-                _ => apart.push((low, high)),
+        let first = match lines {
+            Some(lines) => lines.block_line_starts.first().map(|&(child, _)| child),
+            // A float or an out-of-flow box beside the flow does not start it.
+            None => lineless::rendered_elements(tree, current).find(|&child| {
+                !is_floated(tree, child)
+                    && !matches!(
+                        style_of(tree, child).position(),
+                        Position::Absolute | Position::Fixed
+                    )
+            }),
+        };
+        match first {
+            Some(child) => {
+                top += tree.nodes[child].layout.location.y;
+                current = child;
             }
+            None if content_bottom > content_top + EPSILON => return Ok(content_top),
+            None => return Ok(bottom),
         }
-        Ok(Some(Self {
-            text_bottom,
-            bands: apart,
-        }))
-    }
-
-    /// Whether a page may end `cut` below the top of the spanner.
-    fn allows(&self, cut: f32) -> bool {
-        // Only the last range that starts before the cut can hold it.
-        let before = self.bands.partition_point(|&(low, _)| low < cut);
-        self.text_bottom + EPSILON <= cut
-            && before
-                .checked_sub(1)
-                .is_none_or(|last| cut >= self.bands[last].1)
     }
 }
 
@@ -654,6 +671,9 @@ pub(in crate::layout) struct FragmentEdits {
     by_node: HashMap<usize, Vec<usize>>,
     /// Records whose source node was given new records since.
     dropped: Vec<bool>,
+    /// Records of nodes that had none in the tree, each installed after its
+    /// parent.
+    added: Vec<usize>,
 }
 
 impl FragmentEdits {
@@ -667,6 +687,7 @@ impl FragmentEdits {
             original: tree.fragments.len(),
             by_node,
             dropped: vec![false; tree.fragments.len()],
+            added: Vec::new(),
         }
     }
 
@@ -714,6 +735,25 @@ impl FragmentEdits {
         self.dropped.resize(self.arena.len(), false);
         self.by_node
             .insert(node, (start..self.arena.len()).collect());
+    }
+
+    /// Replace the records of `node` with `fragments`, or give it them when
+    /// it has none.
+    pub(in crate::layout) fn replace_or_add(
+        &mut self,
+        node: usize,
+        fragments: Vec<LayoutFragment>,
+    ) {
+        if self.by_node.get(&node).is_some_and(|ids| !ids.is_empty()) {
+            self.replace(node, fragments);
+            return;
+        }
+        let start = self.arena.len();
+        self.arena.extend(fragments);
+        self.dropped.resize(self.arena.len(), false);
+        self.by_node
+            .insert(node, (start..self.arena.len()).collect());
+        self.added.extend(start..self.arena.len());
     }
 
     /// Move the records of the shifted children placed in `container`, with
@@ -781,6 +821,12 @@ impl FragmentEdits {
         let mut sources = Vec::new();
         let mut remap = vec![None; self.arena.len()];
         let mut emitted = HashSet::new();
+        let mut children = HashMap::<usize, Vec<usize>>::new();
+        for &id in &self.added {
+            if let Some(parent) = self.parent(id) {
+                children.entry(parent).or_default().push(id);
+            }
+        }
         for id in 0..self.original {
             let ids = if !self.dropped[id] {
                 vec![id]
@@ -789,10 +835,14 @@ impl FragmentEdits {
             } else {
                 continue;
             };
-            for id in ids {
+            // Each record is followed by the added records placed in it, and
+            // those by theirs.
+            let mut pending: Vec<usize> = ids.into_iter().rev().collect();
+            while let Some(id) = pending.pop() {
                 remap[id] = Some(updated.len());
                 updated.push(self.arena[id]);
                 sources.push(id);
+                pending.extend(children.remove(&id).unwrap_or_default().into_iter().rev());
             }
             if updated.len() > tree.fragment_tree.limit {
                 // cov:ignore: the preceding work reservation bounds the original plus all replacement records by the same fragment limit.

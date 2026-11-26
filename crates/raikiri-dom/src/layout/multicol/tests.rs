@@ -223,9 +223,14 @@ fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
             expected,
         );
     }
-    // An `orphans` that no height below the number of steps keeps gives up on
-    // it, and the columns stay as tall as the last step made them.
-    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+    // An `orphans` larger than the lines makes the columns tall enough for
+    // all of them, without a step for each line.
+    assert_height(height(2000, 2, 100_000, 1), 20_000.0);
+    // The first `orphans` lines and the last `widows` lines set the least
+    // height the columns start from; the widows give way to the orphans.
+    assert_height(height(7, 3, 2, 4), 40.0);
+    assert_height(height(5, 3, 2, 4), 30.0);
+    assert_height(height(10, 3, 3, 5), 50.0);
 
     // A definite height caps the columns. When no height below the cap keeps
     // the `orphans`, the columns take the cap, and the lines that do not fit
@@ -6772,15 +6777,25 @@ fn a_middle_piece_has_neither_edge_and_both_fall_outside_its_column() {
 }
 
 #[test]
-fn a_line_taller_than_a_column_with_its_edge_is_left_to_the_other_strategies() {
-    // The last line and the 60px of padding below it fit no column: the
-    // planner gives up instead of cutting the padding, and the paragraph stays
-    // whole in the first column, past its end, as on the path that places
-    // it without slicing.
+fn a_last_line_that_fits_no_column_with_its_edge_breaks_before_the_edge() {
+    // The last line and the 60px of padding below it fit no column. The
+    // columns break between the lines first, so the last line starts the
+    // second column, and then between it and the padding, which goes on alone
+    // in the third, as Chromium breaks them. Each piece runs down its column
+    // to the edge below the box and the column clips it: the first to the
+    // column's end, the second to its line, and the third, which holds the
+    // padding, to the padding's end.
     let (doc, _, paragraph) = padded_paragraph_columns("padding-bottom:60px;background:green", 3);
     let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
-    assert_eq!(ranges, [(0, 3, 0)]);
-    assert_eq!(boxes, [(0.0, 90.0, None)]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1), (3, 3, 2)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 110.0, Some((0.0, 50.0))),
+            (0.0, 70.0, Some((0.0, 10.0))),
+            (0.0, 60.0, Some((0.0, 60.0)))
+        ]
+    );
 }
 
 #[test]
@@ -6841,16 +6856,13 @@ fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
             "{css}"
         );
     }
-    // A lone box of lines with a height of its own is placed whole by the
-    // planner, which the columns that balance need.
+    // A lone box of lines with a height of its own is placed by the planner,
+    // which breaks it between its lines, whether the columns balance or not.
     let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
     for balances in [true, false] {
-        assert_eq!(
-            with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container, balances)
-            }),
-            balances
-        );
+        assert!(with_bridged_session(&mut doc, |session| {
+            multicol_has_only_paragraph_children(session, container, balances)
+        }));
     }
 }
 
