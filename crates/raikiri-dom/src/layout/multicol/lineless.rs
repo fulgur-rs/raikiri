@@ -543,11 +543,9 @@ fn sliceable_flex_container(
         // not be the first one laid out, so a break inside a flex item that
         // is itself a flex container does not reach the item.
         let in_flow = in_flow_elements(tree, id);
-        let (first, last) = if id == child || passes_breaks_on(tree, id) {
-            (in_flow.first().copied(), in_flow.last().copied())
-        } else {
-            (None, None)
-        };
+        let passes = id == child || passes_breaks_on(tree, id);
+        let first = in_flow.first().copied().filter(|_| passes);
+        let last = in_flow.last().copied().filter(|_| passes);
         let (before, after) = if id == child {
             (breaking_items, breaking_items)
         } else {
@@ -585,6 +583,7 @@ fn sliceable_flex_container(
             || holds_absolute
             || in_flow_elements(tree, child).into_iter().any(|item| {
                 style_of(tree, item).inset() != Edges::splat(LengthPercentageAuto::auto())
+                    || tree.nodes[item].layout.margin.top < -EPSILON
             }))
     {
         return None;
@@ -595,21 +594,17 @@ fn sliceable_flex_container(
 /// Whether a forced break before the first box in flow inside `id`, or
 /// after the last, is one before or after `id`: `id` lays them out in a
 /// block flow, or is a single-line flex container that lays them out in
-/// the order of the tree.
+/// the order of the tree. `id` is a box that the stream can slice (see
+/// [`is_sliceable_flex_box`]): a block container or a flex container.
 fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
-    match layout_node(tree, id).display() {
-        DisplayValue::Block | DisplayValue::FlowRoot => true,
-        DisplayValue::Flex => {
-            let style = style_of(tree, id);
-            let cascade = tree.style_views.cascade();
-            !style.flex_wraps()
-                && !style.flex_direction_is_reversed()
-                && in_flow_elements(tree, id)
-                    .iter()
-                    .all(|&item| cascade.computed[item].order == 0)
-        }
-        _ => false,
-    }
+    let style = style_of(tree, id);
+    let cascade = tree.style_views.cascade();
+    layout_node(tree, id).display() != DisplayValue::Flex
+        || !style.flex_wraps()
+            && !style.flex_direction_is_reversed()
+            && in_flow_elements(tree, id)
+                .iter()
+                .all(|&item| cascade.computed[item].order == 0)
 }
 
 /// Whether an absolutely positioned box with `style` is placed a fixed
@@ -707,7 +702,9 @@ fn in_flow_elements(tree: &LayoutSession<'_>, id: usize) -> Vec<usize> {
 /// Whether a forced column break falls before `id` (after it, unless
 /// `before`): one set on it, or on the first (last) box in flow inside it,
 /// which propagates to it (CSS Fragmentation 3, 3.1). Breaks that are not
-/// column breaks do not break columns, as in Chromium.
+/// column breaks do not break columns, as in Chromium. A column break below
+/// a box that does not pass breaks on (see [`passes_breaks_on`]) keeps the
+/// container from the stream, so the walk need not stop there.
 fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) -> bool {
     loop {
         let node = layout_node(tree, id);
@@ -718,9 +715,6 @@ fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) ->
         };
         if value == BreakBetween::Column {
             return true;
-        }
-        if !passes_breaks_on(tree, id) {
-            return false;
         }
         let children = in_flow_elements(tree, id);
         let next = if before {
@@ -807,11 +801,10 @@ fn flex_lines(
 /// The forced column breaks of `child`, a flex container the stream slices
 /// whole (see [`sliceable_flex_container`]), laid out with a border box
 /// `height` tall. A break before the first line of items is a break before
-/// the container, and one after the last a break after it. `None` when
-/// breaks fall between items of a container whose block size does not
-/// follow from its content alone, or that sits apart from them, which the
-/// other strategies take.
-fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> Option<FlexBreaks> {
+/// the container, and one after the last a break after it.
+/// [`sliceable_flex_container`] leaves the containers whose parts could not
+/// move down with their items to the other strategies.
+fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> FlexBreaks {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     let mut breaks = FlexBreaks {
@@ -820,7 +813,7 @@ fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> Option<Fl
         parts: Vec::new(),
     };
     if !breaks_between_items(&style) {
-        return Some(breaks);
+        return breaks;
     }
     let items = in_flow_elements(tree, child);
     let lines = if style.flex_direction_is_row() {
@@ -851,24 +844,12 @@ fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> Option<Fl
         .collect();
     lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
-        return Some(breaks);
+        return breaks;
     };
     breaks.before |= first.2;
     breaks.after |= last.3;
     if !lines.windows(2).any(|pair| pair[0].3 || pair[1].2) {
-        return Some(breaks);
-    }
-    // The parts after a break move down to the next column, which a
-    // container sized apart from its content would not grow to hold, and
-    // the paint of an item that a relative offset moves would not follow.
-    if has_block_size(&style)
-        || style_dimension_length(style.max_size().height.into()).is_some()
-        || lines
-            .iter()
-            .flat_map(|line| &line.4)
-            .any(|&id| style_of(tree, id).inset() != Edges::splat(LengthPercentageAuto::auto()))
-    {
-        return None;
+        return breaks;
     }
     let mut part = FlexPart {
         start: 0.0,
@@ -878,10 +859,6 @@ fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> Option<Fl
     let mut previous_after = false;
     for (start, end, before, after, items) in lines {
         if (previous_after || before) && !part.items.is_empty() {
-            // Lines that overlap have no break between them.
-            if start < part.end - EPSILON {
-                return None;
-            }
             let next = FlexPart {
                 start,
                 end: 0.0,
@@ -895,7 +872,7 @@ fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> Option<Fl
     }
     part.end = height;
     breaks.parts.push(part);
-    Some(breaks)
+    breaks
 }
 
 /// A block-only wrapper tree whose leaves can be placed in the column stream.
@@ -1310,10 +1287,7 @@ fn pieces_of_children(
                     }
                     whole.extend(part.iter().cloned());
                 }
-                if whole.is_empty() {
-                    return None;
-                }
-                child_pieces.push(whole);
+                child_pieces.push(Some(whole).filter(|whole| !whole.is_empty())?);
                 wrapped_leaf_pieces.push(None);
             }
             Some(wrapped_tree) => {
@@ -2913,11 +2887,8 @@ pub(super) fn layout(
         .iter()
         .zip(&sizes)
         .zip(&sliced_flex)
-        .map(|((&child, size), &flex)| match flex {
-            true => flex_breaks(tree, child, size.height).map(Some),
-            false => Some(None),
-        })
-        .collect::<Option<Vec<_>>>()?;
+        .map(|((&child, size), &flex)| flex.then(|| flex_breaks(tree, child, size.height)))
+        .collect::<Vec<_>>();
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
     let mut wrapped: Vec<Option<WrappedBlockTree>> = children
@@ -2983,9 +2954,9 @@ pub(super) fn layout(
                 apply_wrapped_layout(tree, wrapped_tree, &mut items, first, context.column_width)?;
             }
         }
+        let break_before = break_after || breaks.as_ref().is_some_and(|breaks| breaks.before);
         if let Some(first) = items.get_mut(first) {
-            first.break_before |=
-                break_after || breaks.as_ref().is_some_and(|breaks| breaks.before);
+            first.break_before |= break_before;
             break_after = false;
         }
         break_after |= breaks.as_ref().is_some_and(|breaks| breaks.after);

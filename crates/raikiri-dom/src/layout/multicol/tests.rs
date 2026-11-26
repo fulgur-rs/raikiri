@@ -2431,6 +2431,16 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
             true
         ));
     }
+    // An item that a negative margin pulls up above the start of its part
+    // would stay in the part before.
+    assert!(!supported(
+        "display:flex;flex-direction:column",
+        &[
+            "display:block;width:10px;height:150px",
+            "display:block;width:10px;height:20px;margin-top:-20px;break-before:column"
+        ],
+        true
+    ));
     // A box placed from the top stays where it is.
     assert!(supported(
         "display:flex;position:relative",

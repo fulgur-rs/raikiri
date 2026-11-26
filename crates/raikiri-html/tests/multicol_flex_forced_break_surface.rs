@@ -364,3 +364,90 @@ fn a_box_placed_from_the_top_of_the_container_stays_when_a_break_moves_the_items
         ],
     );
 }
+
+#[test]
+fn a_break_between_lines_that_run_from_the_right_falls_between_them() {
+    for flow in ["row-reverse wrap", "row wrap;direction:rtl"] {
+        expect(
+            &columns(
+                "balance",
+                &format!(
+                    "<div id=f style='display:flex;flex-flow:{flow}'><div id=a style='width:60px;height:30px'></div>\
+                     <div id=b style='width:60px;height:20px;break-before:column'></div>\
+                     <div id=c style='width:60px;height:20px'></div></div>"
+                ),
+            ),
+            &[
+                ("a", &[(40, 0, 60, 20), (140, 0, 60, 10)]),
+                ("b", &[(240, 0, 60, 20)]),
+                ("c", &[(340, 0, 60, 20)]),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_multi_line_column_container_takes_the_breaks_around_it() {
+    expect(
+        &columns(
+            "auto",
+            "<div id=o style='height:20px'></div><div id=f style='display:flex;flex-flow:column wrap;break-before:column'>\
+             <div id=a style='height:30px'></div><div id=b style='height:30px'></div></div>",
+        ),
+        &[
+            ("o", &[(0, 0, 100, 20)]),
+            ("f", &[(100, 0, 100, 60)]),
+            ("a", &[(100, 0, 100, 30)]),
+            ("b", &[(100, 30, 100, 30)]),
+        ],
+    );
+}
+
+#[test]
+fn the_part_after_a_break_starts_at_the_margin_of_its_first_item() {
+    // A negative margin after the item before the break pulls the next one
+    // up into its box, and the next column starts at that item's margin.
+    expect(
+        &columns(
+            "balance",
+            "<div id=f style='display:flex;flex-direction:column'><div id=a style='height:30px;margin-bottom:-10px'></div>\
+             <div id=b style='height:20px;break-before:column'></div><div id=c style='height:20px'></div></div>",
+        ),
+        &[
+            (
+                "f",
+                &[
+                    (0, 0, 100, 20),
+                    (100, 0, 100, 20),
+                    (200, 0, 100, 20),
+                    (300, 0, 100, 20),
+                ],
+            ),
+            ("a", &[(0, 0, 100, 20), (100, 0, 100, 10)]),
+            ("b", &[(200, 0, 100, 20)]),
+            ("c", &[(300, 0, 100, 20)]),
+        ],
+    );
+}
+
+#[test]
+fn borders_and_margins_of_the_container_stay_at_its_ends() {
+    expect(
+        &columns(
+            "balance",
+            "<div id=f style='display:flex;flex-direction:column;border:5px solid;margin:3px 0'>\
+             <div id=a style='height:30px'></div><div id=b style='height:20px;break-before:column'></div>\
+             <div id=c style='height:20px;break-before:column'></div></div><div id=o style='height:10px'></div>",
+        ),
+        &[
+            (
+                "f",
+                &[(0, 3, 100, 35), (100, 0, 100, 38), (200, 0, 100, 25)],
+            ),
+            ("a", &[(5, 8, 90, 30)]),
+            ("b", &[(105, 0, 90, 20)]),
+            ("c", &[(205, 0, 90, 20)]),
+            ("o", &[(200, 28, 100, 10)]),
+        ],
+    );
+}
