@@ -91,9 +91,17 @@ impl PageSink for &mut Record {
     fn stage_table_sample(
         &mut self,
         sample: &DocumentLayout,
+        ending: &DocumentLayout,
         rows: &mut TableTextRows<'_>,
     ) -> std::io::Result<Option<u32>> {
         assert!(sample.pages().count() > 1);
+        assert_eq!(ending.pages().len(), 2);
+        let first = body_rows(sample.page_at(0));
+        let middle = body_rows(sample.page_at(1));
+        assert_eq!(
+            body_rows(ending.page_at(1)),
+            (rows.row_count() - first - 1) % middle + 1
+        );
         assert_eq!(rows.row_count(), 600);
         for _ in 0..2 {
             for row in rows.read_batch()? {

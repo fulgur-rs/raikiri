@@ -125,6 +125,7 @@ pub trait PageSink {
     fn stage_table_sample(
         &mut self,
         _sample: &DocumentLayout,
+        _ending: &DocumentLayout,
         _rows: &mut TableTextRows<'_>,
     ) -> std::io::Result<Option<u32>> {
         Ok(None)
@@ -1605,25 +1606,39 @@ fn stream_table_windows<S: PageSink>(
             .document(0..window_size.get())
             .map_err(ParseError::Io)?;
         let (_, sample) = render(shell)?;
-        if !needs_replay.get() && sample.pages().all(|page| page.margin_boxes().is_empty()) {
-            let mut rows = TableTextRows { windows, next: 0 };
-            let result = sink.stage_table_sample(&sample, &mut rows);
-            let aborted = config
-                .signal
-                .as_ref()
-                .is_some_and(|signal| signal.is_aborted());
-            if !aborted
-                && let Ok(Some(count)) = result
-                && count > 0
-                && count <= page_limit
-                && rows.next == rows.row_count()
+        if !needs_replay.get()
+            && sample.pages().all(|page| page.margin_boxes().is_empty())
+            && let Some((start, first, last)) = ending_sample(&sample, windows.len())
+        {
+            let ending_shell = windows
+                .document(start..windows.len())
+                .map_err(ParseError::Io)?;
+            let (_, ending) = render(ending_shell)?;
+            if !needs_replay.get()
+                && ending.pages().len() == 2
+                && ending.pages().all(|page| page.margin_boxes().is_empty())
+                && body_rows(ending.page_at(0)) == first
+                && body_rows(ending.page_at(1)) == last
             {
-                return Ok(StreamStatus::Completed(Some(count)));
-            }
-            sink.discard_staged_table_pages();
-            result.map_err(RenderError::Io)?;
-            if aborted {
-                return Ok(StreamStatus::Aborted);
+                let mut rows = TableTextRows { windows, next: 0 };
+                let result = sink.stage_table_sample(&sample, &ending, &mut rows);
+                let aborted = config
+                    .signal
+                    .as_ref()
+                    .is_some_and(|signal| signal.is_aborted());
+                if !aborted
+                    && let Ok(Some(count)) = result
+                    && count > 0
+                    && count <= page_limit
+                    && rows.next == rows.row_count()
+                {
+                    return Ok(StreamStatus::Completed(Some(count)));
+                }
+                sink.discard_staged_table_pages();
+                result.map_err(RenderError::Io)?;
+                if aborted {
+                    return Ok(StreamStatus::Aborted);
+                }
             }
         }
     }
@@ -1738,6 +1753,34 @@ fn stream_table_windows<S: PageSink>(
         StreamStatus::Completed(count) => StreamStatus::Completed(Some(count)),
         StreamStatus::Aborted => StreamStatus::Aborted,
     })
+}
+
+fn body_rows(page: Page<'_>) -> usize {
+    let dom = page.dom();
+    page.fragments()
+        .filter(|fragment| {
+            let node = fragment.node();
+            dom.local_name(node) == Some("tr")
+                && dom.parent(node).and_then(|parent| dom.local_name(parent)) == Some("tbody")
+        })
+        .count()
+}
+
+// A full first page establishes the repeated header on the final page.
+// This predicts a template only; the sink must still check every actual row.
+fn ending_sample(sample: &DocumentLayout, total: usize) -> Option<(usize, usize, usize)> {
+    let pages = sample.pages().len();
+    if pages < 3 {
+        return None;
+    }
+    let first = body_rows(sample.page_at(0));
+    let middle = body_rows(sample.page_at(1));
+    if first == 0 || middle == 0 || (2..pages - 1).any(|p| body_rows(sample.page_at(p)) != middle) {
+        return None;
+    }
+    let remaining = total.checked_sub(first)?.checked_sub(1)?;
+    let last = remaining % middle + 1;
+    Some((total.checked_sub(first + last)?, first, last))
 }
 
 // Only plain table windows without consumer events enter this path.
