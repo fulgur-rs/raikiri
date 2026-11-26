@@ -12,6 +12,7 @@ fn debug_reports_fragment_box_placement_count() {
         oof_candidates: OofCandidates::new(),
         height: 0.0,
         beside_floats: false,
+        below_floats: false,
         external_float_gap: 0.0,
         discarded_float_gap: 0.0,
         escaping_margin: CollapsibleMarginSet::ZERO,

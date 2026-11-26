@@ -79,7 +79,8 @@ pub(crate) struct LayoutContext {
     /// top of a block, or the margin-box top of a float.
     pub(crate) forced_break_tops: Vec<(usize, f32)>,
     /// Blocks the page walk moved whole to a later page without a forced
-    /// break, away from the floats their lines were broken beside, each with
+    /// break, away from the floats their lines were broken beside or moved
+    /// below, each with
     /// how far it moved them and where its top was in the page flow before.
     pub(crate) pushed_flows: Vec<(usize, f32, f32)>,
     /// Blocks the page walk moved whole to a later page with their lines,

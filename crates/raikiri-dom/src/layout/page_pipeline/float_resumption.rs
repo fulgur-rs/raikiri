@@ -58,7 +58,7 @@ pub(crate) struct Plan {
     pushed: HashMap<usize, f32>,
     flows: HashMap<usize, f32>,
     /// Blocks the page walk moved whole to a later page, away from the
-    /// floats their lines were broken beside, each with how far it moved
+    /// floats their lines were broken beside or moved below, each with how far it moved
     /// them and where their top was in the page flow before: layout places
     /// them as far below their place in the flow, so that their lines are
     /// broken against the floats that are there, as Chromium lays them out.
