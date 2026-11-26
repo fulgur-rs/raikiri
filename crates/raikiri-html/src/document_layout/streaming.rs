@@ -15,7 +15,7 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::io::{Read, Write};
 
 use html5ever::driver::{ParseOpts, Parser, parse_document};
 use raikiri_dom::generated_content::generated_origin;
@@ -75,6 +75,17 @@ pub trait PageSink {
         events: Vec<ConsumerPropertyEvent>,
     ) -> std::io::Result<()>;
 
+    /// Optionally paint a tentative table page into private sink state. The
+    /// page has no margin boxes and its final document page count is unknown.
+    /// Return true to retain it until finish. Returning false requests normal
+    /// delivery. All retained pages must be reversible and externally invisible.
+    fn stage_table_page(&mut self, _page: StreamPage<'_>) -> std::io::Result<bool> {
+        Ok(false)
+    }
+
+    /// Undo all tentative table pages before ordinary delivery or replay.
+    fn discard_staged_table_pages(&mut self) {}
+
     /// Called once after the last page, with values known only at the end.
     ///
     /// Not called when the layout fails or is aborted.
@@ -85,15 +96,13 @@ pub trait PageSink {
 #[derive(Clone, Copy)]
 pub struct StreamPage<'a> {
     layout: &'a DocumentLayout,
-    index: u32,
-    /// Stands for the number of pages while it is not known yet.
-    page_count_placeholder: Option<u32>,
+    page: Page<'a>,
 }
 
 impl<'a> StreamPage<'a> {
     /// Zero-based page index in the whole document.
     pub fn index(&self) -> u32 {
-        self.index
+        self.page.index()
     }
 
     /// The laid-out page.
@@ -119,11 +128,20 @@ impl<'a> StreamPage<'a> {
     /// when images of the canvas background fill it, is not delivered before
     /// that height is known.
     pub fn page(&self) -> Page<'a> {
-        let page = self.layout.page_at(self.index as usize);
-        match self.page_count_placeholder {
-            Some(placeholder) => page.with_deferred_page_count(placeholder),
-            None => page,
-        }
+        self.page
+    }
+
+    pub(crate) fn from_window(
+        layout: &'a DocumentLayout,
+        local_index: usize,
+        document_index: u32,
+        total_pages: u32,
+    ) -> Self {
+        let mut page = layout.page_at(local_index);
+        page.document_index = document_index;
+        page.window_node_ids = true;
+        page.page_count = total_pages;
+        Self { layout, page }
     }
 
     /// The document's base URL, for resolving the targets of
@@ -235,7 +253,7 @@ pub enum StreamStatus<T> {
 ///     LayoutConfig, PageDefaults, PageSink, RenderResources, StreamPage, StreamStatus,
 ///     StreamSummary, StreamingLayout,
 /// };
-/// use std::io::Write;
+/// use std::io::{Read, Write};
 ///
 /// struct CountPages(u32);
 /// impl PageSink for CountPages {
@@ -269,6 +287,8 @@ pub struct StreamingLayout<'r, 'a, S> {
     settings: Settings<'r, 'a>,
     sink: S,
     input: StreamInput,
+    table_prefix: Option<Vec<u8>>,
+    table_input: Option<crate::sink::row_store::TableInput>,
     input_bytes: u64,
     /// Input bytes fed since the last checkpoint.
     unchecked_bytes: usize,
@@ -508,34 +528,40 @@ fn hide_element(dom: &mut raikiri_dom::Document, id: usize) {
     dom.set_element_inline_style(id, Some("display: none !important".into()));
 }
 
-impl Settings<'_, '_> {
-    /// Replace the parse-time cascade, computed for the default media
-    /// context, with the one layout uses, so that the frontier and the late
-    /// fixed elements are found with the styles the pages are laid out with.
-    fn recascade_for_layout(
-        &self,
-        document: &mut HtmlDocument,
-        limits: &raikiri_traits::RenderLimits,
-    ) -> Result<(), RenderError> {
-        let media_context = &self.config.media_context;
-        if *media_context == raikiri_style::MediaContext::default() {
-            return Ok(());
-        }
-        let rule_tree =
-            build_rule_tree_with_limits(&document.uncascaded, &[], &limits.rule_tree_limits())?;
-        let mut options = raikiri_style::CascadeOptions::default();
-        options.limits = limits.cascade_limits();
-        options.border_width_device_scale = self.resources.configured_border_width_device_scale();
-        document.cascade = raikiri_style::cascade_with_options(
-            &document.uncascaded.dom,
-            &rule_tree,
-            media_context,
-            &first_page_query(),
-            &options,
-        )?;
-        Ok(())
+fn assemble_resolved(
+    resources: &RenderResources<'_>,
+    media_context: &raikiri_style::MediaContext,
+    uncascaded: UncascadedDocument,
+    options: &crate::ParseOptions<'_>,
+    limits: &raikiri_traits::RenderLimits,
+) -> Result<HtmlDocument, RenderError> {
+    let mut document = assemble_document(
+        uncascaded,
+        options,
+        limits,
+        resources.configured_fonts(),
+        resources.configured_border_width_device_scale(),
+    )?;
+    if *media_context == raikiri_style::MediaContext::default() {
+        return Ok(document);
     }
+    let rule_tree =
+        build_rule_tree_with_limits(&document.uncascaded, &[], &limits.rule_tree_limits())?;
+    let mut options = raikiri_style::CascadeOptions::default();
+    options.limits = limits.cascade_limits();
+    options.border_width_device_scale = resources.configured_border_width_device_scale();
+    document.cascade = raikiri_style::cascade_with_options(
+        &document.uncascaded.dom,
+        &rule_tree,
+        media_context,
+        &first_page_query(),
+        &options,
+    )?;
 
+    Ok(document)
+}
+
+impl Settings<'_, '_> {
     /// Finish and cascade a parsed document, leaving out what a streaming
     /// layout does not apply: `<style>` elements inside `<body>`, fixed
     /// positioned elements whose node id is `late_nodes_from` or more, and
@@ -572,15 +598,13 @@ impl Settings<'_, '_> {
         let uncascaded = finish_document(parsed, &options).map_err(RenderError::Parse)?;
         let forward_dependent =
             forward_dependent && build_rule_tree(&uncascaded).has_forward_dependent_selectors();
-        let fonts = self.resources.configured_fonts();
-        let mut document = assemble_document(
+        let mut document = assemble_resolved(
+            self.resources,
+            &self.config.media_context,
             uncascaded,
             &options,
             &limits,
-            fonts,
-            self.resources.configured_border_width_device_scale(),
         )?;
-        self.recascade_for_layout(&mut document, &limits)?;
 
         let late =
             late_nodes_from.map_or_else(Vec::new, |from| late_fixed_elements(&document, from));
@@ -597,6 +621,33 @@ impl Settings<'_, '_> {
             source_modified,
             ignored,
         })
+    }
+
+    fn assemble_table_window(
+        &self,
+        shell: UncascadedDocument,
+    ) -> Result<HtmlDocument, RenderError> {
+        let network = self.network.as_ref().map(|net| net as &dyn NetworkProvider);
+        let extra = self.resources.extra_stylesheets();
+        let options = self.resources.parse_options(&extra, network);
+        assemble_resolved(
+            self.resources,
+            &self.config.media_context,
+            shell,
+            &options,
+            &self.resources.parse_limits(),
+        )
+    }
+
+    fn layout_table_window(
+        &self,
+        shell: UncascadedDocument,
+    ) -> Result<(HtmlDocument, LayoutStatus, bool), RenderError> {
+        let document = self.assemble_table_window(shell)?;
+        let (status, events) = self
+            .try_layout(&document, None)?
+            .expect("layout without a resume point");
+        Ok((document, status, !events.is_empty()))
     }
 
     /// Re-cascade `document` with the elements `ids` generating no boxes.
@@ -618,16 +669,13 @@ impl Settings<'_, '_> {
         for &id in ids {
             hide_element(&mut uncascaded.dom, id);
         }
-        let fonts = self.resources.configured_fonts();
-        let mut document = assemble_document(
+        assemble_resolved(
+            self.resources,
+            &self.config.media_context,
             uncascaded,
             &options,
             &limits,
-            fonts,
-            self.resources.configured_border_width_device_scale(),
-        )?;
-        self.recascade_for_layout(&mut document, &limits)?;
-        Ok(document)
+        )
     }
 
     /// The elements that the last layout of `document`, given `resume`,
@@ -902,6 +950,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 resumed: std::cell::Cell::new(0),
             },
             sink,
+            table_prefix: matches!(input, StreamInput::Html(_)).then(Vec::new),
+            table_input: None,
             input,
             input_bytes: 0,
             unchecked_bytes: 0,
@@ -976,11 +1026,75 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         if !matches!(self.failure, Failure::None) {
             return Err(failed_earlier());
         }
-        let result = self.feed_unchecked(bytes);
+        let result = self.feed_selecting_table(bytes);
         if result.is_err() {
             self.failure = Failure::Reported;
         }
         result
+    }
+
+    fn feed_selecting_table(&mut self, mut bytes: &[u8]) -> Result<(), RenderError> {
+        if self.checkpoint_bytes != CHECKPOINT_BYTES {
+            self.table_prefix = None;
+        }
+        if let Some(prefix) = &mut self.table_prefix {
+            let take = bytes.len().min(CHECKPOINT_BYTES - prefix.len());
+            prefix.extend_from_slice(&bytes[..take]);
+            if prefix.len() == CHECKPOINT_BYTES {
+                let prefix = self.table_prefix.take().expect("first checkpoint");
+                // The byte scan is only a cost heuristic. The parsed tree and
+                // styles determine whether this table can actually be streamed.
+                if prefix
+                    .windows(3)
+                    .filter(|tag| tag.eq_ignore_ascii_case(b"<tr"))
+                    .take(128)
+                    .count()
+                    == 128
+                {
+                    let limits = self.settings.resources.parse_limits();
+                    if let Ok(mut probe) = crate::sink::row_store::TableInput::new(&limits)
+                        && probe.feed(&prefix)?
+                        && probe.recorded_rows() >= 128
+                    {
+                        #[cfg(feature = "streaming-diagnostics")]
+                        self.settings.diagnostics.update(|mut stats| {
+                            stats.table_inputs += 1;
+                            stats
+                        });
+                        self.table_input = Some(probe);
+                        self.input = StreamInput::Html(Utf8Feed::new(parse_document(
+                            RaikiriTreeSink::with_limits(
+                                limits.max_parse_warnings,
+                                limits.max_dom_nodes,
+                            ),
+                            ParseOpts::default(),
+                        )));
+                        self.input_bytes = 0;
+                        self.unchecked_bytes = 0;
+                        bytes = &bytes[take..];
+                    }
+                }
+            }
+        }
+        if let Some(input) = &mut self.table_input {
+            if !input.feed(bytes)? {
+                let input = self.table_input.take().expect("active table parser");
+                self.replay_table(input.into_replay().map_err(RenderError::Io)?)?;
+            }
+            return Ok(());
+        }
+        self.feed_unchecked(bytes)
+    }
+
+    fn replay_table(&mut self, mut file: std::fs::File) -> Result<(), RenderError> {
+        let mut chunk = [0; 8192];
+        loop {
+            let count = file.read(&mut chunk).map_err(RenderError::Io)?;
+            if count == 0 {
+                return Ok(());
+            }
+            self.feed_unchecked(&chunk[..count])?;
+        }
     }
 
     fn feed_unchecked(&mut self, bytes: &[u8]) -> Result<(), RenderError> {
@@ -1180,7 +1294,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// [`crate::parse_html_with_resources`] and [`layout`](super::layout), an
     /// input error kept from [`std::io::Write`], and [`RenderError::Io`] when
     /// the sink fails.
-    pub fn finish(self) -> Result<StreamStatus<S::Output>, RenderError> {
+    pub fn finish(mut self) -> Result<StreamStatus<S::Output>, RenderError> {
         match self.failure {
             Failure::None => {}
             Failure::Reported => return Err(failed_earlier()),
@@ -1188,6 +1302,56 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         }
         if self.aborted {
             return Ok(StreamStatus::Aborted);
+        }
+        if let Some(input) = self.table_input.take() {
+            let extra = self.settings.resources.extra_stylesheets();
+            let network = self
+                .settings
+                .network
+                .as_ref()
+                .map(|net| net as &dyn NetworkProvider);
+            let options = self.settings.resources.parse_options(&extra, network);
+            let (windows, replay) = input.finish_windows(&options)?;
+            if let Some(mut windows) = windows {
+                #[cfg(feature = "streaming-diagnostics")]
+                self.settings.diagnostics.update(|mut stats| {
+                    stats.table_structures += 1;
+                    stats
+                });
+                let status = stream_table_windows(
+                    &self.settings,
+                    &mut windows,
+                    std::num::NonZeroUsize::new(512).unwrap(),
+                    &mut self.sink,
+                )?;
+                match status {
+                    StreamStatus::Aborted => return Ok(StreamStatus::Aborted),
+                    StreamStatus::Completed(Some(page_count)) => {
+                        #[cfg(feature = "streaming-diagnostics")]
+                        self.settings.diagnostics.update(|mut stats| {
+                            stats.table_window_pages = page_count;
+                            stats
+                        });
+                        let summary = StreamSummary {
+                            #[cfg(feature = "streaming-diagnostics")]
+                            diagnostics: self.settings.diagnostics.get(),
+                            page_count,
+                            anchors: AnchorIndex::default(),
+                            warnings: Vec::new(),
+                            unplaced_events: Vec::new(),
+                            page_count_margin_boxes: Vec::new(),
+                            page_count_running_elements: Vec::new(),
+                        };
+                        return self
+                            .sink
+                            .finish(summary)
+                            .map(StreamStatus::Completed)
+                            .map_err(RenderError::Io);
+                    }
+                    StreamStatus::Completed(None) => {}
+                }
+            }
+            self.replay_table(replay)?;
         }
         let Self {
             recycled_snapshot,
@@ -1308,6 +1472,254 @@ enum Delivery {
     Aborted,
 }
 
+// The caller retains the original input until planning accepts all windows.
+fn stream_table_windows<S: PageSink>(
+    settings: &Settings<'_, '_>,
+    windows: &mut crate::sink::row_store::TableWindows,
+    window_size: std::num::NonZeroUsize,
+    sink: &mut S,
+) -> Result<StreamStatus<Option<u32>>, RenderError> {
+    if !windows.permits_window_styles(
+        settings.consumer_properties,
+        &settings.resources.parse_limits(),
+    )? {
+        return Ok(StreamStatus::Completed(None));
+    }
+    #[cfg(feature = "streaming-diagnostics")]
+    settings.diagnostics.update(|mut stats| {
+        stats.table_styles += 1;
+        stats
+    });
+    let needs_replay = std::cell::Cell::new(false);
+    let render = |shell| {
+        #[cfg(feature = "streaming-diagnostics")]
+        let started = std::time::Instant::now();
+        let (document, status, has_events) = settings.layout_table_window(shell)?;
+        #[cfg(feature = "streaming-diagnostics")]
+        settings.diagnostics.update(|mut stats| {
+            stats.table_window_layout_time += started.elapsed();
+            stats
+        });
+        match status {
+            LayoutStatus::Completed(layout) => {
+                needs_replay.set(
+                    needs_replay.get()
+                        || has_events
+                        || !layout.warnings().is_empty()
+                        || !document.uncascaded.warnings.is_empty(),
+                );
+                Ok((document, layout))
+            }
+            LayoutStatus::Aborted => Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted)),
+        }
+    };
+    #[cfg(feature = "streaming-diagnostics")]
+    let started = std::time::Instant::now();
+    let table = windows.table();
+    let defaults = &settings.defaults;
+    let config = &settings.config;
+    let resources = settings.resources;
+    let registrations = settings.consumer_properties;
+    let extra = resources.extra_stylesheets();
+    let network = settings
+        .network
+        .as_ref()
+        .map(|net| net as &dyn NetworkProvider);
+    let options = resources.parse_options(&extra, network);
+    let limits = resources.parse_limits();
+    let measured = windows.measure_columns(window_size, |shell| {
+        let document =
+            assemble_resolved(resources, &config.media_context, shell, &options, &limits)?;
+        crate::render::measure_table_columns(
+            &document,
+            defaults.clone(),
+            config,
+            resources,
+            registrations,
+            table,
+        )
+    });
+    #[cfg(feature = "streaming-diagnostics")]
+    settings.diagnostics.update(|mut stats| {
+        stats.table_measure_time += started.elapsed();
+        stats
+    });
+    #[cfg(feature = "streaming-diagnostics")]
+    let started = std::time::Instant::now();
+    let mut staging = true;
+    let mut staged = 0u32;
+    let page_limit = settings
+        .config
+        .limits
+        .max_document_pages
+        .unwrap_or(u32::MAX);
+    let mut stage_failed = false;
+    let plan = measured.and_then(|()| {
+        windows.plan_pages_with(window_size, render, |layout, pages| {
+            for local in pages {
+                if !staging || needs_replay.get() {
+                    break;
+                }
+                if settings
+                    .config
+                    .signal
+                    .as_ref()
+                    .is_some_and(|signal| signal.is_aborted())
+                {
+                    return Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted));
+                }
+                if staged >= page_limit {
+                    staging = false;
+                    break;
+                }
+                let next = staged + 1;
+                let page = StreamPage::from_window(layout, local, staged, next);
+                if !page.page().margin_boxes().is_empty() {
+                    staging = false;
+                    break;
+                }
+                #[cfg(feature = "streaming-diagnostics")]
+                let started = std::time::Instant::now();
+                let result = sink.stage_table_page(page);
+                #[cfg(feature = "streaming-diagnostics")]
+                settings.diagnostics.update(|mut stats| {
+                    stats.table_stage_time += started.elapsed();
+                    stats
+                });
+                match result {
+                    Ok(true) => staged = next,
+                    Ok(false) => {
+                        staging = false;
+                        break;
+                    }
+                    Err(error) => {
+                        stage_failed = true;
+                        return Err(RenderError::Io(error));
+                    }
+                }
+            }
+            Ok(())
+        })
+    });
+    if stage_failed
+        || (staged != 0 && (!staging || needs_replay.get() || !matches!(plan, Ok(Some(_)))))
+    {
+        sink.discard_staged_table_pages();
+    }
+    #[cfg(feature = "streaming-diagnostics")]
+    settings.diagnostics.update(|mut stats| {
+        stats.table_plan_time += started.elapsed();
+        stats
+    });
+    let plan = match plan {
+        Ok(Some(plan)) => plan,
+        Ok(None) => return Ok(StreamStatus::Completed(None)),
+        Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted)) => {
+            return Ok(StreamStatus::Aborted);
+        }
+        Err(error) => return Err(error),
+    };
+    #[cfg(feature = "streaming-diagnostics")]
+    settings.diagnostics.update(|mut stats| {
+        stats.table_plans += 1;
+        stats
+    });
+    if needs_replay.get() {
+        return Ok(StreamStatus::Completed(None));
+    }
+    #[cfg(feature = "streaming-diagnostics")]
+    let started = std::time::Instant::now();
+    let result = if staging {
+        if settings
+            .config
+            .signal
+            .as_ref()
+            .is_some_and(|signal| signal.is_aborted())
+        {
+            sink.discard_staged_table_pages();
+            StreamStatus::Aborted
+        } else {
+            StreamStatus::Completed(staged)
+        }
+    } else {
+        deliver_table_windows(
+            sink,
+            windows,
+            &plan,
+            settings.config.limits.max_document_pages,
+            settings.config.signal.as_ref(),
+            |shell| {
+                settings
+                    .layout_table_window(shell)
+                    .map(|(_, status, _)| status)
+            },
+        )?
+    };
+    #[cfg(feature = "streaming-diagnostics")]
+    settings.diagnostics.update(|mut stats| {
+        stats.table_delivery_time += started.elapsed();
+        stats
+    });
+    Ok(match result {
+        StreamStatus::Completed(count) => StreamStatus::Completed(Some(count)),
+        StreamStatus::Aborted => StreamStatus::Aborted,
+    })
+}
+
+// Only plain table windows without consumer events enter this path.
+fn deliver_table_windows<S: PageSink>(
+    sink: &mut S,
+    windows: &mut crate::sink::row_store::TableWindows,
+    plan: &[crate::sink::row_store::PlannedTableWindow],
+    max_pages: Option<u32>,
+    signal: Option<&raikiri_traits::AbortSignal>,
+    mut layout: impl FnMut(UncascadedDocument) -> Result<LayoutStatus, RenderError>,
+) -> Result<StreamStatus<u32>, RenderError> {
+    let limit = u64::from(max_pages.unwrap_or(u32::MAX));
+    let total = plan.iter().fold(0u64, |sum, window| {
+        sum.saturating_add(window.pages.len() as u64)
+    });
+    if total > limit {
+        return Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit,
+            actual: total,
+        });
+    }
+    let total = total as u32;
+    let aborted = || signal.is_some_and(|s| s.is_aborted());
+    let mut index = 0;
+    for window in plan {
+        if aborted() {
+            return Ok(StreamStatus::Aborted);
+        }
+        let shell = windows
+            .document(window.rows.clone())
+            .map_err(RenderError::Io)?;
+        let LayoutStatus::Completed(result) = layout(shell)? else {
+            return Ok(StreamStatus::Aborted);
+        };
+        if window.pages.end > result.pages().len() {
+            return Err(RenderError::Configuration(
+                "table pagination changed during output".to_owned(),
+            ));
+        }
+        for local in window.pages.clone() {
+            if aborted() {
+                return Ok(StreamStatus::Aborted);
+            }
+            let page = StreamPage::from_window(&result, local, index, total);
+            sink.page(page, Vec::new()).map_err(RenderError::Io)?;
+            index += 1;
+        }
+    }
+    if aborted() {
+        Ok(StreamStatus::Aborted)
+    } else {
+        Ok(StreamStatus::Completed(index))
+    }
+}
+
 /// Hand pages `*delivered..until` of `laid_out` to `sink`, with the events
 /// bucketed for them in `by_page`, advancing `*delivered` past each page.
 fn deliver<S: PageSink>(
@@ -1324,10 +1736,13 @@ fn deliver<S: PageSink>(
             return Ok(Delivery::Aborted);
         }
         let index = *delivered;
+        let mut view = laid_out.page_at(index as usize);
+        if let Some(placeholder) = page_count_placeholder {
+            view = view.with_deferred_page_count(placeholder);
+        }
         let page = StreamPage {
             layout: laid_out,
-            index,
-            page_count_placeholder,
+            page: view,
         };
         let events = std::mem::take(&mut by_page[index as usize]);
         sink.page(page, events).map_err(RenderError::Io)?;

@@ -1676,13 +1676,21 @@ fn take_layout_failure(
     Ok(())
 }
 
-fn layout_single_page_with_table_projection(
+struct PreparedPageRoot {
+    icb: usize,
+    available_space: Size<AvailableSpace>,
+    content_width: f32,
+    content_height: f32,
+    body_id: usize,
+}
+
+fn prepare_page_root(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     page_box: PageBox,
     project_explicit_table_parts: bool,
     paged: bool,
-) -> Result<(), LayoutError> {
+) -> Result<PreparedPageRoot, LayoutError> {
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     // At this observation-side entry point, synchronize membership.
@@ -1800,6 +1808,67 @@ fn layout_single_page_with_table_projection(
             document.begin_oof_layout();
             Ok::<_, LayoutError>((icb, available_space, content_width, content_height, body_id))
         })?;
+    Ok(PreparedPageRoot {
+        icb,
+        available_space,
+        content_width,
+        content_height,
+        body_id,
+    })
+}
+
+/// Measure the columns of a spooled horizontal table in a disposable document.
+/// The caller installs its column collector before this width-only query.
+#[doc(hidden)]
+pub fn measure_window_columns(
+    mut document: Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    table: usize,
+) -> Result<(), LayoutError> {
+    if document.get_node(table).and_then(|node| node.tag_name()) != Some("table") {
+        return Err(LayoutError::Internal {
+            message: format!("column measurement requires a table at node {table}"),
+        });
+    }
+    let mut session = super::context::LayoutSession::with_cascade(&mut document, cascade);
+    let root = prepare_page_root(&mut session, cascade, page_box, true, true)?;
+    let measure = protocol::LayoutInput {
+        run_mode: protocol::RunMode::ComputeSize,
+        sizing_mode: protocol::SizingMode::InherentSize,
+        axis: protocol::RequestedAxis::Horizontal,
+        parent_size: Size {
+            width: Some(root.content_width),
+            height: Some(root.content_height),
+        },
+        available_space: root.available_space,
+        ..protocol::LayoutInput::HIDDEN
+    };
+    session.context.table_width_probe = Some((table, measure));
+    session.compute_child_layout_with_block_ctx(protocol::NodeId::from(table), measure, None);
+    take_layout_failure(&mut session)
+}
+
+fn layout_single_page_with_table_projection(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    project_explicit_table_parts: bool,
+    paged: bool,
+) -> Result<(), LayoutError> {
+    let PreparedPageRoot {
+        icb,
+        available_space,
+        content_width,
+        content_height,
+        body_id,
+    } = prepare_page_root(
+        document,
+        cascade,
+        page_box,
+        project_explicit_table_parts,
+        paged,
+    )?;
     crate::layout::dispatch::compute_root_layout_with_content_limits(
         document,
         protocol::NodeId::from(icb),
@@ -9006,6 +9075,23 @@ fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> Ifc
         }
     } // cov:ignore: only source boxes are materialized during pagination.
     IfcBoxShifts::default()
+}
+
+// A row and its cells share the row group's origin. When its absolute position
+// crosses a power of two, translating by a rounded absolute delta can leave
+// the row one representable coordinate away from its target.
+fn materialize_table_row_y(document: &mut Document, row: usize, desired_y: f32) {
+    materialize_y(document, row, desired_y);
+    if desired_y.is_finite()
+        && current_abs_y(document, row) != desired_y
+        && let Some(parent) = document.layout_parent_of(row)
+    {
+        let parent_y = current_abs_y(document, parent);
+        let local_y = desired_y - parent_y;
+        if parent_y + local_y == desired_y {
+            document.set_pagination_local_y(row, local_y);
+        }
+    }
 }
 
 /// The lines of the text `text` of the paragraph `root` start a later
@@ -19482,7 +19568,7 @@ fn make_room_for_header_copy(
     {
         let origin = page_origins.origin(current_page);
         let delta = (origin + header.height + header.gap - row_y).max(0.0);
-        materialize_y(document, row, row_y + delta);
+        materialize_table_row_y(document, row, row_y + delta);
         header.placements.insert(current_page, (origin, origin));
         return delta;
     }

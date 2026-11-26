@@ -133,3 +133,18 @@ fn moving_the_focused_element_clears_focus() {
     doc.append_child(div, span).unwrap();
     assert_eq!(doc.focused_element(), Some(button));
 }
+
+#[test]
+fn window_node_index_translation_excludes_absent_source_nodes() {
+    let mut doc = Document::new();
+    let id = doc.append_element(Some(0), "tbody", None::<&str>);
+    assert_eq!(doc.local_node_index(id), Some(id));
+    assert_eq!(doc.source_node_index(id), Some(id));
+    assert_eq!(doc.local_node_index(7), None);
+    assert_eq!(doc.source_node_index(7), None);
+    doc.set_window_source_ids(vec![0, 7]);
+    assert_eq!(doc.local_node_index(7), Some(id));
+    assert_eq!(doc.source_node_index(id), Some(7));
+    assert_eq!(doc.local_node_index(id), None);
+    assert_eq!(doc.source_node_index(7), None);
+}

@@ -8,6 +8,7 @@ use raikiri_traits::{NodeId, NodeKind};
 #[derive(Debug, Clone, Copy)]
 pub struct DomView<'a> {
     document: &'a raikiri_dom::Document,
+    window_node_ids: bool,
 }
 
 /// Elements before whose content [`DomView::text_content`] inserts a space,
@@ -40,11 +41,36 @@ const BLOCK_BOUNDARY_TAGS: &[&str] = &[
 
 impl<'a> DomView<'a> {
     pub(crate) fn new(document: &'a raikiri_dom::Document) -> Self {
-        Self { document }
+        Self::for_page(document, false)
+    }
+
+    pub(crate) fn for_page(document: &'a raikiri_dom::Document, window_node_ids: bool) -> Self {
+        Self {
+            document,
+            window_node_ids,
+        }
+    }
+
+    fn local(&self, node: NodeId) -> Option<usize> {
+        let index = usize::try_from(node.0).ok()?;
+        if self.window_node_ids {
+            self.document.local_node_index(index)
+        } else {
+            Some(index)
+        }
+    }
+
+    fn source(self, local: usize) -> Option<NodeId> {
+        let id = if self.window_node_ids {
+            self.document.source_node_index(local)?
+        } else {
+            local
+        };
+        Some(NodeId(id as u64))
     }
 
     fn node(&self, node: NodeId) -> Option<&'a raikiri_dom::Node> {
-        self.document.get_node(usize::try_from(node.0).ok()?)
+        self.document.get_node(self.local(node)?)
     }
 
     /// The document node.
@@ -61,17 +87,18 @@ impl<'a> DomView<'a> {
     pub fn parent(&self, node: NodeId) -> Option<NodeId> {
         self.node(node)?;
         self.document
-            .parent_of(node.0 as usize)
-            .map(|p| NodeId(p as u64))
+            .parent_of(self.local(node)?)
+            .and_then(|p| self.source(p))
     }
 
     /// Children in document order.
     pub fn children(&self, node: NodeId) -> impl Iterator<Item = NodeId> + 'a {
+        let view = *self;
         self.node(node)
             .map(|n| n.children.as_slice())
             .unwrap_or(&[])
             .iter()
-            .map(|&c| NodeId(c as u64))
+            .filter_map(move |&c| view.source(c))
     }
 
     /// Element local name (lower case for HTML elements).

@@ -45,6 +45,23 @@ use std::collections::{HashMap, HashSet};
 /// top of its page than this is at the top, with no margin kept.
 const CONTINUATION_MARGIN_TOLERANCE: f32 = 0.01;
 
+// Keep the geometry inherited from the row when independently moving the
+// cell or its text would only change the last bit of its document coordinate.
+fn cell_flow_y(flow_y: f32, placed_y: f32) -> f32 {
+    if (flow_y.next_down()..=flow_y.next_up()).contains(&placed_y) {
+        placed_y
+    } else {
+        flow_y
+    }
+}
+
+struct RowEnd {
+    group: usize,
+    page: u32,
+    raw: f32,
+    local: f64,
+}
+
 /// What is the same for every candidate of the flow.
 pub(super) struct FlowEnv<'a> {
     pub(super) cascade: &'a CascadeResult,
@@ -430,6 +447,7 @@ pub(super) struct PaginationState {
     pub(super) table_headers: HeaderRepeats,
     /// The table rows the flow is in, and the pages they start and end on.
     cell_rows: super::cell_rows::CellRows,
+    previous_row_end: Option<RowEnd>,
     /// The spanners of multicol containers whose children are boxes that
     /// the flow is in, outermost first (see [`Self::leave_spanner`]).
     open_spanners: Vec<OpenSpanner>,
@@ -513,6 +531,7 @@ impl PaginationState {
             entered_paragraphs: EnteredParagraphs::default(),
             table_headers,
             cell_rows: super::cell_rows::CellRows::default(),
+            previous_row_end: None,
             open_spanners: Vec::new(),
         }
     }
@@ -807,6 +826,14 @@ impl PaginationState {
         let mut text = TextPosition {
             effective_y: if uses_positioned_coordinates {
                 positioned_text_start_y(document, text_lines, node_id, text_ifc_root)
+            } else if text_ifc_root.is_some_and(|root| {
+                document
+                    .get_node(root)
+                    .is_some_and(|node| node.display() == super::DisplayValue::TableCell)
+            }) {
+                let flow_y = candidate.raw_y + self.flow_shift;
+                let placed = positioned_text_start_y(document, text_lines, node_id, text_ifc_root);
+                cell_flow_y(flow_y, placed)
             } else {
                 candidate.raw_y + self.flow_shift
             },
@@ -1396,6 +1423,31 @@ impl PaginationState {
         self.flow_shift += header_delta;
 
         if candidate.context.is_table_row() {
+            if let Some(group) = document.layout_parent_of(node_id) {
+                // Contiguous rows on one page share an edge. Retain that edge
+                // in page coordinates so later rows do not re-round the shift.
+                let mut local = f64::from(effective_y) - f64::from(page_start);
+                if let Some(end) = &self.previous_row_end
+                    && end.group == group
+                    && end.page == self.current_page
+                    && end.raw == raw_y
+                {
+                    let shared_y = (f64::from(page_start) + end.local) as f32;
+                    if (effective_y.next_down()..=effective_y.next_up()).contains(&shared_y) {
+                        local = end.local;
+                        if effective_y != shared_y {
+                            effective_y = shared_y;
+                            super::materialize_table_row_y(document, node_id, effective_y);
+                        }
+                    }
+                }
+                self.previous_row_end = Some(RowEnd {
+                    group,
+                    page: self.current_page,
+                    raw: raw_y + height,
+                    local: local + f64::from(height),
+                });
+            } // cov:ignore: Only descendants are collected as table rows; their document root contributes a layout offset even when inline ancestors are skipped.
             let page_end = page_origins.origin(self.current_page + 1);
             // Whether a break goes through a cell is decided where the row
             // sits in the flow; a relative offset only moves its paint.
@@ -2712,7 +2764,16 @@ impl PaginationState {
         // The other items of a flex line sit where the flow has put their
         // container, as the box does before it moves to `effective_y`.
         let line_y = current_abs_y(document, node_id);
-        materialize_y(document, node_id, effective_y);
+        let effective_y = if document.nodes[node_id].display() == super::DisplayValue::TableCell {
+            cell_flow_y(effective_y, line_y)
+        } else {
+            effective_y
+        };
+        if candidate.context.is_table_row() {
+            super::materialize_table_row_y(document, node_id, effective_y);
+        } else {
+            materialize_y(document, node_id, effective_y);
+        }
         let forced_before = super::takes_forced_break(document, cascade, body_id, node_id, true)
             && !super::clip_holds_breaks(document, env, node_id, true, effective_y);
         // A block box with no block size and no in-flow content lets its

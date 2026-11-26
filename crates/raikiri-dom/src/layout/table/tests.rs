@@ -4106,3 +4106,36 @@ fn publish_border_state_for_assertions(
         session.table_layout_node_mut(cell).cache.clear();
     }
 }
+
+#[test]
+fn column_constraints_merge_across_row_windows_before_width_allocation() {
+    use super::ColumnContribution;
+    let cell = |minimum, preferred, percentage, stated_length| ColumnContribution {
+        occupied: true,
+        minimum,
+        preferred,
+        percentage,
+        stated_length,
+    };
+    let cells = [
+        cell(20.0, 150.0, 0.0, None),
+        cell(18.0, 40.0, 0.0, Some(40.0)),
+        cell(70.0, 100.0, 0.25, None),
+        cell(12.0, 50.0, 0.0, Some(50.0)),
+    ];
+    for window_size in 1..=cells.len() {
+        let mut document = ColumnContribution::default();
+        for window in cells.chunks(window_size) {
+            let mut partial = ColumnContribution::default();
+            for &cell in window {
+                partial.merge(cell);
+            }
+            document.merge(partial);
+        }
+        assert_eq!(document.minimum, 70.0);
+        assert_eq!(document.preferred, 150.0);
+        assert_eq!(document.percentage, 0.25);
+        assert_eq!(document.stated_length, Some(50.0));
+        assert_eq!(document.preferred_width(), 70.0);
+    }
+}

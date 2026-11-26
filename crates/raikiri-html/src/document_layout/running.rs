@@ -285,6 +285,8 @@ impl RunningElementLayout {
     /// painter that clips to the margin box draws nothing of it.
     pub fn page(&self) -> Page<'_> {
         Page {
+            window_node_ids: false,
+            document_index: self.laid_out.slice.page_index,
             slice: &self.laid_out.slice,
             geometry: &self.laid_out.geometry,
             style: &self.laid_out.cascade.page,

@@ -111,6 +111,31 @@ pub enum PaintEvent<'a> {
     ColumnRule(crate::ColumnRule),
 }
 
+#[derive(Clone, Copy)]
+struct RunNodes {
+    line: TextLineId,
+    source: RunSource,
+    letter_box: Option<(usize, usize)>,
+}
+
+impl RunNodes {
+    fn from_run(run: &PositionedGlyphRun<'_>, map: impl Fn(NodeId) -> NodeId) -> Self {
+        let mut line = run.line;
+        line.root = map(line.root);
+        let source = match run.source {
+            RunSource::Text(node) => RunSource::Text(map(node)),
+            RunSource::Generated(node, kind) => RunSource::Generated(map(node), kind),
+            RunSource::Ellipsis(node) => RunSource::Ellipsis(map(node)),
+            source @ RunSource::MarginBox(_) => source,
+        };
+        Self {
+            line,
+            source,
+            letter_box: run.letter_box,
+        }
+    }
+}
+
 /// The reason reported for a multi-column container by
 /// [`Document::paint_order_approximations`].
 const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
@@ -352,10 +377,23 @@ impl Document {
         page_index: u32,
         runs: &[PositionedGlyphRun<'a>],
     ) -> Vec<PaintEvent<'a>> {
+        self.page_paint_order_with_node_map(cascade, page_index, runs, |node| node)
+    }
+
+    /// Resolve run identifiers into the layout arena without copying glyph data.
+    #[doc(hidden)]
+    pub fn page_paint_order_with_node_map<'a>(
+        &'a self,
+        cascade: &'a CascadeResult,
+        page_index: u32,
+        runs: &[PositionedGlyphRun<'a>],
+        local: impl Fn(NodeId) -> NodeId,
+    ) -> Vec<PaintEvent<'a>> {
         let mut lines = TextLines::default();
         let mut seen = HashSet::new();
         for run in runs {
-            let group = self.text_run_opacity_group(cascade, run);
+            let run = RunNodes::from_run(run, &local);
+            let group = self.run_opacity_group(cascade, run);
             // The letters of a `::first-letter` group, its own or that of an
             // ancestor block's first letter around them.
             if let (Some(_), Some(Ok(group)), Ok(root)) = (
@@ -414,6 +452,21 @@ impl Document {
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
+        self.run_opacity_group(cascade, RunNodes::from_run(run, |node| node))
+    }
+
+    /// Resolve source node identifiers before looking up a window run's opacity group.
+    #[doc(hidden)]
+    pub fn text_run_group_with_node_map(
+        &self,
+        cascade: &CascadeResult,
+        run: &PositionedGlyphRun<'_>,
+        local: impl Fn(NodeId) -> NodeId,
+    ) -> Option<NodeId> {
+        self.run_opacity_group(cascade, RunNodes::from_run(run, local))
+    }
+
+    fn run_opacity_group(&self, cascade: &CascadeResult, run: RunNodes) -> Option<NodeId> {
         // The paragraph retains the fragment of every run a letter box
         // holds.
         if let Some((letter, owner)) = run.letter_box
@@ -429,11 +482,7 @@ impl Document {
 
     /// The opacity group of `run`, text outside every `::first-letter`
     /// group.
-    fn run_group_outside_letter(
-        &self,
-        cascade: &CascadeResult,
-        run: &PositionedGlyphRun<'_>,
-    ) -> Option<NodeId> {
+    fn run_group_outside_letter(&self, cascade: &CascadeResult, run: RunNodes) -> Option<NodeId> {
         let root = usize::try_from(run.line.root.0).ok()?;
         let start = match run.source {
             RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,

@@ -66,6 +66,8 @@ pub struct InlineSvg {
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
+    pub(super) document_index: u32,
+    pub(super) window_node_ids: bool,
     pub(super) slice: &'a raikiri_dom::PageSlice,
     pub(super) geometry: &'a raikiri_dom::ResolvedPageGeometry,
     pub(super) style: &'a PageCascadeResult,
@@ -192,6 +194,62 @@ impl Placement {
 }
 
 impl<'a> Page<'a> {
+    fn source_id(&self, node: NodeId) -> NodeId {
+        self.document
+            .source_node_index(node.0 as usize)
+            .map_or(node, |id| NodeId(id as u64))
+    }
+
+    fn local_id(&self, node: NodeId) -> NodeId {
+        self.document
+            .local_node_index(node.0 as usize)
+            .map_or(node, |id| NodeId(id as u64))
+    }
+
+    fn map_run_ids(run: &mut PositionedGlyphRun<'_>, map: impl Fn(NodeId) -> NodeId) {
+        run.line.root = map(run.line.root);
+        match &mut run.source {
+            crate::RunSource::Text(node)
+            | crate::RunSource::Generated(node, _)
+            | crate::RunSource::Ellipsis(node) => *node = map(*node),
+            _ => {}
+        }
+    }
+
+    fn project_events(&self, mut events: Vec<PaintEvent<'a>>) -> Vec<PaintEvent<'a>> {
+        if self.window_node_ids {
+            for event in &mut events {
+                match event {
+                    PaintEvent::Box(f)
+                    | PaintEvent::OuterBoxShadow(f)
+                    | PaintEvent::Text(f)
+                    | PaintEvent::Replaced(f) => *f = f.with_source_node(self.source_id(f.node())),
+                    PaintEvent::TextLine(line) => line.root = self.source_id(line.root),
+                    PaintEvent::GroupTextLine(line, group) => {
+                        line.root = self.source_id(line.root);
+                        *group = self.source_id(*group);
+                    }
+                    PaintEvent::GeneratedImage(image) => image.owner = self.source_id(image.owner),
+                    PaintEvent::MarkerImage(owner) => *owner = self.source_id(*owner),
+                    PaintEvent::ColumnRule(rule) => rule.owner = self.source_id(rule.owner),
+                    PaintEvent::GeneratedBox(b) => {
+                        b.owner = self.source_id(b.owner);
+                        b.clip_owner = self.source_id(b.clip_owner);
+                        b.line.root = self.source_id(b.line.root);
+                    }
+                    PaintEvent::LineBox(b) => {
+                        b.fragment = b
+                            .fragment
+                            .with_source_node(self.source_id(b.fragment.node()));
+                        b.line.root = self.source_id(b.line.root);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        events
+    }
+
     /// This page with `placeholder` standing in for the number of pages.
     pub(super) fn with_deferred_page_count(mut self, placeholder: u32) -> Self {
         self.page_count = placeholder;
@@ -201,7 +259,7 @@ impl<'a> Page<'a> {
 
     /// Zero-based page index.
     pub fn index(&self) -> u32 {
-        self.slice.page_index
+        self.document_index
     }
 
     /// Named page, if the page context selected one.
@@ -232,7 +290,19 @@ impl<'a> Page<'a> {
 
     /// All fragments on this page. The order is not the paint order.
     pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
-        self.document.page_fragments(self.slice.page_index)
+        let document = self.document;
+        let translate = self.window_node_ids;
+        document
+            .page_fragments(self.slice.page_index)
+            .map(move |fragment| {
+                if translate
+                    && let Some(source) = document.source_node_index(fragment.node().0 as usize)
+                {
+                    fragment.with_source_node(NodeId(source as u64))
+                } else {
+                    fragment
+                }
+            })
     }
 
     /// Resolve an image fragment from already cached pixels.
@@ -407,11 +477,18 @@ impl<'a> Page<'a> {
     }
 
     fn marker_placement(&self, owner: NodeId) -> Option<Placement> {
-        let (url, rect) = self.document.page_marker_image(self.index(), owner)?;
+        let local = if self.window_node_ids {
+            self.local_id(owner)
+        } else {
+            owner
+        };
+        let (url, rect) = self
+            .document
+            .page_marker_image(self.slice.page_index, local)?;
         if !is_drawable_rect(&rect) {
             return None;
         }
-        let element = usize::try_from(owner.0).ok()?;
+        let element = usize::try_from(local.0).ok()?;
         let clip_owner =
             if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
                 && self
@@ -448,8 +525,14 @@ impl<'a> Page<'a> {
         &self,
         image: GeneratedImageId,
     ) -> Option<(TextLineId, Option<usize>)> {
-        self.document
-            .page_generated_image_text_position(self.index(), image)
+        let (mut line, offset) = self.document.page_generated_image_text_position(
+            self.slice.page_index,
+            self.local_generated_image(image),
+        )?;
+        if self.window_node_ids {
+            line.root = self.source_id(line.root);
+        }
+        Some((line, offset))
     }
 
     /// The alternative text of the `content` of the `kind` pseudo-element of
@@ -467,6 +550,11 @@ impl<'a> Page<'a> {
             crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
             crate::GeneratedKind::Marker => raikiri_style::PseudoElem::Marker,
             _ => return None,
+        };
+        let owner = if self.window_node_ids {
+            self.local_id(owner)
+        } else {
+            owner
         };
         let element = usize::try_from(owner.0).ok()?;
         let snapshots = self
@@ -508,9 +596,19 @@ impl<'a> Page<'a> {
         self.place(placement, source)
     }
 
+    fn local_generated_image(&self, mut image: GeneratedImageId) -> GeneratedImageId {
+        if self.window_node_ids {
+            image.owner = self.local_id(image.owner);
+        }
+        image
+    }
+
     fn generated_image_placement(&self, image: GeneratedImageId) -> Option<Placement> {
-        let (url, content) = self.document.page_generated_image(self.index(), image)?;
-        let owner = usize::try_from(image.owner.0).ok();
+        let local = self.local_generated_image(image);
+        let (url, content) = self
+            .document
+            .page_generated_image(self.slice.page_index, local)?;
+        let owner = usize::try_from(local.owner.0).ok();
         let pseudo = match image.kind {
             crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
             _ => raikiri_style::PseudoElem::Before,
@@ -810,8 +908,15 @@ impl<'a> Page<'a> {
     /// once in [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::TextRunsOmitted`].
     pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'a>> {
-        self.document
-            .page_text_runs(self.cascade, self.slice.page_index)
+        let mut runs = self
+            .document
+            .page_text_runs(self.cascade, self.slice.page_index);
+        if self.window_node_ids {
+            for run in &mut runs {
+                Self::map_run_ids(run, |id| self.source_id(id));
+            }
+        }
+        runs
     }
 
     /// Body content of this page in paint order: element boxes, paragraph
@@ -853,11 +958,11 @@ impl<'a> Page<'a> {
     /// not a group here: its line is listed with the rest of its paragraph
     /// and drawn opaque. [`Self::paint_order_for_text_runs`] lists the group.
     pub fn paint_order(&self) -> Vec<PaintEvent<'a>> {
-        self.document.page_paint_order(
+        self.project_events(self.document.page_paint_order(
             self.cascade,
             self.slice.page_index,
             self.slice.page_name.as_deref(),
-        )
+        ))
     }
 
     /// Body paint order using the supplied [`Self::text_runs`] instead of
@@ -912,8 +1017,17 @@ impl<'a> Page<'a> {
         &self,
         runs: &[PositionedGlyphRun<'a>],
     ) -> Vec<PaintEvent<'a>> {
-        self.document
-            .page_paint_order_for_text_runs(self.cascade, self.slice.page_index, runs)
+        if self.window_node_ids {
+            self.project_events(self.document.page_paint_order_with_node_map(
+                self.cascade,
+                self.slice.page_index,
+                runs,
+                |node| self.local_id(node),
+            ))
+        } else {
+            self.document
+                .page_paint_order_for_text_runs(self.cascade, self.slice.page_index, runs)
+        }
     }
 
     /// The element whose inline opacity group draws `run`, a run of
@@ -932,7 +1046,13 @@ impl<'a> Page<'a> {
     /// opacity and enclosing group, each with an id of its own; a fragment
     /// whose opacity is one forms none.
     pub fn text_run_opacity_group(&self, run: &PositionedGlyphRun<'_>) -> Option<NodeId> {
-        self.document.text_run_opacity_group(self.cascade, run)
+        if self.window_node_ids {
+            self.document
+                .text_run_group_with_node_map(self.cascade, run, |node| self.local_id(node))
+                .map(|group| self.source_id(group))
+        } else {
+            self.document.text_run_opacity_group(self.cascade, run)
+        }
     }
 
     /// Page-margin boxes of this page (CSS Paged Media 3 §4.2) in drawing
@@ -954,7 +1074,7 @@ impl<'a> Page<'a> {
     /// [`MarginBox::deferred`]; see [`crate::StreamPage::page`].
     pub fn margin_boxes(&self) -> Vec<MarginBox> {
         // The first page is a right page, as in the page context queries.
-        let page_is_left = self.slice.page_index % 2 == 1;
+        let page_is_left = self.index() % 2 == 1;
         let paired_page_increment = self.paired_style.and_then(|paired| {
             match paired
                 .declarations()
@@ -967,12 +1087,9 @@ impl<'a> Page<'a> {
                 _ => None,
             }
         });
-        let mut context = raikiri_dom::MarginBoxPageContext::new(
-            self.slice.page_index,
-            self.page_count,
-            page_is_left,
-        )
-        .with_paired_page_increment(paired_page_increment);
+        let mut context =
+            raikiri_dom::MarginBoxPageContext::new(self.index(), self.page_count, page_is_left)
+                .with_paired_page_increment(paired_page_increment);
         if self.page_count_deferred {
             context = context.with_deferred_page_count();
         }
@@ -1134,13 +1251,19 @@ impl<'a> Page<'a> {
 
     /// Structure and attributes of the document.
     pub fn dom(&self) -> DomView<'a> {
-        DomView::new(self.document)
+        DomView::for_page(self.document, self.window_node_ids)
     }
 
     /// Computed values from the cascade used for layout. `None` for an
     /// out-of-range node.
     pub fn computed(&self, node: NodeId) -> Option<&'a ComputedValues> {
-        self.cascade.computed.get(usize::try_from(node.0).ok()?)
+        let index = usize::try_from(node.0).ok()?;
+        let local = if self.window_node_ids {
+            self.document.local_node_index(index)?
+        } else {
+            index
+        };
+        self.cascade.computed.get(local)
     }
 
     /// The `@page` cascade for this page's context.
@@ -1179,6 +1302,14 @@ impl<'a> Page<'a> {
     /// `None` when the painter draws nothing of `node` because a transform
     /// on it or an ancestor is singular, and for an out-of-range node.
     pub fn paint_transform(&self, node: NodeId) -> Option<PaintTransform> {
+        let node = if self.window_node_ids {
+            NodeId(
+                self.document
+                    .local_node_index(usize::try_from(node.0).ok()?)? as u64,
+            )
+        } else {
+            node
+        };
         self.document
             .page_paint_transforms(self.cascade, self.slice.page_index, [node])
             .pop()
@@ -1219,3 +1350,6 @@ fn checked_pixels(
         .checked_mul(4)?;
     (pixels.width != 0 && pixels.height != 0 && pixels.rgba.len() == bytes).then_some(pixels)
 }
+
+#[cfg(test)]
+mod tests;

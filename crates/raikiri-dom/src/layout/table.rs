@@ -1508,13 +1508,12 @@ fn compute_table_layout_checked(
                             },
                             ..intrinsic_inputs
                         };
-                        let (_, cell_max) = measure_cell_widths(
+                        let cell_max = vertical_cell_widths(
                             doc,
                             &intrinsic_grid,
                             probe,
                             table_column_available_space(&probe, distrib_insets.width),
                             border_spacing.0,
-                            true,
                         );
                         let floors = stated_row_widths(doc, &intrinsic_grid);
                         let natural = vertical_row_widths(
@@ -3150,6 +3149,10 @@ fn build_table_grid(
     n_cols = n_cols.max(rowspan::reserve_columns(doc, table_idx, &rows, &mut cells)?);
     let col_widths = collect_col_widths(doc, table_idx)?;
     n_cols = n_cols.max(col_widths.len() as u16);
+    if let Some(WindowColumns::Apply(measured)) = &doc.document.window_columns {
+        // Each measurement vector was allocated from a u16 grid column count.
+        n_cols = n_cols.max(u16::try_from(measured.len()).expect("table column count"));
+    }
     Ok(TableGrid {
         n_cols,
         rows,
@@ -3941,14 +3944,8 @@ fn resolve_table_columns(
     };
     let vertical_rows = pass.vertical_writing.then(|| {
         let column_space = table_column_available_space(&pass.inputs, insets_width);
-        let (_, cell_max) = measure_cell_widths(
-            doc,
-            grid,
-            pass.inputs,
-            column_space,
-            pass.border_spacing_x,
-            true,
-        );
+        let cell_max =
+            vertical_cell_widths(doc, grid, pass.inputs, column_space, pass.border_spacing_x);
         let floors = stated_row_widths(doc, grid);
         vertical_row_widths(grid, &cell_max, pass.border_spacing_x, &floors)
     });
@@ -4047,75 +4044,163 @@ fn cell_numeric_minimum(doc: &LayoutSession<'_>, cell: usize) -> Option<f32> {
 // ---------------------------------------------------------------------------
 
 /// Intrinsic physical widths before cells from different rows are combined.
-fn measure_cell_widths(
+fn vertical_cell_widths(
     doc: &mut LayoutSession<'_>,
     grid: &TableGrid,
     inputs: LayoutInput,
     column_space: AvailableSpace,
     spacing: f32,
+) -> Vec<f32> {
+    grid.cells
+        .iter()
+        .map(|cell| measure_cell_width(doc, cell, inputs, column_space, spacing, true).1)
+        .collect()
+}
+
+fn measure_cell_width(
+    doc: &mut LayoutSession<'_>,
+    cell: &CellPlacement,
+    inputs: LayoutInput,
+    column_space: AvailableSpace,
+    spacing: f32,
     vertical_writing: bool,
-) -> (Vec<f32>, Vec<f32>) {
-    let mut cell_min = vec![0.0f32; grid.cells.len()];
-    let mut cell_max = vec![0.0f32; grid.cells.len()];
-    for (i, cell) in grid.cells.iter().enumerate() {
-        let mut min_content = measure_cell_inline(
+) -> (f32, f32) {
+    let mut min_content = measure_cell_inline(
+        doc,
+        cell.node_id,
+        AvailableSpace::MIN_CONTENT,
+        SizingMode::InherentSize,
+    );
+    let mut max_content = measure_cell_inline(
+        doc,
+        cell.node_id,
+        AvailableSpace::MAX_CONTENT,
+        SizingMode::InherentSize,
+    );
+    if matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)) {
+        // The cell's own `width` made both measures that width. The
+        // column still cannot be narrower than what the content cannot
+        // break (CSS 2.1 17.5.2.2), so the width only sets how wide the
+        // cell wants to be above that.
+        let unbreakable = measure_cell_inline(
             doc,
             cell.node_id,
             AvailableSpace::MIN_CONTENT,
-            SizingMode::InherentSize,
+            SizingMode::ContentSize,
         );
-        let mut max_content = measure_cell_inline(
-            doc,
-            cell.node_id,
-            AvailableSpace::MAX_CONTENT,
-            SizingMode::InherentSize,
-        );
-        if matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)) {
-            // The cell's own `width` made both measures that width. The
-            // column still cannot be narrower than what the content cannot
-            // break (CSS 2.1 17.5.2.2), so the width only sets how wide the
-            // cell wants to be above that.
-            let unbreakable = measure_cell_inline(
-                doc,
-                cell.node_id,
-                AvailableSpace::MIN_CONTENT,
-                SizingMode::ContentSize,
-            );
-            // Physical width is the block extent in a vertical table, where
-            // the cell's stated extent still floors the table's width.
-            min_content = if vertical_writing {
-                min_content.max(unbreakable)
-            } else {
-                unbreakable.max(cell_numeric_minimum(doc, cell.node_id).unwrap_or(0.0))
-            };
-            max_content = max_content.max(unbreakable);
-        }
-        let cell_space = match column_space {
-            AvailableSpace::Definite(room) => AvailableSpace::Definite(
-                room + spacing * usize::from(cell.col_span).saturating_sub(1) as f32,
-            ),
-            intrinsic => intrinsic,
+        // Physical width is the block extent in a vertical table, where
+        // the cell's stated extent still floors the table's width.
+        min_content = if vertical_writing {
+            min_content.max(unbreakable)
+        } else {
+            unbreakable.max(cell_numeric_minimum(doc, cell.node_id).unwrap_or(0.0))
         };
-        let (min, max) = constrain_cell_intrinsic_widths(
-            doc,
-            cell.node_id,
-            doc.nodes[cell.node_id].content_limits,
-            min_content,
-            max_content,
-            &inputs,
-            cell_space,
-        );
-        cell_min[i] = min;
-        cell_max[i] = max;
+        max_content = max_content.max(unbreakable);
     }
-
-    (cell_min, cell_max)
+    let cell_space = match column_space {
+        AvailableSpace::Definite(room) => AvailableSpace::Definite(
+            room + spacing * usize::from(cell.col_span).saturating_sub(1) as f32,
+        ),
+        intrinsic => intrinsic,
+    };
+    constrain_cell_intrinsic_widths(
+        doc,
+        cell.node_id,
+        doc.nodes[cell.node_id].content_limits,
+        min_content,
+        max_content,
+        &inputs,
+        cell_space,
+    )
 }
 
 /// Columns and the independent block-axis rows measured for a vertical table.
 struct ColumnSizing {
     widths: Vec<f32>,
     vertical_rows: Option<Vec<f32>>,
+}
+
+/// Mergeable width contributions from single-column cells, before allocation.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ColumnContribution {
+    occupied: bool,
+    minimum: f32,
+    preferred: f32,
+    percentage: f32,
+    stated_length: Option<f32>,
+}
+
+impl ColumnContribution {
+    fn merge(&mut self, other: Self) {
+        self.occupied |= other.occupied;
+        self.minimum = f32_max_compat(self.minimum, other.minimum);
+        self.preferred = f32_max_compat(self.preferred, other.preferred);
+        self.percentage = f32_max_compat(self.percentage, other.percentage);
+        if let Some(length) = other.stated_length {
+            self.stated_length = Some(f32_max_compat(self.stated_length.unwrap_or(0.0), length));
+        }
+    }
+
+    fn preferred_width(self) -> f32 {
+        self.stated_length.map_or(self.preferred, |length| {
+            f32_max_compat(length, self.minimum)
+        })
+    }
+}
+
+/// Intrinsic column measurements shared by windows of a single horizontal table.
+#[derive(Clone, Debug, Default)]
+pub struct TableColumnMeasurements(std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>);
+
+#[derive(Clone, Debug)]
+pub(crate) enum WindowColumns {
+    Measure(TableColumnMeasurements),
+    Apply(std::sync::Arc<[ColumnContribution]>),
+}
+
+impl TableColumnMeasurements {
+    /// Collect column constraints during layout of a fresh single-table window.
+    pub fn measure_window(&self, document: &mut crate::document::Document) {
+        document.window_columns = Some(WindowColumns::Measure(self.clone()));
+    }
+
+    /// Finish the measurement pass and share its immutable columns across output windows.
+    pub fn finish(self) -> MeasuredTableColumns {
+        let columns = self.0.lock().unwrap();
+        MeasuredTableColumns(columns.as_slice().into())
+    }
+}
+
+/// Column constraints for the output windows of a measured single table.
+#[derive(Clone, Debug)]
+pub struct MeasuredTableColumns(std::sync::Arc<[ColumnContribution]>);
+
+impl MeasuredTableColumns {
+    /// Use the measured constraints during layout of a fresh single-table window.
+    pub fn apply_to_window(&self, document: &mut crate::document::Document) {
+        document.window_columns = Some(WindowColumns::Apply(self.0.clone()));
+    }
+}
+
+impl WindowColumns {
+    fn combine(&self, columns: &mut [ColumnContribution]) {
+        match self {
+            Self::Measure(measurements) => {
+                let mut measured = measurements.0.lock().unwrap();
+                if measured.len() < columns.len() {
+                    measured.resize(columns.len(), ColumnContribution::default());
+                }
+                for (total, &column) in measured.iter_mut().zip(columns.iter()) {
+                    total.merge(column);
+                }
+            }
+            Self::Apply(measured) => {
+                for (column, &total) in columns.iter_mut().zip(measured.iter()) {
+                    column.merge(total);
+                }
+            }
+        }
+    }
 }
 
 fn resolve_column_widths(
@@ -4131,56 +4216,78 @@ fn resolve_column_widths(
     tests::COLUMN_RESOLUTIONS.with(|count| count.set(count.get() + 1));
     let n = grid.n_cols as usize;
     let column_space = table_column_available_space(&inputs, padding_border_size.width);
-    let (cell_min, cell_max) =
-        measure_cell_widths(doc, grid, inputs, column_space, spacing, vertical_writing);
+    let mut vertical_maxima = Vec::new();
+    let mut spans = Vec::new();
 
     // (C.1) Aggregate colspan==1
-    let mut col_min = vec![0.0f32; n];
-    let mut col_max = vec![0.0f32; n];
-    let mut col_pct = vec![0.0f32; n];
-    let mut authored_length = vec![false; n];
-    let mut length_max = vec![0.0f32; n];
+    let mut contributions = vec![ColumnContribution::default(); n];
+    let measured_columns = match &doc.document.window_columns {
+        Some(WindowColumns::Apply(columns)) if !vertical_writing => columns.len(),
+        _ => 0,
+    };
     for (i, cell) in grid.cells.iter().enumerate() {
+        // The document-wide pass already measured this cell and every other
+        // single-column cell on this track, including rows outside this window.
+        if cell.col_span == 1 && usize::from(cell.col_start) < measured_columns {
+            continue;
+        }
         #[cfg(test)]
         tests::AUTHORED_LENGTH_CELL_VISITS.with(|count| count.set(count.get() + 1));
+        let (minimum, preferred) =
+            measure_cell_width(doc, cell, inputs, column_space, spacing, vertical_writing);
+        if vertical_writing {
+            vertical_maxima.push(preferred);
+        }
+        if cell.col_span > 1 {
+            spans.push((i, cell.col_start, cell.col_span, minimum, preferred));
+            for column in contributions
+                .iter_mut()
+                .skip(usize::from(cell.col_start))
+                .take(usize::from(cell.col_span))
+            {
+                column.occupied = true;
+            }
+        }
         let c = cell.col_start as usize;
         if cell.col_span == 1 && c < n {
-            if matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)) {
-                authored_length[c] = true;
-                length_max[c] = f32_max_compat(length_max[c], cell_max[i]);
-            }
-            col_min[c] = f32_max_compat(col_min[c], cell_min[i]);
-            col_max[c] = f32_max_compat(col_max[c], cell_max[i]);
-            if let ExpandedDimension::Percent(percent) = cell.specified_width.expand() {
-                col_pct[c] = f32_max_compat(col_pct[c], percent);
-            }
+            let width = cell.specified_width.expand();
+            contributions[c].merge(ColumnContribution {
+                occupied: true,
+                minimum,
+                preferred,
+                percentage: if let ExpandedDimension::Percent(percent) = width {
+                    percent
+                } else {
+                    0.0
+                },
+                stated_length: matches!(width, ExpandedDimension::Length(_)).then_some(preferred),
+            });
         }
     }
-    // A column that states a length is as wide as the widest length it
-    // states, or as the widest content that cannot break if that is wider; the
-    // content of its other cells does not widen it.
-    for c in 0..n {
-        if authored_length[c] {
-            col_max[c] = f32_max_compat(length_max[c], col_min[c]);
-        }
+    if let Some(window) = &doc.document.window_columns {
+        window.combine(&mut contributions);
     }
+    let mut col_min: Vec<_> = contributions.iter().map(|column| column.minimum).collect();
+    let mut col_max: Vec<_> = contributions
+        .iter()
+        .map(|column| column.preferred_width())
+        .collect();
+    let mut col_pct: Vec<_> = contributions
+        .iter()
+        .map(|column| column.percentage)
+        .collect();
+    let mut authored_length: Vec<_> = contributions
+        .iter()
+        .map(|column| column.stated_length.is_some())
+        .collect();
+    let occupied: Vec<bool> = contributions.iter().map(|column| column.occupied).collect();
+    drop(contributions);
     let mut col_min_full = col_min.clone();
     let mut col_max_full = col_max.clone();
 
     // A `<col>` percentage constrains an occupied column from the start,
     // before the cells that span it ask for theirs (it is indefinite for a
     // column with no cells).
-    let occupied = {
-        let mut occ = vec![false; n];
-        for cell in grid.cells.iter() {
-            let s = cell.col_start as usize;
-            let e = (s + cell.col_span as usize).min(n);
-            for slot in occ.iter_mut().take(e).skip(s) {
-                *slot = true;
-            }
-        }
-        occ
-    };
     for (c, sz) in grid.col_widths.iter().enumerate().take(n) {
         if let ExpandedDimension::Percent(percent) = sz.width.expand()
             && occupied[c]
@@ -4196,15 +4303,8 @@ fn resolve_column_widths(
     // state none, and the minimum and the maximum are then shared out as
     // widths of the spanned columns, a length-sized cell also growing columns
     // that state a length.
-    let mut spans: Vec<(usize, u16, u16)> = grid
-        .cells
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.col_span > 1)
-        .map(|(i, c)| (i, c.col_start, c.col_span))
-        .collect();
-    spans.sort_by_key(|&(_, start, span)| (span, start));
-    for (i, col_start, span) in spans {
+    spans.sort_by_key(|&(_, start, span, _, _)| (span, start));
+    for (i, col_start, span, minimum, preferred) in spans {
         let s = col_start as usize;
         let e = (s + span as usize).min(n);
         if s >= e {
@@ -4234,7 +4334,7 @@ fn resolve_column_widths(
             }
         }
         let minimums = distribute_columns_with_authored(
-            (cell_min[i] - gaps).max(0.0),
+            (minimum - gaps).max(0.0),
             &col_min_full[s..e],
             &col_max_full[s..e],
             &col_pct[s..e],
@@ -4249,7 +4349,7 @@ fn resolve_column_widths(
         // is not lifted to it first, which is how Chromium's width table
         // behaves and lets the percentage column set a wider table.
         let maximums = distribute_columns_with_authored(
-            (cell_max[i] - gaps).max(0.0),
+            (preferred - gaps).max(0.0),
             &col_min_full[s..e],
             &col_max_full[s..e],
             &col_pct[s..e],
@@ -4416,7 +4516,7 @@ fn resolve_column_widths(
         widths,
         vertical_rows: vertical_writing.then(|| {
             let floors = stated_row_widths(doc, grid);
-            vertical_row_widths(grid, &cell_max, spacing, &floors)
+            vertical_row_widths(grid, &vertical_maxima, spacing, &floors)
         }),
     }
 }

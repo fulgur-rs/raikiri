@@ -44,6 +44,8 @@ pub(crate) mod dispatch;
 pub(crate) mod protocol;
 pub(crate) mod style_views;
 pub(crate) mod table;
+#[doc(hidden)]
+pub use table::{MeasuredTableColumns, TableColumnMeasurements};
 pub(crate) mod taffy_adapter;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
@@ -137,7 +139,8 @@ pub use page::{
 pub use page_pipeline::{
     PageImageOptions, PageLayoutControl, PageLayoutOptions, PageSlice, layout_pages,
     layout_pages_with_options, layout_single_page, layout_single_page_with_resolver,
-    layout_single_page_with_resolver_and_base_url, pages_follow_x_axis, relayout_text_for_width,
+    layout_single_page_with_resolver_and_base_url, measure_window_columns, pages_follow_x_axis,
+    relayout_text_for_width,
 };
 pub use relative::placed_without_relative_offset;
 #[doc(hidden)]
