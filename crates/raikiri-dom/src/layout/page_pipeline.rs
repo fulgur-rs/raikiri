@@ -6368,16 +6368,46 @@ fn anonymous_row_cut(
                 && current_abs_y(document, child) >= start - 0.001
                 && bottom(child) <= end + 0.001
         })
-        .flat_map(|child| {
-            let top = current_abs_y(document, child);
-            let before = (top > start + 0.001 && forces_page_break(document, cascade, child, true))
-                .then_some(top);
-            let after = (bottom(child) < end - 0.001
-                && forces_page_break(document, cascade, child, false))
-            .then(|| bottom(child));
-            before.into_iter().chain(after)
-        })
+        .filter_map(|child| first_forced_break_cut(document, cascade, child, start, end, 0))
         .min_by(f32::total_cmp)
+}
+
+/// Where the first forced break before or after `id`, an in-flow block, or
+/// one of the blocks it stacks in block flow that pagination breaks
+/// through, cuts the flow strictly between `start` and `end`, before
+/// pagination. A break inside an ordinary block breaks the page there as one
+/// between its siblings does (Chromium).
+fn first_forced_break_cut(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+    start: f32,
+    end: f32,
+    depth: usize,
+) -> Option<f32> {
+    let top = current_abs_y(document, id);
+    let bottom = top + document.nodes[id].layout.size.height;
+    let before =
+        (top > start + 0.001 && forces_page_break(document, cascade, id, true)).then_some(top);
+    let inner = (depth < 128 && breaks_through_block_flow(document, cascade, id))
+        .then(|| {
+            document
+                .children_through_contents(id)
+                .into_iter()
+                .filter(|&child| {
+                    let node = &document.nodes[child];
+                    node.kind() == NodeKind::Element
+                        && is_block_level_flow_box(node.display())
+                        && !is_out_of_flow_positioned(document, child)
+                })
+                .find_map(|child| {
+                    first_forced_break_cut(document, cascade, child, start, end, depth + 1)
+                })
+        })
+        .flatten();
+    let after =
+        (bottom < end - 0.001 && forces_page_break(document, cascade, id, false)).then_some(bottom);
+    before.or(inner).or(after)
 }
 
 /// The block end, before pagination, of what the leading anonymous row of
@@ -6432,6 +6462,20 @@ fn held_anonymous_row_end(
         }
         if forces_page_break(document, cascade, child, true) {
             return current_abs_y(document, child).max(anonymous_end);
+        }
+        // A forced break inside a block between or after the rows cuts the
+        // group there too.
+        if !row
+            && let Some(cut) = first_forced_break_cut(
+                document,
+                cascade,
+                child,
+                current_abs_y(document, child),
+                bottom(child),
+                0,
+            )
+        {
+            return cut.max(anonymous_end);
         }
         rows_started = true;
         previous = Some(child);

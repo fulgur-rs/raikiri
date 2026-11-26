@@ -501,3 +501,74 @@ fn generated_content_stays_tied_across_a_forced_break_before_the_rows() {
         );
     }
 }
+
+#[test]
+fn a_forced_break_inside_a_block_of_the_text_ends_what_it_holds() {
+    let row = |glyph: char| {
+        format!(
+            r#"<div style="display:table-row"><div style="display:table-cell">{glyph}</div></div>"#
+        )
+    };
+    let nested = [
+        r#"<div><div>A</div><div style="break-before:page">C</div></div>"#,
+        r#"<div><div style="break-after:page">A</div><div>C</div></div>"#,
+        r#"<div><div>A</div><div><div style="break-before:page">C</div></div></div>"#,
+    ];
+    for content in nested {
+        let tables = [
+            format!(
+                r#"<div style="display:table">{content}{}{}</div>"#,
+                row('R'),
+                row('T')
+            ),
+            format!(
+                r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">{content}{}</div>{}</div>"#,
+                row('R'),
+                row('T')
+            ),
+        ];
+        for table in &tables {
+            assert_eq!(
+                glyph_tops(&document(10, "", table, ""), &[]),
+                [
+                    (0, 'A', 45),
+                    (0, 'H', 15),
+                    (0, 'Y', 5),
+                    (1, 'C', 5),
+                    (1, 'R', 35),
+                    (1, 'T', 65),
+                    (2, 'Z', 5)
+                ],
+                "{table}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_forced_break_inside_a_block_beside_the_rows_ends_what_a_held_group_holds() {
+    let row = |glyph: char| {
+        format!(
+            r#"<div style="display:table-row"><div style="display:table-cell">{glyph}</div></div>"#
+        )
+    };
+    for content in [
+        r#"<div><div style="height:1px"></div><div style="break-before:page;height:5px"></div></div>"#,
+        r#"<div><div style="height:1px;break-after:page"></div><div style="height:5px"></div></div>"#,
+    ] {
+        let table = format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">A{}{content}</div>{}</div>"#,
+            row('R'),
+            row('T')
+        );
+        let tops = glyph_tops(&document(8, "", &table, ""), &[]);
+        assert_eq!(
+            tops.iter()
+                .filter(|(page, ..)| *page == 0)
+                .map(|&(_, glyph, top)| (glyph, top))
+                .collect::<Vec<_>>(),
+            vec![('A', 43), ('H', 13), ('R', 73), ('Y', 5)],
+            "{table}"
+        );
+    }
+}
