@@ -227,6 +227,11 @@ pub(crate) fn compute_root_layout_with_content_limits(
     root: NodeId,
     available_space: Size<AvailableSpace>,
 ) {
+    // Each layout of the root may run under other page and float plans, which
+    // the keyword-size measures do not record.
+    if tree.context.content_limit_depth == 0 {
+        tree.context.content_limit_measures.clear();
+    }
     // The initial containing block takes the writing mode of the root element.
     with_oof_axes(tree, root, |tree| {
         super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
