@@ -18759,6 +18759,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         holder: None,
         forced_holder: None,
         flex_line: None,
+        clip_holds_page_name: false,
     }
 }
 
@@ -19980,6 +19981,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         holder: None,
         forced_holder: None,
         flex_line: None,
+        clip_holds_page_name: false,
     }
 }
 

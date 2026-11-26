@@ -209,7 +209,7 @@ impl OwnedOverrideUndo {
 impl OwnedPropertyOverride {
     /// Whether this entry replaces the physical length `property`.
     pub fn overrides_length(&self, property: LengthProperty) -> bool {
-        matches!(self.as_borrowed().0, OverrideKind::Length(own, _) if own == property)
+        matches!(&self.0, OwnedOverrideKind::Length { property: own, .. } if *own == property)
     }
 
     /// Replace one property, retaining the previous entry for a later restore.

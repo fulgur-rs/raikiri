@@ -1730,9 +1730,12 @@ fn containing_block_dependence(tree: &LayoutSession<'_>, idx: usize) -> Containi
 /// the content has a say, as it does for an out-of-flow box. An item whose sizes
 /// depend on the grid area keeps its authored sizes: the area is not known until
 /// the tracks are. An item whose only such size is a `height` as a percentage
-/// of the area still gets the minimum width of its content and of its edges,
-/// which do not depend on the height; the height it states is not raised to
-/// the edges here, as the area it is a percentage of is not known.
+/// of the area gets no minimum width here: it measures itself, so its automatic minimum is its min-content contribution,
+/// which the algorithm asks for again once the rows are sized. Chromium makes
+/// `aspect-ratio: 2/1; height: 50%` with 25px borders 137.5px wide in a 75px
+/// row of a 100px grid: the column grows to the 125px the height of that row
+/// gives, where a minimum taken at a zero height would hold it at the 50px of
+/// the borders.
 ///
 /// The overrides are written for a width along the columns, so the caller does
 /// not ask for them for a grid that runs its algorithm on the axes of its own
@@ -1777,7 +1780,7 @@ fn grid_item_ratio_overrides(
     for &item in &items {
         entries.extend(ratio_max_size_overrides(tree, usize::from(item), no_area));
     }
-    entries.extend(ratio_width_floors(tree, &items, no_area));
+    entries.extend(ratio_width_floors(tree, &independent, no_area));
     let overridden = entries.iter().map(|(key, _)| *key).collect::<HashSet<_>>();
     let items = items
         .into_iter()
