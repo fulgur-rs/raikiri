@@ -545,8 +545,12 @@ impl LayoutSession<'_> {
             ClaimsPolicy::Positioning
         };
         if matches!(role, ReadRole::FlexItem) {
-            context.flex_item_ratio = self.flex_item_ratio(idx);
-            context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            // An item of a container on vertical axes is read on those axes
+            // through the frame of its container (see `transposed_child_view`).
+            if !self.container_is_vertical(idx) {
+                context.flex_item_ratio = self.flex_item_ratio(idx);
+                context.held_cross_size = self.held_cross_size(idx, view.with_context(context));
+            }
             context.unbounded_max = self.flex_item_unbounded_max(idx, view.with_context(context));
             context.zero_min_main_axis = self
                 .zero_min_main_axis(idx)
@@ -1151,6 +1155,9 @@ impl LayoutSession<'_> {
     /// A limit the item has on the cross axis itself is left as it is, so that it
     /// clamps the cross size it states. A minimum is held in place only when the
     /// item has no maximum on that axis, as a held minimum would win over it.
+    ///
+    /// The axes are those of `item`: an item of a container on vertical axes
+    /// is read on the axes of that container, where a row runs along the width.
     fn held_cross_size(
         &self,
         idx: usize,
@@ -1158,9 +1165,7 @@ impl LayoutSession<'_> {
     ) -> Option<raikiri_layout_style::HeldCrossSize> {
         use raikiri_layout_style::values::ExpandedLengthPercentageAuto;
         use raikiri_layout_style::{Axis, HeldCrossSize};
-        let ratio = item
-            .aspect_ratio()
-            .filter(|_| !self.container_is_vertical(idx))?;
+        let ratio = item.aspect_ratio()?;
         let is_row = self
             .taffy_parent_of(idx)
             .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
@@ -1301,13 +1306,36 @@ impl LayoutSession<'_> {
         use raikiri_layout_style::FlexItemRatio;
         use raikiri_layout_style::values::ExpandedDimension;
         let item = self.physical_style(idx);
-        if self.container_is_vertical(idx) || item.stated_aspect_ratio().is_none() {
+        if item.stated_aspect_ratio().is_none() {
             return FlexItemRatio::Declared;
         }
         let size = item.size();
         let is_row = self
             .taffy_parent_of(idx)
             .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
+        // On the vertical axes of a container, the main axis of a row is the
+        // physical height. An item that states that height and leaves its
+        // width `auto` takes the width from the height it flexes to, as an
+        // item of a horizontal row takes its height from its flexed width.
+        if self.container_is_vertical(idx) {
+            let derives_cross = matches!(
+                self.nodes[idx].formatting_context,
+                FormattingContext::Block
+                    | FormattingContext::Inline
+                    | FormattingContext::Flex
+                    | FormattingContext::Grid
+            );
+            return if is_row
+                && derives_cross
+                && item.aspect_ratio().is_some()
+                && size.width.is_auto()
+                && states_a_size(size.height)
+            {
+                FlexItemRatio::CrossFollowsMain
+            } else {
+                FlexItemRatio::Declared
+            };
+        }
         let (main, cross) = if is_row {
             (size.width, size.height)
         } else {

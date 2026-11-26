@@ -98,6 +98,19 @@ impl FrozenViewInput {
         tree.retain_snapshot_calcs(owners);
         input
     }
+    /// Capture the flex item `idx` of a container whose frame reads it on the
+    /// container's axes, with the ratio and the cross size the flex algorithm
+    /// reads on those axes, as an item of a horizontal container is read.
+    pub(crate) fn capture_flex_item(
+        tree: &mut LayoutSession<'_>,
+        idx: usize,
+        context: ViewContext,
+    ) -> Self {
+        let mut input = Self::capture(tree, idx, context);
+        input.context.flex_item_ratio = tree.flex_item_ratio(idx);
+        input.context.held_cross_size = tree.held_cross_size(idx, input.view());
+        input
+    }
     pub(crate) fn view(&self) -> LayoutStyleView<'_> {
         LayoutStyleView::with_owned_overrides(
             &self.prepared,
