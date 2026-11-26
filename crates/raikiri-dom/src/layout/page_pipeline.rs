@@ -1776,14 +1776,14 @@ fn prepare_page_root(
                 || !document.forced_break_float_floor.is_empty()
                 || !document.forced_break_line_float_floor.is_empty()
                 || !document.named_break_floats.is_empty()
-                || !document.float_flow_named_breaks.is_empty()
+                || !document.page_name_breaks.is_empty()
             {
                 document.forced_break_clearance.clear();
                 document.forced_break_line_clearance.clear();
                 document.forced_break_float_floor.clear();
                 document.forced_break_line_float_floor.clear();
                 document.named_break_floats.clear();
-                document.float_flow_named_breaks.clear();
+                document.page_name_breaks.clear();
                 document.layout_dirty = true;
             }
             document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -3858,12 +3858,12 @@ fn clear_floats_at_forced_breaks<'name>(
     };
     // The page value a box ends with: that of its last in-flow content, down
     // to the deepest box, or `inherited` without one. A monolithic box does
-    // not pass up a descendant's. In a float's flow (`in_float_flow`), a
-    // multicol container does not either, as its columns take no change of
-    // page type, nor does a box with in-flow `::after` text, which ends it on
-    // its own page. `trailing` keeps each box's own result, so nested boxes
-    // are each looked at once; each `in_float_flow` setting takes its own
-    // map.
+    // not pass up a descendant's, nor does a box with in-flow `::after`
+    // text, which ends it on its own page. In a float's flow
+    // (`in_float_flow`), a multicol container does not either, as its
+    // columns take no change of page type. `trailing` keeps each box's own
+    // result, so nested boxes are each looked at once; each `in_float_flow`
+    // setting takes its own map.
     let end_page_name = |document: &Document,
                          trailing: &mut HashMap<usize, Option<&'name str>>,
                          id: usize,
@@ -3879,13 +3879,12 @@ fn clear_floats_at_forced_breaks<'name>(
                 break *name;
             }
             chain.push(id);
-            if (in_float_flow
-                && (document.nodes[id].multicol.is_some()
-                    || crate::generated_content::is_in_flow_generated_text(
-                        cascade,
-                        id,
-                        raikiri_style::PseudoElem::After,
-                    )))
+            if (in_float_flow && document.nodes[id].multicol.is_some())
+                || crate::generated_content::is_in_flow_generated_text(
+                    cascade,
+                    id,
+                    raikiri_style::PseudoElem::After,
+                )
                 || is_monolithic_for_pagination_with_transposed_axes(
                     document,
                     cascade,
@@ -3946,6 +3945,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 pagination_on_transposed_axes,
             )
     };
+    // The boxes where a change of page type that no box or text of the page
+    // flow takes forces a page break before (`true`) or after them.
+    let mut page_name_breaks = Vec::new();
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
@@ -4212,7 +4214,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 cleared.push(child);
             }
         }
-        // Generated `::after` content ends the parent's lines like text.
+        // Generated `::after` content ends the parent's lines like text. It
+        // takes the parent's page type, so a last box that ends with another
+        // breaks the page before it, as text after that box would (Chromium).
         if let Some(block) = last_block
             && (after_forced_break || changes_page(&previous_page_name, &inherited))
             && crate::generated_content::is_in_flow_generated_text(
@@ -4221,6 +4225,17 @@ fn clear_floats_at_forced_breaks<'name>(
                 raikiri_style::PseudoElem::After,
             )
         {
+            // A block inside an inline box ends no line of the parent's
+            // own: the generated text shares the line the inline box ends,
+            // which takes no break (Chromium).
+            if !after_forced_break
+                && document
+                    .ancestors(block)
+                    .take_while(|&id| id != parent)
+                    .all(|id| document.nodes[id].display() == DisplayValue::Contents)
+            {
+                page_name_breaks.push((block, false));
+            }
             record_line_break_float(document, block, float_after_break, break_float);
             if block_ends_with_page_start_float {
                 cleared_lines_to_float_floor.push(block);
@@ -4236,7 +4251,6 @@ fn clear_floats_at_forced_breaks<'name>(
     // (Chromium). The first box of a box in that flow has nothing before it
     // there to differ from, as in the page flow. The floats inside a float
     // are walked the same way.
-    let mut float_flow_named_breaks = Vec::new();
     let mut float_trailing = HashMap::new();
     while let Some((parent, inherited)) = float_flows.pop() {
         let mut previous_page_name =
@@ -4248,7 +4262,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 if let Some(block) = last_block.take()
                     && changes_page(&previous_page_name, &inherited)
                 {
-                    float_flow_named_breaks.push((block, false));
+                    page_name_breaks.push((block, false));
                 }
                 previous_page_name = Some(inherited);
                 continue;
@@ -4268,7 +4282,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 pagination_on_transposed_axes,
             );
             if changes_page(&previous_page_name, &start_page_name) {
-                float_flow_named_breaks.push((child, true));
+                page_name_breaks.push((child, true));
             }
             last_block = Some(child);
             previous_page_name = Some(end_page_name(
@@ -4291,7 +4305,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 raikiri_style::PseudoElem::After,
             )
         {
-            float_flow_named_breaks.push((block, false));
+            page_name_breaks.push((block, false));
         }
     }
     cleared.sort_unstable();
@@ -4299,20 +4313,20 @@ fn clear_floats_at_forced_breaks<'name>(
     cleared_to_float_floor.sort_unstable();
     cleared_lines_to_float_floor.sort_unstable();
     named_break_floats.sort_unstable();
-    float_flow_named_breaks.sort_unstable();
+    page_name_breaks.sort_unstable();
     if cleared != document.forced_break_clearance
         || cleared_lines != document.forced_break_line_clearance
         || cleared_to_float_floor != document.forced_break_float_floor
         || cleared_lines_to_float_floor != document.forced_break_line_float_floor
         || named_break_floats != document.named_break_floats
-        || float_flow_named_breaks != document.float_flow_named_breaks
+        || page_name_breaks != document.page_name_breaks
     {
         document.forced_break_clearance = cleared;
         document.forced_break_line_clearance = cleared_lines;
         document.forced_break_float_floor = cleared_to_float_floor;
         document.forced_break_line_float_floor = cleared_lines_to_float_floor;
         document.named_break_floats = named_break_floats;
-        document.float_flow_named_breaks = float_flow_named_breaks;
+        document.page_name_breaks = page_name_breaks;
         document.layout_dirty = true;
     }
 }
@@ -4635,7 +4649,7 @@ fn forces_page_break(
     } else {
         page_break_after_is_forced(document, cascade, node_id, computed.break_after)
     } || document
-        .float_flow_named_breaks
+        .page_name_breaks
         .binary_search(&(node_id, before))
         .is_ok();
     // Break properties apply to boxes in the flow: an absolutely or fixed
@@ -4960,6 +4974,24 @@ pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Opt
         Some(raikiri_style::property::PageValue::Named(name)) => Some(name.0.as_str()),
         _ => None,
     }
+}
+
+/// The page type of the flow inside `node_id`: its own used page value, or
+/// the one it inherits. A line laid out in its flow takes this type, which
+/// the start value of the box itself (that of its first child) need not be.
+fn inner_flow_page_name(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<String> {
+    std::iter::once(node_id)
+        .chain(document.ancestors(node_id))
+        .find_map(|id| {
+            page_applies_to_box(document, id)
+                .then(|| selected_page_name(cascade, id))
+                .flatten()
+        })
+        .map(str::to_owned)
 }
 
 /// Layout a document once and produce ordered page slices.
@@ -7770,18 +7802,19 @@ fn boxes_are_tied(
     let (forced_after, avoided_after) = page_edge_constraint(document, cascade, before, false);
     let (forced_before, avoided_before) = page_edge_constraint(document, cascade, after, true);
     // A change of page type in the flow of a float breaks the page there,
-    // though the names inside a float meet for the page flow.
-    let named_in_float_flow = document
-        .float_flow_named_breaks
+    // though the names inside a float meet for the page flow, as does one
+    // before generated `::after` text.
+    let named_break = document
+        .page_name_breaks
         .binary_search(&(before, false))
         .is_ok()
         || document
-            .float_flow_named_breaks
+            .page_name_breaks
             .binary_search(&(after, true))
             .is_ok();
     !forced_after
         && !forced_before
-        && !named_in_float_flow
+        && !named_break
         && (avoided_after || avoided_before)
         && (!document.style_views.names_pages(cascade)
             || super::page::page_names_meet(
@@ -11419,6 +11452,28 @@ impl PendingBreak {
                 break;
             }
             same_break = outer.ends_enclosing;
+        }
+    }
+
+    /// Drop the breaks pending after the boxes around `node_id` that only a
+    /// change of page name after them forces (see `note_after`), down to the
+    /// first one that a box forces itself.
+    fn drop_named_breaks_around(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        node_id: usize,
+    ) {
+        while self.source.is_some_and(|source| {
+            is_descendant_or_self(document, node_id, source)
+                && !takes_forced_break(document, cascade, body_id, source, false)
+        }) {
+            self.source = None;
+            self.line_peers.clear();
+            if let Some(outer) = self.enclosing.pop() {
+                self.restore(outer);
+            }
         }
     }
 
