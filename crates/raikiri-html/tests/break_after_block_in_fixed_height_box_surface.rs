@@ -181,11 +181,7 @@ fn a_clip_that_holds_forced_breaks_holds_a_change_of_page_type() {
             "<div style='{style};overflow:hidden'><div class='b' style='height:20px'>B</div>\
              <div class='a'>A</div></div><div>X</div>"
         );
-        assert_eq!(
-            pages(&body, "ABX"),
-            "2p A@0:0,20 B@0:0,0 X@1:0,0",
-            "{body}"
-        );
+        assert_eq!(pages(&body, "ABX"), "2p A@0:0,20 B@0:0,0 X@1:0,0", "{body}");
     }
 }
 
@@ -202,5 +198,48 @@ fn boxes_with_a_page_type_below_the_end_of_a_clip_add_no_page() {
              <div class='{after}'>X</div>"
         );
         assert_eq!(pages(&body, "X"), "2p X@1:0,0", "{body}");
+    }
+}
+
+#[test]
+fn the_nearest_fixed_height_box_around_the_paragraph_keeps_its_end() {
+    // The paragraph's own box grows with its lines; the box around it that
+    // keeps its height ends where it did. Out-of-flow boxes on the way keep
+    // their own flow.
+    let lines = "<div><div style='height:20px;break-after:page'>B</div>a<br>b</div>";
+    for (body, expected) in [
+        (
+            format!("<div style='height:150px'>{lines}</div><div>X</div>"),
+            "2p B@0:0,0 X@1:0,50 a@1:0,0 b@1:0,30",
+        ),
+        (
+            "<div class='a' style='height:150px'><div><div class='b' style='height:20px'>B</div>\
+                 a<br>b</div></div><div class='a'>X</div>"
+                .to_string(),
+            "2p B@0:0,0 X@1:0,50 a@1:0,0 b@1:0,30",
+        ),
+        (
+            format!(
+                "<div style='position:relative;height:150px'>\
+                 <div style='position:absolute;top:0;height:150px'>{lines}</div></div><div>X</div>"
+            ),
+            "2p B@0:0,0 X@1:0,50 a@1:0,0 b@1:0,30",
+        ),
+        (
+            format!(
+                "<div style='position:relative;height:150px'>\
+                 <div style='position:absolute;top:0'>{lines}</div></div><div>X</div>"
+            ),
+            "2p B@0:0,0 X@1:0,50 a@1:0,0 b@1:0,30",
+        ),
+        (
+            "<div style='height:150px'><div style='float:left;width:40px'>\
+             <div style='height:20px;break-after:page'>B</div>a<br>b</div></div>\
+             <div style='clear:both'>X</div>"
+                .to_string(),
+            "2p B@0:0,0 X@1:0,60 a@1:0,0 b@1:0,30",
+        ),
+    ] {
+        assert_eq!(pages(&body, "BXab"), expected, "{body}");
     }
 }

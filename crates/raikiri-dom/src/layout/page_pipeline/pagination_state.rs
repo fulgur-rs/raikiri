@@ -1024,8 +1024,7 @@ impl PaginationState {
             // leaves ends there, and the rest of its height follows the
             // break, so the flow after it stays where it was (CSS
             // Fragmentation 3 §4.4), as in Chromium.
-            self.subtree_shifts
-                .bound(holder, held, self.current_page);
+            self.subtree_shifts.bound(holder, held, self.current_page);
         }
         self.current_page = target_page;
         self.page_names.current = candidate.page_name.clone();
@@ -7720,24 +7719,23 @@ fn break_holder(
         super::is_out_of_flow_positioned(document, id)
             || is_floating_box_for_pagination(document, env.cascade, id)
     };
-    if leaves_flow(root) {
-        return None;
-    }
-    for id in document.layout_ancestors(root) {
-        if id == env.body_id
-            || !matches!(
-                document.nodes[id].display(),
-                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-            )
-        {
-            return None;
-        }
-        if has_fixed_height(document, id) || document.nodes[id].size_containment.height {
-            return Some((id, delta));
-        }
-        if leaves_flow(id) {
-            return None;
-        }
-    }
-    None
+    // The boxes around the paragraph in block flow, up to the first that
+    // leaves the flow, that one included.
+    let mut inside = !leaves_flow(root);
+    document
+        .layout_ancestors(root)
+        .take_while(|&id| {
+            id != env.body_id
+                && matches!(
+                    document.nodes[id].display(),
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                )
+                && {
+                    let was_inside = inside;
+                    inside &= !leaves_flow(id);
+                    was_inside
+                }
+        })
+        .find(|&id| has_fixed_height(document, id) || document.nodes[id].size_containment.height)
+        .map(|id| (id, delta))
 }
