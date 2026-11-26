@@ -3727,11 +3727,26 @@ impl PaginationState {
         // Overflow of a line before the box that runs onto the page the
         // break opens stays above the box there: the box keeps its place in
         // the flow below it (Chromium).
+        // A forced break inside a cell of a body row continues the row on
+        // the pages it opens: each opens with a copy of the table's repeated
+        // header, which the box goes below, and each page the row leaves
+        // closes with a copy of the repeated footer (Chromium).
+        let copy_row = (forced_transition
+            && forced_holder.is_none()
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant())
+        .then(|| cell_row(document, node_id))
+        .flatten()
+        .filter(|row| {
+            self.table_headers.rows.contains_key(row)
+                || self.table_headers.footer_rows.contains_key(row)
+        });
+        let head = copy_row.map_or(0.0, |row| self.table_headers.repeated_height_before(row));
         let page_top = |target_page: u32| {
             below_line_overflow
                 .filter(|&(_, bottom)| page_origins.page_index_in_flow(bottom) == Some(target_page))
-                .map_or(page_origins.origin(target_page), |(_, bottom)| {
-                    page_origins.origin(target_page).max(bottom)
+                .map_or(page_origins.origin(target_page) + head, |(_, bottom)| {
+                    (page_origins.origin(target_page) + head).max(bottom)
                 })
         };
         let landing_top = page_top(target_page)
@@ -3759,6 +3774,43 @@ impl PaginationState {
             reach_page(control, target_page)?;
         }
         let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
+        // A cell with a definite height counts the space the copies take on
+        // the pages its row crosses as used: the row runs on past the page
+        // the break opens as far as that leaves of its height (Chromium).
+        // A top margin that pushes the box on past the page the break opens
+        // keeps it in the row, which crosses that page too.
+        let row_copy_pages = copy_row.and_then(|row| {
+            let (bottom, last_page) = row_end_below_copies(
+                current_abs_y(document, row),
+                document.nodes[row].layout.size.height,
+                (self.table_headers.footer_copy_height(row), head),
+                page_origins,
+            );
+            let cell = document.inclusive_ancestors(node_id).find(|&id| {
+                document.nodes[id].display() == raikiri_style::DisplayValue::TableCell
+            })?;
+            let holder = super::cell_growth_holder(document, cell);
+            let growth =
+                bottom - current_abs_y(document, row) - document.nodes[row].layout.size.height;
+            self.subtree_shifts
+                .copy_space_rows
+                .retain(|(id, _)| *id != holder);
+            self.subtree_shifts.copy_space_rows.push((holder, growth));
+            Some((last_page, holder, self.subtree_shifts.row_growth(holder)))
+        });
+        if let Some(row) = copy_row {
+            let last_page =
+                row_copy_pages.map_or(target_page, |(page, _, _)| page.max(target_page));
+            reach_page(control, last_page)?;
+            for left in self.current_page..last_page {
+                let next = left + 1;
+                self.table_headers.place_copies_around_row_break(
+                    row,
+                    (left, page_origins.origin(left), page_origins.origin(next)),
+                    (next, page_origins.origin(next)),
+                );
+            }
+        }
         // Clearance at a forced break keeps a box below the floats of the
         // page the break leaves. A float that runs on onto the page the break
         // opens takes its place there beside the content that starts that
@@ -3890,6 +3942,13 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            // The footer below the table's last body row follows the row's
+            // growth.
+            if let (Some(row), Some((_, row_holder, before))) = (copy_row, row_copy_pages) {
+                let growth = self.subtree_shifts.row_growth(row_holder) - before;
+                self.table_headers
+                    .grow_last_row(row, growth, |y| page_origins.page_index_for_y(y));
+            }
             // How far the holder moved, which a bounded ancestor may have
             // held to less than the landing asked for.
             let holder_delta = current_abs_y(document, holder) - holder_before;
@@ -7962,6 +8021,32 @@ fn break_holders(
         }
     }
     holders
+}
+
+/// Where a table row that starts at `top` with `height` ends when each page
+/// it leaves closes with a copy of its table's repeated footer `footer` tall
+/// and each page it continues on opens with a copy of the repeated header
+/// `head` tall, with the page it ends on: the copies take the place of the
+/// row's height on those pages.
+pub(super) fn row_end_below_copies(
+    top: f32,
+    height: f32,
+    (footer, head): (f32, f32),
+    page_origins: &PageOrigins,
+) -> (f32, u32) {
+    let mut page = page_origins.page_index_for_y(top + 0.001);
+    let mut start = top;
+    let mut left = height;
+    loop {
+        let end = page_origins.origin(page + 1) - footer;
+        // A page too short to hold anything below the copies holds the rest.
+        if start + left <= end + 0.001 || end - start <= 0.001 {
+            return (start + left, page);
+        }
+        left -= end - start;
+        page += 1;
+        start = page_origins.origin(page) + head;
+    }
 }
 
 /// The row of the table cell around the paragraph `block_id`.

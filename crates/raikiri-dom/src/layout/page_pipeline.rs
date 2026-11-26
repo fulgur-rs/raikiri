@@ -19080,6 +19080,11 @@ struct SubtreeShifts {
     /// Cells that a page end or a forced break inside them split, which keep
     /// their content at their top.
     split_cells: HashSet<usize>,
+    /// Table rows, with the holders of [`Self::grown_rows`], that a forced
+    /// break in one of their cells grows at least this far: the space the
+    /// copies of the table's repeated header and footer take on the pages
+    /// the row crosses counts toward the height of its cells.
+    copy_space_rows: Vec<((usize, usize), f32)>,
 }
 
 /// A flex or grid container one of whose items grew because the closing
@@ -24336,7 +24341,15 @@ fn shift_flow_after(
                 // A float that moved in the cell grew its stored height
                 // already, which `passed` is measured from.
                 let before = shifts.row_growth(holder);
-                shifts.grow_row(holder, passed + shifts.float_growth(parent));
+                let copy_space = shifts
+                    .copy_space_rows
+                    .iter()
+                    .find(|(id, _)| *id == holder)
+                    .map_or(0.0, |&(_, growth)| growth);
+                shifts.grow_row(
+                    holder,
+                    (passed + shifts.float_growth(parent)).max(copy_space),
+                );
                 let added = shifts.row_growth(holder) - before;
                 // The cells of the row, or of the run of cells outside a
                 // table, and how tall the row is.
