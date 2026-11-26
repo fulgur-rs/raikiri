@@ -187,3 +187,12 @@ fn a_named_box_inside_an_inline_box_keeps_the_text_on_its_page() {
         &["200: G@0,30 H@0,0", "100: K@0,0"],
     );
 }
+
+#[test]
+fn a_display_contents_box_breaks_before_its_generated_text_too() {
+    expect_styled(
+        "<div><div class=a style='display:contents'><div style='page:foo'>H</div></div></div>\
+         <div>K</div>",
+        &["200: H@0,0", "100: G@0,0 K@0,30"],
+    );
+}

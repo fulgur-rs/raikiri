@@ -3988,6 +3988,28 @@ fn clear_floats_at_forced_breaks<'name>(
                 if let Some(block) = last_block.take()
                     && (after_forced_break || changes_page(&previous_page_name, &inherited))
                 {
+                    // Generated `::after` text of a `display: contents`
+                    // element that the block ends has no candidate of its
+                    // own to take the change of page type: the block breaks
+                    // the page after itself, as before the `::after` text of
+                    // a block (Chromium).
+                    if !after_forced_break
+                        && document
+                            .ancestors(block)
+                            .take_while(|&id| {
+                                id != parent
+                                    && document.nodes[id].display() == DisplayValue::Contents
+                            })
+                            .any(|id| {
+                                crate::generated_content::is_in_flow_generated_text(
+                                    cascade,
+                                    id,
+                                    raikiri_style::PseudoElem::After,
+                                ) && child_boxes(document, id, false).last() == Some(&Some(block))
+                            })
+                    {
+                        page_name_breaks.push((block, false));
+                    }
                     record_line_break_float(document, block, float_after_break, break_float);
                     if std::mem::take(&mut block_ends_with_page_start_float) {
                         cleared_lines_to_float_floor.push(block);
