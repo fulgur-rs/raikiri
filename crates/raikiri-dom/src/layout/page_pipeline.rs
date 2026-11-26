@@ -3211,7 +3211,7 @@ fn positioned_text_start_y(
 /// moved, sends its lines where the flow puts them and the lines after
 /// follow, because an earlier box of the paragraph may have grown.
 fn place_text_candidate(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     text_lines: &TextLineIndex,
     node_id: usize,
     moved_root: Option<(usize, f32)>,
@@ -3238,7 +3238,7 @@ fn place_text_candidate(
 /// moved box's own position changes; content that follows it is moved by the
 /// flow shift the caller applies to later candidates.
 fn shift_text_candidate(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     text_lines: &TextLineIndex,
     node_id: usize,
     moved_root: Option<usize>,
@@ -9101,7 +9101,7 @@ fn materialize_table_row_y(document: &mut Document, row: usize, desired_y: f32) 
 /// page: they, the lines after them and the paragraph's boxes below their
 /// top move down by `delta`.
 fn follow_moved_ifc_text(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     root: usize,
     text: usize,
     delta: f32,
@@ -9159,8 +9159,9 @@ fn follow_moved_ifc_text(
             document.pagination_local_y(b) + layout.size.height + layout.margin.bottom
         })
         .fold(f32::NEG_INFINITY, f32::max);
+    let grows = lines_move_grows_box(document, root);
     let layout = &mut document.table_layout_node_mut(root).layout;
-    if let Some(end) = last_line_end {
+    if let Some(end) = last_line_end.filter(|_| grows) {
         let height = (layout.border.top
             + layout.padding.top
             + end
