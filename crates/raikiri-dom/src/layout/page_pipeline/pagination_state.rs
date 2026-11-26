@@ -4569,6 +4569,15 @@ impl PaginationState {
                 block_id,
                 run.as_ref().map(|run| run.lines.end),
             );
+            // A relayout that resumes a page at a line of the paragraph
+            // breaks before that line whatever lines it leaves around it.
+            let free_break = text_lines
+                .get(node_id)
+                .and_then(|owned| super::continuation_break_line(document, owned.root))
+                .and_then(|line| match &run {
+                    Some(run) => run.lines.contains(&line).then(|| line - run.lines.start),
+                    None => Some(line),
+                });
             if let Some(run) = run {
                 all_line_metrics = all_line_metrics.get(run.lines).unwrap_or_default().to_vec();
             }
@@ -4824,7 +4833,8 @@ impl PaginationState {
                     } else {
                         0.0
                     },
-                );
+                )
+                .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
@@ -5392,6 +5402,11 @@ impl PaginationState {
                 cascade.computed[root].orphans,
                 widows,
                 closing_edges,
+            )
+            .with_free_break(
+                super::continuation_break_line(document, root)
+                    .filter(|line| run.contains(line))
+                    .map(|line| line - run.start + lines_before),
             );
             // With lines ahead of the run, the widows the paragraph cannot
             // have are relaxed only on the page it opens on.
