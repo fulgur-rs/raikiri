@@ -2536,16 +2536,16 @@ fn paragraph_line_bounds(
 /// `None` when the paragraph has no such line.
 fn continuation_break_line(document: &Document, root: usize) -> Option<usize> {
     let at = document.continuation_break?;
-    let lines = document
+    let count = document
         .ifc_layout_node(root)?
         .ifc
         .as_ref()?
         .lines
-        .as_ref()?;
-    lines.lines.iter().position(|line| {
-        line.owners()
-            .next()
-            .is_some_and(|(node, range)| (node.0 as usize, range.start) == at)
+        .as_ref()?
+        .lines
+        .len();
+    (0..count).find(|&line| {
+        crate::page_projection::continuation::line_start(document, root, line) == Some(at)
     })
 }
 

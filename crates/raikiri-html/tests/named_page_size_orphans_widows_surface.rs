@@ -2,9 +2,10 @@
 //! name or its `:first` rule differs, lays the content after its start out
 //! again at its own width. The paragraphs that start on it, after a box
 //! that starts it, or before it with a line that starts it, keep their
-//! `orphans` and `widows` at the breaks after its start, as in Chromium. Where each glyph falls is what Chromium prints for the same
-//! documents, on default pages 100px square, pages named `foo` 200px wide,
-//! and Ahem glyphs of 20px on lines of 30px.
+//! `orphans` and `widows` at the breaks after its start, as in Chromium.
+//! Where each glyph falls is what Chromium prints for the same documents,
+//! on default pages 100px square, pages named `foo` 200px wide, and Ahem
+//! glyphs of 20px on lines of 30px.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -250,6 +251,47 @@ fn widows_hold_in_text_wrapped_again_after_a_page_of_another_size() {
             (1, 'H', 0, 35),
             (2, 'I', 0, 5),
             (2, 'J', 0, 35),
+        ]
+    );
+}
+
+#[test]
+fn widows_hold_in_a_table_cell_after_a_page_of_another_size() {
+    assert_eq!(
+        glyphs(&format!(
+            "{WIDE_FIRST_PAGE}<table style=\"border-spacing:0\"><tr><td style=\"padding:0\">\
+             Z<br>Y<br>X<br>W<br>V<br>U<br>T</td></tr></table>"
+        )),
+        [
+            (0, 'X', 0, 65),
+            (0, 'Y', 0, 35),
+            (0, 'Z', 0, 5),
+            (1, 'V', 0, 35),
+            (1, 'W', 0, 5),
+            (2, 'T', 0, 35),
+            (2, 'U', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn widows_hold_in_lines_after_a_block_child_after_a_page_of_another_size() {
+    // The lines after the block start the second page, the first of the
+    // pages laid out again, and a line of them starts the third.
+    assert_eq!(
+        glyphs(&format!(
+            "{WIDE_FIRST_PAGE}<div>Q<div>P</div>Z<br>Y<br>X<br>W<br>V<br>U<br>T</div>"
+        )),
+        [
+            (0, 'P', 0, 35),
+            (0, 'Q', 0, 5),
+            (1, 'X', 0, 65),
+            (1, 'Y', 0, 35),
+            (1, 'Z', 0, 5),
+            (2, 'V', 0, 35),
+            (2, 'W', 0, 5),
+            (3, 'T', 0, 35),
+            (3, 'U', 0, 5),
         ]
     );
 }

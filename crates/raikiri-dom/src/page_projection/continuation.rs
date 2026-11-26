@@ -118,7 +118,7 @@ fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize
 
 /// The first DOM text of paragraph line `line` of the inline formatting
 /// root `root`, as a text node and a byte offset in it.
-fn line_start(document: &Document, root: usize, line: usize) -> Option<(usize, u32)> {
+pub(crate) fn line_start(document: &Document, root: usize, line: usize) -> Option<(usize, u32)> {
     let lines = document
         .ifc_layout_node(root)?
         .ifc
