@@ -991,3 +991,34 @@ fn windows_without_a_confirmable_row_boundary_require_replay() {
         assert_eq!(original, html);
     }
 }
+
+#[test]
+fn stored_cells_can_be_visited_before_layout_including_empty_and_decoded_text() {
+    let mut input = TableInput::new(&Default::default()).unwrap();
+    input
+        .feed("<table><tr><td>first<tr><td><td>二 &amp; three</table>".as_bytes())
+        .unwrap();
+    let mut windows = input
+        .finish_windows(&Default::default())
+        .unwrap()
+        .0
+        .unwrap();
+    let mut observed = Vec::new();
+    windows
+        .rows
+        .visit_rows(1..2, |row_id, mut row| {
+            while let Some(cell) = row.next_cell()? {
+                observed.push((row_id, cell.source_id, cell.text_id, cell.text.to_owned()));
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(observed.len(), 2);
+    let (row, empty, absent_text, empty_value) = &observed[0];
+    let (same_row, filled, text_id, value) = &observed[1];
+    assert_eq!(row, same_row);
+    assert!(row < empty && empty < filled && Some(*filled) < *text_id);
+    assert_eq!(*absent_text, None);
+    assert!(empty_value.is_empty());
+    assert_eq!(value, "二 & three");
+}
