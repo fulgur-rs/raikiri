@@ -1534,10 +1534,11 @@ fn stream_table_windows<S: PageSink>(
     window_size: std::num::NonZeroUsize,
     sink: &mut S,
 ) -> Result<StreamStatus<Option<u32>>, RenderError> {
-    if !windows.permits_window_styles(
+    let (window_styles, template_styles) = windows.permits_window_styles(
         settings.consumer_properties,
         &settings.resources.parse_limits(),
-    )? {
+    )?;
+    if !window_styles {
         return Ok(StreamStatus::Completed(None));
     }
     #[cfg(feature = "streaming-diagnostics")]
@@ -1608,14 +1609,21 @@ fn stream_table_windows<S: PageSink>(
         .limits
         .max_document_pages
         .unwrap_or(u32::MAX);
-    if measured.is_ok() && sink.wants_table_sample() && windows.len() > window_size.get() {
+    if template_styles
+        && measured.is_ok()
+        && sink.wants_table_sample()
+        && windows.len() > window_size.get()
+    {
         let shell = windows
             .document(0..window_size.get())
             .map_err(ParseError::Io)?;
         let (_, sample) = render(shell)?;
         if !needs_replay.get()
             && sample.pages().all(|page| page.margin_boxes().is_empty())
-            && let Some((start, first, last)) = ending_sample(&sample, windows.len())
+            && sample.pages().map(body_rows).sum::<usize>() == window_size.get()
+            && let Some((start, first, last, expected_pages)) =
+                ending_sample(&sample, windows.len())
+            && expected_pages <= page_limit
         {
             let ending_shell = windows
                 .document(start..windows.len())
@@ -1639,8 +1647,7 @@ fn stream_table_windows<S: PageSink>(
                     .is_some_and(|signal| signal.is_aborted());
                 if !aborted
                     && let Ok(Some(count)) = result
-                    && count > 0
-                    && count <= page_limit
+                    && count == expected_pages
                     && rows.next == rows.row_count()
                 {
                     return Ok(StreamStatus::Completed(Some(count)));
@@ -1779,7 +1786,7 @@ fn body_rows(page: Page<'_>) -> usize {
 
 // A full first page establishes the repeated header on the final page.
 // This predicts a template only; the sink must still check every actual row.
-fn ending_sample(sample: &DocumentLayout, total: usize) -> Option<(usize, usize, usize)> {
+fn ending_sample(sample: &DocumentLayout, total: usize) -> Option<(usize, usize, usize, u32)> {
     let pages = sample.pages().len();
     if pages < 3 {
         return None;
@@ -1791,7 +1798,13 @@ fn ending_sample(sample: &DocumentLayout, total: usize) -> Option<(usize, usize,
     }
     let remaining = total.checked_sub(first)?.checked_sub(1)?;
     let last = remaining % middle + 1;
-    Some((total.checked_sub(first + last)?, first, last))
+    let expected_pages = u32::try_from(remaining / middle).ok()?.checked_add(2)?;
+    Some((
+        total.checked_sub(first + last)?,
+        first,
+        last,
+        expected_pages,
+    ))
 }
 
 // Only plain table windows without consumer events enter this path.

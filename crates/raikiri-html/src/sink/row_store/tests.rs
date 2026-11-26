@@ -610,7 +610,7 @@ fn selectors_that_depend_on_rows_outside_a_window_require_replay() {
             .0
             .unwrap();
         assert_eq!(
-            windows.permits_window_styles(&[], &limits).unwrap(),
+            windows.permits_window_styles(&[], &limits).unwrap().0,
             expected,
             "{selector}"
         );
@@ -654,7 +654,7 @@ fn page_context_and_stateful_declarations_require_document_layout() {
             .0
             .unwrap();
         assert_eq!(
-            windows.permits_window_styles(&[], &limits).unwrap(),
+            windows.permits_window_styles(&[], &limits).unwrap().0,
             expected,
             "{css}"
         );
@@ -1021,4 +1021,31 @@ fn stored_cells_can_be_visited_before_layout_including_empty_and_decoded_text() 
     assert_eq!(*absent_text, None);
     assert!(empty_value.is_empty());
     assert_eq!(value, "二 & three");
+}
+
+#[test]
+fn page_templates_only_reuse_geometry_with_supported_size_rules() {
+    let limits = Default::default();
+    for (css, reusable) in [
+        ("table { width: 100% } td, th { padding: 2px }", true),
+        ("td { height: 18px } tr { break-inside: avoid }", true),
+        ("table { height: 90% }", false),
+        ("tbody { padding-bottom: 8px }", false),
+        ("body { margin-bottom: 10% }", false),
+        ("@media print { table { height: 80% } }", false),
+    ] {
+        let mut probe = TableInput::new(&limits).unwrap();
+        let html = format!("<style>{css}</style><table><tr><td>x</table>");
+        probe.feed(html.as_bytes()).unwrap();
+        let windows = probe
+            .finish_windows(&Default::default())
+            .unwrap()
+            .0
+            .unwrap();
+        assert_eq!(
+            windows.permits_window_styles(&[], &limits).unwrap(),
+            (true, reusable),
+            "{css}"
+        );
+    }
 }

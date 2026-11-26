@@ -413,13 +413,14 @@ impl TableWindows {
         &self,
         registrations: &[crate::ConsumerPropertyRegistration],
         limits: &raikiri_traits::RenderLimits,
-    ) -> Result<bool, raikiri_traits::RenderError> {
-        Ok(crate::cascade::build_rule_tree_with_limits(
+    ) -> Result<(bool, bool), raikiri_traits::RenderError> {
+        let tree = crate::cascade::build_rule_tree_with_limits(
             &self.shell,
             registrations,
             &limits.rule_tree_limits(),
-        )?
-        .permits_table_window_styles())
+        )?;
+        let windows = tree.permits_table_window_styles();
+        Ok((windows, windows && tree.permits_table_page_templates()))
     }
 
     pub(crate) fn table(&self) -> usize {

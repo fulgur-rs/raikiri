@@ -30,6 +30,7 @@ struct Record {
     expected_document: Option<crate::HtmlDocument>,
     offered_table_pages: usize,
     inspect_sample: bool,
+    complete_sample_count: Option<u32>,
     sample_rows: usize,
     paint_lines: Vec<Vec<NodeId>>,
     fragment_rects: Vec<Vec<raikiri_traits::PaintRect>>,
@@ -103,12 +104,15 @@ impl PageSink for &mut Record {
             (rows.row_count() - first - 1) % middle + 1
         );
         assert_eq!(rows.row_count(), 600);
-        for _ in 0..2 {
+        while self.sample_rows < rows.row_count() {
             for row in rows.read_batch()? {
                 assert_eq!(row.len(), 1);
                 assert_eq!(row[0].text, format!("row & {}", self.sample_rows));
                 assert!(row[0].node.unwrap() > row[0].cell);
                 self.sample_rows += 1;
+            }
+            if self.sample_rows >= 256 && self.complete_sample_count.is_none() {
+                break;
             }
         }
         self.staged.push(0);
@@ -118,7 +122,7 @@ impl PageSink for &mut Record {
             panic!("read continued after cancellation");
         }
         // A page count offered before the input is exhausted must be discarded.
-        Ok(Some(1))
+        Ok(Some(self.complete_sample_count.unwrap_or(1)))
     }
 
     fn stage_table_page(&mut self, page: StreamPage<'_>) -> std::io::Result<bool> {
@@ -2083,15 +2087,19 @@ fn window_assembly_preserves_limits_in_the_requested_media_context() {
     ));
 }
 
-#[test]
-fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
+fn sample_table_html() -> String {
     let rows: String = (0..600)
         .map(|i| format!("<tr><td>row &amp; {i}</td></tr>"))
         .collect();
-    let html = format!(
-        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}</style><!--{}--><table>{rows}</table>",
+    format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{rows}</table>",
         " ".repeat(55000)
-    );
+    )
+}
+
+#[test]
+fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
+    let html = sample_table_html();
     let mut record = Record {
         inspect_sample: true,
         ..Default::default()
@@ -2106,13 +2114,7 @@ fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
 
 #[test]
 fn cancelling_a_table_sample_stops_row_reads_and_discards_staged_output() {
-    let rows: String = (0..600)
-        .map(|i| format!("<tr><td>row &amp; {i}</td></tr>"))
-        .collect();
-    let html = format!(
-        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}</style><!--{}--><table>{rows}</table>",
-        " ".repeat(55000)
-    );
+    let html = sample_table_html();
     let controller = AbortController::new();
     let config = LayoutConfig::builder()
         .signal(Some(controller.signal.clone()))
@@ -2129,4 +2131,50 @@ fn cancelling_a_table_sample_stops_row_reads_and_discards_staged_output() {
     assert_eq!(record.sample_rows, 256);
     assert_eq!(record.discarded, 1);
     assert!(record.staged.is_empty() && record.pages.is_empty() && !record.finished);
+}
+
+#[test]
+fn table_sample_respects_page_limit_and_validates_completed_count() {
+    let html = sample_table_html();
+    let pages = batch_pages(&html);
+    let count = u32::try_from(pages.len()).unwrap();
+    for (limit, reported) in [(count, count), (count, count - 1), (count - 1, count)] {
+        let mut config = LayoutConfig::default();
+        config.limits.max_document_pages = Some(limit);
+        let mut sink = Record {
+            inspect_sample: true,
+            complete_sample_count: Some(reported),
+            ..Default::default()
+        };
+        let result = stream(&html, 8192, &mut sink, config);
+        if limit < count {
+            assert!(matches!(result, Err(RenderError::LimitExceeded {
+                kind: LimitKind::Pages, limit: cap, actual
+            }) if cap == u64::from(limit) && actual == u64::from(count)));
+            assert_eq!(sink.sample_rows, 0);
+        } else {
+            assert_eq!(completed(result.unwrap()).page_count, count);
+            assert_eq!(sink.sample_rows, 600);
+            if reported == count {
+                assert_eq!(sink.discarded, 0);
+                assert!(sink.pages.is_empty());
+            } else {
+                assert_eq!(sink.discarded, 1);
+                assert_eq!(sink.pages, pages);
+            }
+        }
+    }
+}
+
+#[test]
+fn table_sample_rejects_rows_split_across_pages() {
+    let html = sample_table_html().replace("tr{break-inside:avoid}", "");
+    let mut sink = Record {
+        inspect_sample: true,
+        ..Default::default()
+    };
+    let summary = completed(stream(&html, 8192, &mut sink, Default::default()).unwrap());
+    assert_eq!(sink.sample_rows, 0);
+    assert_eq!(sink.pages, batch_pages(&html));
+    assert_eq!(summary.page_count as usize, sink.pages.len());
 }
