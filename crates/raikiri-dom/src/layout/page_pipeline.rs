@@ -6365,6 +6365,7 @@ fn anonymous_row_cut(
                 && !is_row_or_row_group(node)
                 && is_block_level_flow_box(node.display())
                 && !is_out_of_flow_positioned(document, child)
+                && !document.pagination_style(child).float().is_floated()
                 && current_abs_y(document, child) >= start - 0.001
                 && bottom(child) <= end + 0.001
         })
@@ -6402,10 +6403,13 @@ fn held_anonymous_row_end(
         return anonymous_end;
     }
     // The rows, and the blocks of the anonymous rows between and after them,
-    // until the first forced break between two of them. The leading
-    // anonymous row is held already; a break after its last block ends it.
+    // up to the first forced break before or after one of them: what comes
+    // before that break, text included. The leading anonymous row is held
+    // already; a break after its last block ends it. A break after the last
+    // box of the group, with nothing of it below, is at the group's end.
     let bottom = |id: usize| current_abs_y(document, id) + document.nodes[id].layout.size.height;
-    let mut end = anonymous_end;
+    let layout = &document.nodes[owner].layout;
+    let content_end = bottom(owner) - layout.padding.bottom - layout.border.bottom;
     let mut previous: Option<usize> = None;
     let mut rows_started = false;
     for child in document.children_through_contents(owner) {
@@ -6414,6 +6418,7 @@ fn held_anonymous_row_end(
         if node.kind() != NodeKind::Element
             || !row && !is_block_level_flow_box(node.display())
             || is_out_of_flow_positioned(document, child)
+            || document.pagination_style(child).float().is_floated()
         {
             continue;
         }
@@ -6421,19 +6426,21 @@ fn held_anonymous_row_end(
             previous = Some(child);
             continue;
         }
-        if forces_page_break(document, cascade, child, true)
-            || previous.is_some_and(|held| forces_page_break(document, cascade, held, false))
+        if let Some(held) =
+            previous.filter(|&held| forces_page_break(document, cascade, held, false))
         {
-            return end;
+            return bottom(held).max(anonymous_end);
+        }
+        if forces_page_break(document, cascade, child, true) {
+            return current_abs_y(document, child).max(anonymous_end);
         }
         rows_started = true;
-        end = end.max(bottom(child));
         previous = Some(child);
     }
-    if previous.is_some_and(|held| forces_page_break(document, cascade, held, false)) {
-        return end;
+    match previous.filter(|&held| forces_page_break(document, cascade, held, false)) {
+        Some(held) if bottom(held) < content_end - 0.001 => bottom(held),
+        _ => bottom(owner),
     }
-    bottom(owner)
 }
 
 /// The block end, before pagination, of the first row of each plain block
