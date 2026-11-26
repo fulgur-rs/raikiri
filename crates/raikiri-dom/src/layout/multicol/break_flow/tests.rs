@@ -1749,3 +1749,54 @@ fn grid_rows_split_only_for_grids_this_strategy_can_settle() {
         assert_eq!(boxes(&doc, "grid").len() == 2, rows, "{grid} {item}");
     }
 }
+
+#[test]
+fn security_fragment_budget_stops_inside_a_grid_row() {
+    let mut markup = String::from(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='display:grid;grid-template-columns:repeat(4,25px)'>",
+    );
+    for index in 0..8 {
+        markup.push_str(&format!(
+            "<div id='item-{index}' style='height:10px;break-inside:avoid'></div>"
+        ));
+    }
+    markup.push_str("</div></div>");
+    // Enough nodes that the work allowance outgrows the fragment cap.
+    markup.push_str(&"<div style='display:none'></div>".repeat(3000));
+    let mut doc = laid_out(&markup);
+    let root = id(&doc, "columns");
+    let first = id(&doc, "item-0");
+    let last = id(&doc, "item-7");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    let filler = fragment(
+        root,
+        None,
+        0,
+        FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        },
+    );
+    let limit = doc.fragment_tree.limit;
+    doc.fragment_tree.clear();
+    doc.fragment_tree
+        .replace_finalized_fragments(vec![filler; limit - 4]);
+    layout(
+        &mut doc,
+        root,
+        context,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+        Point::ZERO,
+    );
+    let fragments = &doc.layout_fragments()[limit - 4..];
+    assert!(doc.fragment_tree.limit_exceeded);
+    assert!(fragments.iter().any(|fragment| fragment.node_id == first));
+    assert!(fragments.iter().all(|fragment| fragment.node_id != last));
+}

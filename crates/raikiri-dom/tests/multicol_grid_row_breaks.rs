@@ -191,6 +191,25 @@ const CASES: &[(&str, Expected)] = &[
             ("b", &[[28.0, 8.0, 30.0, 50.0]]),
         ],
     ),
+    // An empty row keeps the gaps on both sides of it.
+    (
+        "<div style='width:100px;height:200px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;row-gap:10px'><div id=a style='height:40px'></div><div id=b></div><div id=c style='height:40px;break-inside:avoid'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 40.0]]),
+            ("b", &[[8.0, 58.0, 50.0, 0.0]]),
+            ("c", &[[8.0, 68.0, 50.0, 40.0]]),
+        ],
+    ),
+    // A forced break truncates the row gap too.
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;row-gap:20px'><div id=a style='height:30px'></div><div id=b style='height:30px;break-before:column'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 30.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 30.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 30.0]]),
+        ],
+    ),
 ];
 
 #[test]

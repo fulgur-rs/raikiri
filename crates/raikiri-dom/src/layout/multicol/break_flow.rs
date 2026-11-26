@@ -481,14 +481,15 @@ impl FlowBox {
                 edged = true;
             }
         }
-        margins.add(self.gap);
         // The margins next to an empty box collapse through it (CSS 2,
-        // 8.3.1), so they stay for the box after it.
-        if self.height > 0.0 || edged {
+        // 8.3.1), so they stay for the box after it. A row gap does not
+        // collapse with them.
+        let lead = if self.height > 0.0 || edged {
             lead + margins.take()
         } else {
             lead
-        }
+        };
+        lead + self.gap
     }
 
     /// The room below the box taken by the bottom edges of the wrappers that
@@ -773,6 +774,11 @@ fn collect(
             AvailableSpace::MaxContent,
         )
     };
+    // A grid placed row by row reads where its items sit in it, which a
+    // cached result would leave at the columns of an earlier pass.
+    if tree.nodes[id].display() == DisplayValue::Grid {
+        tree.nodes[id].cache.clear();
+    }
     let output = tree.compute_child_layout(NodeId::from(id), input);
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);
@@ -1148,6 +1154,7 @@ pub(super) fn layout(
         // The margins next to an unforced break are truncated (CSS
         // Fragmentation 3, 5.2); those after a forced break are kept.
         let mut truncated = false;
+        let mut broke = false;
         if forced_break
             || (!item.floated
                 && (cursor > 0.0
@@ -1159,6 +1166,7 @@ pub(super) fn layout(
             cursor = 0.0;
             previous_after = BreakBetween::Auto;
             truncated = !forced_break;
+            broke = true;
             // The margins before a break end at it, whatever broke there.
             margins = Margins::default();
         }
@@ -1183,15 +1191,16 @@ pub(super) fn layout(
                     cursor += wrapper.edges.top;
                 }
             }
-            // The gap above a grid row is truncated like a margin.
-            if !truncated {
-                margins.add(item.gap);
-            }
             if item.height > 0.0 || waiting > 0 {
                 cursor += margins.take();
             } else {
                 through = margins.collapsed();
                 cursor += through;
+            }
+            // The gap above a grid row is truncated at a break, forced or
+            // not (CSS Box Alignment 3, 8.1).
+            if !broke {
+                cursor += item.gap;
             }
             for top in &mut tops[waiting..] {
                 *top = content_origin.y + cursor;
@@ -1287,7 +1296,7 @@ pub(super) fn layout(
                     if (*placed && bottom <= top) || (!*placed && row_item.y >= end) {
                         continue;
                     }
-                    // Past the fragment limit, the layout stops at the next box.
+                    // Past the fragment limit, the layout stops.
                     let pushed = tree.fragment_tree.try_push(fragment(
                         row_item.node,
                         Some(parent_fragment),
@@ -1299,7 +1308,10 @@ pub(super) fn layout(
                             height: (bottom - top).max(0.0),
                         },
                     ));
-                    if let Some(id) = pushed.filter(|_| !*placed) {
+                    let Some(id) = pushed else {
+                        return fallback.height;
+                    };
+                    if !*placed {
                         *placed = true;
                         let mut layout = tree.nodes[row_item.node].layout;
                         layout.location = Point {
