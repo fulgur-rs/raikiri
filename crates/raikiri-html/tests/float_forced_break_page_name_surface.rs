@@ -3,7 +3,8 @@
 //! page type there as the same break: the page takes the type of that
 //! content instead of opening another page. When a box around the float goes
 //! on onto the page, the page takes that box's type, which the float has.
-//! Pages after it that only the float reaches take the float's type.
+//! Pages after it that only the float reaches take the float's type, which
+//! is that of the flow around it.
 //!
 //! The widths and positions are the ones Chromium prints for the same
 //! documents (`page.pdf` with the page sizes taken from `@page`): `foo` pages
