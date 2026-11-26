@@ -68,22 +68,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Free disk space on the runner
-        # Adding boa_engine (raikiri-js) made the fmt+test+clippy job fail with
-        # "No space left on device". Other contemporaneous CI runs passed,
-        # only this PR branch failed, and the failure did not reproduce locally.
-        # The runner was likely near its disk limit with preinstalled tools,
-        # and the larger dependency tree pushed it over. Remove unused Android
-        # SDK, .NET, Haskell, and other tools to reclaim space.
-        uses: jlumbroso/free-disk-space@v2.0.0
-        with:
-          preinstalled-runtimes: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space on the runner when it is short
+        # Adding boa_engine (raikiri-js) once made this job fail with "No space
+        # left on device" on runners that had about 20 GB free. The current
+        # ubuntu-latest image has about 88 GB free on `/`, which a full build
+        # fits in, and removing the preinstalled SDKs took 1-3 minutes of every
+        # run. Remove the largest unused ones (Android SDK, .NET, Haskell) only
+        # when the runner has less than 50 GB free.
+        run: |
+          avail_gb=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          echo "available on /: ${avail_gb} GB"
+          if [ "$avail_gb" -lt 50 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+            df -h /
+          fi
 
       - name: Setup Rust toolchain
         # Respect rust-toolchain.toml (1.95.0 + rustfmt + clippy) and install
@@ -203,16 +201,15 @@ jobs:
           # The merge base with the base branch must be reachable.
           fetch-depth: 0
 
-      - name: Free disk space on the runner
-        uses: jlumbroso/free-disk-space@v2.0.0
-        with:
-          preinstalled-runtimes: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space on the runner when it is short
+        # Same step as in the `ci` job.
+        run: |
+          avail_gb=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          echo "available on /: ${avail_gb} GB"
+          if [ "$avail_gb" -lt 50 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+            df -h /
+          fi
 
       - name: Setup Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
@@ -304,16 +301,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Free disk space on the runner
-        uses: jlumbroso/free-disk-space@v2.0.0
-        with:
-          preinstalled-runtimes: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          swap-storage: false
+      - name: Free disk space on the runner when it is short
+        # Same step as in the `ci` job.
+        run: |
+          avail_gb=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          echo "available on /: ${avail_gb} GB"
+          if [ "$avail_gb" -lt 50 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+            df -h /
+          fi
 
       - name: Setup Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install
