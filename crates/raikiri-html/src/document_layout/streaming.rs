@@ -57,6 +57,7 @@ pub use diagnostics::StreamingDiagnostics;
 const CHECKPOINT_BYTES: usize = 64 * 1024;
 
 /// A plain body cell with its original document identities.
+#[non_exhaustive]
 pub struct TableTextCell {
     /// The cell element.
     pub cell: NodeId,
@@ -128,6 +129,7 @@ pub trait PageSink {
 
     /// Try to stage the complete input using a sample with the measured
     /// column widths. Decline if the later rows cannot use its layout.
+    /// Check each row against the sampled geometry, including line wrapping.
     /// Returning a page count accepts the input only after consuming all rows.
     fn stage_table_sample(
         &mut self,
