@@ -433,6 +433,26 @@ impl TableWindows {
         self.rows.ends.len() - 1
     }
 
+    pub(crate) fn read_text_rows(
+        &mut self,
+        range: Range<usize>,
+    ) -> io::Result<Vec<Vec<crate::TableTextCell>>> {
+        let mut rows = Vec::with_capacity(range.len());
+        self.rows.visit_rows(range, |_, mut record| {
+            let mut cells = Vec::new();
+            while let Some(cell) = record.next_cell()? {
+                cells.push(crate::TableTextCell {
+                    cell: raikiri_traits::NodeId(cell.source_id as u64),
+                    node: cell.text_id.map(|id| raikiri_traits::NodeId(id as u64)),
+                    text: cell.text.to_owned(),
+                });
+            }
+            rows.push(cells);
+            Ok(())
+        })?;
+        Ok(rows)
+    }
+
     pub(crate) fn measure_columns(
         &mut self,
         window_size: std::num::NonZeroUsize,

@@ -29,6 +29,8 @@ struct Record {
     finished: bool,
     expected_document: Option<crate::HtmlDocument>,
     offered_table_pages: usize,
+    inspect_sample: bool,
+    sample_rows: usize,
     paint_lines: Vec<Vec<NodeId>>,
     fragment_rects: Vec<Vec<raikiri_traits::PaintRect>>,
     stage_before: Option<u32>,
@@ -80,6 +82,30 @@ impl PageSink for &mut Record {
             controller.abort();
         }
         Ok(())
+    }
+
+    fn wants_table_sample(&self) -> bool {
+        self.inspect_sample
+    }
+
+    fn stage_table_sample(
+        &mut self,
+        sample: &DocumentLayout,
+        rows: &mut TableTextRows<'_>,
+    ) -> std::io::Result<Option<u32>> {
+        assert!(sample.pages().count() > 1);
+        assert_eq!(rows.row_count(), 600);
+        for _ in 0..2 {
+            for row in rows.read_batch()? {
+                assert_eq!(row.len(), 1);
+                assert_eq!(row[0].text, format!("row & {}", self.sample_rows));
+                assert!(row[0].node.unwrap() > row[0].cell);
+                self.sample_rows += 1;
+            }
+        }
+        self.staged.push(0);
+        // A page count offered before the input is exhausted must be discarded.
+        Ok(Some(1))
     }
 
     fn stage_table_page(&mut self, page: StreamPage<'_>) -> std::io::Result<bool> {
@@ -2042,4 +2068,25 @@ fn window_assembly_preserves_limits_in_the_requested_media_context() {
             ..
         })
     ));
+}
+
+#[test]
+fn an_incomplete_table_sample_discards_its_pages_and_replays_the_source() {
+    let rows: String = (0..600)
+        .map(|i| format!("<tr><td>row &amp; {i}</td></tr>"))
+        .collect();
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}</style><!--{}--><table>{rows}</table>",
+        " ".repeat(55000)
+    );
+    let mut record = Record {
+        inspect_sample: true,
+        ..Default::default()
+    };
+    let summary = completed(stream(&html, 8192, &mut record, Default::default()).unwrap());
+    assert_eq!(record.sample_rows, 256);
+    assert_eq!(record.discarded, 1);
+    assert!(record.staged.is_empty());
+    assert_eq!(record.pages, batch_pages(&html));
+    assert_eq!(summary.page_count as usize, record.pages.len());
 }

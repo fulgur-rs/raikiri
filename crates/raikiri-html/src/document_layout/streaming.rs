@@ -56,6 +56,37 @@ pub use diagnostics::StreamingDiagnostics;
 /// Input bytes between two layouts of the document parsed so far.
 const CHECKPOINT_BYTES: usize = 64 * 1024;
 
+/// A plain body cell with its original document identities.
+pub struct TableTextCell {
+    /// The cell element.
+    pub cell: NodeId,
+    /// The source text node, absent for an empty cell.
+    pub node: Option<NodeId>,
+    /// The decoded DOM text.
+    pub text: String,
+}
+
+/// Sequential access to plain body rows. Each read holds at most 128 rows.
+pub struct TableTextRows<'a> {
+    windows: &'a mut crate::sink::row_store::TableWindows,
+    next: usize,
+}
+
+impl TableTextRows<'_> {
+    /// Total number of body rows in the input.
+    pub fn row_count(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Read the next batch, or an empty vector at the end.
+    pub fn read_batch(&mut self) -> std::io::Result<Vec<Vec<TableTextCell>>> {
+        let end = self.next.saturating_add(128).min(self.row_count());
+        let rows = self.windows.read_text_rows(self.next..end)?;
+        self.next = end;
+        Ok(rows)
+    }
+}
+
 /// Receiver of the pages of a [`StreamingLayout`].
 pub trait PageSink {
     /// Value returned by [`PageSink::finish`] and, through it, by
@@ -81,6 +112,22 @@ pub trait PageSink {
     /// delivery. All retained pages must be reversible and externally invisible.
     fn stage_table_page(&mut self, _page: StreamPage<'_>) -> std::io::Result<bool> {
         Ok(false)
+    }
+
+    /// Whether the sink can stage a whole plain table from a layout sample.
+    fn wants_table_sample(&self) -> bool {
+        false
+    }
+
+    /// Try to stage the complete input using a sample with the measured
+    /// column widths. Decline if the later rows cannot use its layout.
+    /// Returning a page count accepts the input only after consuming all rows.
+    fn stage_table_sample(
+        &mut self,
+        _sample: &DocumentLayout,
+        _rows: &mut TableTextRows<'_>,
+    ) -> std::io::Result<Option<u32>> {
+        Ok(None)
     }
 
     /// Undo all tentative table pages before ordinary delivery or replay.
@@ -1553,6 +1600,33 @@ fn stream_table_windows<S: PageSink>(
         .limits
         .max_document_pages
         .unwrap_or(u32::MAX);
+    if measured.is_ok() && sink.wants_table_sample() && windows.len() > window_size.get() {
+        let shell = windows
+            .document(0..window_size.get())
+            .map_err(ParseError::Io)?;
+        let (_, sample) = render(shell)?;
+        if !needs_replay.get() && sample.pages().all(|page| page.margin_boxes().is_empty()) {
+            let mut rows = TableTextRows { windows, next: 0 };
+            let result = sink.stage_table_sample(&sample, &mut rows);
+            let aborted = config
+                .signal
+                .as_ref()
+                .is_some_and(|signal| signal.is_aborted());
+            if !aborted
+                && let Ok(Some(count)) = result
+                && count > 0
+                && count <= page_limit
+                && rows.next == rows.row_count()
+            {
+                return Ok(StreamStatus::Completed(Some(count)));
+            }
+            sink.discard_staged_table_pages();
+            result.map_err(RenderError::Io)?;
+            if aborted {
+                return Ok(StreamStatus::Aborted);
+            }
+        }
+    }
     let mut stage_failed = false;
     let plan = measured.and_then(|()| {
         windows.plan_pages_with(window_size, render, |layout, pages| {
