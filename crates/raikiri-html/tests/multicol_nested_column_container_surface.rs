@@ -85,10 +85,13 @@ fn boxes(body: &str) -> String {
 
 #[test]
 fn a_nested_container_stays_in_one_column_and_the_next_box_fills_the_next() {
-    assert_eq!(
-        boxes(&nested("", (40, 40), 40)),
-        "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
-    );
+    for position in ["", "position:relative"] {
+        assert_eq!(
+            boxes(&nested(position, (40, 40), 40)),
+            "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40",
+            "{position}"
+        );
+    }
 }
 
 #[test]
@@ -214,4 +217,29 @@ fn a_flex_line_that_stretches_the_columns_limits_them_like_a_height() {
         inside("flex-direction:column;height:30px"),
         "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
     );
+}
+
+#[test]
+fn a_nested_container_stays_inside_the_columns_a_shrinking_flex_item_gives() {
+    // The flex item shrinks to 30px, below the nested container. Chromium
+    // cuts the container at the end of the outer column; no part of it runs
+    // past the bottom of the outer container.
+    let laid = boxes(
+        "<div style='display:flex;flex-direction:column;height:30px'>\
+         <div id=m style='columns:2;column-gap:0;width:200px;min-height:0'>\
+         <div id=n style='columns:2;column-gap:0'>\
+         <div id=a style='height:40px'></div><div id=b style='height:40px'></div></div>\
+         <div id=c style='height:40px'></div></div></div>",
+    );
+    let bottom = |id: &str| -> f32 {
+        let rect = laid
+            .split(' ')
+            .find_map(|entry| entry.strip_prefix(&format!("{id}:")))
+            .unwrap_or_else(|| panic!("{id} in {laid}"));
+        let values: Vec<f32> = rect.split(',').map(|v| v.parse().unwrap()).collect();
+        values[1] + values[3]
+    };
+    for id in ["n", "a", "b"] {
+        assert!(bottom(id) <= bottom("m"), "{id} in {laid}");
+    }
 }
