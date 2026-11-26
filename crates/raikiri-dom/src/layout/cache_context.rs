@@ -454,6 +454,10 @@ pub(crate) struct SavedLayoutCache {
     key: BoxKey,
     cache: LayoutCache,
     epoch: Option<CacheEpoch>,
+    /// The count of performed layouts when the cache was saved: a layout
+    /// performed before it is restored may have replaced what the boxes
+    /// inside held for its final layout.
+    performed: u64,
 }
 
 impl SavedLayoutCache {
@@ -476,6 +480,7 @@ impl LayoutSession<'_> {
             key,
             cache: std::mem::replace(&mut self.nodes[idx].cache, LayoutCache::new()),
             epoch,
+            performed: self.context.performed_layouts,
         }
     }
 
@@ -487,10 +492,14 @@ impl LayoutSession<'_> {
             key,
             cache: self.nodes[idx].cache.clone(),
             epoch,
+            performed: self.context.performed_layouts,
         }
     }
 
-    pub(crate) fn restore_layout_cache(&mut self, idx: usize, saved: SavedLayoutCache) {
+    pub(crate) fn restore_layout_cache(&mut self, idx: usize, mut saved: SavedLayoutCache) {
+        if saved.performed != self.context.performed_layouts {
+            saved.forget_final_layout();
+        }
         // A descendant unwind can dirty the document while outer scopes remain active.
         // Discard saved caches without publishing metadata inside those scopes.
         if !self.document.layout_dirty {

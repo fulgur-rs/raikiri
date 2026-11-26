@@ -6,7 +6,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::box_sizing_adjustment;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId, OofLayoutResult,
-    OofPosition, OofPositioningArea, SizingMode,
+    OofPosition, OofPositioningArea, RunMode, SizingMode,
 };
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::{Edges, Line, Size};
@@ -310,6 +310,10 @@ pub(crate) fn compute_cached_layout(
         return cached;
     }
     let deferred_before = tree.context.columns_deferred_layouts;
+    let performed_before = tree.context.performed_layouts;
+    if inputs.run_mode == RunMode::PerformLayout {
+        tree.context.performed_layouts += 1;
+    }
     let computed = compute(tree, node, inputs);
     // A layout that left a column container for the layout that follows is not
     // kept, and it drops what the caches of the boxes inside held: that was
@@ -319,6 +323,14 @@ pub(crate) fn compute_cached_layout(
         tree.cache_store(node, &inputs, computed.clone());
     } else {
         tree.cache_clear_subtree(node);
+    }
+    // A measure that performed layouts of the boxes inside left them as it
+    // laid them out, so a later layout of this box at the inputs of its final
+    // layout must lay them out again rather than take the held result.
+    if inputs.run_mode != RunMode::PerformLayout
+        && tree.context.performed_layouts != performed_before
+    {
+        tree.forget_final_layout(node);
     }
     computed
 }

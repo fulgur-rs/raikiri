@@ -133,6 +133,12 @@ pub(crate) struct LayoutContext {
     /// follows (see `compute_multicol_layout`). A layout that moves it is not
     /// kept in the caches.
     pub(crate) columns_deferred_layouts: usize,
+    /// How many layouts have been performed so far, rather than answered from
+    /// a cache. A measure during which it moves has laid out boxes inside
+    /// the measured box again (an inline-block of a paragraph is laid out at
+    /// each width the paragraph is measured at), so the final layout held for
+    /// that box no longer stands for them (see `compute_cached_layout`).
+    pub(crate) performed_layouts: u64,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical
