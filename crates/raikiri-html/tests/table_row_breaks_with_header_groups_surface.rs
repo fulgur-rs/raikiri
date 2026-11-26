@@ -339,3 +339,18 @@ fn a_footer_written_before_the_rows_repeats_around_a_forced_break_in_a_cell() {
         ],
     );
 }
+
+#[test]
+fn a_large_header_on_a_row_running_over_many_pages_stays_within_the_fragment_limit() {
+    // The copies of a header with many boxes on every page a long row runs
+    // over would pass the fragment limit: the header does not repeat.
+    let header = format!(
+        "<thead style='break-inside:avoid'><tr><td style='padding:0;height:20px'>{}</td></tr></thead>",
+        "<i></i>".repeat(1200)
+    );
+    let words = "a ".repeat(400);
+    let pages = pages(&format!(
+        "<table style='border-spacing:0;width:20px'>{header}<tr><td style='padding:0'>{words}</td></tr></table>"
+    ));
+    assert!(pages.len() > 10, "{}", pages.len());
+}
