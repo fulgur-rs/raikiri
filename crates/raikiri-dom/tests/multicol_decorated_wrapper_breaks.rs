@@ -614,6 +614,69 @@ const EDGE_CASES: &[(&str, Expected)] = &[
             ("n", &[[8.0, 58.0, 50.0, 10.0]]),
         ],
     ),
+    (
+        "<div id=p style='height:30px'></div><div id=w style='margin-bottom:20px;break-after:avoid'><div id=a style='height:10px'></div></div><div id=e style='break-after:avoid'></div><div id=v style='margin-top:30px;break-after:avoid'><div id=b style='height:10px'></div></div><div id=n style='height:10px'></div>",
+        &[
+            ("p", &[[8.0, 8.0, 50.0, 30.0]]),
+            ("w", &[[8.0, 38.0, 50.0, 10.0]]),
+            ("a", &[[8.0, 38.0, 50.0, 10.0]]),
+            ("e", &[[8.0, 68.0, 50.0, 0.0]]),
+            ("v", &[[8.0, 78.0, 50.0, 10.0]]),
+            ("b", &[[8.0, 78.0, 50.0, 10.0]]),
+            ("n", &[[8.0, 88.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=p style='height:50px'></div><div id=w style='margin-bottom:20px;break-after:avoid'><div id=a style='height:10px'></div></div><div id=e style='break-after:avoid'></div><div id=v style='margin-top:30px;break-after:avoid'><div id=b style='height:10px'></div></div><div id=n style='height:10px'></div>",
+        &[
+            ("p", &[[8.0, 8.0, 50.0, 50.0]]),
+            ("w", &[[58.0, 8.0, 50.0, 10.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 10.0]]),
+            ("e", &[[58.0, 38.0, 50.0, 0.0]]),
+            ("v", &[[58.0, 48.0, 50.0, 10.0]]),
+            ("b", &[[58.0, 48.0, 50.0, 10.0]]),
+            ("n", &[[58.0, 58.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=o style='padding-bottom:5px'><div id=i style='margin-bottom:-10px'><div id=a style='height:20px'></div></div></div><div id=n style='height:10px;break-before:column'></div>",
+        &[
+            ("o", &[[8.0, 8.0, 50.0, 15.0]]),
+            ("i", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=o style='padding-bottom:5px;border-top:3px solid'><div id=i style='margin-bottom:-30px'><div id=a style='height:20px'></div></div></div><div id=n style='height:10px'></div><div id=m style='height:10px;break-before:column'></div>",
+        &[
+            ("o", &[[8.0, 8.0, 50.0, 8.0]]),
+            ("i", &[[8.0, 11.0, 50.0, 20.0]]),
+            ("a", &[[8.0, 11.0, 50.0, 20.0]]),
+            ("n", &[[8.0, 16.0, 50.0, 10.0]]),
+            ("m", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=x><div id=o style='padding-bottom:5px'><div id=i style='margin-bottom:-10px'><div id=a style='height:20px'></div></div></div><div id=y style='height:10px'></div></div><div id=n style='height:10px;break-before:column'></div>",
+        &[
+            ("x", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("o", &[[8.0, 8.0, 50.0, 15.0]]),
+            ("i", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("y", &[[8.0, 23.0, 50.0, 10.0]]),
+            ("n", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=x><div id=o style='padding-bottom:5px'><div id=a style='height:20px'></div></div></div><div id=n style='height:10px;break-before:column'></div>",
+        &[
+            ("x", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("o", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
 ];
 
 #[test]
