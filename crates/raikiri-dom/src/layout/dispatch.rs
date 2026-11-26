@@ -6430,7 +6430,7 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
     if grid_oof::right_to_left(tree, idx).is_some()
         || tree.nodes[idx].used_writing_mode.is_vertical()
-        || rows_repeat_to_fill(&tree.physical_style(idx))
+        || crate::layout::taffy_adapter::RowSizing::repeat_to_fill(&tree.physical_style(idx))
     {
         return false;
     }
@@ -6454,25 +6454,6 @@ fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
             ]
         };
         depends(0.0) != depends(1.0e3)
-    })
-}
-
-/// Whether the rows of the grid laid out with `style` repeat to fill its
-/// height (`repeat(auto-fill, ...)` or `repeat(auto-fit, ...)`): how many
-/// there are depends on whether that height is known.
-fn rows_repeat_to_fill(style: &raikiri_layout_style::LayoutStyleView<'_>) -> bool {
-    use taffy::{
-        GenericGridTemplateComponent, GenericRepetition, GridContainerStyle, RepetitionCount,
-    };
-    let style = raikiri_layout_style::TaffyStyle::new(*style);
-    style.grid_template_rows().is_some_and(|mut components| {
-        components.any(|component| {
-            matches!(
-                component,
-                GenericGridTemplateComponent::Repeat(repeat)
-                    if matches!(repeat.count(), RepetitionCount::AutoFill | RepetitionCount::AutoFit)
-            )
-        })
     })
 }
 
