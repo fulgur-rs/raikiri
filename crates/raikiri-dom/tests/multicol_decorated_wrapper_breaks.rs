@@ -657,6 +657,26 @@ const EDGE_CASES: &[(&str, Expected)] = &[
             ("m", &[[58.0, 8.0, 50.0, 10.0]]),
         ],
     ),
+    (
+        "<div id=x><div id=o style='padding-bottom:5px'><div id=i style='margin-bottom:-10px'><div id=a style='height:20px'></div></div></div><div id=y style='height:10px'></div></div><div id=n style='height:10px;break-before:column'></div>",
+        &[
+            ("x", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("o", &[[8.0, 8.0, 50.0, 15.0]]),
+            ("i", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("y", &[[8.0, 23.0, 50.0, 10.0]]),
+            ("n", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
+    (
+        "<div id=x><div id=o style='padding-bottom:5px'><div id=a style='height:20px'></div></div></div><div id=n style='height:10px;break-before:column'></div>",
+        &[
+            ("x", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("o", &[[8.0, 8.0, 50.0, 25.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 8.0, 50.0, 10.0]]),
+        ],
+    ),
 ];
 
 #[test]
