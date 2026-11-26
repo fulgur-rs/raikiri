@@ -80,6 +80,12 @@ impl LayoutCache {
         self.final_layout_stale = true;
     }
 
+    /// Whether [`LayoutCache::forget_final_layout`] was called since the last
+    /// performed layout was stored.
+    pub(crate) const fn final_layout_forgotten(&self) -> bool {
+        self.final_layout_stale
+    }
+
     /// The width stored for `input` by [`LayoutCache::store_width`].
     ///
     /// A box that shrinks to fit measures its min-content and max-content

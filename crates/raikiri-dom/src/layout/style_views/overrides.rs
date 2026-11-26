@@ -18,6 +18,10 @@ struct ScopedBox {
 pub(crate) struct ScopedOverrides {
     boxes: HashMap<BoxKey, ScopedBox>,
     journal: Vec<ScopeUndo>,
+    /// How many entries of the journal a layout that resolves keyword sizes
+    /// pushed for something other than measuring a box: a measure taken while
+    /// one is active holds a style no later layout may see.
+    transient: usize,
 }
 
 struct ScopeUndo {
@@ -26,6 +30,8 @@ struct ScopeUndo {
     /// Whether the scope left the cache generation alone; see
     /// [`LayoutSession::push_local_overrides`].
     local: bool,
+    /// Whether the entry counts in [`ScopedOverrides::transient`].
+    transient: bool,
 }
 
 impl ScopedOverrides {
@@ -88,12 +94,38 @@ impl LayoutSession<'_> {
         }
     }
 
+    /// [`LayoutSession::with_overrides`] for the neutral sizes a keyword-size
+    /// measure lays a box out with. The measure stands for exactly that
+    /// style, so it may outlast the overrides.
+    pub(crate) fn with_measure_overrides<R>(
+        &mut self,
+        entries: Vec<(BoxKey, OwnedPropertyOverride)>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let checkpoint = self.override_checkpoint();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.push_scoped_overrides(entries, false, true);
+            f(self)
+        }));
+        self.restore_overrides_to(checkpoint);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Whether a style override that a keyword-size layout pushed for
+    /// something other than a measure is active.
+    pub(crate) fn transient_overrides_active(&self) -> bool {
+        self.scoped_overrides.transient != 0
+    }
+
     pub(crate) fn override_checkpoint(&self) -> usize {
         self.scoped_overrides.journal.len()
     }
 
     pub(crate) fn push_overrides(&mut self, entries: Vec<(BoxKey, OwnedPropertyOverride)>) {
-        self.push_scoped_overrides(entries, false);
+        self.push_scoped_overrides(entries, false, false);
     }
 
     /// Push overrides for a probe that must not discard what has been cached
@@ -114,7 +146,7 @@ impl LayoutSession<'_> {
     /// the caller keeps apart for as long as the scope lasts (see
     /// `with_saved_probe_caches`).
     pub(crate) fn push_local_overrides(&mut self, entries: Vec<(BoxKey, OwnedPropertyOverride)>) {
-        self.push_scoped_overrides(entries, true);
+        self.push_scoped_overrides(entries, true, false);
     }
 
     fn note_override_changed(&mut self, key: BoxKey, local: bool) {
@@ -131,6 +163,7 @@ impl LayoutSession<'_> {
         &mut self,
         entries: Vec<(BoxKey, OwnedPropertyOverride)>,
         local: bool,
+        measure: bool,
     ) {
         self.sync_layout_cache_mutations();
         if entries.is_empty() {
@@ -169,6 +202,12 @@ impl LayoutSession<'_> {
                 .filter_map(|(_, _, entry)| entry.calc_owner())
                 .cloned(),
         );
+        if self.context.content_limit_depth == 0 && !self.context.content_limit_measures.is_empty()
+        {
+            let changed: Vec<usize> = indexed.iter().map(|&(_, index, _)| index).collect();
+            crate::layout::dispatch::content_limits::forget_measures_around(self, &changed);
+        }
+        let transient = self.context.content_limit_depth != 0 && !measure;
         #[cfg(test)]
         let mut applied = 0;
         for (key, index, entry) in indexed {
@@ -195,10 +234,12 @@ impl LayoutSession<'_> {
             };
             state.depth += 1;
             state.entries.push(entry);
+            self.scoped_overrides.transient += usize::from(transient);
             self.scoped_overrides.journal.push(ScopeUndo {
                 token,
                 transposed,
                 local,
+                transient,
             });
             let undo = self
                 .scoped_overrides
@@ -224,12 +265,21 @@ impl LayoutSession<'_> {
             checkpoint <= self.override_checkpoint(),
             "scope checkpoint is active"
         );
+        // Only a change outside every keyword-size layout can reach the
+        // measures those layouts keep.
+        let track = self.context.content_limit_depth == 0
+            && !self.context.content_limit_measures.is_empty();
+        let mut changed = Vec::new();
         while self.override_checkpoint() > checkpoint {
             let saved = self
                 .scoped_overrides
                 .journal
                 .pop()
                 .expect("active override");
+            self.scoped_overrides.transient -= usize::from(saved.transient);
+            if track {
+                changed.extend(self.nodes.layout_index(saved.token.key));
+            }
             self.note_override_changed(saved.token.key, saved.local);
             for snapshot in saved.transposed.into_iter().rev() {
                 snapshot.restore(&mut self.context.transposed_blocks);
@@ -242,6 +292,7 @@ impl LayoutSession<'_> {
             state.entries.truncate(saved.token.length);
             state.depth = saved.token.depth;
         }
+        crate::layout::dispatch::content_limits::forget_measures_around(self, &changed);
     }
 
     pub(crate) fn begin_edge_recording(
@@ -312,6 +363,10 @@ impl LayoutSession<'_> {
         entries: Vec<OwnedPropertyOverride>,
     ) -> Option<OverrideToken> {
         self.sync_layout_cache_mutations();
+        let transient = self.context.content_limit_depth != 0;
+        if !transient {
+            crate::layout::dispatch::content_limits::forget_measures_around(self, &[idx]);
+        }
         let key = self.nodes.box_key(idx).expect("override has a box key");
         self.scoped_overrides.journal.reserve(1);
         let state = self.scoped_overrides.boxes.entry(key).or_default();
@@ -333,7 +388,14 @@ impl LayoutSession<'_> {
             token,
             transposed: Vec::new(),
             local: false,
+            transient,
         });
+        self.scoped_overrides.transient += usize::from(transient);
+        let state = self
+            .scoped_overrides
+            .boxes
+            .get_mut(&key)
+            .expect("reserved key");
         state.depth += 1;
         state.entries.extend(entries);
         Some(token)

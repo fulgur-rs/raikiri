@@ -1443,10 +1443,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 let computed = &cascade.computed[node_id];
                 // A floated box does not establish a page transition merely
-                // because it carries an inherited/explicit `page` value.  In
-                // particular, CSS Page 3 keeps a float in the preceding
-                // fragmentainer in the page-name-float cases.
+                // because it carries an inherited/explicit `page` value: a
+                // float's `page` value opens no page and is not the start
+                // value of anything (Chromium).
                 let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+                // A left or right float, as against a footnote body.
+                let side_float = is_float && super::is_side_float(document, cascade, node_id);
                 let float_subtree = inside_float || is_float;
                 let out_of_flow_subtree = inside_out_of_flow
                     || matches!(
@@ -1555,7 +1557,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     propagated_page_name
                 };
-                let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
+                // A float is no part of the page flow: neither its own page
+                // value nor those of the boxes in it name the pages it
+                // reaches, which take the type of the flow around it.
+                let page_name = if side_float {
+                    frame.inherited_page_name
+                } else if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
                     own_page_name.or(frame.inherited_page_name)
@@ -2374,7 +2381,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
-                            && (explicit_page_name.is_none() || inline_level))
+                            // A float's own page value is no part of the
+                            // page flow (see `own_page_name`).
+                            && (explicit_page_name.is_none() || inline_level || side_float))
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
