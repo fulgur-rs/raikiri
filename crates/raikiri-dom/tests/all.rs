@@ -123,6 +123,7 @@ mod lines_after_block_in_sized_paragraph;
 mod list_item_marker_line;
 mod margin_truncation_before_lines;
 mod margin_truncation_relative_and_nested;
+mod measured_inline_block_relayout;
 mod min_content_keyword_width_contribution;
 mod multicol_absolute_lines;
 mod multicol_balanced_absolute;

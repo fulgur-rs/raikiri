@@ -51,6 +51,7 @@ mod float_gap_page_end_surface;
 mod float_inner_forced_break_surface;
 mod float_lines_page_break_surface;
 mod float_own_forced_break_surface;
+mod float_own_page_value_surface;
 mod float_relative_offset_after_forced_break_surface;
 mod font_collection;
 mod forced_break_after_boxless_content_surface;
