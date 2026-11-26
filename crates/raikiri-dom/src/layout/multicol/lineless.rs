@@ -30,11 +30,12 @@ pub(super) use paged::{PagedPiece, paginate};
 /// strategies. A scroll container with a height of its own is no such
 /// box: it is monolithic, so the stream places it whole in one column (see
 /// [`is_monolithic_scroll_box`]), and so is a column container that the
-/// columns around it grow to fit (see [`is_unbroken_column_container`]). A `position: relative` box with insets is
-/// sliced like any other: its column location carries no offset, which the
-/// painter adds. That holds only for a box with nothing rendered inside it, so
-/// one that holds blocks or absolutely positioned boxes keeps the other
-/// strategies when it has insets, and so does a box inside a wrapper.
+/// columns around it grow to fit (see [`is_unbroken_column_container`]).
+/// A `position: relative` box with insets is sliced like any other: its
+/// column location carries no offset, which the painter adds. That holds only
+/// for a box with nothing rendered inside it, so one that holds blocks or
+/// absolutely positioned boxes keeps the other strategies when it has insets,
+/// and so does a box inside a wrapper.
 ///
 /// With `out_of_flow`, a child may also hold absolutely positioned boxes
 /// that it is the containing block of; [`layout`] breaks them across the
@@ -2637,6 +2638,14 @@ pub(super) fn layout(
         column_height
     };
     if !column_height.is_finite() || column_height <= 0.0 {
+        return None;
+    }
+    // A nested column container is kept whole only where the columns grow to
+    // fit it; one that a maximum keeps them below is cut by the strategies
+    // that break it at the outer column end.
+    if children.iter().zip(&sizes).any(|(&child, size)| {
+        size.height > column_height + EPSILON && is_unbroken_column_container(tree, child)
+    }) {
         return None;
     }
     // A box that must stay whole falls back to the other strategies whole

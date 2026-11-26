@@ -172,11 +172,12 @@ fn gaps_and_more_outer_columns_place_the_nested_container_the_same_way() {
 #[test]
 fn a_display_contents_box_leaves_the_nested_container_in_the_stream() {
     assert_eq!(
-        boxes(&format!(
-            "<div id=m style='columns:2;column-gap:0;width:200px'><div style='display:contents'>{}</div>",
-            &nested("", (40, 40), 40)
-                ["<div id=m style='columns:2;column-gap:0;width:200px'>".len()..]
-        )),
+        boxes(
+            "<div id=m style='columns:2;column-gap:0;width:200px'><div style='display:contents'>\
+             <div id=n style='columns:2;column-gap:0'>\
+             <div id=a style='height:40px'></div><div id=b style='height:40px'></div></div>\
+             <div id=c style='height:40px'></div></div></div>"
+        ),
         "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
     );
 }

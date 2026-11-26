@@ -169,12 +169,16 @@ pub(in crate::layout::multicol) fn paginate(
     let plan = planned_child_pieces(&wrapped, &spans, &placement, grid);
     let Some(plan) = plan else { return Ok(None) };
     let (child_pieces, leaf_pieces) = plan;
-    // A scroll container or a nested column container taller than the page it
-    // lands on would run past the page edge with nothing to carry it on, so
-    // the content would be lost; the container keeps the single column, which
-    // the pages cut.
+    // A nested column container is cut where the pages fill the columns, so
+    // the container keeps the single column, which the pages cut.
+    if holds_unbroken_column_container(tree, children) {
+        return Ok(None);
+    }
+    // A scroll container taller than the page it lands on would run past the
+    // page edge with nothing to carry it on, so the content would be lost; the
+    // container keeps the single column, which the pages cut.
     for (&child, pieces) in children.iter().zip(&child_pieces) {
-        if (is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child))
+        if is_monolithic_scroll_box(tree, child)
             && pieces
                 .iter()
                 .any(|piece| piece.height > row_at(piece.column / columns).capacity() + EPSILON)

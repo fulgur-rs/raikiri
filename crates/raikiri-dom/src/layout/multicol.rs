@@ -654,7 +654,10 @@ pub(crate) fn compute_multicol_layout(
                     slice_wrappers,
                 )
                 .unwrap_or_else(|| {
-                    if nested_fallback {
+                    // A nested column container that the stream could not keep
+                    // whole is cut at the outer column ends there instead.
+                    if nested_fallback || lineless::holds_unbroken_column_container(tree, children)
+                    {
                         return relayout_nested_multicol_children(
                             tree,
                             node_id,
