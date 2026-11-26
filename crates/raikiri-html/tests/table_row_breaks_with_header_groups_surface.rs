@@ -153,7 +153,10 @@ fn the_last_row_leaves_room_for_the_footer_copy() {
         &format!(
             "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>A<br>B</td><td>C<br>D</td></tr></table>"
         ),
-        &["100: A@1,33 C@23,33 F@0,75 X@1,1", "100: B@1,0 D@23,0 F@0,26"],
+        &[
+            "100: A@1,33 C@23,33 F@0,75 X@1,1",
+            "100: B@1,0 D@23,0 F@0,26",
+        ],
     );
     expect(
         &format!(
