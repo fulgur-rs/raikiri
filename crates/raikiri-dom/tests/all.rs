@@ -208,6 +208,7 @@ mod vertical_flex_grid_item_width_keyword;
 mod vertical_flex_grid_room;
 mod vertical_flex_item_min_content;
 mod vertical_flex_item_percent_padding;
+mod vertical_flex_ratio_items;
 mod vertical_grid_container_width;
 mod vertical_grid_opposed_baseline;
 mod vertical_orthogonal_ratio_bounds;

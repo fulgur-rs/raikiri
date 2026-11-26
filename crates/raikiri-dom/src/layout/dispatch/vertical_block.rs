@@ -284,7 +284,11 @@ pub(super) fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut Tran
             zero_min_main_axis: tree.zero_min_main_axis(child),
             ..context
         };
-        let input = FrozenViewInput::capture(tree, child, context);
+        let input = if tree.flex_main_axis_is_width(child).is_some() {
+            FrozenViewInput::capture_flex_item(tree, child, context)
+        } else {
+            FrozenViewInput::capture(tree, child, context)
+        };
         block.child_views.insert(child, input);
     }
 }

@@ -1919,7 +1919,27 @@ fn compute_ifc_root(
             let width = if metrics.ratio_width
                 || grid_cyclic_ratio_content_minimum(tree, idx, &layout_style, inputs)
             {
-                let minimum = ifc_min_content_width(tree, node_id, inputs.parent_size);
+                // The lines of a vertical paragraph in a row of a container on
+                // vertical axes break at the height it flexed to, and the
+                // width they take there is the width of its content.
+                let minimum = if vertical_paragraph
+                    && tree.container_is_vertical(idx)
+                    && inputs.known_dimensions.height.is_some()
+                    && flex_item_follows_main_size(tree, idx, &inputs)
+                {
+                    let probe = LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        axis: RequestedAxis::Horizontal,
+                        ..inputs
+                    };
+                    without_container_ratio(tree, node_id, |tree| {
+                        compute_ifc_root(tree, node_id, probe, None)
+                    })
+                    .size
+                    .width
+                } else {
+                    ifc_min_content_width(tree, node_id, inputs.parent_size)
+                };
                 width.max(minimum.maybe_clamp(None, metrics.own_max.width))
             } else {
                 width
@@ -6890,8 +6910,19 @@ fn with_ratio_width(
     let vertical_content_size = (intrinsic_contribution || flex_cross_measure)
         && inputs.known_dimensions.height.is_some()
         && inputs.known_dimensions_are_definite.height;
+    // An item of a row of a container on vertical axes is given the height it
+    // flexed to, and the ratio gives its width from that height, raised to
+    // the width of its content as in a horizontal row.
+    let vertical_row_item = vertical
+        && tree.container_is_vertical(idx)
+        && inputs.known_dimensions.height.is_some()
+        && inputs.known_dimensions_are_definite.height
+        && flex_item_follows_main_size(tree, idx, &inputs);
     if style.aspect_ratio.is_none()
-        || (vertical && inputs.sizing_mode != SizingMode::InherentSize && !vertical_content_size)
+        || (vertical
+            && inputs.sizing_mode != SizingMode::InherentSize
+            && !vertical_content_size
+            && !vertical_row_item)
     {
         return inputs;
     }
