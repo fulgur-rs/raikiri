@@ -919,6 +919,12 @@ impl LayoutSession<'_> {
             pending.extend(self.nodes[idx].children.iter().copied());
         }
     }
+
+    /// Stop answering a performed layout of the node from its cache (see
+    /// [`crate::layout::taffy_adapter::LayoutCache::forget_final_layout`]).
+    pub(crate) fn forget_final_layout(&mut self, node_id: NodeId) {
+        self.nodes[usize::from(node_id)].cache.forget_final_layout();
+    }
 }
 
 impl LayoutSession<'_> {
@@ -1012,6 +1018,7 @@ impl LayoutSession<'_> {
                 self.context.text_group_shortest.take(),
             )
         });
+        let writes_before = self.context.arena_writes;
         let mut output = if let Some(output) =
             self.compute_transposed_child(node_id, inputs, block_ctx.as_deref_mut())
         {
@@ -1021,6 +1028,12 @@ impl LayoutSession<'_> {
                 self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
             })
         };
+        // A measure that laid out boxes inside the box left them as it laid
+        // them out, so a later layout of the box at the inputs of the final
+        // layout it holds must lay them out again rather than take that.
+        if inputs.run_mode == RunMode::ComputeSize && self.context.arena_writes != writes_before {
+            self.forget_final_layout(node_id);
+        }
         self.context.group_child_uncached = false;
         if let Some((group, shortest)) = outer_group {
             self.context.text_group = group;
