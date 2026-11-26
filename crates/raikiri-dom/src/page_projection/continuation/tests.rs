@@ -133,9 +133,23 @@ fn continuation_cascade_drops_breaks_before_the_token() {
     assert_eq!(token.break_before, BreakBetween::Auto);
     assert_eq!(token.break_inside, BreakInside::Auto);
     assert_eq!(cascade.computed[root].break_inside, BreakInside::Auto);
-    assert_eq!(cascade.computed[root].orphans, 1);
+    // The ancestors of a box token keep their orphans and widows, which the
+    // breaks after the token still count.
+    assert_eq!(cascade.computed[root].orphans, 2);
+    assert_eq!(cascade.computed[root].widows, 2);
     // A box after the token keeps its breaks.
     assert_eq!(cascade.computed[blocks[2]].break_before, BreakBetween::Page);
+}
+
+#[test]
+fn continuation_cascade_keeps_no_minimum_of_lines_around_a_line_token() {
+    let mut text = 0;
+    let (mut doc, mut cascade, root) = ahem_paragraph_with("orphans:3;widows:3", |doc, root| {
+        text = doc.append_text(root, WORDS);
+    });
+    doc.prepare_continuation_cascade(&mut cascade, PageStartToken::Line { text, offset: 20 });
+    assert_eq!(cascade.computed[root].orphans, 1);
+    assert_eq!(cascade.computed[root].widows, 1);
 }
 
 #[test]

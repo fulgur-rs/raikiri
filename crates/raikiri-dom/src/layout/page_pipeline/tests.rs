@@ -21113,9 +21113,9 @@ fn a_flex_container_with_a_border_and_an_orthogonal_item_moves_whole_to_the_next
 }
 
 #[test]
-fn a_paragraph_of_several_lines_with_no_text_is_not_kept_whole() {
-    // Only a single line is kept whole: a break between the lines of this
-    // paragraph is allowed, and nothing moves its second line yet.
+fn a_paragraph_of_several_lines_with_no_text_keeps_its_orphans() {
+    // Only the first line fits below the block, fewer than the two orphans
+    // the paragraph keeps, so it starts the next page whole, as in Chromium.
     let ys = paginated_ys(
         |doc, body| {
             let first = doc.append_element(Some(body), "div", Some("display:block;height:60px"));
@@ -21131,7 +21131,7 @@ fn a_paragraph_of_several_lines_with_no_text_is_not_kept_whole() {
         },
         &[],
     );
-    assert_eq!(ys, [0.0, 60.0]);
+    assert_eq!(ys, [0.0, 100.0]);
 }
 
 #[test]

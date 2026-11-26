@@ -22,8 +22,9 @@ pub(super) fn assign(
     let qualified: HashSet<usize> = candidates
         .iter()
         .filter(|candidate| {
-            (candidate.context.leading_block_piece_end().is_some()
-                && document.nodes[candidate.node_id].display() == DisplayValue::InlineBlock)
+            candidate.context.textless_line()
+                || (candidate.context.leading_block_piece_end().is_some()
+                    && document.nodes[candidate.node_id].display() == DisplayValue::InlineBlock)
                 || (candidate.context.is_direct_body_element()
                     && (document.nodes[candidate.node_id]
                         .display()
@@ -141,6 +142,177 @@ pub(super) fn assign(
         candidates.retain(|candidate| !removed.contains(&candidate.node_id));
     }
     Ok(())
+}
+
+/// The first atomic inline of each line of the paragraph `root`, when it
+/// has more lines than one, no block among them, and no text places any of
+/// them: no text
+/// candidate moves those lines, so each of them moves with its first atomic
+/// inline, as a line of text does. Empty for any other paragraph.
+pub(super) fn textless_first_atoms(document: &Document, root: usize) -> HashSet<usize> {
+    let Some(lines) = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .filter(|ifc| ifc.multicol_fragments.is_none())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .filter(|lines| lines.lines.len() > 1 && lines.block_line_starts.is_empty())
+    else {
+        return HashSet::new();
+    };
+    if lines.lines.iter().any(|line| places_text(document, line)) {
+        return HashSet::new();
+    }
+    lines
+        .lines
+        .iter()
+        .filter_map(|line| {
+            line.fragments().find_map(|fragment| match fragment {
+                shodo::Fragment::Atomic(atomic) => usize::try_from(atomic.node.0).ok(),
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+/// Whether some glyph on `line`, a ruby annotation's included, belongs to
+/// text that is not blank, or to generated content.
+fn places_text(document: &Document, line: &shodo::Line) -> bool {
+    line.fragments().any(|fragment| match fragment {
+        shodo::Fragment::GlyphRun(run) => run.node().is_some_and(|node| {
+            document.nodes.get(node.0 as usize).is_some_and(|node| {
+                !matches!(&node.data, crate::node::NodeData::Text(text) if text.text_content.trim().is_empty())
+            })
+        }),
+        shodo::Fragment::RubyAnnotation(annotation) => places_text(document, annotation.line()),
+        _ => false,
+    })
+}
+
+/// The lines of the paragraph `root`.
+fn paragraph_lines(document: &Document, root: usize) -> Option<&[shodo::Line]> {
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .map(|lines| lines.lines.as_slice())
+}
+
+/// The line that a page break before the line `owner` of a paragraph that
+/// no text places falls before once the `orphans` and `widows` of the
+/// paragraph are kept (CSS Fragmentation 3 section 3.3), with how far that
+/// line moves to start the next page at `next_start`. `page_start` is where
+/// the page of `owner` starts in the flow and `relative` the relative offset
+/// of the paragraph. `None` when the break stays before `owner`: enough lines
+/// follow it, or the paragraph continues from the page before. The widows
+/// move lines even when they do not fit on the next page together, as in
+/// Chromium.
+pub(super) fn kept_lines_break(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: LeadingInlineLine,
+    page_start: f32,
+    relative: f32,
+    next_start: f32,
+) -> Option<KeptBreak> {
+    let root = owner.root;
+    let total = paragraph_lines(document, root)?.len();
+    let computed = &cascade.computed[root];
+    let orphans = usize::try_from(computed.orphans.max(1)).unwrap_or(1);
+    let widows = usize::try_from(computed.widows.max(1)).unwrap_or(1);
+    let top = |line: usize| bounds(document, LeadingInlineLine { root, line }).0 - relative;
+    // The first line of the paragraph on the page of `owner`; the tops of
+    // the lines only grow.
+    let (mut first, mut past) = (0, owner.line);
+    while first < past {
+        let middle = first + (past - first) / 2;
+        if top(middle) < page_start - 0.001 {
+            first = middle + 1;
+        } else {
+            past = middle;
+        }
+    }
+    if first == owner.line {
+        // The first line of the paragraph breaks before its box, when content
+        // comes before it on the page.
+        return (owner.line == 0 && top(0) > page_start + 0.001).then(|| KeptBreak {
+            line: owner,
+            shift: next_start - top(0),
+            whole: true,
+        });
+    }
+    if owner.line - first < orphans {
+        // Fewer lines than the orphans fit: the paragraph starts the next
+        // page, unless it starts this one already. A paragraph continued from
+        // the page before keeps its natural break, as moving all its lines
+        // would leave the page without them.
+        if first > 0 || top(0) <= page_start + 0.001 {
+            return None;
+        }
+        return Some(KeptBreak {
+            line: LeadingInlineLine { root, line: 0 },
+            shift: next_start - top(0),
+            whole: true,
+        });
+    }
+    // Orphans win over widows, as in columns.
+    let line = crate::layout::multicol::piece_end(first, owner.line, total, (orphans, widows));
+    if line == owner.line {
+        return None;
+    }
+    Some(KeptBreak {
+        line: LeadingInlineLine { root, line },
+        shift: next_start - top(line),
+        whole: false,
+    })
+}
+
+/// Where [`kept_lines_break`] moves the break of a paragraph that no text
+/// places.
+pub(super) struct KeptBreak {
+    /// The first line that starts the next page.
+    pub(super) line: LeadingInlineLine,
+    /// How far that line moves.
+    pub(super) shift: f32,
+    /// Whether that line is the first of the paragraph: the break then falls
+    /// before the paragraph's box, which moves with its padding and border.
+    pub(super) whole: bool,
+}
+
+/// The first line without atomic inlines between the line of `owner` and
+/// the one with atomic inlines before it, in a paragraph that no text places,
+/// that crosses the end of its page or starts a page exactly: such a line,
+/// left by `<br>`, has no candidate of its own, so the break before it moves
+/// with the line after it. `relative` is the relative offset of the
+/// paragraph.
+pub(super) fn crossing_blank_line(
+    document: &Document,
+    owner: LeadingInlineLine,
+    relative: f32,
+    page_origins: &PageOrigins,
+) -> Option<LeadingInlineLine> {
+    let lines = paragraph_lines(document, owner.root)?;
+    let has_atom = |line: usize| {
+        lines[line]
+            .fragments()
+            .any(|fragment| matches!(fragment, shodo::Fragment::Atomic(_)))
+    };
+    let after_atoms = (0..owner.line)
+        .rev()
+        .find(|&line| has_atom(line))
+        .map_or(0, |line| line + 1);
+    (after_atoms..owner.line)
+        .map(|line| LeadingInlineLine {
+            root: owner.root,
+            line,
+        })
+        .find(|&line| {
+            let (top, height) = bounds(document, line);
+            let top = top - relative;
+            let page = page_origins.page_index_for_y(top);
+            let start = page_origins.origin(page);
+            top + height > start + page_origins.step_at(page) + 0.001
+                || page > 0 && (top - start).abs() <= 0.001
+        })
 }
 
 pub(super) fn bounds(document: &Document, owner: LeadingInlineLine) -> (f32, f32) {
