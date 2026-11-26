@@ -193,9 +193,7 @@ fn a_splittable_box_that_must_stay_whole_moves_to_the_next_column_when_it_fits_o
 /// `leading` at its block start and `trailing` at its block end.
 fn sliced(height: f32, leading: f32, trailing: f32) -> Item {
     Item {
-        whole: true,
         slice: Some((leading, trailing)),
-        edges: trailing,
         ..split(height)
     }
 }

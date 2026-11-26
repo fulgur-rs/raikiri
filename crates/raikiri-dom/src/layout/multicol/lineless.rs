@@ -1157,9 +1157,11 @@ struct Item {
     /// pieces slice them: it is cut where it is taller than a column, but
     /// not inside these insets.
     slice: Option<(f32, f32)>,
-    /// The block-end margin, border and padding that follow the content of
-    /// the box and are counted in `height`: a break between the content and
-    /// them leaves them alone in the next column.
+    /// The block-end border and padding of the wrappers that end with the
+    /// box, counted in `height`: a break between the box and them would
+    /// leave them alone in the next column. The box's own block-end border
+    /// and padding are not counted: a break that would fall inside them
+    /// falls where its content ends, and they go on alone (see `slice`).
     edges: f32,
 }
 
@@ -1320,8 +1322,10 @@ fn place_columns(
                 // a column that is taller than what is left, the next column
                 // offers no more room, so the border and padding are cut like
                 // any other box.
-                let room = match item.slice {
-                    Some((_, trailing))
+                // The border and padding of the wrappers that end with the
+                // box follow its own, and go on with them.
+                let room = match item.slice.map(|(_, trailing)| trailing + item.edges) {
+                    Some(trailing)
                         if left > room + EPSILON
                             && left - room < trailing - EPSILON
                             && (cursor > 0.0 || left - trailing > EPSILON) =>
@@ -1978,7 +1982,7 @@ fn push_wrapped_block(
                     x: 0.0,
                     y: shift - parent.top,
                     width: (x + size.width).max(context.column_width),
-                    height: column_height,
+                    height: sliced_piece_clip_height(sliced, pieces, index, column_height),
                 }
                 .into(),
             ),
@@ -2056,6 +2060,27 @@ fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>], items: &[Item])
             shown + cut_margin
         })
         .collect()
+}
+
+/// The block size, from the top of its column, of the clip of the `index`th
+/// of `pieces`, those of a box cut at column ends in columns `column_height`
+/// tall. A piece of a box that paints whole in each piece, `sliced`, ends its
+/// clip where the piece ends when the piece ends above the column end, as one
+/// does when the box's block-end border and padding go on alone, so that the
+/// next piece alone paints what follows. The last piece, and every piece of
+/// any other box, is clipped at the column end.
+fn sliced_piece_clip_height(
+    sliced: bool,
+    pieces: &[Piece],
+    index: usize,
+    column_height: f32,
+) -> f32 {
+    match pieces.get(index) {
+        Some(piece) if sliced && index + 1 < pieces.len() => {
+            (piece.top + piece.height).min(column_height)
+        }
+        _ => column_height,
+    }
 }
 
 /// The rect of a piece of a box that slices its decorations: the whole box,
@@ -2138,24 +2163,30 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
             }
         });
     let monolithic = is_monolithic_scroll_box(tree, child);
+    let splittable = !monolithic
+        && !matches!(
+            node.break_inside,
+            BreakInside::Avoid | BreakInside::AvoidColumn
+        );
     Item {
         height,
         margin_top,
         margin_bottom,
-        splittable: !monolithic
-            && !matches!(
-                node.break_inside,
-                BreakInside::Avoid | BreakInside::AvoidColumn
-            ),
-        // A box with block-axis borders or padding, or with effects sized
-        // from the whole box, sits whole in the next column when it fits
-        // there. One taller than a column is cut only where its pieces slice
-        // the decorations, as a piece that does not would repeat them at each
-        // break. A monolithic box is never cut.
-        whole: monolithic || node.paints_whole_box_effects || has_block_edge_decorations(&style),
+        splittable,
+        // A box with effects sized from the whole box, or with block-axis
+        // borders or padding that its pieces do not slice, sits whole in the
+        // next column when it fits there: a piece that does not slice them
+        // would repeat them at each break. One taller than a column is cut
+        // only where its pieces slice the decorations. A box whose pieces
+        // slice them breaks at a column end like any other (CSS
+        // Fragmentation 3, 5.4), unless it avoids breaks. A monolithic box
+        // is never cut.
+        whole: monolithic
+            || node.paints_whole_box_effects
+            || (has_block_edge_decorations(&style) && (slice.is_none() || !splittable)),
         monolithic,
         slice,
-        edges: slice.map_or(0.0, |(_, trailing)| trailing),
+        edges: 0.0,
     }
 }
 
@@ -2728,7 +2759,7 @@ pub(super) fn layout(
                         x: x + left,
                         y: origin.y,
                         width: right - left,
-                        height: column_height,
+                        height: sliced_piece_clip_height(sliced, pieces, index, column_height),
                     }
                     .into()
                 }),
