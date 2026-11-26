@@ -30,6 +30,7 @@ struct Record {
     expected_document: Option<crate::HtmlDocument>,
     offered_table_pages: usize,
     inspect_sample: bool,
+    abort_before_sample: Option<AbortController>,
     complete_sample_count: Option<u32>,
     sample_rows: usize,
     paint_lines: Vec<Vec<NodeId>>,
@@ -86,6 +87,9 @@ impl PageSink for &mut Record {
     }
 
     fn wants_table_sample(&self) -> bool {
+        if let Some(controller) = &self.abort_before_sample {
+            controller.abort();
+        }
         self.inspect_sample
     }
 
@@ -95,6 +99,11 @@ impl PageSink for &mut Record {
         ending: &DocumentLayout,
         rows: &mut TableTextRows<'_>,
     ) -> std::io::Result<Option<u32>> {
+        assert!(
+            Shared::default()
+                .stage_table_sample(sample, ending, rows)?
+                .is_none()
+        );
         assert!(sample.pages().count() > 1);
         assert_eq!(ending.pages().len(), 2);
         let first = body_rows(sample.page_at(0));
@@ -171,7 +180,7 @@ fn painted_line_roots(page: crate::Page<'_>) -> Vec<NodeId> {
         .collect()
 }
 
-fn batch_pages(html: &str) -> Vec<(u32, Vec<NodeId>)> {
+fn batch_layout(html: &str) -> DocumentLayout {
     let resources = RenderResources::new();
     let doc = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
     let LayoutStatus::Completed(laid_out) = layout(
@@ -184,6 +193,10 @@ fn batch_pages(html: &str) -> Vec<(u32, Vec<NodeId>)> {
         panic!("aborted");
     };
     laid_out
+}
+
+fn batch_pages(html: &str) -> Vec<(u32, Vec<NodeId>)> {
+    batch_layout(html)
         .pages()
         .map(|page| (page.index(), page.fragments().map(|f| f.node()).collect()))
         .collect()
@@ -2322,4 +2335,30 @@ fn table_sample_rejects_rows_split_across_pages() {
     assert_eq!(sink.sample_rows, 0);
     assert_eq!(sink.pages, batch_pages(&html));
     assert_eq!(summary.page_count as usize, sink.pages.len());
+}
+
+#[test]
+fn cancelling_before_the_first_table_sample_reports_aborted() {
+    let controller = AbortController::new();
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let mut sink = Record {
+        inspect_sample: true,
+        abort_before_sample: Some(controller),
+        ..Default::default()
+    };
+    assert!(matches!(
+        stream(&sample_table_html(), 8192, &mut sink, config).unwrap(),
+        StreamStatus::Aborted
+    ));
+    assert!(sink.pages.is_empty() && !sink.finished);
+}
+
+#[test]
+fn ending_sample_needs_a_first_and_repeated_body_page() {
+    assert!(ending_sample(&batch_layout("<p>short</p>"), 600).is_none());
+    let layout = batch_layout(PAGED);
+    assert!(layout.pages().len() >= 3);
+    assert!(ending_sample(&layout, 600).is_none());
 }

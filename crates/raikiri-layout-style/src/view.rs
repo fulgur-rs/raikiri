@@ -59,7 +59,7 @@ impl<'a> OverrideLayer<'a> {
                     .find(|entry| entry.overrides_length(property))?;
                 match entry.as_borrowed().0 {
                     OverrideKind::Length(_, value) => Some(value),
-                    _ => unreachable!(),
+                    _ => unreachable!(), // cov:ignore: overrides_length selected an owned length entry
                 }
             }
         }

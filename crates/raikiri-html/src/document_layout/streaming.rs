@@ -1378,10 +1378,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                     &mut windows,
                     std::num::NonZeroUsize::new(512).unwrap(),
                     &mut self.sink,
-                )?;
+                );
                 match status {
-                    StreamStatus::Aborted => return Ok(StreamStatus::Aborted),
-                    StreamStatus::Completed(Some(page_count)) => {
+                    Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted))
+                    | Ok(StreamStatus::Aborted) => return Ok(StreamStatus::Aborted),
+                    Ok(StreamStatus::Completed(Some(page_count))) => {
                         #[cfg(feature = "streaming-diagnostics")]
                         self.settings.diagnostics.update(|mut stats| {
                             stats.table_window_pages = page_count;
@@ -1403,7 +1404,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                             .map(StreamStatus::Completed)
                             .map_err(RenderError::Io);
                     }
-                    StreamStatus::Completed(None) => {}
+                    Err(error) => return Err(error),
+                    Ok(StreamStatus::Completed(None)) => {}
                 }
             }
             self.replay_table(replay)?;
