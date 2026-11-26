@@ -169,6 +169,11 @@ impl LayoutSession<'_> {
                 .filter_map(|(_, _, entry)| entry.calc_owner())
                 .cloned(),
         );
+        if self.context.content_limit_depth == 0 && !self.context.content_limit_measures.is_empty()
+        {
+            let changed: Vec<usize> = indexed.iter().map(|&(_, index, _)| index).collect();
+            crate::layout::dispatch::content_limits::forget_measures_around(self, &changed);
+        }
         #[cfg(test)]
         let mut applied = 0;
         for (key, index, entry) in indexed {
@@ -224,12 +229,20 @@ impl LayoutSession<'_> {
             checkpoint <= self.override_checkpoint(),
             "scope checkpoint is active"
         );
+        // Only a change outside every keyword-size layout can reach the
+        // measures those layouts keep.
+        let track = self.context.content_limit_depth == 0
+            && !self.context.content_limit_measures.is_empty();
+        let mut changed = Vec::new();
         while self.override_checkpoint() > checkpoint {
             let saved = self
                 .scoped_overrides
                 .journal
                 .pop()
                 .expect("active override");
+            if track {
+                changed.extend(self.nodes.layout_index(saved.token.key));
+            }
             self.note_override_changed(saved.token.key, saved.local);
             for snapshot in saved.transposed.into_iter().rev() {
                 snapshot.restore(&mut self.context.transposed_blocks);
@@ -242,6 +255,7 @@ impl LayoutSession<'_> {
             state.entries.truncate(saved.token.length);
             state.depth = saved.token.depth;
         }
+        crate::layout::dispatch::content_limits::forget_measures_around(self, &changed);
     }
 
     pub(crate) fn begin_edge_recording(

@@ -219,12 +219,16 @@ pub(crate) struct LayoutContext {
     /// parent holds in, which a `stretch` height limit leaves out of its room
     /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
     pub(crate) held_margins: Vec<crate::layout::dispatch::content_limits::HeldMargins>,
-    /// The width or height each box measured for its keyword sizes, while the
-    /// outermost box laying out with them runs, and how many such layouts are
+    /// The width or height each box measured for its keyword sizes, kept until
+    /// a style the measure reads changes, and how many such layouts are
     /// running (see `dispatch::content_limits`).
     pub(crate) content_limit_measures:
         HashMap<crate::layout::dispatch::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
+    /// How many keyword-size measures were laid out, for tests that check a
+    /// box is not measured again.
+    #[cfg(test)]
+    pub(crate) content_limit_measure_runs: usize,
     /// The final layout inputs observed for out-of-flow candidates during a
     /// preliminary positioning pass, before their intrinsic limits are
     /// installed.
