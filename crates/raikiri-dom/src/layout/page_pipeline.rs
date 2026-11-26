@@ -4926,8 +4926,8 @@ fn resolve_document_images(
 const MAX_BREAK_TOP_ATTEMPTS: usize = 6;
 
 /// How many more page attempts the gaps above lines moved past page edges,
-/// away from the floats beside them, take at most, so that a document with
-/// many such lines is not laid out once for each.
+/// away from the floats beside them, take at most, so that a document whose
+/// walks keep finding such lines is not laid out once for each.
 const MAX_LINE_GAP_ATTEMPTS: usize = 8;
 
 fn layout_pages_core(
@@ -4968,12 +4968,13 @@ fn layout_pages_core(
     // Each float whose growth past a page edge first narrows the lines
     // beside it takes one more attempt to break them there.
     let mut line_extent_floats = HashSet::new();
-    // Each gap left above a line that the walk moved past a page edge, away
-    // from the floats beside it, takes one more attempt to break the lines
-    // after it where they land, up to a bound: a gap dropped and planned
-    // again counts once. Once those are spent, the plan keeps the gaps it
-    // has, and the pages laid out with them stand.
+    // Each attempt that plans new gaps above lines that the walk moved past
+    // a page edge, away from the floats beside them, takes one more attempt
+    // to break the lines after them where they land, up to a bound: a gap
+    // dropped and planned again is no new one. Once those are spent, the
+    // plan keeps the gaps it has, and the pages laid out with them stand.
     let mut line_gaps = HashSet::new();
+    let mut line_gap_growths = 0;
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
     let mut break_top_settled = None;
@@ -4984,7 +4985,7 @@ fn layout_pages_core(
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
             + line_extent_floats.len()
-            + line_gaps.len().min(MAX_LINE_GAP_ATTEMPTS)
+            + line_gap_growths.min(MAX_LINE_GAP_ATTEMPTS)
     {
         attempts += 1;
         let mut next = layout_pages_attempt(
@@ -5005,7 +5006,7 @@ fn layout_pages_core(
         // Once the gaps have taken all the attempts they may, the plan
         // keeps the gaps it has: the pages laid out with them stand, though
         // the lines after the last gap keep the room they were broken for.
-        if line_gaps.len() >= MAX_LINE_GAP_ATTEMPTS {
+        if line_gap_growths >= MAX_LINE_GAP_ATTEMPTS {
             next.resumptions.keep_line_gaps_of(&resumptions);
         }
         let settled_apart_from_flows = !next.moved_columns
@@ -5015,7 +5016,9 @@ fn layout_pages_core(
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
         line_extent_floats.extend(next.resumptions.line_extent_floats());
+        let known_line_gaps = line_gaps.len();
         line_gaps.extend(next.resumptions.planned_line_gaps());
+        line_gap_growths += usize::from(line_gaps.len() > known_line_gaps);
         let known_break_tops = break_top_nodes.len();
         break_top_nodes.extend(next.resumptions.break_top_nodes());
         let break_tops_grew = break_top_nodes.len() > known_break_tops;
@@ -20280,26 +20283,156 @@ fn note_line_gap(
     let layout = &document.nodes[root].layout;
     let content_top = current_abs_y(document, root) + layout.border.top + layout.padding.top;
     let floats_above = floats
-        .into_iter()
-        .all(|float| current_abs_y(document, float) < content_top + walked - 0.01);
+        .iter()
+        .all(|&float| current_abs_y(document, float) < content_top + walked - 0.01);
     // Only a line that floats narrowed, or one after it, breaks differently
     // where it lands: once the floats end above the lines, a page edge they
     // cross moves them with the room they already have.
     // The room a line had is its content and what it left unfilled, with
     // the text indent of an indented line, which neither counts.
+    let narrowed = (line..lines.lines.len()).any(|index| line_is_narrowed(ifc, lines, index));
+    if floats_above && narrowed {
+        let follows = gaps_keep_line_breaks(
+            document,
+            cascade,
+            root,
+            (ifc, lines),
+            content_top,
+            line,
+            delta,
+        );
+        document
+            .context
+            .line_gaps
+            .push(super::context::LineGapNote {
+                root,
+                line,
+                top,
+                delta,
+                follows,
+            });
+    }
+}
+
+/// Whether something beside the line `index` of the paragraph `ifc`, a
+/// float, left it less room than the paragraph's width. The room a line had
+/// is its content and what it left unfilled, with the text indent of an
+/// indented line, which neither counts.
+fn line_is_narrowed(
+    ifc: &crate::layout::ifc::root::IfcRoot,
+    lines: &crate::layout::ifc::root::IfcLines,
+    index: usize,
+) -> bool {
     let text_indent = ifc.options.text_indent;
     let indent = crate::layout::ifc::flow::resolve_indent(ifc.indent, lines.width);
-    let narrowed = (line..lines.lines.len()).any(|index| {
-        let after_break = index > 0 && lines.lines[index - 1].forced_break().is_some();
-        let indented = (index == 0 || text_indent.each_line && after_break) != text_indent.hanging;
-        let room = lines.lines[index].inline_size()
-            + lines.lines[index].remaining_inline_size()
-            + if indented { indent } else { 0.0 };
-        room < lines.width - 0.5
-    });
-    if floats_above && narrowed {
-        document.context.line_gaps.push((root, top, delta));
-    }
+    let after_break = index > 0 && lines.lines[index - 1].forced_break().is_some();
+    let indented = (index == 0 || text_indent.each_line && after_break) != text_indent.hanging;
+    let room = lines.lines[index].inline_size()
+        + lines.lines[index].remaining_inline_size()
+        + if indented { indent } else { 0.0 };
+    room < lines.width - 0.5
+}
+
+/// Whether the walk noted lines of the paragraph `root` before its line
+/// `line`, which it moved down by `delta`, and the gaps planned above them
+/// leave each line from the first of them through `line` beside the same
+/// floats where it lands: each then breaks as layout broke it, so that the
+/// walk moved `line` from where layout puts it with those gaps.
+/// `content_top` is where the walk has the paragraph's content box, and
+/// `lines` are the lines of its layout `ifc`.
+///
+/// The floats are those of the formatting context the lines are broken in,
+/// as the walk has them. That is where layout has them only while the walk
+/// moved no line of the paragraph but those it noted, and every line it
+/// judged beside a float there is one that layout narrowed; any other
+/// paragraph is left to plan one gap at a time.
+fn gaps_keep_line_breaks(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    (ifc, lines): (
+        &crate::layout::ifc::root::IfcRoot,
+        &crate::layout::ifc::root::IfcLines,
+    ),
+    content_top: f32,
+    line: usize,
+    delta: f32,
+) -> bool {
+    let earlier: Vec<(usize, f32)> = document
+        .context
+        .line_gaps
+        .iter()
+        .filter(|note| note.root == root)
+        .map(|note| (note.line, note.delta))
+        .collect();
+    let Some(&(first, _)) = earlier.first() else {
+        return false;
+    };
+    // The walk notes the lines of a paragraph in order; any other order
+    // leaves no gap above the next to plan it with.
+    let ordered = earlier
+        .iter()
+        .map(|&(noted, _)| noted)
+        .chain(std::iter::once(line))
+        .is_sorted_by(|a, b| a < b);
+    let context = std::iter::once(root)
+        .chain(document.layout_ancestors(root))
+        .find(|&id| id == 0 || holds_floats(document, cascade, id))
+        .unwrap_or(0);
+    // The margin box of each float, from the paragraph's content-box top.
+    // Layout adds the offsets of relatively positioned inline ancestors
+    // after it places a float, and the lines are broken against where it
+    // placed it.
+    let extents: Vec<(f32, f32)> = own_floats(document, cascade, context)
+        .into_iter()
+        .map(|float| {
+            let layout = &document.nodes[float].layout;
+            let top = current_abs_y(document, float)
+                - float_resumption::relative_inline_offset_y(document, float)
+                - content_top
+                - layout.margin.top;
+            (
+                top,
+                top + layout.margin.top + layout.size.height + layout.margin.bottom,
+            )
+        })
+        .collect();
+    let beside = |top: f32, bottom: f32| {
+        extents
+            .iter()
+            .map(|&(start, end)| start < bottom - 0.01 && end > top + 0.01)
+            .collect::<Vec<_>>()
+    };
+    // The noted moves, this one last, in the order of their lines.
+    let notes: Vec<(usize, f32)> = earlier
+        .iter()
+        .copied()
+        .chain(std::iter::once((line, delta)))
+        .collect();
+    // How far the noted moves through the line reached so far, that line
+    // included, moved it; the lines are visited in order, so the sum grows
+    // from one line to the next.
+    let mut next_note = 0;
+    let mut noted = 0.0;
+    // What the walk moved every line by before the noted moves.
+    let base = lines.shift_of(0);
+    ordered
+        && !extents.is_empty()
+        && (0..=line).all(|index| {
+            while let Some(&(_, moved)) = notes.get(next_note).filter(|&&(at, _)| at <= index) {
+                noted += moved;
+                next_note += 1;
+            }
+            let current = &lines.lines[index];
+            let top = current.block_offset() + base;
+            let bottom = top + current.block_size();
+            let here = beside(top, bottom);
+            // The line lands below the gaps of the noted moves above it.
+            let shift = noted - if index == line { delta } else { 0.0 };
+            (lines.shift_of(index) - noted - base).abs() <= 0.01
+                && here.iter().any(|&by| by) == line_is_narrowed(ifc, lines, index)
+                && (index < first || here == beside(top + shift, bottom + shift))
+        })
 }
 
 /// Notes where the content box of the paragraph `root` starts on its page

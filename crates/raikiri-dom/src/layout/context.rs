@@ -19,6 +19,27 @@ pub(crate) struct IfcProbeWidths {
     pub(crate) answered: f32,
 }
 
+/// A line the page walk moved down past a page edge while its paragraph was
+/// broken beside floats.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineGapNote {
+    /// The paragraph.
+    pub(crate) root: usize,
+    /// The line's index in the paragraph.
+    pub(crate) line: usize,
+    /// The line's block offset from the paragraph's content-box top, as
+    /// layout put it.
+    pub(crate) top: f32,
+    /// How far the walk moved the line.
+    pub(crate) delta: f32,
+    /// Whether the walk noted earlier lines of the same paragraph, and the
+    /// lines from the first of them through this one break the same once the
+    /// gaps above them move them down: the floats beside each are the same
+    /// where it lands. The walk then moved this line from where layout puts
+    /// it with those gaps, so its gap is planned with theirs.
+    pub(crate) follows: bool,
+}
+
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
@@ -87,9 +108,9 @@ pub(crate) struct LayoutContext {
     /// but not away from floats beside them.
     pub(crate) flows_moved_otherwise: Vec<usize>,
     /// Each line the page walk moved down past a page edge while its
-    /// paragraph was broken beside floats: the paragraph, the line's block
-    /// offset from the paragraph's content-box top, and how far it moved.
-    pub(crate) line_gaps: Vec<(usize, f32, f32)>,
+    /// paragraph was broken beside floats, in the order the walk moved them
+    /// (see [`LineGapNote`]).
+    pub(crate) line_gaps: Vec<LineGapNote>,
     /// Where the content box of each paragraph the page walk judged starts
     /// on its page, from the page's origin.
     pub(crate) paragraph_page_tops: HashMap<usize, f32>,
