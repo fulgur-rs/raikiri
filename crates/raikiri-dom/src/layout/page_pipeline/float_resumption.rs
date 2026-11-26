@@ -402,33 +402,65 @@ impl Plan {
         // did on its page when they were found, and takes the first new move
         // the walk makes below the line after its last gap: a gap moves the
         // lines after it, so the later moves of the same walk no longer fall
-        // where they did, and a move of that line itself is no new gap.
+        // where they did, and a move of that line itself is no new gap. The
+        // later moves still fall where they did when the lines from that
+        // first move on break the same where the gaps put them (see
+        // `LineGapNote::follows`): each of them takes a gap too, moved down
+        // by the gaps the same walk planned above it, so that a float
+        // running beside the lines of many pages does not take one layout
+        // for each page edge.
         plan.line_gaps
             .clone_from(&document.context.float_resumptions.line_gaps);
         // A paragraph whose gaps went stale takes no new one from the same
         // walk: its lines were measured with the stale gaps above them, so it
-        // is judged again laid out without them.
-        let mut gapped: HashSet<usize> = HashSet::new();
+        // is judged again laid out without them. Each other paragraph that
+        // took a new gap has how far the gaps this walk planned for it move
+        // the next line down, while its later moves may still take gaps.
+        let mut gapped: HashMap<usize, Option<f32>> = HashMap::new();
+        let mut passed_over: HashSet<usize> = HashSet::new();
         for &root in &document.context.stale_line_gaps {
             plan.line_gaps.remove(&root);
-            gapped.insert(root);
+            gapped.insert(root, None);
         }
-        for &(root, top, delta) in &document.context.line_gaps {
+        for note in &document.context.line_gaps {
+            let root = note.root;
+            match gapped.get_mut(&root) {
+                Some(Some(shift)) if note.follows => {
+                    let top = note.top + *shift;
+                    *shift += note.delta;
+                    plan.line_gaps
+                        .get_mut(&root)
+                        .expect("a paragraph that took a gap has it planned")
+                        .1
+                        .push((top, note.delta));
+                    continue;
+                }
+                Some(taken) => {
+                    *taken = None;
+                    continue;
+                }
+                None => {}
+            }
             let page_top = document.context.paragraph_page_tops.get(&root);
             let below_gaps = plan
                 .line_gaps
                 .get(&root)
                 .and_then(|(_, gaps)| gaps.last())
-                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
+                .is_none_or(|&(last, moved)| note.top > last + moved + 0.01);
             if let Some(&page_top) = page_top
                 && below_gaps
-                && gapped.insert(root)
             {
+                // A later move follows the gaps of the moves before it, so
+                // one passed over leaves no later move to follow this gap.
+                let follows = (!passed_over.contains(&root)).then_some(note.delta);
+                gapped.insert(root, follows);
                 plan.line_gaps
                     .entry(root)
                     .or_insert_with(|| (page_top, Vec::new()))
                     .1
-                    .push((top, delta));
+                    .push((note.top, note.delta));
+            } else {
+                passed_over.insert(root);
             }
         }
         // A float keeps the extent first planned for it, even once it no

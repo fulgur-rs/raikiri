@@ -197,34 +197,55 @@ fn a_hanging_indent_is_no_float_narrowing_a_line() {
     );
 }
 
-#[test]
-fn a_float_many_pages_tall_still_paginates() {
-    // A float 1095px tall narrows the lines of eleven pages, and the line
-    // each page edge moves takes a gap where it lands, up to a bound on the
-    // layouts that takes. Chromium puts one word on each line beside the
-    // float, three lines on each page. Past the bound, the pages laid out
-    // stand: the first line below the float keeps the room it was broken
-    // for, and every word is still laid out.
-    let text = vec!["XX"; 100].join(" ");
-    let laid_out = words(&format!(
-        "<div style='float:left;width:40px;height:1095px'></div>{text}"
-    ));
-    // The words of the pages beside the float, which `words` lists as
-    // `XX@page:x,y`.
-    let beside: Vec<&str> = laid_out
-        .split(' ')
-        .filter(|word| {
-            word.trim_start_matches("XX@")
-                .split_once(':')
-                .and_then(|(page, _)| page.parse::<u32>().ok())
-                .is_some_and(|page| page <= 10)
-        })
-        .collect();
-    let mut expected = Vec::new();
-    for page in 0..=10 {
-        expected.extend((0..3).map(|line| format!("XX@{page}:40,{}", line * 30)));
+/// Where Chromium puts 100 words of `XX` after a float 40px wide and
+/// `height` tall: each line beside the float holds one word, each line
+/// below it two, three lines to a page, and the last page keeps two lines.
+fn beside_a_float(height: u32) -> String {
+    let mut lines = Vec::new();
+    let mut left = 100;
+    while left > 0 {
+        let (page, slot) = (lines.len() as u32 / 3, lines.len() as u32 % 3);
+        let beside = page * 100 + slot * 30 < height;
+        let count = if beside { 1 } else { 2.min(left) };
+        left -= count;
+        lines.push((page, slot, beside, count));
     }
-    expected.sort();
-    assert_eq!(beside.join(" "), expected.join(" "));
-    assert_eq!(laid_out.split(' ').count(), 100);
+    if lines.len() % 3 == 1 {
+        let page = lines[lines.len() - 1].0;
+        let moved = lines.len() - 2;
+        lines[moved].0 = page;
+        lines[moved].1 = 0;
+        lines[moved + 1].1 = 1;
+    }
+    let mut words = Vec::new();
+    for (page, slot, beside, count) in lines {
+        let xs: &[u32] = if beside { &[40] } else { &[0, 60] };
+        for x in &xs[..count as usize] {
+            words.push(format!("XX@{page}:{x},{}", slot * 30));
+        }
+    }
+    words.sort();
+    words.join(" ")
+}
+
+#[test]
+fn the_lines_below_a_float_many_pages_tall_take_the_full_width() {
+    // A float 1095px tall narrows the lines of eleven pages, and each page
+    // edge moves a narrowed line down; the lines on page 11, below the
+    // float, take the full width. So do those below floats ending on other
+    // pages, and those of a paragraph after the float.
+    let text = vec!["XX"; 100].join(" ");
+    for height in [595, 1095, 1495, 2095] {
+        let float = format!("<div style='float:left;width:40px;height:{height}px'></div>");
+        assert_eq!(
+            words(&format!("{float}{text}")),
+            beside_a_float(height),
+            "{height}"
+        );
+        assert_eq!(
+            words(&format!("{float}<p style='margin:0'>{text}</p>")),
+            beside_a_float(height),
+            "{height} paragraph"
+        );
+    }
 }

@@ -4857,8 +4857,8 @@ fn resolve_document_images(
 const MAX_BREAK_TOP_ATTEMPTS: usize = 6;
 
 /// How many more page attempts the gaps above lines moved past page edges,
-/// away from the floats beside them, take at most, so that a document with
-/// many such lines is not laid out once for each.
+/// away from the floats beside them, take at most, so that a document whose
+/// walks keep finding such lines is not laid out once for each.
 const MAX_LINE_GAP_ATTEMPTS: usize = 8;
 
 fn layout_pages_core(
@@ -4899,12 +4899,13 @@ fn layout_pages_core(
     // Each float whose growth past a page edge first narrows the lines
     // beside it takes one more attempt to break them there.
     let mut line_extent_floats = HashSet::new();
-    // Each gap left above a line that the walk moved past a page edge, away
-    // from the floats beside it, takes one more attempt to break the lines
-    // after it where they land, up to a bound: a gap dropped and planned
-    // again counts once. Once those are spent, the plan keeps the gaps it
-    // has, and the pages laid out with them stand.
+    // Each attempt that plans new gaps above lines that the walk moved past
+    // a page edge, away from the floats beside them, takes one more attempt
+    // to break the lines after them where they land, up to a bound: a gap
+    // dropped and planned again is no new one. Once those are spent, the
+    // plan keeps the gaps it has, and the pages laid out with them stand.
     let mut line_gaps = HashSet::new();
+    let mut line_gap_growths = 0;
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
     let mut break_top_settled = None;
@@ -4915,7 +4916,7 @@ fn layout_pages_core(
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
             + line_extent_floats.len()
-            + line_gaps.len().min(MAX_LINE_GAP_ATTEMPTS)
+            + line_gap_growths.min(MAX_LINE_GAP_ATTEMPTS)
     {
         attempts += 1;
         let mut next = layout_pages_attempt(
@@ -4936,7 +4937,7 @@ fn layout_pages_core(
         // Once the gaps have taken all the attempts they may, the plan
         // keeps the gaps it has: the pages laid out with them stand, though
         // the lines after the last gap keep the room they were broken for.
-        if line_gaps.len() >= MAX_LINE_GAP_ATTEMPTS {
+        if line_gap_growths >= MAX_LINE_GAP_ATTEMPTS {
             next.resumptions.keep_line_gaps_of(&resumptions);
         }
         let settled_apart_from_flows = !next.moved_columns
@@ -4946,7 +4947,9 @@ fn layout_pages_core(
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
         line_extent_floats.extend(next.resumptions.line_extent_floats());
+        let known_line_gaps = line_gaps.len();
         line_gaps.extend(next.resumptions.planned_line_gaps());
+        line_gap_growths += usize::from(line_gaps.len() > known_line_gaps);
         let known_break_tops = break_top_nodes.len();
         break_top_nodes.extend(next.resumptions.break_top_nodes());
         let break_tops_grew = break_top_nodes.len() > known_break_tops;
@@ -20194,8 +20197,8 @@ fn note_line_gap(
     let layout = &document.nodes[root].layout;
     let content_top = current_abs_y(document, root) + layout.border.top + layout.padding.top;
     let floats_above = floats
-        .into_iter()
-        .all(|float| current_abs_y(document, float) < content_top + walked - 0.01);
+        .iter()
+        .all(|&float| current_abs_y(document, float) < content_top + walked - 0.01);
     // Only a line that floats narrowed, or one after it, breaks differently
     // where it lands: once the floats end above the lines, a page edge they
     // cross moves them with the room they already have.
@@ -20212,8 +20215,74 @@ fn note_line_gap(
         room < lines.width - 0.5
     });
     if floats_above && narrowed {
-        document.context.line_gaps.push((root, top, delta));
+        let follows = gaps_keep_line_breaks(document, root, &floats, lines, content_top, line);
+        document
+            .context
+            .line_gaps
+            .push(super::context::LineGapNote {
+                root,
+                line,
+                top,
+                delta,
+                follows,
+            });
     }
+}
+
+/// Whether the walk noted lines of the paragraph `root` before its line
+/// `line`, and the gaps planned above them leave each line from the first of
+/// them through `line` beside the same floats, of `floats`, where it lands:
+/// each then breaks as layout broke it, so that the walk moved `line` from
+/// where layout puts it with those gaps. `content_top` is where the walk has
+/// the paragraph's content box.
+fn gaps_keep_line_breaks(
+    document: &super::context::LayoutSession<'_>,
+    root: usize,
+    floats: &[usize],
+    lines: &crate::layout::ifc::root::IfcLines,
+    content_top: f32,
+    line: usize,
+) -> bool {
+    let earlier: Vec<(usize, f32)> = document
+        .context
+        .line_gaps
+        .iter()
+        .filter(|note| note.root == root)
+        .map(|note| (note.line, note.delta))
+        .collect();
+    let Some(&(first, _)) = earlier.first() else {
+        return false;
+    };
+    // The floats beside the band from `top` to `bottom`, as the paragraph's
+    // content box has them, each as the block offsets of its margin box.
+    let extents: Vec<(f32, f32)> = floats
+        .iter()
+        .map(|&float| {
+            let layout = &document.nodes[float].layout;
+            let top = current_abs_y(document, float) - content_top - layout.margin.top;
+            (
+                top,
+                top + layout.margin.top + layout.size.height + layout.margin.bottom,
+            )
+        })
+        .collect();
+    let beside = |top: f32, bottom: f32| {
+        extents
+            .iter()
+            .map(|&(start, end)| start < bottom - 0.01 && end > top + 0.01)
+            .collect::<Vec<_>>()
+    };
+    (first..=line).all(|index| {
+        let shift: f32 = earlier
+            .iter()
+            .filter(|&&(noted, _)| noted <= index)
+            .map(|&(_, delta)| delta)
+            .sum();
+        let current = &lines.lines[index];
+        let top = current.block_offset();
+        let bottom = top + current.block_size();
+        beside(top, bottom) == beside(top + shift, bottom + shift)
+    })
 }
 
 /// Notes where the content box of the paragraph `root` starts on its page
