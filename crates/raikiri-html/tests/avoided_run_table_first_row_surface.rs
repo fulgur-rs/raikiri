@@ -283,6 +283,207 @@ fn text_in_a_group_that_avoids_breaks_holds_the_group() {
 }
 
 #[test]
+fn a_forced_break_in_a_group_that_avoids_breaks_ends_what_the_text_holds() {
+    let group = |rows: &str| {
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">A{rows}</div><div style="display:table-row"><div style="display:table-cell">T</div></div></div>"#
+        )
+    };
+    let row = |glyph: char, style: &str| {
+        format!(
+            r#"<div style="display:table-row;{style}"><div style="display:table-cell">{glyph}</div></div>"#
+        )
+    };
+    // The break before the second row leaves the text with the first one.
+    let first = group(&(row('R', "") + &row('S', "break-before:page")));
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(10, open, &first, close), &[]),
+            [
+                (0, 'A', 45),
+                (0, 'H', 15),
+                (0, 'R', 75),
+                (0, 'Y', 5),
+                (1, 'S', 5),
+                (1, 'T', 35),
+                (1, 'Z', 65)
+            ],
+            "{open}"
+        );
+        assert_eq!(
+            glyph_tops(&document(20, open, &first, close), &[]),
+            [
+                (0, 'Y', 5),
+                (1, 'A', 35),
+                (1, 'H', 5),
+                (1, 'R', 65),
+                (2, 'S', 5),
+                (2, 'T', 35),
+                (2, 'Z', 65)
+            ],
+            "{open}"
+        );
+    }
+    // A break before the first row leaves the text alone.
+    let alone = group(&(row('R', "break-before:page") + &row('S', "")));
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(40, open, &alone, close), &[]),
+            [
+                (0, 'A', 75),
+                (0, 'H', 45),
+                (0, 'Y', 5),
+                (1, 'R', 5),
+                (1, 'S', 35),
+                (1, 'T', 65),
+                (2, 'Z', 5)
+            ],
+            "{open}"
+        );
+    }
+}
+
+#[test]
+fn a_forced_break_at_a_block_of_the_text_ends_what_it_holds() {
+    let group = |content: &str| {
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">{content}</div><div style="display:table-row"><div style="display:table-cell">T</div></div></div>"#
+        )
+    };
+    let row = |glyph: char, style: &str| {
+        format!(
+            r#"<div style="display:table-row;{style}"><div style="display:table-cell">{glyph}</div></div>"#
+        )
+    };
+    // After the last row, before text that follows the rows.
+    let trailing = group(&format!("A{}B", row('R', "break-after:page")));
+    // After a block of the text before the rows.
+    let after = group(&format!(
+        r#"<div style="break-after:page">A</div>{}{}"#,
+        row('R', ""),
+        row('S', "")
+    ));
+    // Before a block of the text before the rows.
+    let before = group(&format!(
+        r#"<div>A</div><div style="break-before:page">C</div>{}"#,
+        row('R', "")
+    ));
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(10, open, &trailing, close), &[]),
+            [
+                (0, 'A', 45),
+                (0, 'H', 15),
+                (0, 'R', 75),
+                (0, 'Y', 5),
+                (1, 'B', 5),
+                (1, 'T', 35),
+                (1, 'Z', 65)
+            ],
+            "{open}"
+        );
+        assert_eq!(
+            glyph_tops(&document(20, open, &after, close), &[]),
+            [
+                (0, 'A', 55),
+                (0, 'H', 25),
+                (0, 'Y', 5),
+                (1, 'R', 5),
+                (1, 'S', 35),
+                (1, 'T', 65),
+                (2, 'Z', 5)
+            ],
+            "{open}"
+        );
+        assert_eq!(
+            glyph_tops(&document(20, open, &before, close), &[]),
+            [
+                (0, 'A', 55),
+                (0, 'H', 25),
+                (0, 'Y', 5),
+                (1, 'C', 5),
+                (1, 'R', 35),
+                (1, 'T', 65),
+                (2, 'Z', 5)
+            ],
+            "{open}"
+        );
+    }
+}
+
+#[test]
+fn a_forced_break_in_text_before_the_rows_ends_the_first_row() {
+    let row = r#"<div style="display:table-row"><div style="display:table-cell">R</div></div>"#;
+    let tables = [
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group"><div>A</div><div style="break-before:page">C</div>{row}</div></div>"#
+        ),
+        format!(
+            r#"<div style="display:table"><div>A</div><div style="break-before:page">C</div>{row}</div>"#
+        ),
+        format!(
+            r#"<div style="display:table"><div style="break-after:page">A</div><div>C</div>{row}</div>"#
+        ),
+    ];
+    // Text before the block that breaks is content of the row before it.
+    let text =
+        format!(r#"<div style="display:table">A<div style="break-before:page">C</div>{row}</div>"#);
+    for table in tables.iter().chain([&text]) {
+        for (open, close) in WRAPPERS {
+            assert_eq!(
+                glyph_tops(&document(20, open, table, close), &[]),
+                [
+                    (0, 'A', 55),
+                    (0, 'H', 25),
+                    (0, 'Y', 5),
+                    (1, 'C', 5),
+                    (1, 'R', 35),
+                    (1, 'Z', 65)
+                ],
+                "{open} {table}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_forced_break_at_a_block_beside_the_rows_ends_what_a_held_group_holds() {
+    let group = |content: &str| {
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">{content}</div><div style="display:table-row"><div style="display:table-cell">T</div></div></div>"#
+        )
+    };
+    let row = r#"<div style="display:table-row"><div style="display:table-cell">R</div></div>"#;
+    let empty = |height: u32| format!(r#"<div style="display:table-row;height:{height}px"></div>"#);
+    // After the text before the rows.
+    let after_text = group(&format!(
+        r#"<div style="break-after:page">A</div>{row}{}"#,
+        empty(5)
+    ));
+    // Before a block after the rows.
+    let before_block = group(&format!(
+        r#"A{row}<div style="break-before:page;height:5px"></div>"#
+    ));
+    for (open, close) in WRAPPERS {
+        for table in [&after_text, &before_block] {
+            let tops = glyph_tops(&document(8, open, table, close), &[]);
+            assert_eq!(
+                tops.iter()
+                    .filter(|(page, ..)| *page == 0)
+                    .map(|&(_, glyph, top)| (glyph, top))
+                    .collect::<Vec<_>>(),
+                if std::ptr::eq(table, &after_text) {
+                    vec![('A', 43), ('H', 13), ('Y', 5)]
+                } else {
+                    vec![('A', 43), ('H', 13), ('R', 73), ('Y', 5)]
+                },
+                "{open} {table}"
+            );
+        }
+    }
+}
+
+#[test]
 fn generated_content_stays_tied_across_a_forced_break_before_the_rows() {
     let table = r#"<table class="b"><tr style="break-before:page"><td>R</td></tr><tr><td>S</td></tr></table>"#;
     for (open, close) in WRAPPERS {
