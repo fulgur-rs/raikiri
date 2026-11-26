@@ -125,6 +125,9 @@ impl PageSink for &mut Record {
             }
         }
         self.staged.push(0);
+        if self.fail_on_page == Some(0) {
+            return Err(std::io::Error::other("sample output failed"));
+        }
         if let Some((_, controller)) = &self.abort_on_page {
             controller.abort();
             rows.read_batch()?;
@@ -2326,14 +2329,50 @@ fn table_sample_respects_page_limit_and_validates_completed_count() {
 
 #[test]
 fn table_sample_rejects_rows_split_across_pages() {
-    let html = sample_table_html().replace("tr{break-inside:avoid}", "");
+    let html = sample_table_html()
+        .replace("tr{break-inside:avoid}", "")
+        .replacen("row &amp; 0", &"wrapped cell ".repeat(600), 1);
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .stylesheet("body{font-family:Ahem;font-size:12px}");
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(layout) = crate::layout(
+        &document,
+        Default::default(),
+        Default::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("layout aborted");
+    };
+    assert!(layout.pages().map(body_rows).sum::<usize>() > 600);
     let mut sink = Record {
         inspect_sample: true,
         ..Default::default()
     };
-    let summary = completed(stream(&html, 8192, &mut sink, Default::default()).unwrap());
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut sink,
+    );
+    for chunk in html.as_bytes().chunks(8192) {
+        stream.feed(chunk).unwrap();
+    }
+    let summary = completed(stream.finish().unwrap());
     assert_eq!(sink.sample_rows, 0);
-    assert_eq!(sink.pages, batch_pages(&html));
+    let expected: Vec<_> = layout
+        .pages()
+        .map(|page| (page.index(), page.fragments().map(|f| f.node()).collect()))
+        .collect();
+    assert_eq!(sink.pages, expected);
     assert_eq!(summary.page_count as usize, sink.pages.len());
 }
 
@@ -2361,4 +2400,19 @@ fn ending_sample_needs_a_first_and_repeated_body_page() {
     let layout = batch_layout(PAGED);
     assert!(layout.pages().len() >= 3);
     assert!(ending_sample(&layout, 600).is_none());
+}
+
+#[test]
+fn a_sample_output_error_discards_the_tentative_page() {
+    let mut sink = Record {
+        inspect_sample: true,
+        fail_on_page: Some(0),
+        ..Default::default()
+    };
+    let result = stream(&sample_table_html(), 8192, &mut sink, Default::default());
+    assert!(
+        matches!(result, Err(RenderError::Io(error)) if error.to_string() == "sample output failed")
+    );
+    assert_eq!(sink.discarded, 1);
+    assert!(sink.staged.is_empty() && sink.pages.is_empty() && !sink.finished);
 }
