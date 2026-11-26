@@ -741,7 +741,10 @@ impl PaginationState {
         let Some(float) = self.float_break_page.take() else {
             return comparison_page_name;
         };
-        if float.page != self.current_page || !float.beside(candidate) {
+        // The float's own content may have taken the walk on past the page
+        // it opened, when the float splits there; the content after the
+        // float still starts beside it on that page.
+        if float.page > self.current_page || !float.beside(candidate) {
             return comparison_page_name;
         }
         if super::clears_float(cascade, candidate.node_id, float.float) {

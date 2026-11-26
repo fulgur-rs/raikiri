@@ -1764,12 +1764,14 @@ fn prepare_page_root(
                 || !document.forced_break_float_floor.is_empty()
                 || !document.forced_break_line_float_floor.is_empty()
                 || !document.named_break_floats.is_empty()
+                || !document.float_flow_named_breaks.is_empty()
             {
                 document.forced_break_clearance.clear();
                 document.forced_break_line_clearance.clear();
                 document.forced_break_float_floor.clear();
                 document.forced_break_line_float_floor.clear();
                 document.named_break_floats.clear();
+                document.float_flow_named_breaks.clear();
                 document.layout_dirty = true;
             }
             document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -3886,7 +3888,7 @@ fn clear_floats_at_forced_breaks<'name>(
         previous.as_ref().is_some_and(|previous| previous != name)
     };
     // Walk the boxes with the page value each inherits. Floats are no part of
-    // the page flow, and their insides are not walked.
+    // the page flow: their insides are walked after it, each on its own.
     let mut cleared = Vec::new();
     document.context.float_resumption_candidates.clear();
     document.context.float_break_closers.clear();
@@ -3896,6 +3898,9 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared_lines_to_float_floor = Vec::new();
     let mut named_break_floats = Vec::new();
     let mut trailing_floats = HashMap::new();
+    // The floats the walk passes, each with the page value its content
+    // inherits.
+    let mut float_flows = Vec::new();
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
@@ -3986,6 +3991,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             }
             if is_float(document, child) {
+                if has_named_pages {
+                    float_flows.push((child, selected_page_name(cascade, child).or(inherited)));
+                }
                 let carries_flow_break = after_forced_break && !float_after_break;
                 page_start_inherited = false;
                 // The first float right after a forced break goes to the new
@@ -4163,22 +4171,86 @@ fn clear_floats_at_forced_breaks<'name>(
             }
         }
     }
+    // A float's flow is no part of the page flow, but a change of page type
+    // between two boxes in it, or between a box and the text after it,
+    // breaks the page there as a forced break would: the float splits, and
+    // the pages it goes on to keep the page type of the flow around it
+    // (Chromium). The first box of a box in that flow has nothing before it
+    // there to differ from, as in the page flow. The floats inside a float
+    // are walked the same way.
+    let mut float_flow_named_breaks = Vec::new();
+    while let Some((parent, inherited)) = float_flows.pop() {
+        let mut previous_page_name =
+            crate::generated_content::has_page_flow_generated_prefix(cascade, parent)
+                .then_some(inherited);
+        let mut last_block = None;
+        for item in child_boxes(document, parent, false) {
+            let Some(child) = item else {
+                if let Some(block) = last_block.take()
+                    && changes_page(&previous_page_name, &inherited)
+                {
+                    float_flow_named_breaks.push((block, false));
+                }
+                previous_page_name = Some(inherited);
+                continue;
+            };
+            let own_page_name = selected_page_name(cascade, child).or(inherited);
+            if is_float(document, child) {
+                float_flows.push((child, own_page_name));
+                continue;
+            }
+            let (_, start_page_name) = propagated_start_page_name_with_transposed_axes(
+                document,
+                cascade,
+                child,
+                inherited,
+                pagination_on_transposed_axes,
+            );
+            if changes_page(&previous_page_name, &start_page_name) {
+                float_flow_named_breaks.push((child, true));
+            }
+            last_block = Some(child);
+            previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
+            if !is_monolithic_for_pagination_with_transposed_axes(
+                document,
+                cascade,
+                child,
+                pagination_on_transposed_axes,
+            ) {
+                float_flows.push((child, own_page_name));
+            }
+        }
+        // Generated `::after` content ends the box like text.
+        if let Some(block) = last_block
+            && changes_page(&previous_page_name, &inherited)
+            && crate::generated_content::is_in_flow_generated_text(
+                cascade,
+                parent,
+                raikiri_style::PseudoElem::After,
+            )
+        {
+            float_flow_named_breaks.push((block, false));
+        }
+    }
     cleared.sort_unstable();
     cleared_lines.sort_unstable();
     cleared_to_float_floor.sort_unstable();
     cleared_lines_to_float_floor.sort_unstable();
     named_break_floats.sort_unstable();
+    float_flow_named_breaks.sort_unstable();
     if cleared != document.forced_break_clearance
         || cleared_lines != document.forced_break_line_clearance
         || cleared_to_float_floor != document.forced_break_float_floor
         || cleared_lines_to_float_floor != document.forced_break_line_float_floor
         || named_break_floats != document.named_break_floats
+        || float_flow_named_breaks != document.float_flow_named_breaks
     {
         document.forced_break_clearance = cleared;
         document.forced_break_line_clearance = cleared_lines;
         document.forced_break_float_floor = cleared_to_float_floor;
         document.forced_break_line_float_floor = cleared_lines_to_float_floor;
         document.named_break_floats = named_break_floats;
+        document.float_flow_named_breaks = float_flow_named_breaks;
         document.layout_dirty = true;
     }
 }
@@ -4498,7 +4570,10 @@ fn forces_page_break(
             || document.named_break_floats.binary_search(&node_id).is_ok()
     } else {
         page_break_after_is_forced(document, cascade, node_id, computed.break_after)
-    };
+    } || document
+        .float_flow_named_breaks
+        .binary_search(&(node_id, before))
+        .is_ok();
     // Break properties apply to boxes in the flow: an absolutely or fixed
     // positioned box breaks no page before or after itself (Chromium).
     (own && !at_table_cell_edge(document, cascade, node_id, before)
