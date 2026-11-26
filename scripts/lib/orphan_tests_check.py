@@ -62,6 +62,14 @@ file `property/tests.rs` is *itself* also a candidate (its own name is
 checked independently, so a hub file that forgets to declare one of its
 sub-files, or a hub file that itself isn't reachable, are both caught.
 
+## Integration-test files of crates with `autotests = false`
+
+A crate that sets `autotests = false` in its `Cargo.toml` compiles only the
+`[[test]]` targets it lists, so a new `tests/<X>.rs` file there is silently
+never compiled, the same failure as above. For such a crate, every
+`tests/*.rs` file must be the `path` of a `[[test]]` target or be declared
+`mod <X>;` in the root file of one.
+
 Usage: `python3 orphan_tests_check.py [--repo-root PATH] [-v]`
 Exit status: 0 if no orphans found, 1 if at least one is found.
 """
@@ -71,6 +79,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,6 +96,7 @@ class Orphan:
     path: Path
     mod_name: str
     tried_parents: tuple[Path, ...]
+    hint: str = ""
 
 
 def discover_candidates(repo_root: Path) -> list[Path]:
@@ -142,6 +152,36 @@ def find_orphans(repo_root: Path) -> list[Orphan]:
     return orphans
 
 
+def find_untargeted_integration_tests(repo_root: Path) -> list[Orphan]:
+    """`tests/*.rs` files of `autotests = false` crates that no `[[test]]`
+    target compiles, neither as its root nor as a `mod` of its root."""
+    orphans = []
+    for manifest in sorted(repo_root.glob("crates/*/Cargo.toml")):
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        if data.get("package", {}).get("autotests", True):
+            continue
+        crate_dir = manifest.parent
+        roots = [
+            (crate_dir / target["path"]).resolve()
+            for target in data.get("test", [])
+            if "path" in target
+        ]
+        for path in sorted((crate_dir / "tests").glob("*.rs")):
+            if path.resolve() in roots:
+                continue
+            if not any(has_mod_decl(root, path.stem) for root in roots):
+                orphans.append(
+                    Orphan(
+                        path=path,
+                        mod_name=path.stem,
+                        tried_parents=tuple(roots),
+                        hint="the crate sets `autotests = false`: declare the file as a `mod` "
+                        "of its tests/all.rs or list it as a [[test]] target",
+                    )
+                )
+    return orphans
+
+
 def _rel(repo_root: Path, path: Path) -> str:
     try:
         return str(path.relative_to(repo_root))
@@ -160,16 +200,18 @@ def main(argv: list[str]) -> int:
         for path in discover_candidates(repo_root):
             print(f"  scanned: {_rel(repo_root, path)}")
 
-    orphans = find_orphans(repo_root)
+    orphans = find_orphans(repo_root) + find_untargeted_integration_tests(repo_root)
     if not orphans:
-        print("orphan-tests-lint: PASS (0 orphan tests.rs/*_tests.rs files)")
+        print("orphan-tests-lint: PASS (0 orphan tests.rs/*_tests.rs or integration-test files)")
         return 0
 
     print(f"orphan-tests-lint: FAIL ({len(orphans)} orphan file(s))")
     for o in orphans:
-        tried = " or ".join(_rel(repo_root, p) for p in o.tried_parents)
+        tried = " or ".join(_rel(repo_root, p) for p in o.tried_parents) or "(no [[test]] target)"
         print(f"  {_rel(repo_root, o.path)}")
         print(f"    no `mod {o.mod_name};` found in: {tried}")
+        if o.hint:
+            print(f"    {o.hint}")
         print("    this file is outside the module tree: never compiled, its tests never run")
     return 1
 
