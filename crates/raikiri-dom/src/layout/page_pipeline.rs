@@ -500,6 +500,19 @@ fn clip_holds_breaks(
     before: bool,
     at: f32,
 ) -> bool {
+    let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+    clip_holds_breaks_in_flow(document, env, node_id, before, at - relative)
+}
+
+/// [`clip_holds_breaks`] for a break at `at` where the normal flow puts it,
+/// with the relative offsets already taken off.
+fn clip_holds_breaks_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    before: bool,
+    at: f32,
+) -> bool {
     let FlowEnv {
         cascade,
         body_id,
@@ -521,7 +534,6 @@ fn clip_holds_breaks(
     {
         edge = parent;
     }
-    let at = at - accumulated_relative_offset_y(document, cascade, body_id, node_id);
     let page = if before {
         page_origins.page_index_for_y(at)
     } else {

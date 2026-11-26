@@ -304,3 +304,14 @@ fn a_clip_that_holds_forced_breaks_holds_a_change_of_page_type_among_lines() {
         );
     }
 }
+
+#[test]
+fn a_clip_is_judged_where_the_flow_puts_a_change_of_page_type() {
+    // The relative offset only paints the box higher: the change falls on
+    // the first page, which the clip runs past, so the lines open a page of
+    // their own type, and the offset paints the first of them on the page
+    // before.
+    let body = "<div class='a' style='position:relative;top:-50px;height:150px;overflow:hidden'>\
+                <div class='b' style='height:60px'>B</div>a<br>b</div><div class='a'>X</div>";
+    assert_eq!(pages(body, "a"), "2p a@0:0,50", "{body}");
+}

@@ -995,7 +995,7 @@ impl PaginationState {
                 &candidate.page_name,
                 &entry.comparison_page_name,
             )
-            && !super::clip_holds_breaks(document, env, node_id, true, text.effective_y);
+            && !super::clip_holds_breaks_in_flow(document, env, node_id, true, text.effective_y);
         if !self.saw_child
             || !(forced || renamed)
             || !candidate.context.page_name_in_flow()
@@ -6400,19 +6400,14 @@ impl PaginationState {
         // grid row (see `PendingBreak::applies_to`).
         // A clip that holds forced breaks back holds a change of page type
         // back too (see `begin_box`).
-        let named_page_change = text_changes_page_name(
-            entry.name_context_seen,
-            name_participates_in_flow,
-            text.height,
-            &candidate.page_name,
-            &entry.comparison_page_name,
-        ) && !super::clip_holds_breaks(
-            document,
-            env,
-            node_id,
-            true,
-            text.effective_y - relative_offset,
-        );
+        let named_page_change =
+            text_changes_page_name(
+                entry.name_context_seen,
+                name_participates_in_flow,
+                text.height,
+                &candidate.page_name,
+                &entry.comparison_page_name,
+            ) && !super::clip_holds_breaks(document, env, node_id, true, text.effective_y);
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
         // A break forced inside an absolutely positioned box falls before
         // the text after it inside that box, which is out of the flow.
