@@ -312,16 +312,17 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
 pub(super) fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
+    let in_flow = matches!(
+        node.layout_position(),
+        Position::Relative | Position::Static
+    );
     node.multicol.is_some()
         && column_owner(tree, child).is_some_and(|owner| balances_without_limit(tree, owner))
         && block_margins(&style).is_some()
         && style.inset() == Edges::splat(LengthPercentageAuto::auto())
         && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
         && is_horizontal(node)
-        && matches!(
-            node.layout_position(),
-            Position::Relative | Position::Static
-        )
+        && in_flow
         && !style.float().is_floated()
         && style.clear() == Clear::None
         && !node.size_containment.height
