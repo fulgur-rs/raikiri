@@ -921,7 +921,7 @@ impl LayoutSession<'_> {
     }
 
     /// Stop answering a performed layout of the node from its cache (see
-    /// [`crate::layout::taffy_adapter::cache::LayoutCache::forget_final_layout`]).
+    /// [`crate::layout::taffy_adapter::LayoutCache::forget_final_layout`]).
     pub(crate) fn forget_final_layout(&mut self, node_id: NodeId) {
         self.nodes[usize::from(node_id)].cache.forget_final_layout();
     }
