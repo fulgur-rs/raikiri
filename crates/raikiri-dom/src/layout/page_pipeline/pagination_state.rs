@@ -1682,7 +1682,13 @@ impl PaginationState {
                 node_id,
                 LineAfterBlock {
                     flow_page: entry.page_before_candidate,
-                    page_name: candidate.page_name.clone(),
+                    // The line takes the page type of the paragraph's own
+                    // flow, not the start value it took from its first box.
+                    page_name: if self.page_names.records_names {
+                        super::inner_flow_page_name(document, env.cascade, node_id)
+                    } else {
+                        None
+                    },
                     page_name_in_flow: candidate.context.page_name_in_flow(),
                     in_flow: !candidate.context.is_out_of_flow_descendant(),
                     beside_flow: candidate.context.is_float_descendant()
@@ -2031,7 +2037,11 @@ impl PaginationState {
                             && self.pending_break.scope.is_none())
                         .then(|| LineAfterBlock {
                             flow_page: self.current_page,
-                            page_name: self.page_names.current.clone(),
+                            page_name: if self.page_names.records_names {
+                                super::inner_flow_page_name(document, env.cascade, root)
+                            } else {
+                                None
+                            },
                             page_name_in_flow: true,
                             in_flow: true,
                             beside_flow: false,
@@ -2148,7 +2158,15 @@ impl PaginationState {
             return Ok(());
         }
         self.pending_break.take(document, root);
+        // The page the line opens has the line's type: a box around the
+        // paragraph that put its items on the page of a named one breaks no
+        // page after itself for that name any more.
+        self.pending_break
+            .drop_named_breaks_around(document, env.cascade, env.body_id, root);
         self.current_page = self.current_page.max(target);
+        // The boxes after the paragraph compare their page type with the
+        // line's, which ends the flow before them.
+        self.page_names.outer.clone_from(&paragraph.page_name);
         self.page_names.current = paragraph.page_name;
         self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
         Ok(())
@@ -4583,6 +4601,15 @@ impl PaginationState {
                 block_id,
                 run.as_ref().map(|run| run.lines.end),
             );
+            // A relayout that resumes a page at a line of the paragraph
+            // breaks before that line whatever lines it leaves around it.
+            let free_break = text_lines
+                .get(node_id)
+                .and_then(|owned| super::continuation_break_line(document, owned.root))
+                .and_then(|line| match &run {
+                    Some(run) => run.lines.contains(&line).then(|| line - run.lines.start),
+                    None => Some(line),
+                });
             if let Some(run) = run {
                 all_line_metrics = all_line_metrics.get(run.lines).unwrap_or_default().to_vec();
             }
@@ -4853,7 +4880,8 @@ impl PaginationState {
                     } else {
                         0.0
                     },
-                );
+                )
+                .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
                 line_fit.page_insets = page_insets;
                 // The block is measured from where it is now: lines moved
@@ -5422,6 +5450,11 @@ impl PaginationState {
                 cascade.computed[root].orphans,
                 widows,
                 closing_edges,
+            )
+            .with_free_break(
+                super::continuation_break_line(document, root)
+                    .filter(|line| run.contains(line))
+                    .map(|line| line - run.start + lines_before),
             );
             // With lines ahead of the run, the widows the paragraph cannot
             // have are relaxed only on the page it opens on.
