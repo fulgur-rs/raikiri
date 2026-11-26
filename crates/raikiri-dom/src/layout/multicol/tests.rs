@@ -2402,9 +2402,16 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     assert!(!supported(sized, &[item], false));
     // A box the container holds that breaks, clips or paints on its own
     // terms.
+    // A forced column break before or after a flex item falls between the
+    // items, or before or after the container.
     for held in [
-        "display:block;break-before:column",
-        "display:block;break-after:column",
+        "display:block;width:10px;break-before:column",
+        "display:block;width:10px;break-after:column",
+    ] {
+        assert!(supported(sized, &[held], true), "{held}");
+    }
+    for held in [
+        "display:block;break-before:avoid",
         "display:block;break-inside:avoid",
         // A container that holds a flex container keeps its absolutely
         // positioned boxes in its flow.

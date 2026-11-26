@@ -28,6 +28,7 @@ fn split(height: f32) -> Item {
         monolithic: false,
         slice: None,
         edges: 0.0,
+        break_before: false,
     }
 }
 
