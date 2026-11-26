@@ -211,3 +211,39 @@ fn a_tall_row_whose_first_line_does_not_fit_starts_the_next_page() {
         ],
     );
 }
+
+#[test]
+fn a_row_too_tall_for_the_room_below_the_header_copy_breaks_below_it() {
+    expect(
+        &format!(
+            "<div style='height:30px'></div>{TABLE}{HEADER}<tr><td>X</td></tr><tr><td>A<br>B<br>C</td></tr><tr><td>Z</td></tr></table>"
+        ),
+        &[
+            "100: H@0,25 X@1,51",
+            "100: A@1,21 B@1,51 H@0,-5",
+            "100: C@1,20 H@0,-5 Z@1,52",
+        ],
+    );
+}
+
+#[test]
+fn lines_after_a_forced_break_in_a_cell_go_below_the_header_copy() {
+    expect(
+        &format!(
+            "<style>td.f::before{{content:'A';display:block;break-after:page}}</style>{TABLE}{HEADER}<tr><td class=f>B</td></tr></table>"
+        ),
+        &["100: A@1,21 H@0,-5", "100: B@1,20 H@0,-5"],
+    );
+}
+
+#[test]
+fn lines_moved_inside_a_taller_cell_leave_the_footer_on_the_rows_last_page() {
+    // The cell's height holds the moved line, so the row does not grow past
+    // it and the footer stays on the second page.
+    let pages = pages(&format!(
+        "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td style='height:120px;padding:0;vertical-align:top'>A<br>B</td></tr></table>"
+    ));
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    assert_eq!(pages[0], "100: A@0,32 F@0,75 X@1,1");
+    assert!(pages[1].starts_with("100: B@0,0 F@0,"), "{pages:?}");
+}

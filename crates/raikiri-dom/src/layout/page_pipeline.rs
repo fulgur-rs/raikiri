@@ -3051,11 +3051,25 @@ fn merge_forced_line_breaks(breaks: &mut Vec<ForcedLineBreak>) {
 /// [`widows_break_on_next_page`]. A break that has no line on either side
 /// stays at the edge of the paragraph, and a page edge that already falls
 /// before what the break is before is the break.
+#[cfg(test)]
 fn forced_line_moves(
     breaks: &[ForcedLineBreak],
     line_metrics: &[(f32, f32)],
     effective_y: f32,
     page_origins: &PageOrigins,
+) -> Vec<LineBreakMove> {
+    forced_line_moves_below(breaks, line_metrics, effective_y, page_origins, 0.0)
+}
+
+/// [`forced_line_moves`], with each page the lines move to opening with
+/// `head` of other content above them, as a copy of a table's repeated
+/// header above the lines of a cell.
+fn forced_line_moves_below(
+    breaks: &[ForcedLineBreak],
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_origins: &PageOrigins,
+    head: f32,
 ) -> Vec<LineBreakMove> {
     let mut moved = 0.0;
     let mut moves = Vec::new();
@@ -3082,7 +3096,7 @@ fn forced_line_moves(
             continue;
         }
         let page = previous.saturating_add(1);
-        let shift = page_origins.origin(page) + gap - starts;
+        let shift = page_origins.origin(page) + head + gap - starts;
         if shift.is_finite() && shift > 0.0 {
             moves.push((line, shift, page));
             moved += shift;
@@ -19884,12 +19898,12 @@ fn make_room_for_header_copy(
         }
         header.body_started = true;
     }
-    // A row taller than the page breaks below the copy on the pages it
-    // runs over, as Chromium does.
+    // A row taller than the room below the copy breaks below it, as
+    // Chromium does, so the copy goes on the page whenever it fits there.
     let step = page_origins.step_at(current_page);
     if !header.placements.contains_key(&current_page)
         && (header.height + header.gap + height <= step + 0.001
-            || height > step + 0.001 && header.height + header.gap < step)
+            || header.height + header.gap < step)
     {
         let origin = page_origins.origin(current_page);
         let delta = (origin + header.height + header.gap - row_y).max(0.0);
