@@ -177,6 +177,22 @@ fn generated_content_in_a_float_takes_part_like_text() {
             );
         }
     }
+    // The generated content of a `display: contents` element is text of
+    // the box around it, before and after the element's children.
+    expect(
+        &format!(
+            "{style}{FLOAT}'><div class='a' style='display:contents'>\
+             <div style='page:foo'>H</div></div>G</div>Z"
+        ),
+        &["100: H@0,0 Z@40,0", "100: G@20,0 K@0,0"],
+    );
+    expect(
+        &format!(
+            "{style}{FLOAT}'>F<div class='b' style='display:contents'>\
+             <div style='page:foo'>H</div></div></div>Z"
+        ),
+        &["100: F@0,0 G@20,0 Z@40,0", "100: H@0,0"],
+    );
 }
 
 #[test]

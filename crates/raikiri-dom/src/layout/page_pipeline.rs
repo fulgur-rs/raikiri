@@ -3706,12 +3706,13 @@ fn clear_floats_at_forced_breaks<'name>(
     let is_float =
         |document: &Document, id: usize| is_floating_box_for_pagination(document, cascade, id);
     // The in-flow and floating child boxes of `parent`, and its nonempty text
-    // as `None`, with the children of a `display: contents` element standing
-    // in its place. With `static_absolute`, the absolutely positioned boxes
+    // as `None`, with the children of a `display: contents` element, between
+    // its generated text, standing in its place. With `static_absolute`, the absolutely positioned boxes
     // left at their static position are among them too.
     let child_boxes = |document: &Document, parent: usize, static_absolute: bool| {
         let mut boxes = Vec::new();
-        // `None` stands for the `::before` content of a flattened element.
+        // `None` stands for the `::before` or `::after` content of a
+        // flattened element.
         // The children are taken in the order pagination visits them, which
         // follows `order` in a flex or grid container.
         let mut pending: Vec<Option<usize>> = pagination_child_order(document, cascade, parent)
@@ -3755,6 +3756,13 @@ fn clear_floats_at_forced_breaks<'name>(
                 // a line of its own.
                 if node.children.is_empty() && document.nodes[child].display().is_inline_flow() {
                     boxes.push(None);
+                }
+                if crate::generated_content::is_in_flow_generated_text(
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::After,
+                ) {
+                    pending.push(None);
                 }
                 pending.extend(node.children.iter().rev().map(|&child| Some(child)));
                 if crate::generated_content::is_in_flow_generated_text(
