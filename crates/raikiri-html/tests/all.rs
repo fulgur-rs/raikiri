@@ -48,6 +48,7 @@ mod float_after_page_break_surface;
 mod float_before_named_page_text_surface;
 mod float_below_float_beside_moved_lines_surface;
 mod float_ending_wrapper_page_break_surface;
+mod float_flow_page_name_break_surface;
 mod float_forced_break_page_name_surface;
 mod float_gap_page_end_surface;
 mod float_inner_forced_break_surface;

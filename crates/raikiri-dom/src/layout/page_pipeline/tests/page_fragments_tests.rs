@@ -3187,9 +3187,12 @@ fn a_real_float_below_the_flex_item_does_not_establish_named_pages() {
             );
             texts.push(doc.append_text(named, "X"));
         }
+        // The change of page type between the two boxes in the float's flow
+        // splits the float onto a second page, which keeps the type of the
+        // flow around it (Chromium).
         assert_eq!(
             column_review_pages(doc, &texts),
-            (vec![None], vec![0, 0]),
+            (vec![None, None], vec![0, 1]),
             "{float}"
         );
     }

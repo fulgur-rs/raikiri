@@ -16,6 +16,7 @@ pub use running::RunningElementLayout;
 pub use streaming::StreamingDiagnostics;
 pub use streaming::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
+    TableTextCell, TableTextRows,
 };
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{

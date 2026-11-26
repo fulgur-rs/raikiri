@@ -1351,6 +1351,38 @@ fn marker_runs<'a>(
     );
 }
 
+impl crate::StandaloneText {
+    /// Append the glyphs of a horizontal text cell at its content-box origin.
+    /// Returns false for vertical lines, leaving the output untouched.
+    pub fn append_cell_runs<'a>(
+        &'a self,
+        origin: (f32, f32),
+        color: CssColor,
+        cell: NodeId,
+        text_node: NodeId,
+        out: &mut Vec<PositionedGlyphRun<'a>>,
+    ) -> bool {
+        if self
+            .lines()
+            .iter()
+            .any(|line| line.writing_mode().is_vertical())
+        {
+            return false;
+        }
+        standalone_runs(
+            self,
+            origin,
+            color,
+            &[],
+            cell,
+            RunSource::Text(text_node),
+            out,
+            None,
+        );
+        true
+    }
+}
+
 /// Glyph runs of standalone text whose container's top-left is at `origin`,
 /// in the way the built-in painter draws it.
 ///

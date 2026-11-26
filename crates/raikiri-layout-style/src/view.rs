@@ -46,6 +46,24 @@ impl<'a> OverrideLayer<'a> {
             Self::Owned(values) => values.len(),
         }
     }
+    fn length(self, property: LengthProperty) -> Option<LengthValue<'a>> {
+        match self {
+            Self::Borrowed(entries) => entries.iter().rev().find_map(|entry| match &entry.0 {
+                OverrideKind::Length(key, value) if *key == property => Some(value.as_borrowed()),
+                _ => None,
+            }),
+            Self::Owned(entries) => {
+                let entry = entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.overrides_length(property))?;
+                match entry.as_borrowed().0 {
+                    OverrideKind::Length(_, value) => Some(value),
+                    _ => unreachable!(), // cov:ignore: overrides_length selected an owned length entry
+                }
+            }
+        }
+    }
     fn get(self, index: usize) -> PropertyOverride<'a> {
         match self {
             Self::Borrowed(values) => values[index].as_borrowed(),
@@ -365,12 +383,7 @@ impl<'a> LayoutStyleView<'a> {
     }
 
     pub(crate) fn scoped_length(&self, property: LengthProperty) -> Option<LengthValue<'a>> {
-        (0..self.scoped.len())
-            .rev()
-            .find_map(|index| match self.scoped.get(index).0 {
-                OverrideKind::Length(p, value) if p == property => Some(value),
-                _ => None,
-            })
+        self.scoped.length(property)
     }
     #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {
@@ -383,10 +396,10 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub(crate) fn length(&self, property: LengthProperty) -> LengthValue<'a> {
         if self.has_overrides
-            && let Some(value) = self.overrides().find_map(|entry| match entry {
-                OverrideKind::Length(p, v) if p == property => Some(v),
-                _ => None,
-            })
+            && let Some(value) = self
+                .scoped
+                .length(property)
+                .or_else(|| self.pass.length(property))
         {
             return value;
         }

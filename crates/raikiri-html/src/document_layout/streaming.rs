@@ -56,6 +56,45 @@ pub use diagnostics::StreamingDiagnostics;
 /// Input bytes between two layouts of the document parsed so far.
 const CHECKPOINT_BYTES: usize = 64 * 1024;
 
+/// A plain body cell with its original document identities.
+#[non_exhaustive]
+pub struct TableTextCell {
+    /// The cell element.
+    pub cell: NodeId,
+    /// The source text node, absent for an empty cell.
+    pub node: Option<NodeId>,
+    /// The decoded DOM text.
+    pub text: String,
+}
+
+/// Sequential access to plain body rows. Each read holds at most 128 rows.
+pub struct TableTextRows<'a> {
+    windows: &'a mut crate::sink::row_store::TableWindows,
+    signal: Option<&'a raikiri_traits::AbortSignal>,
+    next: usize,
+}
+
+impl TableTextRows<'_> {
+    /// Total number of body rows in the input.
+    pub fn row_count(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Read the next batch, or an empty vector at the end.
+    pub fn read_batch(&mut self) -> std::io::Result<Vec<Vec<TableTextCell>>> {
+        if self.signal.is_some_and(|signal| signal.is_aborted()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "table read aborted",
+            ));
+        }
+        let end = self.next.saturating_add(128).min(self.row_count());
+        let rows = self.windows.read_text_rows(self.next..end)?;
+        self.next = end;
+        Ok(rows)
+    }
+}
+
 /// Receiver of the pages of a [`StreamingLayout`].
 pub trait PageSink {
     /// Value returned by [`PageSink::finish`] and, through it, by
@@ -81,6 +120,24 @@ pub trait PageSink {
     /// delivery. All retained pages must be reversible and externally invisible.
     fn stage_table_page(&mut self, _page: StreamPage<'_>) -> std::io::Result<bool> {
         Ok(false)
+    }
+
+    /// Whether the sink can stage a whole plain table from a layout sample.
+    fn wants_table_sample(&self) -> bool {
+        false
+    }
+
+    /// Try to stage the complete input using a sample with the measured
+    /// column widths. Decline if the later rows cannot use its layout.
+    /// Check each row against the sampled geometry, including line wrapping.
+    /// Returning a page count accepts the input only after consuming all rows.
+    fn stage_table_sample(
+        &mut self,
+        _sample: &DocumentLayout,
+        _ending: &DocumentLayout,
+        _rows: &mut TableTextRows<'_>,
+    ) -> std::io::Result<Option<u32>> {
+        Ok(None)
     }
 
     /// Undo all tentative table pages before ordinary delivery or replay.
@@ -1323,10 +1380,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                     &mut windows,
                     std::num::NonZeroUsize::new(512).unwrap(),
                     &mut self.sink,
-                )?;
+                );
                 match status {
-                    StreamStatus::Aborted => return Ok(StreamStatus::Aborted),
-                    StreamStatus::Completed(Some(page_count)) => {
+                    Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted))
+                    | Ok(StreamStatus::Aborted) => return Ok(StreamStatus::Aborted),
+                    Ok(StreamStatus::Completed(Some(page_count))) => {
                         #[cfg(feature = "streaming-diagnostics")]
                         self.settings.diagnostics.update(|mut stats| {
                             stats.table_window_pages = page_count;
@@ -1348,7 +1406,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                             .map(StreamStatus::Completed)
                             .map_err(RenderError::Io);
                     }
-                    StreamStatus::Completed(None) => {}
+                    Err(error) => return Err(error),
+                    Ok(StreamStatus::Completed(None)) => {}
                 }
             }
             self.replay_table(replay)?;
@@ -1479,10 +1538,11 @@ fn stream_table_windows<S: PageSink>(
     window_size: std::num::NonZeroUsize,
     sink: &mut S,
 ) -> Result<StreamStatus<Option<u32>>, RenderError> {
-    if !windows.permits_window_styles(
+    let (window_styles, template_styles) = windows.permits_window_styles(
         settings.consumer_properties,
         &settings.resources.parse_limits(),
-    )? {
+    )?;
+    if !window_styles {
         return Ok(StreamStatus::Completed(None));
     }
     #[cfg(feature = "streaming-diagnostics")]
@@ -1553,6 +1613,69 @@ fn stream_table_windows<S: PageSink>(
         .limits
         .max_document_pages
         .unwrap_or(u32::MAX);
+    if template_styles
+        && measured.is_ok()
+        && sink.wants_table_sample()
+        && windows.len() > window_size.get()
+    {
+        let shell = windows
+            .document(0..window_size.get())
+            .map_err(ParseError::Io)?;
+        let (_, sample) = render(shell)?;
+        // All windows contributed to the preferred widths. A table narrower than
+        // their sum may wrap even when its first and last pages have uniform rows.
+        let table_width = sample.page(0).and_then(|page| {
+            let dom = page.dom();
+            page.fragments()
+                .find(|fragment| dom.local_name(fragment.node()) == Some("table"))
+                .map(|fragment| fragment.rect().width)
+        });
+        if !needs_replay.get()
+            && windows
+                .preferred_width()
+                .zip(table_width)
+                .is_some_and(|(preferred, available)| preferred <= available)
+            && sample.pages().all(|page| page.margin_boxes().is_empty())
+            && sample.pages().map(body_rows).sum::<usize>() == window_size.get()
+            && let Some((start, first, last, expected_pages)) =
+                ending_sample(&sample, windows.len())
+            && expected_pages <= page_limit
+        {
+            let ending_shell = windows
+                .document(start..windows.len())
+                .map_err(ParseError::Io)?;
+            let (_, ending) = render(ending_shell)?;
+            if !needs_replay.get()
+                && ending.pages().len() == 2
+                && ending.pages().all(|page| page.margin_boxes().is_empty())
+                && body_rows(ending.page_at(0)) == first
+                && body_rows(ending.page_at(1)) == last
+            {
+                let mut rows = TableTextRows {
+                    windows,
+                    signal: config.signal.as_ref(),
+                    next: 0,
+                };
+                let result = sink.stage_table_sample(&sample, &ending, &mut rows);
+                let aborted = config
+                    .signal
+                    .as_ref()
+                    .is_some_and(|signal| signal.is_aborted());
+                if !aborted
+                    && let Ok(Some(count)) = result
+                    && count == expected_pages
+                    && rows.next == rows.row_count()
+                {
+                    return Ok(StreamStatus::Completed(Some(count)));
+                }
+                sink.discard_staged_table_pages();
+                if aborted {
+                    return Ok(StreamStatus::Aborted);
+                }
+                result.map_err(RenderError::Io)?;
+            }
+        }
+    }
     let mut stage_failed = false;
     let plan = measured.and_then(|()| {
         windows.plan_pages_with(window_size, render, |layout, pages| {
@@ -1664,6 +1787,40 @@ fn stream_table_windows<S: PageSink>(
         StreamStatus::Completed(count) => StreamStatus::Completed(Some(count)),
         StreamStatus::Aborted => StreamStatus::Aborted,
     })
+}
+
+fn body_rows(page: Page<'_>) -> usize {
+    let dom = page.dom();
+    page.fragments()
+        .filter(|fragment| {
+            let node = fragment.node();
+            dom.local_name(node) == Some("tr")
+                && dom.parent(node).and_then(|parent| dom.local_name(parent)) == Some("tbody")
+        })
+        .count()
+}
+
+// A full first page establishes the repeated header on the final page.
+// This predicts a template only; the sink must still check every actual row.
+fn ending_sample(sample: &DocumentLayout, total: usize) -> Option<(usize, usize, usize, u32)> {
+    let pages = sample.pages().len();
+    if pages < 3 {
+        return None;
+    }
+    let first = body_rows(sample.page_at(0));
+    let middle = body_rows(sample.page_at(1));
+    if first == 0 || middle == 0 || (2..pages - 1).any(|p| body_rows(sample.page_at(p)) != middle) {
+        return None;
+    }
+    let remaining = total.checked_sub(first)?.checked_sub(1)?;
+    let last = remaining % middle + 1;
+    let expected_pages = u32::try_from(remaining / middle).ok()?.checked_add(2)?;
+    Some((
+        total.checked_sub(first + last)?,
+        first,
+        last,
+        expected_pages,
+    ))
 }
 
 // Only plain table windows without consumer events enter this path.
