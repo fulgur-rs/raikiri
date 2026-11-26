@@ -986,7 +986,7 @@ impl PaginationState {
         // lines after it to open a page of their paragraph's type, unless the
         // text is the first of its paragraph, which moves the paragraph.
         let renamed = in_flow_lines
-            && self.pending_break.source.is_none()
+            && !self.pending_break.applies_to(document, node_id)
             && entry.ifc_root.is_none()
             && super::text_changes_page_name(
                 entry.name_context_seen,
@@ -994,7 +994,8 @@ impl PaginationState {
                 text.height,
                 &candidate.page_name,
                 &entry.comparison_page_name,
-            );
+            )
+            && !super::clip_holds_breaks(document, env, node_id, true, text.effective_y);
         if !self.saw_child
             || !(forced || renamed)
             || !candidate.context.page_name_in_flow()
@@ -1016,14 +1017,14 @@ impl PaginationState {
         let delta = page_origins.origin(target_page) - text.effective_y;
         self.flow_shift += delta;
         text.effective_y += delta;
-        if let Some((holder, held)) = candidate
+        // A box that keeps its height ends where it did, or at the top of
+        // the page the break opens: the flow after it follows that end.
+        let page_top = page_origins.origin(target_page);
+        let holders = candidate
             .ifc_root
-            .and_then(|(root, _)| break_holder(document, env, root, delta))
-        {
-            // The box keeps its height: its fragment on the page the break
-            // leaves ends there, and the rest of its height follows the
-            // break, so the flow after it stays where it was (CSS
-            // Fragmentation 3 §4.4), as in Chromium.
+            .into_iter()
+            .flat_map(|(root, _)| break_holders(document, env, root, delta, page_top));
+        for (holder, held) in holders {
             self.subtree_shifts.bound(holder, held, self.current_page);
         }
         self.current_page = target_page;
@@ -6397,12 +6398,20 @@ impl PaginationState {
         // anonymous page.  Text consumes a pending break-after only
         // outside the box that forced it and off that box's flex line or
         // grid row (see `PendingBreak::applies_to`).
+        // A clip that holds forced breaks back holds a change of page type
+        // back too (see `begin_box`).
         let named_page_change = text_changes_page_name(
             entry.name_context_seen,
             name_participates_in_flow,
             text.height,
             &candidate.page_name,
             &entry.comparison_page_name,
+        ) && !super::clip_holds_breaks(
+            document,
+            env,
+            node_id,
+            true,
+            text.effective_y - relative_offset,
         );
         let pending_break_applies = self.pending_break.applies_to(document, node_id);
         // A break forced inside an absolutely positioned box falls before
@@ -7698,44 +7707,61 @@ fn float_top_at_edge(
     top
 }
 
-/// The box around the lines of the paragraph `root` that holds a move of
-/// them by `delta` down to the page that a forced break or a change of page
-/// type opens, and how much of it it holds:
-/// the paragraph itself as far as its height does not grow with the move,
-/// or else the nearest box around it in block flow that keeps a set height.
-/// None holds it past an absolutely positioned box, a float, a flex or grid
-/// item or a table part, which place the flow inside them on their own.
-fn break_holder(
+/// The boxes around the lines of the paragraph `root` that hold a move of
+/// them by `delta` down to `page_top`, the top of the page that a forced
+/// break or a change of page type opens, each with how much of the move it
+/// holds. A box ends where its height puts it, grown with the content moved
+/// inside it as far as its height can grow, but not above the page top: its
+/// fragment before the break runs to the end of that page (CSS Fragmentation
+/// 3 §4.4), as in Chromium. The flow after the box follows its end, and the
+/// box holds the rest of the move. The walk starts at the paragraph and
+/// goes out through the boxes in block flow up to the first that leaves the
+/// flow, which places the flow inside it on its own.
+fn break_holders(
     document: &LayoutSession<'_>,
     env: &FlowEnv<'_>,
     root: usize,
     delta: f32,
-) -> Option<(usize, f32)> {
-    let held = delta - super::lines_shift_growth(document, root, delta);
-    if held > 0.01 {
-        return Some((root, held));
-    }
+    page_top: f32,
+) -> Vec<(usize, f32)> {
     let leaves_flow = |id: usize| {
         super::is_out_of_flow_positioned(document, id)
             || is_floating_box_for_pagination(document, env.cascade, id)
     };
-    // The boxes around the paragraph in block flow, up to the first that
-    // leaves the flow, that one included.
-    let mut inside = !leaves_flow(root);
-    document
-        .layout_ancestors(root)
-        .take_while(|&id| {
-            id != env.body_id
-                && matches!(
-                    document.nodes[id].display(),
-                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-                )
-                && {
-                    let was_inside = inside;
-                    inside &= !leaves_flow(id);
-                    was_inside
-                }
-        })
-        .find(|&id| has_fixed_height(document, id) || document.nodes[id].size_containment.height)
-        .map(|id| (id, delta))
+    let in_block_flow = |id: usize| {
+        id != env.body_id
+            && matches!(
+                document.nodes[id].display(),
+                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+            )
+    };
+    let mut holders = Vec::new();
+    // How far the content of the box at hand moved.
+    let mut moved = delta;
+    for id in std::iter::once(root).chain(
+        document
+            .layout_ancestors(root)
+            .take_while(|&id| in_block_flow(id)),
+    ) {
+        let layout = &document.nodes[id].layout;
+        let growth = if id == root {
+            super::lines_shift_growth(document, root, delta)
+        } else if has_fixed_height(document, id) || document.nodes[id].size_containment.height {
+            0.0
+        } else {
+            let (_, max_height) = super::border_box_height_bounds(document, id);
+            moved.min((max_height - layout.size.height).max(0.0))
+        };
+        let end = super::current_abs_y(document, id) + env.root_flow_offset
+            - accumulated_relative_offset_y(document, env.cascade, env.body_id, id)
+            + layout.size.height;
+        let end_moved = (end + growth).max(page_top) - end;
+        let held = moved - end_moved;
+        holders.extend((held > 0.01).then_some((id, held)));
+        moved = end_moved;
+        if leaves_flow(id) || moved <= 0.0 {
+            break;
+        }
+    }
+    holders
 }

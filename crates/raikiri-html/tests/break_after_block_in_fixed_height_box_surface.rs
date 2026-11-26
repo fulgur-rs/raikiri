@@ -243,3 +243,64 @@ fn the_nearest_fixed_height_box_around_the_paragraph_keeps_its_end() {
         assert_eq!(pages(&body, "BXab"), expected, "{body}");
     }
 }
+
+#[test]
+fn a_box_that_ends_above_the_break_runs_to_the_end_of_its_page() {
+    // The box's fragment before the break runs to the end of the page, so
+    // the content after it starts the page the lines moved to.
+    let lines = "<div style='height:20px;break-after:page'>B</div>a<br>b";
+    for body in [
+        format!("<div style='height:60px'>{lines}</div><div>X</div>"),
+        format!("<div style='max-height:60px'>{lines}</div><div>X</div>"),
+        "<div class='a' style='height:60px'><div class='b' style='height:20px'>B</div>a<br>b</div>\
+         <div class='a'>X</div>"
+            .to_string(),
+    ] {
+        assert_eq!(
+            pages(&body, "BXab"),
+            "2p B@0:0,0 X@1:0,0 a@1:0,0 b@1:0,30",
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn boxes_whose_height_is_bounded_hold_the_part_of_the_move_past_their_bound() {
+    // A paragraph with a `min-height` grows past it with its lines, and the
+    // box around it that keeps its height holds the rest; a box with a
+    // `max-height` grows up to it.
+    let lines = "<div style='height:20px;break-after:page'>B</div>a<br>b";
+    for body in [
+        format!(
+            "<div style='height:150px'><div style='min-height:120px'>{lines}</div></div><div>X</div>"
+        ),
+        format!("<div style='max-height:150px'><div>{lines}</div></div><div>X</div>"),
+        format!("<div style='max-height:150px'>{lines}</div><div>X</div>"),
+    ] {
+        assert_eq!(
+            pages(&body, "BXab"),
+            "2p B@0:0,0 X@1:0,50 a@1:0,0 b@1:0,30",
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_clip_that_holds_forced_breaks_holds_a_change_of_page_type_among_lines() {
+    // The box that clips ends on the page the change would leave, so its
+    // lines stay there below the block, as after a forced break.
+    for (class, block) in [
+        ("a", "class='b' style='height:20px'"),
+        ("", "style='height:20px;break-after:page'"),
+    ] {
+        let body = format!(
+            "<div class='{class}' style='height:80px;overflow:hidden'><div {block}>B</div>a<br>b</div>\
+             <div class='{class}'>X</div>"
+        );
+        assert_eq!(
+            pages(&body, "BXab"),
+            "2p B@0:0,0 X@1:0,0 a@0:0,20 b@0:0,50",
+            "{body}"
+        );
+    }
+}

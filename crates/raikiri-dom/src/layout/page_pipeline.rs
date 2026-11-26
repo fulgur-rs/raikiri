@@ -9160,6 +9160,7 @@ fn follow_moved_ifc_text(
         })
         .fold(f32::NEG_INFINITY, f32::max);
     let grows = lines_move_grows_box(document, root);
+    let (_, max_height) = border_box_height_bounds(document, root);
     let layout = &mut document.table_layout_node_mut(root).layout;
     if let Some(end) = last_line_end.filter(|_| grows) {
         let height = (layout.border.top
@@ -9168,7 +9169,7 @@ fn follow_moved_ifc_text(
             + layout.padding.bottom
             + layout.border.bottom)
             .max(floats_end + layout.padding.bottom + layout.border.bottom);
-        layout.size.height = layout.size.height.max(height);
+        layout.size.height = layout.size.height.max(height.min(max_height));
         document.mark_pagination_extent_dirty(root);
     }
 }
