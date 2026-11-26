@@ -490,6 +490,17 @@ impl PageSink for Shared {
     }
 }
 
+#[test]
+fn discarding_tentative_pages_preserves_delivery_for_a_nonstaging_sink() {
+    let mut sink = Shared::default();
+    let delivered = vec![(0, vec![NodeId(7)])];
+    sink.0.borrow_mut().clone_from(&delivered);
+
+    sink.discard_staged_table_pages();
+
+    assert_eq!(*sink.0.borrow(), delivered);
+}
+
 /// Stream `html` in `chunk`-byte pieces with a checkpoint every
 /// `checkpoint` bytes. Returns all pages and how many arrived before
 /// `finish`.
@@ -1696,7 +1707,7 @@ fn failing_public_table_sink_does_not_interrupt_another_document() {
 }
 
 #[test]
-fn aborting_on_first_or_last_table_page_preserves_only_final_output() {
+fn aborting_at_table_page_and_window_boundaries_preserves_only_final_output() {
     let html = format!(
         "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
         " ".repeat(54000),
@@ -1705,7 +1716,18 @@ fn aborting_on_first_or_last_table_page_preserves_only_final_output() {
     let pages = batch_pages(&html);
     let last = pages.last().unwrap().0;
     assert!(last > 1);
-    for (index, staging) in [(0, true), (last, true), (0, false), (last, false)] {
+    let first_window_end = html.match_indices("</tr>").nth(511).unwrap().0 + "</tr>".len();
+    let first_window = batch_pages(&format!("{}</table>", &html[..first_window_end]));
+    // The planner withholds the trailing page until it has another window.
+    let last_staged_before_next_window = first_window[first_window.len() - 2].0;
+    assert!((1..last).contains(&last_staged_before_next_window));
+    for (index, staging) in [
+        (0, true),
+        (last_staged_before_next_window, true),
+        (last, true),
+        (0, false),
+        (last, false),
+    ] {
         let controller = AbortController::new();
         let mut config = LayoutConfig::default();
         config.signal = Some(controller.signal.clone());
@@ -1729,6 +1751,97 @@ fn aborting_on_first_or_last_table_page_preserves_only_final_output() {
         assert!(record.staged.is_empty());
         assert!(!record.finished);
     }
+}
+
+#[test]
+fn row_markers_in_a_comment_do_not_select_window_layout() {
+    let html = format!(
+        "<!doctype html><!--{}{}--><table><tr><td>row</td></tr></table><p id=end>after</p>",
+        "<tr>".repeat(128),
+        " ".repeat(CHECKPOINT_BYTES)
+    );
+    let resources = RenderResources::new();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_none());
+    let summary = completed(stream.finish().unwrap());
+    assert_eq!(record.pages, batch_pages(&html));
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(summary.anchors.get("end").unwrap().page_index, 0);
+}
+
+#[test]
+fn a_stray_end_tag_preserves_parse_warnings_when_replaying_the_table() {
+    let html = format!(
+        "<!doctype html><style>@page{{size:240px 150px;margin:0}}body{{margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table></span>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let reference = crate::parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    #[cfg(feature = "streaming-diagnostics")]
+    assert_eq!(
+        summary.diagnostics.table_plans, 1,
+        "{:?}",
+        summary.diagnostics
+    );
+    let messages = |warnings: &[RenderWarning]| {
+        warnings
+            .iter()
+            .filter_map(|warning| match &warning.kind {
+                WarningKind::HtmlParseError { message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = messages(&reference.uncascaded.warnings);
+    assert!(!expected.is_empty());
+    assert_eq!(messages(&summary.warnings), expected);
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(record.pages, batch_pages(&html));
+}
+
+#[test]
+fn content_after_a_complete_table_is_replayed_with_its_anchor() {
+    let html = format!(
+        "<!doctype html><!--{}--><table>{}</table><p id=end>after</p>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let summary = completed(stream.finish().unwrap());
+    let expected = batch_pages(&html);
+    assert_eq!(record.pages, expected);
+    assert_eq!(record.offered_table_pages, 0);
+    assert_eq!(
+        summary.anchors.get("end").unwrap().page_index,
+        expected.last().unwrap().0
+    );
 }
 
 #[test]
@@ -1829,6 +1942,33 @@ fn registered_row_events_require_replay_before_any_table_page_is_staged() {
 }
 
 #[test]
+fn window_style_rule_limit_fails_before_page_delivery() {
+    let html = format!(
+        "<!doctype html><style>td{{height:20px}}</style><!--{}--><table>{}</table>",
+        " ".repeat(54000),
+        "<tr><td>row</td></tr>".repeat(600)
+    );
+    let resources = RenderResources::new()
+        .render_limits(RenderLimits::builder().max_style_rules(Some(1)).build());
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        Default::default(),
+        Default::default(),
+        &mut record,
+    );
+    stream.feed(html.as_bytes()).unwrap();
+    assert!(stream.table_input.is_some());
+    let error = stream.finish().unwrap_err();
+    assert!(
+        matches!(error, RenderError::LimitExceeded { kind: LimitKind::StyleRules, limit: 1, actual } if actual > 1)
+    );
+    assert_eq!(record.offered_table_pages, 0);
+    assert!(record.pages.is_empty());
+    assert!(!record.finished);
+}
+
+#[test]
 fn document_page_limit_discards_staged_table_pages_before_returning_error() {
     let html = format!(
         "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{}</table>",
@@ -1883,7 +2023,7 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
     let resources = RenderResources::new()
         .fonts(fonts)
         .image_pixel_source(&Pixels);
-    let mut doc = crate::parse_html_with_resources(b"<!doctype html><style>body{font:20px/20px Ahem}div::before{content:'B';background:red}div::after{content:url(https://example.test/x.png) / 'label'}p::first-line{color:red}span{border:1px solid currentColor}em{opacity:.5}li{list-style-image:url(https://example.test/marker.png)}article{width:100px;column-count:2;column-gap:20px;column-rule:2px solid red;orphans:1;widows:1}</style><div>A</div><p><span>B</span></p><section><em>C</em></section><ul><li>D</li></ul><article>A<br>B<br>C<br>D</article>".as_slice(), &resources).unwrap();
+    let mut doc = crate::parse_html_with_resources(b"<!doctype html><style>body{font:20px/20px Ahem}div::before{content:'B';background:red}div::after{content:url(https://example.test/x.png) / 'label'}p::first-line{color:red}span{border:1px solid currentColor}em{opacity:.5}li{list-style-image:url(https://example.test/marker.png)}article{width:100px;column-count:2;column-gap:20px;column-rule:2px solid red;orphans:1;widows:1}</style><div>A</div><p><span>B</span></p><section><em>C</em></section><ul><li>D</li></ul><article>A<br>B<br>C<br>D</article><table><tr style='box-shadow:2px 2px red;background:blue'><td>E</td></tr></table>".as_slice(), &resources).unwrap();
     let source_ids = (0..doc.dom().node_count()).map(|id| id + 1000).collect();
     doc.uncascaded.dom.set_window_source_ids(source_ids);
     let LayoutStatus::Completed(layout) = layout(
@@ -1939,18 +2079,20 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
     let decoration_owners = |page: crate::Page<'_>| {
         let mut marker = None;
         let mut column = None;
+        let mut shadow = None;
         for event in page.paint_order() {
             match event {
                 crate::PaintEvent::MarkerImage(owner) => {
                     let raster = page.raster_marker(owner, &Pixels).expect("marker pixels");
                     marker = Some([owner.0, raster.node.0, raster.clip_owner.unwrap().0]);
                 }
+                crate::PaintEvent::OuterBoxShadow(fragment) => shadow = Some(fragment.node().0),
                 crate::PaintEvent::ColumnRule(rule) => column = Some(rule.owner.0),
                 _ => {}
             }
         }
         let [owner, image, clip] = marker.unwrap();
-        [owner, image, clip, column.unwrap()]
+        [owner, image, clip, column.unwrap(), shadow.unwrap()]
     };
     assert_eq!(
         decoration_owners(StreamPage::from_window(&layout, 0, 0, 1).page()),
@@ -1965,6 +2107,9 @@ fn projected_generated_box_uses_source_ids_for_its_clip_and_text_line() {
                 _ => None,
             })
             .unwrap();
+        let mut missing = image;
+        missing.index += 1;
+        assert!(page.generated_image_text_position(missing).is_none());
         let (line, _) = page.generated_image_text_position(image).unwrap();
         let raster = page.raster_generated_image(image, &Pixels).unwrap();
         assert_eq!(

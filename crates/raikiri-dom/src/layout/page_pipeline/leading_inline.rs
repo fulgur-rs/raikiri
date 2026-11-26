@@ -193,7 +193,7 @@ pub(super) fn move_line(
     cascade: &CascadeResult,
     body_id: usize,
     owner: LeadingInlineLine,
-    shift: f32,
+    (shift, growth): (f32, Option<f32>),
     shifts: &mut SubtreeShifts,
     (flow_page, page): (u32, u32),
 ) -> f32 {
@@ -210,6 +210,7 @@ pub(super) fn move_line(
             shift,
             page,
             with_block_before: false,
+            growth,
         },
         shifts,
         flow_page,

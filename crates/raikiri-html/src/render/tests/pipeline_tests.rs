@@ -2324,9 +2324,9 @@ fn pipeline_clears_a_forced_break_on_a_block_inside_an_inline_box() {
 }
 
 #[test]
-fn pipeline_clears_a_float_with_its_own_break_before() {
-    // The float's own break moves it to the new page, clear of the earlier
-    // page's float.
+fn pipeline_ignores_a_floats_own_break_before() {
+    // The float's own break does not apply, as in Chromium: it stays on the
+    // page, beside the earlier float.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
@@ -2334,14 +2334,15 @@ fn pipeline_clears_a_float_with_its_own_break_before() {
          <div class='f' style='break-before:page'></div>",
     );
     let out = run(&doc);
-    assert_eq!(out.slices.len(), 2);
-    let (document, _) = out.layout_for_page(1);
-    let floats: Vec<f32> = document
-        .page_fragments(1)
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let mut floats: Vec<f32> = document
+        .page_fragments(0)
         .filter(|fragment| fragment.rect().width == 100.0)
         .map(|fragment| fragment.rect().x)
         .collect();
-    assert_eq!(floats, vec![300.0]);
+    floats.sort_by(f32::total_cmp);
+    assert_eq!(floats, vec![200.0, 300.0]);
 }
 
 #[test]
@@ -2515,17 +2516,19 @@ fn tops_by_id(out: &PipelineOutput, ids: &[&str]) -> Vec<f32> {
 }
 
 #[test]
-fn pipeline_clears_floats_after_a_named_page_inside_a_static_absolute_box() {
+fn pipeline_starts_the_page_after_a_named_page_inside_a_static_absolute_box_beside_a_running_float()
+{
     // The named box inside the absolutely positioned box left at its static
-    // position opens page `x`, so the box after it opens a page of its own
-    // and starts below the 250px float, at the start of the fourth page.
+    // position opens page `x`, so the box after it opens a page of its own,
+    // the third, and starts at its top beside the 250px float that runs on
+    // onto it.
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:10px}</style>\
          <div style='float:left;width:50px;height:250px'></div><div style='height:20px'>a</div>\
          <div style='position:absolute;width:200px'><div style='page:x;height:10px'>x</div></div>\
          <div id=after style='height:10px'>after</div>",
     );
-    assert_eq!(tops_by_id(&run(&doc), &["after"]), [300.0]);
+    assert_eq!(tops_by_id(&run(&doc), &["after"]), [200.0]);
     // An absolutely positioned box whose content is unnamed passes no page
     // name on, so the two `y` boxes around it share their page.
     // Nor does a monolithic one, here an orthogonal flow, whatever its

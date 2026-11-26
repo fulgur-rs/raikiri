@@ -2216,3 +2216,74 @@ fn a_flex_container_remeasures_percentage_fit_content_after_available_width_chan
         40.0
     );
 }
+
+/// Lays out `depth` nested `display` containers that take their width from
+/// `aspect-ratio` and a px height, and returns how many keyword-size measures
+/// ran and the width and height of the innermost one.
+fn nested_ratio_containers(display: &str, depth: usize) -> (usize, f32, f32) {
+    let mut first = 0;
+    let mut last = 0;
+    let fixture = block_fixture_with_ahem("line-height: 10px; width: 400px", |doc, root| {
+        let mut parent = root;
+        for level in 0..depth {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                Some(&format!(
+                    "display:{display};height:{}px;aspect-ratio:1/1",
+                    200 - 5 * level
+                )),
+            );
+            if first == 0 {
+                first = parent;
+            }
+        }
+        last = parent;
+        doc.append_text(parent, "AAAA");
+    });
+    let mut doc = fixture.doc;
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
+    let inputs = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(400.0),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(400.0),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    session.compute_child_layout_with_block_ctx(NodeId::from(first), inputs, None);
+    let runs = session.context.content_limit_measure_runs;
+    drop(session);
+    let (_, _, width, height) = absolute_rect(&doc, last);
+    (runs, width, height)
+}
+
+#[test]
+fn nested_ratio_flex_and_grid_containers_measure_each_box_a_few_times() {
+    // Each container's ratio width is floored by its min-content width. A box
+    // measured once keeps that measure for the layouts of every container
+    // around it, so the measures grow with the depth, not with its square.
+    for display in ["flex", "grid"] {
+        let (shallow, width, height) = nested_ratio_containers(display, 8);
+        assert_eq!((width, height), (165.0, 165.0), "{display}");
+        let (deep, width, height) = nested_ratio_containers(display, 32);
+        assert_eq!((width, height), (45.0, 45.0), "{display}");
+        assert!(deep <= 8 * 32, "{display}: {deep} measures");
+        assert!(
+            deep <= 5 * shallow,
+            "{display}: {shallow} then {deep} measures"
+        );
+    }
+}

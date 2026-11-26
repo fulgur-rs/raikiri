@@ -417,21 +417,26 @@ fn a_constrained_wrapper_refills_middle_orphans_when_lending_to_final_widows() {
     );
 }
 
+/// Balanced columns are the least height at which the lines, broken one
+/// column at a time, fit the columns, as Chromium balances them.
 #[test]
-fn a_constrained_wrapper_redistributes_variable_height_lines_to_keep_widows() {
+fn a_constrained_wrapper_balances_variable_height_lines_at_their_least_height() {
     compare(
         "<div class=mc><div style='width:80px'><p style='orphans:1;widows:3'><span style='line-height:20px'>A</span><br><span style='line-height:5px'>B</span><br><span style='line-height:10px'>C</span><br><span style='line-height:15px'>D</span><br><span style='line-height:20px'>E</span><br><span style='line-height:10px'>F</span><br><span style='line-height:5px'>G</span><br><span style='line-height:5px'>H</span></p></div></div><p>I</p>",
         "body{font:5px/5px Ahem}.mc{height:40px;width:160px;column-count:3}",
-        "<style>body{font:5px/5px Ahem}</style><div style='position:absolute;left:0;top:0'><span style='line-height:20px'>A</span></div><div style='position:absolute;left:60px;top:0'><span style='line-height:5px'>B</span><br><span style='line-height:10px'>C</span><br><span style='line-height:15px'>D</span></div><div style='position:absolute;left:120px;top:0'><span style='line-height:20px'>E</span><br><span style='line-height:10px'>F</span><br><span style='line-height:5px'>G</span><br><span style='line-height:5px'>H</span></div><div style='position:absolute;left:0;top:40px'>I</div>",
+        "<style>body{font:5px/5px Ahem}</style><div style='position:absolute;left:0px;top:0'><span style='line-height:20px'>A</span><br><span style='line-height:5px'>B</span><br><span style='line-height:10px'>C</span></div><div style='position:absolute;left:60px;top:0'><span style='line-height:15px'>D</span><br><span style='line-height:20px'>E</span></div><div style='position:absolute;left:120px;top:0'><span style='line-height:10px'>F</span><br><span style='line-height:5px'>G</span><br><span style='line-height:5px'>H</span></div><div style='position:absolute;left:0;top:40px'>I</div>",
     );
 }
 
+/// Balanced columns are first made tall enough for the widows, as Chromium
+/// makes them, and the last column keeps fewer lines when the orphans of
+/// the middle column leave it no more.
 #[test]
-fn a_constrained_wrapper_keeps_lines_when_all_break_minima_cannot_fit() {
+fn a_constrained_wrapper_makes_balanced_columns_tall_enough_for_the_widows() {
     compare(
         "<div class=mc><div style='width:80px'><p style='orphans:4;widows:5'>A<br>B<br>C<br>D<br>E<br>F<br>G<br>H<br>I<br>J<br>K<br>L</p></div></div><p>M</p>",
         ".mc{height:100px;width:160px;column-count:3}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:60px;top:0'>E<br>F<br>G</div><div style='position:absolute;left:120px;top:0'>H<br>I<br>J<br>K<br>L</div><div style='position:absolute;left:0;top:100px'>M</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D<br>E</div><div style='position:absolute;left:60px;top:0'>F<br>G<br>H<br>I</div><div style='position:absolute;left:120px;top:0'>J<br>K<br>L</div><div style='position:absolute;left:0;top:100px'>M</div>",
     );
 }
 

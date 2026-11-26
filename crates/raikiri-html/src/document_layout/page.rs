@@ -1350,3 +1350,6 @@ fn checked_pixels(
         .checked_mul(4)?;
     (pixels.width != 0 && pixels.height != 0 && pixels.rgba.len() == bytes).then_some(pixels)
 }
+
+#[cfg(test)]
+mod tests;

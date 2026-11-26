@@ -321,3 +321,52 @@ pages at each lookahead of 14, 18 and 31. Poppler pdftoppm at 72 dpi
 produced identical PPM bytes per page in all four runs. SHA-256 over
 the concatenated binary SHA-256 digests of those PPM files in page order
 was 29b8796d2ef49b620a0289dfba4a7e3669dc00f13fea8aaa090ebe57f6eee9e5.
+
+After the staging-limit and source-ID changes (Raikiri 927abda1e), paired
+20,000-row PDF generation runs took 5.160 and 5.125 seconds at 91,276 and
+91,020 KiB peak RSS. At 40,000 rows the Fulgur
+runs took 10.273 and 10.271 seconds at 96,948 and 98,796 KiB.
+Fulgur diagnostics counted 318 and 635 window pages and zero snapshots.
+
+For RAIKIRI-1505, the same Fulgur release table_probe binary processed the
+same 20,000-row input and font in streaming, batch, batch, streaming order.
+Streaming took 5.389 and 5.146 seconds at 89,856 and 89,892 KiB peak RSS.
+Batch took 14.172 and 13.978 seconds at 1,187,644 and 1,189,104 KiB.
+These paired runs shared the machine with the workspace gate.
+The Fulgur checkout was 1ce46bc1, with Raikiri pinned at 927abda1e.
+Build the probe in the Fulgur checkout and supply the input, output and
+Ahem font paths as its first three arguments:
+
+```sh
+cargo build --locked --release -p fulgur-raikiri --example table_probe --features streaming-diagnostics
+for mode in streaming batch batch streaming; do
+    /usr/bin/time -f '%e s, %M KiB' "${CARGO_TARGET_DIR:-target}/release/examples/table_probe" "$input" "$output" "$font" "$mode"
+done
+```
+
+A fresh run of this Fulgur binary rendered the 20,000-row input through
+both public entry points. Each produced 318 pages. The SHA-256 of all PPM
+files concatenated in page order after rendering with `pdftoppm -r 72`
+was `6c3d892b17ed849f733620e14da7fed7acfea3c437873ad56d87d17a65f3594f`
+for both PDFs. Streaming diagnostics reported 318 window pages and zero
+parser snapshots.
+
+After the workspace gate finished, three fresh 20,000-row processes took
+5.103, 5.091 and 5.288 seconds at 89,380, 89,388 and 89,704 KiB peak RSS.
+The median was 5.103 seconds, 2.1% above five seconds. The workspace gate
+passed at a1eaffa8a against origin/main with zero uncovered added lines
+after its coverage exemptions (11 added lines exempt across the patch).
+With the same Fulgur revision rebuilt without the streaming-diagnostics
+feature, the same input took 5.253, 5.188 and 5.212 seconds at 93,124,
+94,648 and 93,124 KiB in three fresh processes.
+
+On the same Linux host, user-space CPU sampling at 199 Hz attributed 6.14%
+of samples to glibc private lock wake/wait functions. To measure allocator
+sensitivity, four fresh production-release probe processes ran in glibc,
+jemalloc, jemalloc, glibc order. Set `LD_PRELOAD=/usr/lib/libjemalloc.so.2`
+on the probe invocation only for the jemalloc runs. At 20,000 rows glibc
+took 5.215 and 5.268 seconds at 91,704 and 92,120 KiB. jemalloc took
+4.756 and 4.732 seconds at 96,860 and 98,088 KiB. A third jemalloc run
+took 4.747 seconds at 100,048 KiB and reproduced the 318-page reference
+raster digest above. At 40,000 rows jemalloc took 9.363 and 9.609 seconds
+at 105,816 and 107,796 KiB. The library leaves allocator choice to its host.

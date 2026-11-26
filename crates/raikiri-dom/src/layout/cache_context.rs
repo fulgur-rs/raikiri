@@ -490,7 +490,12 @@ impl LayoutSession<'_> {
         }
     }
 
-    pub(crate) fn restore_layout_cache(&mut self, idx: usize, saved: SavedLayoutCache) {
+    pub(crate) fn restore_layout_cache(&mut self, idx: usize, mut saved: SavedLayoutCache) {
+        // A layout of the boxes inside that made the cache in use forget its
+        // final layout replaced what the saved final layout stands for too.
+        if self.nodes[idx].cache.final_layout_forgotten() {
+            saved.forget_final_layout();
+        }
         // A descendant unwind can dirty the document while outer scopes remain active.
         // Discard saved caches without publishing metadata inside those scopes.
         if !self.document.layout_dirty {

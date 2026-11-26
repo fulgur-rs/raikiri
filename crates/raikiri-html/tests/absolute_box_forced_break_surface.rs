@@ -591,7 +591,7 @@ fn a_break_forced_inside_a_fixed_box_breaks_no_page() {
 
 #[test]
 fn a_float_breaking_before_itself_inside_an_absolute_box_leaves_the_flow_after_it() {
-    // Where the float itself lands is left out: the flow past the absolute
+    // A float's own break does not apply, and the flow past the absolute
     // box stays on the page either way.
     let (_, runs) = lines(&after_spacer(
         "<div style='position:relative'><div style='position:absolute;width:20px'>\

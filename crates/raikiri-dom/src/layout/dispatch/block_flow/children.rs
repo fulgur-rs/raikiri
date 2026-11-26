@@ -54,18 +54,14 @@ fn measure_in_flow_child(
     child: NodeId,
     inputs: LayoutInput,
     context: Option<&mut BlockContext>,
+    marker_wants_baseline: bool,
 ) -> LayoutOutput {
     let measure = |tree: &mut LayoutSession<'_>| {
         tree.compute_child_layout_with_block_ctx(child, inputs, context)
     };
     if inputs.run_mode == RunMode::ComputeSize
         && (tree.context.baseline_measure_owners.last() == Some(&usize::from(parent))
-            || crate::layout::ifc::outside_marker::height(
-                tree,
-                tree.style_views.cascade(),
-                usize::from(parent),
-            )
-            .is_some())
+            || marker_wants_baseline)
     {
         // Block flow collects its baseline from an in-flow child's output,
         // just as native flex/grid do through their placement callbacks.
@@ -964,11 +960,21 @@ pub(super) fn layout(
                         flow.end + pending.resolve()
                     };
                     // A float the page walk moved whole to a later page
-                    // starts there, never above where the flow puts it.
+                    // starts there, never above where the flow puts it. One
+                    // after a box that closed before the break that sends
+                    // the float on starts where that box ends, beside the
+                    // flow after the box.
                     tree.context
                         .float_resumptions
                         .pushed_float_top(usize::from(child))
-                        .map_or(top, |pushed| pushed.max(top))
+                        .into_iter()
+                        .chain(
+                            tree.context
+                                .float_resumptions
+                                .closed_float_top(usize::from(child)),
+                        )
+                        .chain(tree.context.float_resumptions.break_top(usize::from(child)))
+                        .fold(top, f32::max)
                 },
                 if style.float == Float::Left {
                     FloatDirection::Left
@@ -978,6 +984,22 @@ pub(super) fn layout(
                 style.clear,
                 leading && collapse_start,
             );
+            if let Some(extent) = tree
+                .context
+                .float_resumptions
+                .line_extent(usize::from(child))
+            {
+                ctx.extend_float_for_lines(
+                    position,
+                    output.size + margin.sum_axes(),
+                    if style.float == Float::Left {
+                        FloatDirection::Left
+                    } else {
+                        FloatDirection::Right
+                    },
+                    extent,
+                );
+            }
             if track_margin_floats {
                 margin_float_tops.push((usize::from(child), position.y));
             }
@@ -1031,8 +1053,13 @@ pub(super) fn layout(
             .flatten()
             .into_iter()
             .chain(tree.context.float_resumptions.flow_top(usize::from(child)))
+            .chain(tree.context.float_resumptions.break_top(usize::from(child)))
             .chain(margin_floor)
             .reduce(f32::max);
+        let pushed_delta = tree
+            .context
+            .float_resumptions
+            .pushed_flow_delta(usize::from(child));
         // An `auto` width fills the room, but a table, a compressible
         // replaced box and a button take their own size then; `stretch` fills
         // it for them too (CSS Sizing 4 §5.1).
@@ -1198,6 +1225,24 @@ pub(super) fn layout(
         // margins of its parent.
         let mut separated = false;
         let joins = leading && collapse_start;
+        // A block the page walk moved whole to a later page, away from the
+        // floats beside its lines, goes as far below its place in the flow
+        // as the walk moved it, so that its lines are broken where it lands.
+        let pushed_floor = pushed_delta.map(|delta| {
+            let natural = if joins {
+                flow.end
+            } else {
+                flow.end + pending.collapse_with_margin(margin.top).resolve()
+            };
+            // A block that clears floats, or that another plan holds lower,
+            // starts there in the flow.
+            ctx.cleared_threshold(style.clear)
+                .into_iter()
+                .chain(floor)
+                .fold(natural, f32::max)
+                + delta
+        });
+        let floor = floor.into_iter().chain(pushed_floor).reduce(f32::max);
         let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         if !same {
             let margins = pending.collapse_with_margin(margin.top);
@@ -1263,6 +1308,15 @@ pub(super) fn layout(
         child_input.available_space.width = AvailableSpace::Definite(assigned_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
+        // The clearance a forced break gives a box does not clear the floats
+        // that run on onto the page the break opens.
+        if tree
+            .forced_break_clearance
+            .binary_search(&usize::from(child))
+            .is_err()
+        {
+            ctx.clear_line_extensions(style.clear);
+        }
         // Clearance refers to preceding floats. Descendant floats created
         // by a speculative child must never push that same child downward.
         let clear_y = ctx
@@ -1270,6 +1324,9 @@ pub(super) fn layout(
             .into_iter()
             .chain(floor)
             .fold(f32::NEG_INFINITY, f32::max);
+        // Only the child that gives the first baseline can be moved down
+        // by the outside marker, so only it is measured for its baseline.
+        let marker_wants_baseline = marker_height.is_some() && flow.baselines.first.is_none();
         let saved = ctx.snapshot();
         let mut final_pass = resolved && joins && style.clear == Clear::None && floor.is_none();
         let mut guess = slot_y
@@ -1298,7 +1355,14 @@ pub(super) fn layout(
                     )
                 };
                 sub.set_origin_resolved(final_pass);
-                let output = measure_in_flow_child(tree, node, child, child_input, Some(&mut sub));
+                let output = measure_in_flow_child(
+                    tree,
+                    node,
+                    child,
+                    child_input,
+                    Some(&mut sub),
+                    marker_wants_baseline,
+                );
                 (
                     output,
                     sub.floated_content_height_contribution(),
@@ -1306,7 +1370,14 @@ pub(super) fn layout(
                 )
             } else {
                 (
-                    measure_in_flow_child(tree, node, child, child_input, None),
+                    measure_in_flow_child(
+                        tree,
+                        node,
+                        child,
+                        child_input,
+                        None,
+                        marker_wants_baseline,
+                    ),
                     f32::NEG_INFINITY,
                     [false; 2],
                 )

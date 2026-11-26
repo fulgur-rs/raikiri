@@ -19,6 +19,27 @@ pub(crate) struct IfcProbeWidths {
     pub(crate) answered: f32,
 }
 
+/// A line the page walk moved down past a page edge while its paragraph was
+/// broken beside floats.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineGapNote {
+    /// The paragraph.
+    pub(crate) root: usize,
+    /// The line's index in the paragraph.
+    pub(crate) line: usize,
+    /// The line's block offset from the paragraph's content-box top, as
+    /// layout put it.
+    pub(crate) top: f32,
+    /// How far the walk moved the line.
+    pub(crate) delta: f32,
+    /// Whether the walk noted earlier lines of the same paragraph, and the
+    /// lines from the first of them through this one break the same once the
+    /// gaps above them move them down: the floats beside each are the same
+    /// where it lands. The walk then moved this line from where layout puts
+    /// it with those gaps, so its gap is planned with theirs.
+    pub(crate) follows: bool,
+}
+
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
@@ -43,9 +64,59 @@ pub(crate) struct LayoutContext {
     pub(crate) float_resumptions: super::page_pipeline::float_resumption::Plan,
     /// Floats taking a preceding normal-flow break, with the flow resumed beside them.
     pub(crate) float_resumption_candidates: Vec<(usize, usize)>,
+    /// Floats whose content the page walk moved down past page edges, so
+    /// that they grew, and how the lines beside them moved (see
+    /// [`LineGrowth`](super::page_pipeline::float_resumption::LineGrowth)).
+    pub(crate) float_line_growth:
+        HashMap<usize, super::page_pipeline::float_resumption::LineGrowth>,
+    /// How far the page walk moved the top of each float it placed, for
+    /// `float_line_growth`.
+    pub(crate) float_start_shifts: HashMap<usize, f32>,
+    /// How far the page walk moved the lines of each paragraph past page
+    /// edges, in all, for `float_line_growth`.
+    pub(crate) paragraph_line_moves: HashMap<usize, f32>,
+    /// The floats whose content the page walk moved whole to a later page by
+    /// moving their first lines: they get no line extent.
+    pub(crate) floats_moved_whole: HashSet<usize>,
+    /// Floats that a forced break at the end of the content of the boxes
+    /// around them sends to the next page, each with the outermost of those
+    /// boxes: only floats follow the break inside that box.
+    pub(crate) float_break_closers: HashMap<usize, usize>,
+    /// The float right after a forced break, before the text that follows
+    /// it, keyed by the block whose end the break follows: the lines after
+    /// that block start where the float does when the page walk planned the
+    /// float a top beside an earlier float (see `float_resumption`).
+    pub(crate) line_break_floats: HashMap<usize, usize>,
+    /// The floats of `float_break_closers` whose box the page walk ended on
+    /// the page the break leaves, each with the lowest top it takes, local
+    /// to its parent: where that box ends.
+    pub(crate) floats_after_closed_edges: Vec<(usize, f32)>,
     /// Floats the page walk moved whole to a later page without a forced
     /// break, in the order it moved them.
     pub(crate) pushed_floats: Vec<usize>,
+    /// Boxes after a forced break that clearance took past the top of the
+    /// page the break opens, below an earlier float that runs on onto that
+    /// page, each with the top the walk found for it there: the border-box
+    /// top of a block, or the margin-box top of a float.
+    pub(crate) forced_break_tops: Vec<(usize, f32)>,
+    /// Blocks the page walk moved whole to a later page without a forced
+    /// break, away from the floats their lines were broken beside or moved
+    /// below, each with
+    /// how far it moved them and where its top was in the page flow before.
+    pub(crate) pushed_flows: Vec<(usize, f32, f32)>,
+    /// Blocks the page walk moved whole to a later page with their lines,
+    /// but not away from floats beside them.
+    pub(crate) flows_moved_otherwise: Vec<usize>,
+    /// Each line the page walk moved down past a page edge while its
+    /// paragraph was broken beside floats, in the order the walk moved them
+    /// (see [`LineGapNote`]).
+    pub(crate) line_gaps: Vec<LineGapNote>,
+    /// Where the content box of each paragraph the page walk judged starts
+    /// on its page, from the page's origin.
+    pub(crate) paragraph_page_tops: HashMap<usize, f32>,
+    /// Paragraphs that the page walk found starting elsewhere on their page
+    /// than where the gaps planned for their lines were found.
+    pub(crate) stale_line_gaps: Vec<usize>,
     /// Page origins chosen when a float takes a pending forced break.
     pub(crate) float_resumption_boundaries:
         HashMap<usize, super::page_pipeline::float_resumption::Boundary>,
@@ -62,6 +133,12 @@ pub(crate) struct LayoutContext {
     /// follows (see `compute_multicol_layout`). A layout that moves it is not
     /// kept in the caches.
     pub(crate) columns_deferred_layouts: usize,
+    /// How many layouts have been written into the arena so far. A measure
+    /// during which it moves has laid out boxes inside the measured box again
+    /// (a paragraph lays out its inline-blocks at each width it is measured
+    /// at), so the final layout held for that box no longer stands for them
+    /// (see `compute_child_layout_with_block_ctx`).
+    pub(crate) arena_writes: u64,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical
@@ -148,12 +225,20 @@ pub(crate) struct LayoutContext {
     /// parent holds in, which a `stretch` height limit leaves out of its room
     /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
     pub(crate) held_margins: Vec<crate::layout::dispatch::content_limits::HeldMargins>,
-    /// The width or height each box measured for its keyword sizes, while the
-    /// outermost box laying out with them runs, and how many such layouts are
+    /// The width or height each box measured for its keyword sizes, kept until
+    /// a style the measure reads changes, and how many such layouts are
     /// running (see `dispatch::content_limits`).
     pub(crate) content_limit_measures:
         HashMap<crate::layout::dispatch::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
+    /// The measures that hold a state only the running keyword-size layouts
+    /// set up, dropped when the outermost of them ends.
+    pub(crate) content_limit_transient_measures:
+        Vec<crate::layout::dispatch::content_limits::MeasureKey>,
+    /// How many keyword-size measures were laid out, for tests that check a
+    /// box is not measured again.
+    #[cfg(test)]
+    pub(crate) content_limit_measure_runs: usize,
     /// The final layout inputs observed for out-of-flow candidates during a
     /// preliminary positioning pass, before their intrinsic limits are
     /// installed.
@@ -227,6 +312,24 @@ pub(crate) struct LayoutContext {
     pub(crate) page_filled_origins: std::collections::HashMap<usize, f32>,
     /// Accepted owner origins used to replan leading spanners from source layout.
     pub(crate) spanning_page_origins: std::collections::HashMap<usize, f32>,
+    /// How far the page walk has moved the columns after each spanner of a
+    /// multicol container whose children are boxes, for the breaks inside
+    /// the spanner.
+    pub(crate) spanner_column_shifts: std::collections::HashMap<usize, f32>,
+    /// How far the pages pushed the column content after each spanner of a
+    /// multicol container below where it would start, which the spanner may
+    /// grow into without moving that content.
+    pub(crate) spanner_column_slack: std::collections::HashMap<usize, f32>,
+    /// How far an earlier attempt's page walk had to move the columns after
+    /// each spanner, for the breaks inside it: the columns are planned that
+    /// far below it from the start, so that they break where their pages
+    /// end.
+    pub(crate) spanner_growth: std::collections::HashMap<usize, f32>,
+    /// The spanners whose columns after them were planned page by page
+    /// before this page walk, which can plan them below a growth.
+    pub(crate) planned_spanners: std::collections::HashSet<usize>,
+    /// How far the breaks inside each spanner grew it in this page walk.
+    pub(crate) spanner_breaks_growth: std::collections::HashMap<usize, f32>,
     /// How deeply the child layouts of this pass are nested, and whether that
     /// passed its limit.
     pub(crate) recursion: LayoutRecursion,
@@ -367,6 +470,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.safe_static_positions.clear();
             self.context.vertical_block_size_seeds.clear();
             self.context.variant_caches.clear();
+            self.context.content_limit_measures.clear();
             self.document.layout_dirty = false;
         }
     }

@@ -128,9 +128,10 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
 fn contains_spanner(tree: &LayoutSession<'_>, node: NodeId) -> bool {
     tree.child_ids(node).any(|child| {
         let style = child_style(tree, child);
-        shares_parent_context(tree, node, child, &style)
-            && (crate::layout::is_spanner(tree, usize::from(child))
-                || contains_spanner(tree, child))
+        // A spanner roots a formatting context of its own, but still spans
+        // the columns of the container whose context it sits in.
+        crate::layout::is_spanner(tree, usize::from(child))
+            || (shares_parent_context(tree, node, child, &style) && contains_spanner(tree, child))
     })
 }
 

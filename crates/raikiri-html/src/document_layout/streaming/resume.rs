@@ -14,10 +14,10 @@
 //! content was laid out:
 //!
 //! - every ancestor of the page start is a block container in the normal
-//!   flow whose height follows its content, so that the content before the
-//!   start sits in preceding sibling blocks and leaving it out moves only
-//!   where those ancestors begin, and none of them is transformed about an
-//!   origin that depends on where it begins;
+//!   flow whose height follows its content and whose width does not, so
+//!   that the content before the start sits in preceding sibling blocks and
+//!   leaving it out moves only where those ancestors begin, and none of them
+//!   is transformed about an origin that depends on where it begins;
 //! - the body does not reach the page of the start, as it spans the page
 //!   area from the top of the first page;
 //! - the page start is the top of a line or a box, not a line straddling
@@ -207,6 +207,13 @@ fn skipped_before(
             {
                 return None;
             }
+            // A box sized by its content gets narrower without the content
+            // left out, and so does everything laid out in it.
+            if dom.get_node(parent)?.kind() == NodeKind::Element
+                && has_content_width(cascade.computed.get(parent)?)
+            {
+                return None;
+            }
             // A transform turns a box about an origin found from its whole
             // border box, which starts higher than a relayout begins it.
             if dom.get_node(parent)?.kind() == NodeKind::Element
@@ -256,6 +263,15 @@ fn has_content_height(computed: &ComputedValues) -> bool {
     matches!(computed.height, ComputedLengthPercentageOrAuto::Auto)
         && matches!(computed.max_height, ComputedLengthPercentageOrAuto::Auto)
         && unset(&computed.min_height)
+}
+
+/// Whether an element with these computed values takes a width, or a bound
+/// on it, from its content (CSS Sizing 3 §3.1.1) rather than from its
+/// containing block.
+fn has_content_width(computed: &ComputedValues) -> bool {
+    computed.width.is_content_keyword()
+        || computed.min_width.is_content_keyword()
+        || computed.max_width.is_content_keyword()
 }
 
 /// Whether element `id` is the body or the root element above it.
