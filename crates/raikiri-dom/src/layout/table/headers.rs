@@ -270,22 +270,28 @@ impl HeaderRepeats {
                     }));
                 }
             }
-            // A header copy is placed on a page where a body row starts, or
-            // where a box that does not break runs on. Bound those pages by
-            // the rows, and by the table's unfragmented height over the body
-            // area left beside the copies (at least three quarters of a page
-            // beside one group, half a page beside both). Pushing an
-            // unfitting row to the next page can waste up to one row per
-            // page, hence the doubling; forced row breaks each open at most
-            // one further page. Footer copies close the same pages.
-            let forced_breaks = body_rows
-                .iter()
-                .filter(|&&row| {
-                    let computed = &cascade.computed[row];
+            // A header copy is placed on each page a body row starts or runs
+            // on, and on each page a box that does not break runs over. Rows
+            // break between their lines and at forced breaks in their cells,
+            // so bound those pages by the table's unfragmented height over the
+            // body area left beside the copies (at least three quarters of a
+            // page beside one group, half a page beside both). Pushing an
+            // unfitting row or line to the next page can waste up to one of
+            // them per page, hence the doubling; each forced break in the
+            // body opens at most one further page. Footer copies close the
+            // same pages.
+            let forces_break = |id: usize| {
+                cascade.computed.get(id).is_some_and(|computed| {
                     computed.break_before.may_force_page_break()
                         || computed.break_after.may_force_page_break()
                 })
-                .count();
+            };
+            let mut forced_breaks = 0usize;
+            let mut body_boxes = body_rows.clone();
+            while let Some(id) = body_boxes.pop() {
+                forced_breaks += usize::from(forces_break(id));
+                body_boxes.extend(document.nodes[id].children.iter().copied());
+            }
             let table_height = node.layout.size.height;
             let body_area = if header.is_some() && footer.is_some() {
                 0.5
@@ -295,17 +301,10 @@ impl HeaderRepeats {
             let flow_pages = Some((table_height / (page_height * body_area)).ceil())
                 .filter(|pages| pages.is_finite())
                 .map_or(usize::MAX, |pages| pages.max(0.0) as usize);
-            let row_pages = if unbroken.is_empty() {
-                body_rows.len() + 1
-            } else {
-                usize::MAX
-            };
-            let pages = row_pages.min(
-                flow_pages
-                    .saturating_mul(2)
-                    .saturating_add(forced_breaks)
-                    .saturating_add(1),
-            );
+            let pages = flow_pages
+                .saturating_mul(2)
+                .saturating_add(forced_breaks)
+                .saturating_add(1);
             let copies = sources.len().saturating_mul(pages);
             if copies > copy_budget {
                 continue;
