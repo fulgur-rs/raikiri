@@ -447,6 +447,43 @@ fn a_forced_break_in_text_before_the_rows_ends_the_first_row() {
 }
 
 #[test]
+fn a_forced_break_at_a_block_beside_the_rows_ends_what_a_held_group_holds() {
+    let group = |content: &str| {
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">{content}</div><div style="display:table-row"><div style="display:table-cell">T</div></div></div>"#
+        )
+    };
+    let row = r#"<div style="display:table-row"><div style="display:table-cell">R</div></div>"#;
+    let empty = |height: u32| format!(r#"<div style="display:table-row;height:{height}px"></div>"#);
+    // After the text before the rows.
+    let after_text = group(&format!(
+        r#"<div style="break-after:page">A</div>{row}{}"#,
+        empty(5)
+    ));
+    // Before a block after the rows.
+    let before_block = group(&format!(
+        r#"A{row}<div style="break-before:page;height:5px"></div>"#
+    ));
+    for (open, close) in WRAPPERS {
+        for table in [&after_text, &before_block] {
+            let tops = glyph_tops(&document(8, open, table, close), &[]);
+            assert_eq!(
+                tops.iter()
+                    .filter(|(page, ..)| *page == 0)
+                    .map(|&(_, glyph, top)| (glyph, top))
+                    .collect::<Vec<_>>(),
+                if std::ptr::eq(table, &after_text) {
+                    vec![('A', 43), ('H', 13), ('Y', 5)]
+                } else {
+                    vec![('A', 43), ('H', 13), ('R', 73), ('Y', 5)]
+                },
+                "{open} {table}"
+            );
+        }
+    }
+}
+
+#[test]
 fn generated_content_stays_tied_across_a_forced_break_before_the_rows() {
     let table = r#"<table class="b"><tr style="break-before:page"><td>R</td></tr><tr><td>S</td></tr></table>"#;
     for (open, close) in WRAPPERS {

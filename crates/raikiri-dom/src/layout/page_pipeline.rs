@@ -6365,7 +6365,6 @@ fn anonymous_row_cut(
                 && !is_row_or_row_group(node)
                 && is_block_level_flow_box(node.display())
                 && !is_out_of_flow_positioned(document, child)
-                && !document.pagination_style(child).float().is_floated()
                 && current_abs_y(document, child) >= start - 0.001
                 && bottom(child) <= end + 0.001
         })
@@ -6386,8 +6385,8 @@ fn anonymous_row_cut(
 /// `anonymous_end`: its content up to the first forced break inside it (see
 /// [`anonymous_row_cut`]). With `holds_rows`, for a row group that avoids
 /// breaks inside it, the row holds the rest of the group as well, up to the
-/// first forced break between its rows, after them, or inside the anonymous
-/// row that follows them.
+/// first forced break before or after one of its rows or of the blocks
+/// between and after them.
 fn held_anonymous_row_end(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6402,33 +6401,39 @@ fn held_anonymous_row_end(
     if !holds_rows {
         return anonymous_end;
     }
+    // The rows, and the blocks of the anonymous rows between and after them,
+    // until the first forced break between two of them. The leading
+    // anonymous row is held already; a break after its last block ends it.
     let bottom = |id: usize| current_abs_y(document, id) + document.nodes[id].layout.size.height;
     let mut end = anonymous_end;
     let mut previous: Option<usize> = None;
-    for row in document
-        .children_through_contents(owner)
-        .into_iter()
-        .filter(|&row| {
-            document.nodes[row].display() == DisplayValue::TableRow
-                && !is_out_of_flow_positioned(document, row)
-        })
-    {
-        if forces_page_break(document, cascade, row, true)
+    let mut rows_started = false;
+    for child in document.children_through_contents(owner) {
+        let node = &document.nodes[child];
+        let row = node.display() == DisplayValue::TableRow;
+        if node.kind() != NodeKind::Element
+            || !row && !is_block_level_flow_box(node.display())
+            || is_out_of_flow_positioned(document, child)
+        {
+            continue;
+        }
+        if !rows_started && !row {
+            previous = Some(child);
+            continue;
+        }
+        if forces_page_break(document, cascade, child, true)
             || previous.is_some_and(|held| forces_page_break(document, cascade, held, false))
         {
             return end;
         }
-        end = end.max(bottom(row));
-        previous = Some(row);
+        rows_started = true;
+        end = end.max(bottom(child));
+        previous = Some(child);
     }
     if previous.is_some_and(|held| forces_page_break(document, cascade, held, false)) {
         return end;
     }
-    // The content after the rows sits in an anonymous row of its own, below
-    // the padding and border that end the group.
-    let layout = &document.nodes[owner].layout;
-    let content_end = bottom(owner) - layout.padding.bottom - layout.border.bottom;
-    anonymous_row_cut(document, cascade, owner, end, content_end).unwrap_or(bottom(owner))
+    bottom(owner)
 }
 
 /// The block end, before pagination, of the first row of each plain block
