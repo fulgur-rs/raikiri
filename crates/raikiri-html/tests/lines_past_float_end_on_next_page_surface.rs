@@ -210,9 +210,13 @@ fn beside_a_float(height: u32) -> String {
         left -= count;
         lines.push((page, slot, beside, count));
     }
+    // The floats here end pages above the last line, so the line that
+    // moves down to keep two lines on the last page has the full width
+    // where it was and where it lands.
     if lines.len() % 3 == 1 {
         let page = lines[lines.len() - 1].0;
         let moved = lines.len() - 2;
+        assert!(!lines[moved].2 && page * 100 >= height);
         lines[moved].0 = page;
         lines[moved].1 = 0;
         lines[moved + 1].1 = 1;

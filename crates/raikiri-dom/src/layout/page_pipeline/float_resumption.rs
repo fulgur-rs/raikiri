@@ -104,11 +104,14 @@ impl Plan {
     }
 
     /// The gaps that layout leaves above lines moved past a page edge (see
-    /// [`Self::line_gaps`]), each as its paragraph and its block offset.
-    pub(crate) fn planned_line_gaps(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
-        self.line_gaps
-            .iter()
-            .flat_map(|(&root, (_, gaps))| gaps.iter().map(move |&(top, _)| (root, top.to_bits())))
+    /// [`Self::line_gaps`]), each as its paragraph and its block offset in
+    /// hundredths of a pixel: a gap planned again from a later walk is the
+    /// same gap though its offset was added up otherwise.
+    pub(crate) fn planned_line_gaps(&self) -> impl Iterator<Item = (usize, i64)> + '_ {
+        self.line_gaps.iter().flat_map(|(&root, (_, gaps))| {
+            gaps.iter()
+                .map(move |&(top, _)| (root, (f64::from(top) * 100.0).round() as i64))
+        })
     }
 
     /// Keeps the gaps planned above lines as `previous` has them, in place
@@ -559,7 +562,7 @@ fn plain_flow_margin(
 
 /// The vertical offsets of the relatively positioned inline elements
 /// between `float` and its layout parent, the paragraph root, added up.
-fn relative_inline_offset_y(document: &LayoutSession<'_>, float: usize) -> f32 {
+pub(super) fn relative_inline_offset_y(document: &LayoutSession<'_>, float: usize) -> f32 {
     let parent = document.layout_parent_of(float);
     let offsets = parent.map_or(&[][..], |parent| {
         document.nodes[parent].ifc_relative_offsets()
