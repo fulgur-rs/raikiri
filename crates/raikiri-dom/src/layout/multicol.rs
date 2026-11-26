@@ -2664,7 +2664,7 @@ fn record_wrapped_fragments(
                     tree,
                     wrapped.node,
                     fragment,
-                    (placement.first_column, placement.first_y),
+                    placement,
                     end,
                     group.height,
                     context,
@@ -2781,10 +2781,12 @@ fn record_wrapped_fragments(
 }
 
 /// Give `wrapper`, a wrapper whose boxes joined the flow, a piece in each
-/// column its border box reaches, from `start`, the column and block offset
-/// where it starts, to `end`, where it ends, in columns `column_height` tall:
-/// its first piece `first_fragment`, which holds its boxes, and one more for
-/// each column after it, which paint its background and borders there. A
+/// column its border box reaches, from where `placement` starts it, its
+/// first column and block offset, to `end`, where it ends, in columns
+/// `column_height` tall: its first piece `first_fragment`, which holds its
+/// boxes, and one more for each column after it, which paint its background
+/// and borders there. The piece in the column its content ends in ends there
+/// when the padding below the wrapper went whole to a later column. A
 /// wrapper that paints neither keeps its one piece. A wrapper that slices
 /// its block-axis border and padding paints whole in each piece, moved up by
 /// what the earlier pieces took, and the column clips it. `None` when the
@@ -2793,11 +2795,12 @@ fn push_wrapper_pieces(
     tree: &mut LayoutSession<'_>,
     wrapper: usize,
     first_fragment: usize,
-    start: (usize, f32),
+    placement: &paragraph_group::Placement,
     end: (usize, f32),
     column_height: f32,
     context: FragmentationContext,
 ) -> Option<()> {
+    let start = (placement.first_column, placement.first_y);
     if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
         return Some(());
     }
@@ -2807,10 +2810,12 @@ fn push_wrapper_pieces(
     let heights: Vec<f32> = (start.0..=end.0)
         .map(|column| {
             let top = if column == start.0 { start.1 } else { 0.0 };
-            let bottom = if column == end.0 {
-                end.1
-            } else {
-                column_height
+            let bottom = match placement.content_end {
+                _ if column == end.0 => end.1,
+                Some((content_column, y)) if column == content_column => y.min(column_height),
+                // Columns past the one the content ends in hold none of it.
+                Some((content_column, _)) if column > content_column => top,
+                _ => column_height,
             };
             (bottom - top).max(0.0)
         })
@@ -2840,13 +2845,19 @@ fn push_wrapper_pieces(
         } else {
             0.0
         };
+        // A piece that ends above its column's end is cut there.
+        let window = if index + 1 < count {
+            (top + height).min(column_height)
+        } else {
+            column_height
+        };
         let fragment = crate::fragment::LayoutFragment {
             fragmentainer: first.fragmentainer + index,
             rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
             fragmentainer_clip: Some(paragraph_group::inline_open_clip(
                 crate::fragment::FragmentRect {
                     y: column_top - above,
-                    height: column_height + above + below,
+                    height: window + above + below,
                     ..rect
                 },
             )),
@@ -3013,6 +3024,8 @@ fn sliced_leaf_placement(
         entry_column: column,
         entry_y: top,
         sliced: true,
+        moved_whole: false,
+        content_end: None,
     })
 }
 
@@ -4865,7 +4878,7 @@ fn layout_column_group(
                                 tree,
                                 child,
                                 child_fragment,
-                                (placement.first_column, placement.first_y),
+                                &placement,
                                 end,
                                 group.height,
                                 context,
@@ -5961,11 +5974,22 @@ fn record_nested_ifc_box_fragments(
                 // or, for a slice the paragraph goes on from, down to the
                 // fragmentainer edge, including unused space left by
                 // paragraph break minima.
+                // A piece that the edge below the last line follows alone,
+                // in a piece of its own, ends with that line (Chromium).
+                let edge_follows = line_ranges.as_ref().is_some_and(|ranges| {
+                    ranges
+                        .get(fragment_index + 1)
+                        .is_some_and(|next| next.line_start >= next.line_end)
+                });
                 let slice_height =
                     |range: MulticolTextFragment,
                      extend: bool,
                      base: crate::fragment::LayoutFragment| {
-                        if extend && fragment_index + 1 < fragment_count {
+                        if range.line_start >= range.line_end {
+                            // The piece of the edge alone holds no line.
+                            return 0.0;
+                        }
+                        if extend && fragment_index + 1 < fragment_count && !edge_follows {
                             let top = if fragment_index == 0 {
                                 base.rect.y - context.origin_y
                             } else {
@@ -6074,7 +6098,14 @@ fn record_nested_ifc_box_fragments(
                 };
                 if root_owns_fragments && let Some(range) = line_range {
                     let base = tree.fragment_tree.fragments[parent_fragment];
-                    let extent = slice_height(range, origins_recorded, base);
+                    // The first piece that ends with its lines holds the
+                    // edge above them too.
+                    let extent = slice_height(range, origins_recorded, base)
+                        + if edge_follows && fragment_index == 0 {
+                            edge_start
+                        } else {
+                            0.0
+                        };
                     let fragment_height = extent
                         + if sliced {
                             piece_lead + edge_end
@@ -6097,6 +6128,25 @@ fn record_nested_ifc_box_fragments(
                             pieces[fragment_index] = Some((extent + end, piece_lead));
                         }
                     }
+                    // The column clips a piece of a sliced box, unless the
+                    // piece ends above the column's end, before the edge
+                    // that goes on alone, or is that edge, which overflows
+                    // the column when it is taller.
+                    let piece_bottom = piece_lead + extent + if last { edge_end } else { 0.0 };
+                    let window = |rect: crate::fragment::FragmentRect| {
+                        let mut clip =
+                            paragraph_group::column_window(rect, context, height, open_window);
+                        let bottom = rect.y + piece_bottom;
+                        if edge_follows || range.line_start >= range.line_end {
+                            let top = clip.rect.y;
+                            clip.rect.height = if edge_follows {
+                                bottom - top
+                            } else {
+                                clip.rect.height.max(bottom - top)
+                            };
+                        }
+                        clip
+                    };
                     let fragment_id = if base.fragmentainer == column {
                         let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
                         fragment.rect.height = fragment_height;
@@ -6105,12 +6155,7 @@ fn record_nested_ifc_box_fragments(
                         fragment.fragment_index = fragment_index;
                         fragment.fragment_count = fragment_count;
                         if sliced {
-                            fragment.fragmentainer_clip = Some(paragraph_group::column_window(
-                                fragment.rect,
-                                context,
-                                height,
-                                open_window,
-                            ));
+                            fragment.fragmentainer_clip = Some(window(fragment.rect));
                         }
                         parent_fragment
                     } else {
@@ -6127,14 +6172,7 @@ fn record_nested_ifc_box_fragments(
                                 parent: base.parent,
                                 fragmentainer: column,
                                 rect,
-                                fragmentainer_clip: sliced.then(|| {
-                                    paragraph_group::column_window(
-                                        rect,
-                                        context,
-                                        height,
-                                        open_window,
-                                    )
-                                }),
+                                fragmentainer_clip: sliced.then(|| window(rect)),
                                 fragment_index,
                                 fragment_count,
                                 line_start: Some(range.line_start),
