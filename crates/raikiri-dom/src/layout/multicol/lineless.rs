@@ -308,7 +308,7 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// limit their height grow to fit it, so only such a container holds it
 /// whole. Columns that a height or the page fills in turn, and columns nested
 /// in other columns, cut it, which their own strategies do.
-fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
+pub(super) fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     node.multicol.is_some()
@@ -323,10 +323,29 @@ fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool 
         )
         && !style.float().is_floated()
         && style.clear() == Clear::None
+        && !node.size_containment.height
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        && style.overflow().x == TaffyOverflow::Visible
+        && style.overflow().y == TaffyOverflow::Visible
         && !sets_break_in_columns(node.break_before)
         && !sets_break_in_columns(node.break_after)
         && !is_right_aligned_in_parent(tree, child)
         && supported(tree, child, false).is_some()
+}
+
+/// Whether one of `children` is a column container the stream keeps whole
+/// (see [`is_unbroken_column_container`]).
+pub(super) fn holds_unbroken_column_container(
+    tree: &LayoutSession<'_>,
+    children: &[usize],
+) -> bool {
+    children
+        .iter()
+        .any(|&child| is_unbroken_column_container(tree, child))
 }
 
 /// The multicol container whose stream holds `child`: its nearest ancestor
@@ -339,16 +358,17 @@ fn column_owner(tree: &LayoutSession<'_>, child: usize) -> Option<usize> {
     tree.nodes[owner].multicol.is_some().then_some(owner)
 }
 
-/// Whether the columns of `owner` balance with no height, maximum or outer
-/// column to stop them, so they grow to fit a box that is never cut.
+/// Whether the columns of `owner` balance with no maximum, aspect ratio or
+/// outer column to stop them, so they grow to fit a box that is never cut. A
+/// definite height stops them too, which the caller that resolves it checks.
 fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
     let style = style_of(tree, owner);
     tree.nodes[owner]
         .multicol
         .as_ref()
         .is_some_and(|columns| columns.column_fill != ColumnFillValue::Auto)
-        && style.size().height == Dimension::auto()
         && style.max_size().height.is_auto()
+        && style.aspect_ratio().is_none()
         && std::iter::successors(tree.nodes[owner].parent, |&id| tree.nodes[id].parent)
             .all(|id| tree.nodes[id].multicol.is_none())
 }

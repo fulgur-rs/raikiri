@@ -190,3 +190,27 @@ fn columns_a_height_limits_still_cut_the_nested_container() {
         "m:0,0,200,30 n:0,0,200,30 a:0,0,100,30 b:50,0,150,30 c:100,0,200,30"
     );
 }
+
+#[test]
+fn a_flex_line_that_stretches_the_columns_limits_them_like_a_height() {
+    let inside = |flex: &str| {
+        boxes(&format!(
+            "<div style='display:flex;{flex}'>{}</div>",
+            nested("", (40, 40), 40)
+        ))
+    };
+    assert_eq!(
+        inside("height:30px"),
+        "m:0,0,200,30 n:0,0,200,30 a:0,0,100,30 b:50,0,150,30 c:100,0,200,30"
+    );
+    assert_eq!(
+        inside(""),
+        "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
+    );
+    // A column flex item does not shrink below its content, so its columns
+    // still balance around the nested container.
+    assert_eq!(
+        inside("flex-direction:column;height:30px"),
+        "m:0,0,200,40 n:0,0,100,40 a:0,0,50,40 b:50,0,50,40 c:100,0,100,40"
+    );
+}
