@@ -2531,6 +2531,24 @@ fn paragraph_line_bounds(
     )
 }
 
+/// The line of the paragraph rooted at `root` that starts at the text where
+/// a relayout resumes its page (see `Document::set_continuation_break`), or
+/// `None` when the paragraph has no such line.
+fn continuation_break_line(document: &Document, root: usize) -> Option<usize> {
+    let at = document.continuation_break?;
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    lines.lines.iter().position(|line| {
+        line.owners()
+            .next()
+            .is_some_and(|(node, range)| (node.0 as usize, range.start) == at)
+    })
+}
+
 /// Block-start and block-end edges of every line of the ifc paragraph rooted
 /// at `root`, as they sit in the document, or `None` when the root has no
 /// positioned lines.
@@ -2783,6 +2801,7 @@ fn paragraph_line_moves(
         .iter()
         .zip(pieces.iter().skip(1))
         .enumerate()
+        .filter(|(_, (_, after))| Some(after.first) != fit.free_break)
         .find_map(|(index, (before, after))| {
             let remaining = total - after.first;
             let moved = kept_widows
@@ -17914,6 +17933,9 @@ struct ParagraphLineFit {
     /// Whether the lines need a break that leaves fewer than `orphans`
     /// lines before it or fewer than `widows` lines after it.
     violates_line_constraints: bool,
+    /// The line that a break before keeps no `orphans` or `widows` for (see
+    /// [`ParagraphLineFit::with_free_break`]).
+    free_break: Option<usize>,
     /// The padding and border below the last line, which stay with it; 0 for
     /// a paragraph of one line.
     tail_edges: f32,
@@ -17939,7 +17961,26 @@ impl ParagraphLineFit {
     /// Whether the break leaves fewer than `orphans` lines on the page, or
     /// all the lines of a paragraph shorter than that do not fit it.
     fn leaves_too_few_orphans(&self) -> bool {
-        self.lines_before_break < self.orphans.min(self.total_lines)
+        !self.breaks_freely() && self.lines_before_break < self.orphans.min(self.total_lines)
+    }
+
+    /// The fit with no minimum of lines on either side of the break before
+    /// `line`. A relayout that resumes a page at a line of the paragraph,
+    /// laid out at the width of that page, breaks there as the earlier
+    /// layout did, whatever number of lines the new width leaves on either
+    /// side; the breaks after it keep the paragraph's `orphans` and
+    /// `widows`.
+    fn with_free_break(mut self, line: Option<usize>) -> Self {
+        self.free_break = line;
+        if self.breaks_freely() {
+            self.violates_line_constraints = false;
+        }
+        self
+    }
+
+    /// Whether the natural break is the one before the free line.
+    fn breaks_freely(&self) -> bool {
+        self.free_break == Some(self.lines_before_break)
     }
 
     /// How to repair the break between the paragraph's lines on the page
@@ -18041,6 +18082,7 @@ impl ParagraphLineFit {
             top_edges_end_page: false,
             lone_line_moves_with_edges: false,
             violates_line_constraints,
+            free_break: None,
             tail_edges,
             tail_overflows,
             edges_overflow,

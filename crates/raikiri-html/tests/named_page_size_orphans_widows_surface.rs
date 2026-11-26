@@ -1,8 +1,8 @@
 //! A page whose size differs from the page before it, because its page
 //! name or its `:first` rule differs, lays the content after its start out
-//! again at its own width. The paragraphs that start on it, or after a box that starts it,
-//! keep their `orphans` and `widows` at the breaks after its start, as in
-//! Chromium. Where each glyph falls is what Chromium prints for the same
+//! again at its own width. The paragraphs that start on it, after a box
+//! that starts it, or before it with a line that starts it, keep their
+//! `orphans` and `widows` at the breaks after its start, as in Chromium. Where each glyph falls is what Chromium prints for the same
 //! documents, on default pages 100px square, pages named `foo` 200px wide,
 //! and Ahem glyphs of 20px on lines of 30px.
 
@@ -158,6 +158,98 @@ fn lines_after_a_block_that_starts_a_page_of_another_size_keep_their_widows() {
             (2, 'U', 0, 65),
             (2, 'V', 0, 35),
             (2, 'W', 0, 5),
+        ]
+    );
+}
+
+/// The style that makes the first page 200px wide, so the page after it,
+/// which a line of the paragraph starts, is laid out again at its own width.
+const WIDE_FIRST_PAGE: &str = "<style>@page :first{size:200px 100px}</style>";
+
+#[test]
+fn widows_hold_after_a_page_of_another_size_that_a_line_starts() {
+    // The fifth line would end the second page alone over the last; the
+    // widows take it down with the last.
+    let lines = "Z<br>Y<br>X<br>W<br>V<br>U<br>T";
+    let expected = [
+        (0, 'X', 0, 65),
+        (0, 'Y', 0, 35),
+        (0, 'Z', 0, 5),
+        (1, 'V', 0, 35),
+        (1, 'W', 0, 5),
+        (2, 'T', 0, 35),
+        (2, 'U', 0, 5),
+    ];
+    assert_eq!(glyphs(&format!("{WIDE_FIRST_PAGE}{lines}")), expected);
+    assert_eq!(
+        glyphs(&format!("{WIDE_FIRST_PAGE}<div>{lines}</div>")),
+        expected
+    );
+    // Three widows would leave one line on the second page, under the two
+    // orphans: the page gives up as many as it can spare.
+    assert_eq!(
+        glyphs(&format!(
+            "{WIDE_FIRST_PAGE}<div style=\"widows:3\">{lines}</div>"
+        )),
+        expected
+    );
+}
+
+#[test]
+fn orphans_that_no_page_holds_keep_the_lines_after_a_page_of_another_size() {
+    // Neither the first page nor the second holds four lines: both break
+    // where they end, and the second keeps the line the widows would take.
+    assert_eq!(
+        glyphs(&format!(
+            "{WIDE_FIRST_PAGE}<div style=\"orphans:4\">Z<br>Y<br>X<br>W<br>V<br>U<br>T</div>"
+        )),
+        [
+            (0, 'X', 0, 65),
+            (0, 'Y', 0, 35),
+            (0, 'Z', 0, 5),
+            (1, 'U', 0, 65),
+            (1, 'V', 0, 35),
+            (1, 'W', 0, 5),
+            (2, 'T', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn the_breaks_after_a_paragraph_that_a_page_of_another_size_splits_keep_their_widows() {
+    let glyphs = glyphs(&format!(
+        "{WIDE_FIRST_PAGE}<div>Z<br>Y<br>X<br>W<br>V<br>U<br>T</div><div>Q<br>P<br>O<br>N</div>"
+    ));
+    assert_eq!(
+        glyphs[7..],
+        [
+            (3, 'P', 0, 35),
+            (3, 'Q', 0, 5),
+            (4, 'N', 0, 35),
+            (4, 'O', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn widows_hold_in_text_wrapped_again_after_a_page_of_another_size() {
+    // Two words fit on a line of the first page, one on the pages after it.
+    let line_starts: Vec<_> = glyphs(&format!(
+        "{WIDE_FIRST_PAGE}<div>AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJ</div>"
+    ))
+    .into_iter()
+    .filter(|&(_, _, left, _)| left == 0)
+    .collect();
+    assert_eq!(
+        line_starts,
+        [
+            (0, 'A', 0, 5),
+            (0, 'C', 0, 35),
+            (0, 'E', 0, 65),
+            (1, 'G', 0, 5),
+            (1, 'H', 0, 35),
+            (2, 'I', 0, 5),
+            (2, 'J', 0, 35),
         ]
     );
 }

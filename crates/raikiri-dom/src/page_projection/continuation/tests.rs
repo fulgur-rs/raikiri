@@ -142,14 +142,16 @@ fn continuation_cascade_drops_breaks_before_the_token() {
 }
 
 #[test]
-fn continuation_cascade_keeps_no_minimum_of_lines_around_a_line_token() {
+fn continuation_cascade_keeps_the_minimum_of_lines_around_a_line_token() {
+    // Layout lets the break at the token itself leave fewer lines, and
+    // the breaks after it count them.
     let mut text = 0;
     let (mut doc, mut cascade, root) = ahem_paragraph_with("orphans:3;widows:3", |doc, root| {
         text = doc.append_text(root, WORDS);
     });
     doc.prepare_continuation_cascade(&mut cascade, PageStartToken::Line { text, offset: 20 });
-    assert_eq!(cascade.computed[root].orphans, 1);
-    assert_eq!(cascade.computed[root].widows, 1);
+    assert_eq!(cascade.computed[root].orphans, 3);
+    assert_eq!(cascade.computed[root].widows, 3);
 }
 
 #[test]

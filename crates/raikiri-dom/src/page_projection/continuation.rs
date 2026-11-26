@@ -434,12 +434,13 @@ impl Document {
     /// relayout that resumes at `token`.
     ///
     /// Boxes wholly before the token lose their forced breaks and page
-    /// names; the token and its ancestors lose break avoidance, and the
-    /// paragraph of a `Line` token keeps no minimum of lines on either side.
-    /// The relayout then breaks exactly where it places the token's page.
-    /// The paragraphs around a `Node` token keep their `orphans` and
-    /// `widows`: no break falls between their lines at the token, and the
-    /// breaks after it count them, as the earlier layout did.
+    /// names, and the token and its ancestors lose break avoidance. The
+    /// relayout then breaks exactly where it places the token's page. The
+    /// paragraphs around the token keep their `orphans` and `widows` for the
+    /// breaks after it, as the earlier layout did: no break falls between
+    /// their lines at a `Node` token, and paged layout keeps no minimum of
+    /// lines on either side of the break before the line of a `Line` token,
+    /// which [`Document::set_continuation_break`] names.
     ///
     /// The dropped forced breaks and page names still give the boxes after
     /// them clearance past the floats before them in the next paged layouts
@@ -457,7 +458,6 @@ impl Document {
         let target = token.node();
         let order = tree_positions(self);
         let target_order = order[target];
-        let line_token = matches!(token, PageStartToken::Line { .. });
         let mut ancestors = vec![false; self.nodes.len()];
         for id in self.inclusive_ancestors(target) {
             ancestors[id] = true;
@@ -466,10 +466,6 @@ impl Document {
         for (id, computed) in cascade.computed.iter_mut().enumerate() {
             if ancestors[id] {
                 computed.break_inside = BreakInside::Auto;
-                if line_token {
-                    computed.orphans = 1;
-                    computed.widows = 1;
-                }
                 computed.break_before = BreakBetween::Auto;
             } else if order[id] < target_order {
                 computed.break_before = BreakBetween::Auto;
