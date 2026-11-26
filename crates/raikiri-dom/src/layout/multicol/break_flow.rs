@@ -106,9 +106,15 @@ pub(super) fn supports(
             return false;
         }
         // The block-axis edges of a wrapper are placed around the flow boxes
-        // it holds, so a wrapper with edges needs one to hold.
-        if projected && !atomic(tree, id) && has_block_edges(tree, id) {
-            if !has_in_flow_element_child(tree, id) {
+        // it holds, so a wrapper with edges needs one to hold. They are placed
+        // once each, so cloned decorations stay with the other strategies. An
+        // inline box takes no block-axis room (see `BlockEdges::of`).
+        if projected
+            && !atomic(tree, id)
+            && node.display() != DisplayValue::Inline
+            && has_block_edges(tree, id)
+        {
+            if node.clones_box_decorations || !has_in_flow_element_child(tree, id) {
                 return false;
             }
             edged_wrappers = true;
@@ -271,20 +277,35 @@ struct FlowBox {
 }
 
 impl FlowBox {
-    /// The top edges of the wrappers that start at the box.
-    fn lead_edges(&self) -> f32 {
-        self.ancestors[self.ancestors.len() - self.opens..]
-            .iter()
-            .map(|wrapper| wrapper.edges.top)
-            .sum()
+    /// The room above the box: the top margins and edges of the wrappers
+    /// that start at it, collapsed with the `margins` before it. A top edge
+    /// takes the margins above it; the rest stay in `margins`.
+    fn lead(&self, margins: &mut Margins) -> f32 {
+        let mut lead = 0.0;
+        for wrapper in &self.ancestors[self.ancestors.len() - self.opens..] {
+            margins.add(wrapper.edges.margin_top);
+            if wrapper.edges.top > 0.0 {
+                lead += margins.take() + wrapper.edges.top;
+            }
+        }
+        lead + margins.take()
     }
 
-    /// The bottom edges of the wrappers that end at the box.
-    fn trail_edges(&self) -> f32 {
-        self.ancestors[self.ancestors.len() - self.closes..]
+    /// The room below the box taken by the bottom edges of the wrappers that
+    /// end at it, from the innermost out. A bottom edge takes the margins
+    /// before it; the bottom margins after the last edge stay in `margins`.
+    fn trail(&self, margins: &mut Margins) -> f32 {
+        let mut trail = 0.0;
+        for wrapper in self.ancestors[self.ancestors.len() - self.closes..]
             .iter()
-            .map(|wrapper| wrapper.edges.bottom)
-            .sum()
+            .rev()
+        {
+            if wrapper.edges.bottom > 0.0 {
+                trail += margins.take() + wrapper.edges.bottom;
+            }
+            margins.add(wrapper.edges.margin_bottom);
+        }
+        trail
     }
 }
 
@@ -843,26 +864,35 @@ pub(super) fn layout(
     };
     // A lookahead run includes normal-flow siblings across parallel floats.
     // Floats occupy space for painting, but consume no block-flow advance.
-    let mut runs = HashMap::<usize, f32>::new();
+    // Each run maps its first box to the advance of the whole run and the
+    // lead of that first box, which placement replaces with the lead it finds.
+    let mut runs = HashMap::<usize, (f32, f32)>::new();
     let mut previous: Option<usize> = None;
     let mut start = 0;
     let mut advance = 0.0;
+    let mut first_lead = 0.0;
+    let mut pending = Margins::default();
     for (index, item) in boxes.iter().enumerate() {
         if item.floated {
             continue;
         }
-        let extent = item.lead_edges() + item.height + item.trail_edges();
         let connected = previous.is_some_and(|prior| {
             !forced(boxes[prior].after)
                 && !forced(item.before)
                 && (avoided(boxes[prior].after) || avoided(item.before))
         });
+        if !connected {
+            pending = Margins::default();
+        }
+        let lead = item.lead(&mut pending);
+        let extent = lead + item.height + item.trail(&mut pending);
         if connected {
             advance += extent;
-            runs.insert(start, advance);
+            runs.insert(start, (advance, first_lead));
         } else {
             start = index;
             advance = extent;
+            first_lead = lead;
         }
         previous = Some(index);
     }
@@ -880,17 +910,7 @@ pub(super) fn layout(
     for (index, item) in boxes.iter().enumerate() {
         let opened = &item.ancestors[item.ancestors.len() - item.opens..];
         // The margins and top edges of the wrappers that start at the box.
-        let lead = {
-            let mut margins = margins;
-            let mut lead = 0.0;
-            for wrapper in opened {
-                margins.add(wrapper.edges.margin_top);
-                if wrapper.edges.top > 0.0 {
-                    lead += margins.take() + wrapper.edges.top;
-                }
-            }
-            lead + margins.collapsed()
-        };
+        let lead = item.lead(&mut { margins });
         // A run of boxes kept together moves to the next column whole when it
         // fits there, unless its first box breaks where the column ends: the
         // run is kept together after that break. A single box breaks there.
@@ -898,7 +918,7 @@ pub(super) fn layout(
         let run = runs
             .get(&index)
             .filter(|_| !breaks_inside)
-            .map(|run| run + lead - item.lead_edges());
+            .map(|&(run, first_lead)| run + lead - first_lead);
         let extent = lead + item.height;
         // A forced edge on prior normal flow also determines an adjacent
         // float's column. Consume it once without charging float height to flow.
@@ -911,21 +931,22 @@ pub(super) fn layout(
             || (!item.floated
                 && (cursor > 0.0
                     && (run.is_some_and(|run| run <= height && cursor + run > height)
-                        || (cursor + extent > height && !item.splittable))))
+                        || (cursor + extent > height && !item.splittable)
+                        || (cursor + lead >= height && item.height > 0.0))))
         {
             column = column.saturating_add(1);
             cursor = 0.0;
             previous_after = BreakBetween::Auto;
             truncated = !forced_break;
+            // The margins before a break end at it, whatever broke there.
+            margins = Margins::default();
         }
         // The top of the border box of each wrapper that starts at the box. A
         // wrapper without a top edge is where the margins below it end.
         let mut tops = vec![0.0f32; opened.len()];
+        // The margins next to an empty box collapse through it (CSS 2, 8.3.1).
+        let mut through = 0.0;
         if !item.floated {
-            // The margins before a break end at it, whatever broke there.
-            if cursor == 0.0 && column > 0 {
-                margins = Margins::default();
-            }
             let mut waiting = 0;
             for (position, wrapper) in opened.iter().enumerate() {
                 if !truncated {
@@ -941,11 +962,17 @@ pub(super) fn layout(
                     cursor += wrapper.edges.top;
                 }
             }
-            cursor += margins.take();
+            if item.height > 0.0 || waiting > 0 {
+                cursor += margins.take();
+            } else {
+                through = margins.collapsed();
+                cursor += through;
+            }
             for top in &mut tops[waiting..] {
                 *top = content_origin.y + cursor;
             }
         }
+        let start_column = column;
         let mut remaining = item.height;
         let mut first = true;
         loop {
@@ -1050,6 +1077,9 @@ pub(super) fn layout(
             }
             column = column.saturating_add(1);
             cursor = 0.0;
+        }
+        if column == start_column {
+            cursor -= through;
         }
         if !item.floated {
             // The bottom edges and margins of the wrappers that end at the box,

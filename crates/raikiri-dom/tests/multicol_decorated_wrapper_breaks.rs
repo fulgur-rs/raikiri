@@ -85,6 +85,27 @@ fn markup(wrapper: &str, variant: Variant) -> String {
     )
 }
 
+/// The fragments in `got` that differ from the `expected` ones, by id.
+fn mismatches(case: &str, got: &[(String, [f32; 4])], expected: Expected) -> Vec<String> {
+    let mut failures = Vec::new();
+    for &(id, rects) in expected {
+        let fragments: Vec<[f32; 4]> = got
+            .iter()
+            .filter(|(name, _)| name == id)
+            .map(|(_, rect)| *rect)
+            .collect();
+        let matches = fragments.len() == rects.len()
+            && fragments
+                .iter()
+                .zip(rects)
+                .all(|(a, b)| a.iter().zip(b).all(|(a, b)| (a - b).abs() <= 0.05));
+        if !matches {
+            failures.push(format!("{case} #{id}: got {fragments:?}, want {rects:?}"));
+        }
+    }
+    failures
+}
+
 type Expected = &'static [(&'static str, &'static [[f32; 4]])];
 
 const CASES: &[(&str, Variant, Expected)] = &[
@@ -495,23 +516,114 @@ fn decorated_wrappers_break_between_columns_like_chromium() {
     let mut failures = Vec::new();
     for &(wrapper, variant, expected) in CASES {
         let got = boxes(&markup(wrapper, variant));
-        for &(id, rects) in expected {
-            let fragments: Vec<[f32; 4]> = got
-                .iter()
-                .filter(|(name, _)| name == id)
-                .map(|(_, rect)| *rect)
-                .collect();
-            let matches = fragments.len() == rects.len()
-                && fragments
-                    .iter()
-                    .zip(rects)
-                    .all(|(a, b)| a.iter().zip(b).all(|(a, b)| (a - b).abs() <= 0.05));
-            if !matches {
-                failures.push(format!(
-                    "{wrapper:?} {variant:?} #{id}: got {fragments:?}, want {rects:?}"
-                ));
-            }
-        }
+        failures.extend(mismatches(
+            &format!("{wrapper:?} {variant:?}"),
+            &got,
+            expected,
+        ));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Children of the same two-column container, for the margins and edges next
+/// to the end of a column and around empty boxes.
+const EDGE_CASES: &[(&str, Expected)] = &[
+    (
+        "<div style='height:100px'></div><div id=w><div id=a style='height:20px'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[58.0, 8.0, 50.0, 20.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 28.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div style='height:100px'></div><div id=w style='margin-top:10px'><div id=a style='height:20px'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[58.0, 8.0, 50.0, 20.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 28.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div style='height:100px'></div><div id=w style='border-top:5px solid'><div id=a style='height:20px'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[58.0, 8.0, 50.0, 25.0]]),
+            ("a", &[[58.0, 13.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 33.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div style='height:95px'></div><div id=w style='border-top:5px solid'><div id=a style='height:20px'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[58.0, 8.0, 50.0, 25.0]]),
+            ("a", &[[58.0, 13.0, 50.0, 20.0]]),
+            ("n", &[[58.0, 33.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div id=p style='height:30px'></div><div id=w style='margin-bottom:30px'><div id=a style='height:30px'></div></div><div id=n style='height:30px;break-before:avoid;break-inside:avoid'></div>",
+        &[
+            ("p", &[[8.0, 8.0, 50.0, 30.0]]),
+            ("w", &[[58.0, 8.0, 50.0, 30.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 30.0]]),
+            ("n", &[[58.0, 68.0, 50.0, 30.0]]),
+        ],
+    ),
+    (
+        "<div id=w style='padding-bottom:10px'><div id=a style='height:50px'></div><div id=b style='height:50px;break-inside:avoid'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 60.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 50.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 50.0]]),
+            ("n", &[[58.0, 68.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div id=w style='padding-bottom:10px'><div id=a style='height:50px'></div><div id=b style='height:50px'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 60.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 50.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 50.0]]),
+            ("n", &[[58.0, 68.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div id=w style='padding-bottom:10px'><div id=a style='height:45px'></div><div id=b style='height:50px;break-inside:avoid'></div></div><div id=n style='height:20px;break-before:avoid'></div>",
+        &[
+            ("w", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 60.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 45.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 50.0]]),
+            ("n", &[[58.0, 68.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div style='height:20px'></div><div id=w style='margin-bottom:20px'><div id=a style='break-before:column'></div></div><div id=n style='height:20px'></div>",
+        &[
+            ("w", &[[58.0, 8.0, 50.0, 0.0]]),
+            ("a", &[[58.0, 8.0, 50.0, 0.0]]),
+            ("n", &[[58.0, 28.0, 50.0, 20.0]]),
+        ],
+    ),
+    (
+        "<div id=w style='margin-bottom:20px'><div style='height:10px'></div></div><div id=e></div><div id=v style='margin-top:30px'><div id=a style='height:10px'></div></div><div id=n style='height:10px;break-before:avoid'></div>",
+        &[
+            ("w", &[[8.0, 8.0, 50.0, 10.0]]),
+            ("e", &[[8.0, 38.0, 50.0, 0.0]]),
+            ("v", &[[8.0, 48.0, 50.0, 10.0]]),
+            ("a", &[[8.0, 48.0, 50.0, 10.0]]),
+            ("n", &[[8.0, 58.0, 50.0, 10.0]]),
+        ],
+    ),
+];
+
+#[test]
+fn wrapper_edges_at_column_ends_and_empty_boxes_match_chromium() {
+    let mut failures = Vec::new();
+    for &(children, expected) in EDGE_CASES {
+        let got = boxes(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'>{children}</div>"
+        ));
+        failures.extend(mismatches(children, &got, expected));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

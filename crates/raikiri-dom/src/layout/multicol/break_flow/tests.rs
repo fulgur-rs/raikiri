@@ -290,7 +290,10 @@ fn excessive_wrapper_depth_keeps_the_bounded_fallback() {
 
 #[test]
 fn decorated_and_positioned_boxes_keep_the_existing_geometry_strategy() {
-    for decoration in ["position:relative;top:10px"] {
+    for decoration in [
+        "position:relative;top:10px",
+        "box-decoration-break:clone;padding-top:10px",
+    ] {
         let markup = format!(
             "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='{decoration}'><div style='height:20px'></div><div style='height:20px;break-before:avoid'></div></div></div>"
         );
