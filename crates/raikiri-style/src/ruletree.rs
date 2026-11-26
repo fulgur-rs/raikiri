@@ -502,6 +502,30 @@ impl RuleTree {
                 })
     }
 
+    /// Additional restrictions for reusing page geometry across table windows.
+    /// Call after checking [`Self::permits_table_window_styles`].
+    pub fn permits_table_page_templates(&self) -> bool {
+        use crate::property::PropertyKey::*;
+        use selectors::parser::Component;
+        self.page_rules.iter().all(|rule| rule.margin_box_rules.is_empty())
+            && self.style_rules.iter().chain(self.media_rules.iter().map(|media| &media.rule))
+                .filter(|rule| rule.origin != Origin::UserAgent)
+                .all(|rule| rule.declarations.iter().all(|decl| {
+                    let tags: &[&str] = match decl.key {
+                        Height | PaddingTop | PaddingBottom | PaddingLeft | PaddingRight => &["td", "th"],
+                        Width => &["table", "td", "th"],
+                        BreakInside => &["tr"],
+                        MarginTop | MarginLeft | MarginRight | MarginBottom => return false,
+                        _ => return true,
+                    };
+                    rule.selectors.slice().iter().all(|selector| {
+                        let mut components = selector.iter_raw_match_order();
+                        matches!(components.next(), Some(Component::LocalName(name)) if tags.contains(&name.lower_name.0.as_str()))
+                            && components.next().is_none()
+                    })
+                }))
+    }
+
     pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder<'_> {
         self.layers.order(Some(context))
     }

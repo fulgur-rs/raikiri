@@ -4176,6 +4176,11 @@ impl TableColumnMeasurements {
 pub struct MeasuredTableColumns(std::sync::Arc<[ColumnContribution]>);
 
 impl MeasuredTableColumns {
+    /// Sum of preferred column widths before distribution into the table box.
+    pub fn preferred_width(&self) -> f32 {
+        self.0.iter().map(|column| column.preferred).sum()
+    }
+
     /// Use the measured constraints during layout of a fresh single-table window.
     pub fn apply_to_window(&self, document: &mut crate::document::Document) {
         document.window_columns = Some(WindowColumns::Apply(self.0.clone()));

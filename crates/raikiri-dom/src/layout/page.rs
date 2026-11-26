@@ -1591,6 +1591,29 @@ pub(crate) fn propagated_start_page_name_with_transposed_axes<'name>(
     )
 }
 
+/// The start page value of `node_id` in the flow of a float, with
+/// `inherited_page_name` as its inherited value. A page value inside a
+/// multicol container falls in its columns, which take no change of page
+/// type, so only the container's own value counts there (Chromium).
+pub(crate) fn float_flow_start_page_name<'name>(
+    document: &Document,
+    cascade: &'name CascadeResult,
+    node_id: usize,
+    inherited_page_name: Option<&'name str>,
+    pagination_on_transposed_axes: bool,
+) -> Option<&'name str> {
+    start_page_name(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        true,
+        pagination_on_transposed_axes,
+        IgnoredNames::MulticolContents,
+    )
+    .1
+}
+
 /// Whether `child_id` is an in-flow child whose start page value can pass to
 /// its parent: it has a computed style and is neither absolutely positioned
 /// nor floated.
@@ -1662,9 +1685,10 @@ fn propagated_start_page_name_with_order<'name>(
 ///
 /// Pagination leaves `page` alone where Chromium ignores it: on the items of
 /// a flex or grid container, and inside a multicol container, a float or an
-/// absolutely positioned box. Names there force no break, so they meet. The
-/// own value of a flex item does not pass to the start or end value of its
-/// container either, while boxes nested inside it still pass theirs, and a
+/// absolutely positioned box. Names there force no break in the page flow,
+/// so they meet; a change of page type in the flow of a float still breaks
+/// the page there (see `boxes_are_tied`). The own value of a flex item does
+/// not pass to the start or end value of its container either, while boxes nested inside it still pass theirs, and a
 /// grid item's own value does. The own value of a multicol container still
 /// counts.
 pub(crate) fn page_names_meet(
@@ -1873,6 +1897,9 @@ enum IgnoredNames {
     Root,
     /// The own values of flex items, which pagination leaves alone.
     FlexItems,
+    /// The values inside a multicol container, whose columns take no change
+    /// of page type; the container's own value still counts.
+    MulticolContents,
 }
 
 /// The start page value of `node_id`, leaving out the values `ignored` names.
@@ -1945,7 +1972,7 @@ fn start_page_name<'name>(
 
         let page_applies = page_applies_with_boxes(boxes, node_id)
             && match ignored {
-                IgnoredNames::None => true,
+                IgnoredNames::None | IgnoredNames::MulticolContents => true,
                 IgnoredNames::Root => node_id != root_id,
                 IgnoredNames::FlexItems => {
                     !is_item_of(boxes, node_id, DisplayValue::is_flex_container)
@@ -1961,14 +1988,17 @@ fn start_page_name<'name>(
         if crate::generated_content::has_page_flow_generated_prefix(cascade, node_id) {
             return (true, used_page_name);
         }
-        // A monolithic box does not pass a descendant's page value up.
+        // A monolithic box does not pass a descendant's page value up, nor
+        // does a multicol container where its contents are left out.
         if monolithic_with_boxes(
             document,
             cascade,
             node_id,
             boxes,
             pagination_on_transposed_axes,
-        ) {
+        ) || (matches!(ignored, IgnoredNames::MulticolContents)
+            && document.nodes[node_id].multicol.is_some())
+        {
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {
