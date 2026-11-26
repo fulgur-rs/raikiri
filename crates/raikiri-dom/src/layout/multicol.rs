@@ -2746,7 +2746,15 @@ fn record_wrapped_fragments(
                 } else {
                     columns_top
                 };
-                let bottom = columns_top + group.height + if last { reach } else { 0.0 };
+                let column_bottom = columns_top + group.height;
+                // The first piece of a sliced box ends above the column end
+                // when its block-end border and padding went on alone; its
+                // clip ends with it, so that only the next piece paints them.
+                let bottom = if sliced && index == 0 && !last {
+                    (y + height).min(column_bottom)
+                } else {
+                    column_bottom + if last { reach } else { 0.0 }
+                };
                 paragraph_group::inline_open_clip(crate::fragment::FragmentRect {
                     x: rect.x,
                     y: top,
@@ -2914,10 +2922,17 @@ fn push_sliced_box_pieces(
             fragmentainer: first.fragmentainer
                 + piece.fragmentainer.checked_sub(placement.first_column)?,
             rect: lineless::sliced_rect(rect, sliced.then_some((taken, total))),
+            // The first piece ends above the column end when the box's
+            // block-end border and padding went on alone; its clip ends with
+            // it, so that only the next piece paints them.
             fragmentainer_clip: Some(paragraph_group::inline_open_clip(
                 crate::fragment::FragmentRect {
                     y: column_top,
-                    height: column_height,
+                    height: if sliced && index == 0 && count > 1 {
+                        (placement.first_y + placement.first_height).min(column_height)
+                    } else {
+                        column_height
+                    },
                     ..rect
                 },
             )),

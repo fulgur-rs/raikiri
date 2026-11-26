@@ -550,6 +550,12 @@ struct Paragraph {
     /// columns hold it whole, so the padding above it needs none of it at the
     /// top of a column.
     sized_leaf: bool,
+    /// The block-start and block-end border and padding of a `sliced` box
+    /// whose pieces slice them. A box goes on to the next column when only
+    /// some of the first fit; a column end that would fall inside the second
+    /// falls where its content ends, and they go on alone at the top of the
+    /// next column (Chromium).
+    slice_edges: (f32, f32),
 }
 
 impl Paragraph {
@@ -581,6 +587,7 @@ impl Paragraph {
             held_extents: Vec::new(),
             overflows: false,
             sliced: false,
+            slice_edges: (0.0, 0.0),
         }
     }
 
@@ -964,6 +971,7 @@ fn collect(
                 },
                 closes: role == Role::Close && edge > 0.0,
                 sized_leaf: false,
+                slice_edges: (0.0, 0.0),
                 extents: if separates {
                     vec![(0.0, edge)]
                 } else {
@@ -1002,6 +1010,7 @@ fn collect(
             paragraphs.push(Some(Paragraph {
                 sized_leaf: true,
                 sliced,
+                slice_edges: own_slice_edges(tree, child, sliced, &layout),
                 ..Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None)
             }));
             continue;
@@ -1021,11 +1030,13 @@ fn collect(
             sized_leaf |= lineless::slices_sized_leaf(tree, child);
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
+            let sliced = lineless::slices_sized_leaf(tree, child);
             paragraphs.push(Some(Paragraph {
                 opens: None,
                 closes: false,
-                sliced: lineless::slices_sized_leaf(tree, child),
+                sliced,
                 sized_leaf: true,
+                slice_edges: own_slice_edges(tree, child, sliced, &layout),
                 ..whole
             }));
             continue;
@@ -1081,6 +1092,7 @@ fn collect(
                 opens: None,
                 closes: false,
                 sliced,
+                slice_edges: own_slice_edges(tree, child, sliced, &layout),
                 held_reach: before + reach,
                 held_extents: lines
                     .lines
@@ -1183,6 +1195,7 @@ fn collect(
                 opens: None,
                 closes: false,
                 sized_leaf: false,
+                slice_edges: (0.0, 0.0),
                 extents: Vec::new(),
                 margin_top,
                 margin_bottom,
@@ -1217,6 +1230,7 @@ fn collect(
             opens: None,
             closes: false,
             sized_leaf: false,
+            slice_edges: (0.0, 0.0),
             extents,
             margin_top,
             margin_bottom,
@@ -1618,8 +1632,32 @@ fn fill_chunk_with(
                     column_has_content,
                     strict,
                 )?;
+                // A column end that would fall inside the box's own
+                // block-end border and padding falls where its content ends
+                // instead, and they go on alone at the top of the next
+                // column, when it holds them.
+                let (leading, trailing) = paragraph.slice_edges;
+                let ends_early = left > room + f32::EPSILON
+                    && left - room < trailing
+                    && left - trailing > f32::EPSILON
+                    && trailing <= height;
+                // Where that leaves the break right below the last line of
+                // the box, it is a break between the line and the edge below
+                // it, which comes last: the box goes on whole to the next
+                // column when content before it gives the break a place.
+                // So does a box below content whose border and padding above
+                // its content leave none of it room in this column.
+                let moves_whole = fragments.is_empty()
+                    && top > 0.0
+                    && left > room + f32::EPSILON
+                    && (room <= leading + f32::EPSILON
+                        || ends_early
+                            && column_has_content
+                            && paragraph.held_lines.is_some()
+                            && left - trailing <= paragraph.held_reach + f32::EPSILON);
                 if let Some(line_end) = lines
                     && (room >= SLICE_MIN_ROOM || top <= 0.0)
+                    && !moves_whole
                 {
                     // A box cut into more pieces than the budget, or that a
                     // column too short for it to shrink cannot hold, is left
@@ -1627,7 +1665,11 @@ fn fill_chunk_with(
                     if fragments.len() >= MAX_SLICED_PIECES {
                         return None;
                     }
-                    let used = left.min(room);
+                    let used = if ends_early {
+                        left - trailing
+                    } else {
+                        left.min(room)
+                    };
                     if fragments.is_empty() {
                         (first_column, first_y, first_height) = (column, top, used);
                     }
@@ -1904,10 +1946,34 @@ fn lines_fit_column(paragraph: &Paragraph, first: usize, height: f32) -> bool {
     })
 }
 
+/// The block-start and block-end border and padding of `child`, laid out as
+/// `layout`, that a column end does not cut when it slices the box, `sliced`,
+/// and paints its pieces as [`lineless::slices_decorations`] says: none for
+/// a box that is not sliced, or whose pieces repeat or do not paint them.
+fn own_slice_edges(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    sliced: bool,
+    layout: &BoxLayout,
+) -> (f32, f32) {
+    if sliced && lineless::slices_decorations(tree, child) {
+        block_edges(layout)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
 fn finish_group(mut placements: Vec<Option<Placement>>, used: f32) -> Group {
     for placement in placements.iter_mut().flatten() {
         if placement.fragments.len() > 1 {
-            placement.first_height = (used - placement.first_y).max(0.0);
+            let to_column_end = (used - placement.first_y).max(0.0);
+            // The first piece of a sliced box ends above the column end when
+            // its block-end border and padding went on alone.
+            placement.first_height = if placement.sliced {
+                placement.first_height.min(to_column_end)
+            } else {
+                to_column_end
+            };
         }
     }
     Group {
