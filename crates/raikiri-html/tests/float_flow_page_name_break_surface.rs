@@ -163,6 +163,20 @@ fn generated_content_in_a_float_takes_part_like_text() {
         ),
         &["100: H@0,0 Z@40,0", "100: K@0,0"],
     );
+    // Generated content after a box ends it on the page type around the
+    // box, so the box after it goes on on the same page, whether the named
+    // box is its child or deeper.
+    for named in [
+        "<div style='page:foo'>H</div>",
+        "<div><div style='page:foo'>H</div></div>",
+    ] {
+        for after in ["<div>G</div>", "G"] {
+            expect(
+                &format!("{style}{FLOAT}'><div class='a'>{named}</div>{after}</div>Z"),
+                &["100: H@0,0 Z@40,0", "100: G@0,30 K@0,0"],
+            );
+        }
+    }
 }
 
 #[test]

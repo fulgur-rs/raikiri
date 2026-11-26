@@ -3838,15 +3838,17 @@ fn clear_floats_at_forced_breaks<'name>(
     };
     // The page value a box ends with: that of its last in-flow content, down
     // to the deepest box, or `inherited` without one. A monolithic box does
-    // not pass up a descendant's, nor does a multicol container where
-    // `multicol_ends` is set. `trailing` keeps each box's own result, so
-    // nested boxes are each looked at once; each `multicol_ends` setting
-    // takes its own map.
+    // not pass up a descendant's. In a float's flow (`in_float_flow`), a
+    // multicol container does not either, as its columns take no change of
+    // page type, nor does a box with in-flow `::after` text, which ends it on
+    // its own page. `trailing` keeps each box's own result, so nested boxes
+    // are each looked at once; each `in_float_flow` setting takes its own
+    // map.
     let end_page_name = |document: &Document,
                          trailing: &mut HashMap<usize, Option<&'name str>>,
                          id: usize,
                          inherited: Option<&'name str>,
-                         multicol_ends: bool| {
+                         in_float_flow: bool| {
         if !has_named_pages {
             return inherited;
         }
@@ -3857,7 +3859,13 @@ fn clear_floats_at_forced_breaks<'name>(
                 break *name;
             }
             chain.push(id);
-            if (multicol_ends && document.nodes[id].multicol.is_some())
+            if (in_float_flow
+                && (document.nodes[id].multicol.is_some()
+                    || crate::generated_content::is_in_flow_generated_text(
+                        cascade,
+                        id,
+                        raikiri_style::PseudoElem::After,
+                    )))
                 || is_monolithic_for_pagination_with_transposed_axes(
                     document,
                     cascade,
