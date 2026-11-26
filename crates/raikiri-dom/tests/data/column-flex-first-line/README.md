@@ -48,7 +48,7 @@ shared contained-block bug in the reference, which is fixed through the same
 monolithic classification rather than by changing WPT expectations.
 
 ```sh
-RUSTUP_TOOLCHAIN=1.95.0 TMPDIR="$HOME/tmp" cargo test -p raikiri-dom --test column_flex_first_line
+RUSTUP_TOOLCHAIN=1.95.0 TMPDIR="$HOME/tmp" cargo test -p raikiri-dom --test all column_flex_first_line::
 ```
 
 

@@ -1,5 +1,8 @@
 [package]
 name = "raikiri-dom"
+# Integration tests build as one binary (tests/all.rs) plus the [[test]]
+# targets at the end of this file; see tests/all.rs.
+autotests = false
 version.workspace = true
 description = "DOM data model + taffy block layout and shodo inline layout engine + PageStream/LayoutBuffer + GCPM runtime side (PageContext, TargetRegistry, PageBoxCache) for raikiri"
 readme = "README.md"
@@ -67,3 +70,57 @@ harness = false
 [[bench]]
 name = "page_preparation"
 harness = false
+
+# One binary for the plain integration-test files (see tests/all.rs). The
+# targets after it need a process of their own.
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "character_data_append_allocations"
+path = "tests/character_data_append_allocations.rs"
+
+[[test]]
+name = "first_line_allocation_tests"
+path = "tests/first_line_allocation_tests.rs"
+
+[[test]]
+name = "line_owner_projection_tests"
+path = "tests/line_owner_projection_tests.rs"
+
+[[test]]
+name = "page_name_allocations"
+path = "tests/page_name_allocations.rs"
+
+[[test]]
+name = "principal_writing_mode"
+path = "tests/principal_writing_mode.rs"
+
+[[test]]
+name = "sibling_margin_allocations"
+path = "tests/sibling_margin_allocations.rs"
+
+[[test]]
+name = "sibling_shift_allocations"
+path = "tests/sibling_shift_allocations.rs"
+
+[[test]]
+name = "stretch_replaced_height"
+path = "tests/stretch_replaced_height.rs"
+
+[[test]]
+name = "generated_image_prep_probe"
+path = "tests/generated_image_prep_probe.rs"
+
+[[test]]
+name = "line_range_pagination_probe"
+path = "tests/line_range_pagination_probe.rs"
+
+[[test]]
+name = "shrink_to_fit_percentages"
+path = "tests/shrink_to_fit_percentages.rs"
+
+[[test]]
+name = "vertical_shrink_to_fit_ratio_width"
+path = "tests/vertical_shrink_to_fit_ratio_width.rs"

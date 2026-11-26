@@ -728,7 +728,8 @@ impl PaginationState {
     /// page type there as the same break. The page takes the type of that
     /// content, unless a box around the float goes on onto the page before
     /// it; the page then takes the type of that box, which the float has.
-    /// Later pages that only the float reaches take the float's type. A box
+    /// Later pages that only the float reaches take the float's type, which
+    /// is that of the flow around it, not its own `page` value. A box
     /// that clears the float starts below it instead, and compares its type
     /// against the float's.
     fn join_float_break(
@@ -758,6 +759,10 @@ impl PaginationState {
             return float.page_name;
         }
         if candidate.page_name == comparison_page_name {
+            // The page the float opened keeps the type of the flow, and the
+            // pages after it that only the float reaches take the float's.
+            self.page_names
+                .name_pages_from(float.first_page_of_its_own, &float.page_name);
             return comparison_page_name;
         }
         let continued_box =
@@ -6604,6 +6609,16 @@ impl PaginationState {
         let names_end = control.capped_page_index(self.reach.max);
         self.page_names
             .continue_onto(self.reach.flow_max, names_end, true);
+        // A float that took a forced break with no in-flow content after it
+        // opened its page alone: that page and the ones after it that only
+        // the float reaches take the float's type (Chromium). Pages that
+        // earlier content reached keep theirs.
+        if let Some(float) = self.float_break_page.take() {
+            self.page_names
+                .keep_page(float.page, float.page_name.clone());
+            self.page_names
+                .name_pages_from(float.first_page_of_its_own, &float.page_name);
+        }
         Ok(())
     }
 

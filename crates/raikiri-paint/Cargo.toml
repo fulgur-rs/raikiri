@@ -1,5 +1,8 @@
 [package]
 name = "raikiri-paint"
+# Integration tests build as one binary (tests/all.rs) plus the [[test]]
+# targets at the end of this file; see tests/all.rs.
+autotests = false
 version.workspace = true
 description = "PageFragment → anyrender::PaintScene walker for raikiri (VRT and debug output)"
 edition.workspace = true
@@ -60,3 +63,21 @@ required-features = ["generated-image-diagnostics"]
 
 [lints]
 workspace = true
+
+# One binary for the plain integration-test files (see tests/all.rs). The
+# targets after it need a process of their own.
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "inline_svg_warm_paint"
+path = "tests/inline_svg_warm_paint.rs"
+
+[[test]]
+name = "paint_transform"
+path = "tests/paint_transform.rs"
+
+[[test]]
+name = "svg_cache_scaling"
+path = "tests/svg_cache_scaling.rs"
