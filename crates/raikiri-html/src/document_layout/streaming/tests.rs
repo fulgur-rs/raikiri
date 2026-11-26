@@ -2416,3 +2416,21 @@ fn a_sample_output_error_discards_the_tentative_page() {
     assert_eq!(sink.discarded, 1);
     assert!(sink.staged.is_empty() && sink.pages.is_empty() && !sink.finished);
 }
+
+#[test]
+fn a_shorter_ending_window_declines_the_sample_before_staging() {
+    let mut html = sample_table_html();
+    let start = html.find("<tr><td>row &amp; 520").unwrap();
+    html.truncate(start);
+    html.push_str(&"<tr></tr>".repeat(80));
+    html.push_str("</table>");
+    let mut sink = Record {
+        inspect_sample: true,
+        ..Default::default()
+    };
+    let summary = completed(stream(&html, 8192, &mut sink, Default::default()).unwrap());
+    assert_eq!(sink.sample_rows, 0);
+    assert_eq!(sink.discarded, 0);
+    assert_eq!(sink.pages, batch_pages(&html));
+    assert_eq!(summary.page_count as usize, sink.pages.len());
+}
