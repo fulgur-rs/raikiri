@@ -16,6 +16,39 @@ pub(super) struct RowStore {
     row_source_ids: Vec<usize>,
 }
 
+struct StoredCell<'a> {
+    source_id: usize,
+    text_id: Option<usize>,
+    text: &'a str,
+}
+
+struct StoredRow<'a>(&'a [u8]);
+
+impl<'a> StoredRow<'a> {
+    fn next_cell(&mut self) -> io::Result<Option<StoredCell<'a>>> {
+        if self.0.is_empty() {
+            return Ok(None);
+        }
+        let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid stored table cell");
+        let (cell_id, tail) = self.0.split_first_chunk::<8>().ok_or_else(invalid)?;
+        let (text_id, tail) = tail.split_first_chunk::<8>().ok_or_else(invalid)?;
+        let (len, tail) = tail.split_first_chunk::<8>().ok_or_else(invalid)?;
+        let index = |bytes| usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| invalid());
+        let (value, rest) = tail.split_at_checked(index(*len)?).ok_or_else(invalid)?;
+        let text = std::str::from_utf8(value).map_err(|_| invalid())?;
+        self.0 = rest;
+        Ok(Some(StoredCell {
+            source_id: index(*cell_id)?,
+            text_id: if text.is_empty() {
+                None
+            } else {
+                Some(index(*text_id)?)
+            },
+            text,
+        }))
+    }
+}
+
 impl RowStore {
     pub(super) fn new() -> io::Result<Self> {
         Ok(Self {
@@ -27,6 +60,23 @@ impl RowStore {
             removed_nodes: 0,
             row_source_ids: Vec::new(),
         })
+    }
+
+    fn visit_rows(
+        &mut self,
+        range: Range<usize>,
+        mut visit: impl FnMut(usize, StoredRow<'_>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let bytes = self.read_rows(range.clone())?;
+        let base = self.ends[range.start];
+        for (bounds, &source_id) in self.ends[range.start..=range.end]
+            .windows(2)
+            .zip(&self.row_source_ids[range])
+        {
+            let record = &bytes[(bounds[0] - base) as usize..(bounds[1] - base) as usize];
+            visit(source_id, StoredRow(record))?;
+        }
+        Ok(())
     }
 
     fn source_id(&self, local: usize) -> usize {
@@ -363,13 +413,20 @@ impl TableWindows {
         &self,
         registrations: &[crate::ConsumerPropertyRegistration],
         limits: &raikiri_traits::RenderLimits,
-    ) -> Result<bool, raikiri_traits::RenderError> {
-        Ok(crate::cascade::build_rule_tree_with_limits(
+    ) -> Result<(bool, bool), raikiri_traits::RenderError> {
+        let tree = crate::cascade::build_rule_tree_with_limits(
             &self.shell,
             registrations,
             &limits.rule_tree_limits(),
-        )?
-        .permits_table_window_styles())
+        )?;
+        let windows = tree.permits_table_window_styles();
+        Ok((windows, windows && tree.permits_table_page_templates()))
+    }
+
+    pub(crate) fn preferred_width(&self) -> Option<f32> {
+        self.columns
+            .as_ref()
+            .map(|columns| columns.preferred_width())
     }
 
     pub(crate) fn table(&self) -> usize {
@@ -381,6 +438,26 @@ impl TableWindows {
 
     pub(crate) fn len(&self) -> usize {
         self.rows.ends.len() - 1
+    }
+
+    pub(crate) fn read_text_rows(
+        &mut self,
+        range: Range<usize>,
+    ) -> io::Result<Vec<Vec<crate::TableTextCell>>> {
+        let mut rows = Vec::with_capacity(range.len());
+        self.rows.visit_rows(range, |_, mut record| {
+            let mut cells = Vec::new();
+            while let Some(cell) = record.next_cell()? {
+                cells.push(crate::TableTextCell {
+                    cell: raikiri_traits::NodeId(cell.source_id as u64),
+                    node: cell.text_id.map(|id| raikiri_traits::NodeId(id as u64)),
+                    text: cell.text.to_owned(),
+                });
+            }
+            rows.push(cells);
+            Ok(())
+        })?;
+        Ok(rows)
     }
 
     pub(crate) fn measure_columns(
@@ -581,8 +658,6 @@ impl TableWindows {
         &mut self,
         range: Range<usize>,
     ) -> io::Result<crate::types::UncascadedDocument> {
-        let bytes = self.rows.read_rows(range.clone())?;
-        let base = self.rows.ends[range.start];
         let mut dom = self.shell.dom.clone();
         if let Some(columns) = &self.columns {
             columns.apply_to_window(&mut dom);
@@ -590,31 +665,19 @@ impl TableWindows {
         let mut ids: Vec<_> = (0..dom.node_count())
             .map(|id| self.rows.source_id(id))
             .collect();
-        for (bounds, &row_source_id) in self.rows.ends[range.start..=range.end]
-            .windows(2)
-            .zip(&self.rows.row_source_ids[range.clone()])
-        {
-            ids.push(row_source_id);
+        self.rows.visit_rows(range, |row_id, mut stored| {
+            ids.push(row_id);
             let row = dom.append_element(Some(self.group), "tr", None::<&str>);
-            let mut record = &bytes[(bounds[0] - base) as usize..(bounds[1] - base) as usize];
-            while !record.is_empty() {
-                let invalid =
-                    || io::Error::new(io::ErrorKind::InvalidData, "invalid stored table cell");
-                let (cell_id, tail) = record.split_first_chunk::<8>().ok_or_else(invalid)?;
-                let (text_id, tail) = tail.split_first_chunk::<8>().ok_or_else(invalid)?;
-                let (len, tail) = tail.split_first_chunk::<8>().ok_or_else(invalid)?;
-                ids.push(usize::try_from(u64::from_le_bytes(*cell_id)).map_err(|_| invalid())?);
-                let len = usize::try_from(u64::from_le_bytes(*len)).map_err(|_| invalid())?;
-                let (value, tail) = tail.split_at_checked(len).ok_or_else(invalid)?;
-                let text = std::str::from_utf8(value).map_err(|_| invalid())?;
-                let cell = dom.append_element(Some(row), "td", None::<&str>);
-                if !text.is_empty() {
-                    dom.append_text(cell, text);
-                    ids.push(usize::try_from(u64::from_le_bytes(*text_id)).map_err(|_| invalid())?);
+            while let Some(cell) = stored.next_cell()? {
+                ids.push(cell.source_id);
+                let id = dom.append_element(Some(row), "td", None::<&str>);
+                if let Some(text_id) = cell.text_id {
+                    dom.append_text(id, cell.text);
+                    ids.push(text_id);
                 }
-                record = tail;
             }
-        }
+            Ok(())
+        })?;
         dom.set_window_source_ids(ids);
         Ok(crate::types::UncascadedDocument {
             dom,
