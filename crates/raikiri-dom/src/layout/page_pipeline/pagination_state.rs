@@ -28,13 +28,14 @@ use super::{
     make_room_for_caption_header, make_room_for_table_header, margin_above_line,
     margin_box_starts_page, margin_kept_by_floats, margins_adjoin_in_flow, materialize_y,
     move_box_by_truncated_margin, move_box_for_transition, move_line_block, move_paragraph_lines,
-    page_type_leaves_local_flow, paragraph_line_bounds, paragraph_line_moves,
-    participates_in_margin_adjacency, place_first_table_header, place_table_footer,
-    place_text_candidate, positioned_line_moves, positioned_text_start_y, push_in_flow_boxes_rev,
-    reaches_line, record_candidate_pages, reset_inline_x_for_page_transition, row_flex_container,
-    run_ends_paragraph, run_tail_move, shift_paragraph_lines, shift_text_candidate,
-    shrink_ancestors_after_content_change, starts_on_page_and_runs_past_it, straddling_line,
-    text_changes_page_name, text_sets_page_name, truncation_after_generated_content,
+    note_line_gap, note_paragraph_page_top, page_type_leaves_local_flow, paragraph_line_bounds,
+    paragraph_line_moves, participates_in_margin_adjacency, place_first_table_header,
+    place_table_footer, place_text_candidate, positioned_line_moves, positioned_text_start_y,
+    push_in_flow_boxes_rev, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, row_flex_container, run_ends_paragraph, run_tail_move,
+    shift_paragraph_lines, shift_text_candidate, shrink_ancestors_after_content_change,
+    starts_on_page_and_runs_past_it, straddling_line, text_changes_page_name, text_sets_page_name,
+    truncation_after_generated_content,
 };
 use crate::layout::context::LayoutSession;
 use std::collections::{HashMap, HashSet};
@@ -4377,9 +4378,9 @@ impl PaginationState {
             };
             // The room that floats leave at the top of the paragraph, above
             // its first line: the content box holds it, but no line does.
-            let (float_lead, content_top) = {
+            let content_top = {
                 let layout = &document.nodes[block_id].layout;
-                let content_top = block_effective_y(
+                block_effective_y(
                     document,
                     block_id,
                     candidate.raw_y,
@@ -4387,16 +4388,16 @@ impl PaginationState {
                     root_flow_offset,
                     self.flow_shift,
                 ) + layout.border.top
-                    + layout.padding.top;
+                    + layout.padding.top
+            };
+            note_paragraph_page_top(document, page_origins, block_id, content_top);
+            let float_lead = {
                 let gap = text.effective_y + line_metrics[0].0 - content_top;
-                let lead =
-                    if floats_put_first_line_down(document, block_id, text_lines.get(node_id), gap)
-                    {
-                        gap
-                    } else {
-                        0.0
-                    };
-                (lead, content_top)
+                if floats_put_first_line_down(document, block_id, text_lines.get(node_id), gap) {
+                    gap
+                } else {
+                    0.0
+                }
             };
             // A paragraph that avoids a break inside it moves whole with the
             // edges when they fit a page together, along with the blocks it
@@ -6230,6 +6231,7 @@ impl PaginationState {
             self.float_shifts
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
             record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
+            note_line_gap(document, cascade, block_id, line, shift);
             if line == 0 {
                 // The first line moves, and the text that starts on it with it.
                 text.effective_y += shift;

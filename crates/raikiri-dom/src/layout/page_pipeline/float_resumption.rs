@@ -81,6 +81,14 @@ pub(crate) struct Plan {
     /// below its end laid out unbroken the lines beside it are broken against
     /// it (see [`LineGrowth`]).
     line_extents: HashMap<usize, f32>,
+    /// Paragraphs whose lines the page walk moved down past a page edge,
+    /// away from the floats beside them, each with the block offsets, from
+    /// the content-box top, of the lines it moved and how far it moved each:
+    /// layout leaves that gap above the line, so that the lines from there on
+    /// are broken against the floats beside them where they land, as Chromium
+    /// breaks them (see [`Self::line_gaps`]). Each paragraph also has where
+    /// its content box started on its page when the walk moved them.
+    line_gaps: HashMap<usize, (f32, Vec<(f32, f32)>)>,
 }
 
 impl Plan {
@@ -92,6 +100,38 @@ impl Plan {
             && self.closed.is_empty()
             && self.break_tops.is_empty()
             && self.line_extents.is_empty()
+            && self.line_gaps.is_empty()
+    }
+
+    /// The gaps that layout leaves above lines moved past a page edge (see
+    /// [`Self::line_gaps`]), each as its paragraph and its block offset.
+    pub(crate) fn planned_line_gaps(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.line_gaps
+            .iter()
+            .flat_map(|(&root, (_, gaps))| gaps.iter().map(move |&(top, _)| (root, top.to_bits())))
+    }
+
+    /// Keeps the gaps planned above lines as `previous` has them, in place
+    /// of the ones this plan found.
+    pub(crate) fn keep_line_gaps_of(&mut self, previous: &Self) {
+        self.line_gaps.clone_from(&previous.line_gaps);
+    }
+
+    /// The gaps that layout leaves in the paragraph `root`: the block offset
+    /// of each line the page walk moved past a page edge, from the content-box
+    /// top as layout put it with the gaps before it, and how far the walk
+    /// moved it, in order.
+    pub(crate) fn line_gaps(&self, root: usize) -> &[(f32, f32)] {
+        self.line_gaps
+            .get(&root)
+            .map_or(&[], |(_, gaps)| gaps.as_slice())
+    }
+
+    /// Where the content box of the paragraph `root` started on its page,
+    /// from the page's origin, when the page walk moved the lines that the
+    /// gaps planned for it are left above, if any are.
+    pub(crate) fn line_gaps_page_top(&self, root: usize) -> Option<f32> {
+        self.line_gaps.get(&root).map(|&(page_top, _)| page_top)
     }
 
     /// The floats whose lines are broken against them below their end laid
@@ -358,6 +398,39 @@ impl Plan {
         }
         plan.closed
             .extend(document.context.floats_after_closed_edges.iter().copied());
+        // A paragraph keeps the gaps planned for it while it starts where it
+        // did on its page when they were found, and takes the first new move
+        // the walk makes below the line after its last gap: a gap moves the
+        // lines after it, so the later moves of the same walk no longer fall
+        // where they did, and a move of that line itself is no new gap.
+        plan.line_gaps
+            .clone_from(&document.context.float_resumptions.line_gaps);
+        // A paragraph whose gaps went stale takes no new one from the same
+        // walk: its lines were measured with the stale gaps above them, so it
+        // is judged again laid out without them.
+        let mut gapped: HashSet<usize> = HashSet::new();
+        for &root in &document.context.stale_line_gaps {
+            plan.line_gaps.remove(&root);
+            gapped.insert(root);
+        }
+        for &(root, top, delta) in &document.context.line_gaps {
+            let page_top = document.context.paragraph_page_tops.get(&root);
+            let below_gaps = plan
+                .line_gaps
+                .get(&root)
+                .and_then(|(_, gaps)| gaps.last())
+                .is_none_or(|&(last, moved)| top > last + moved + 0.01);
+            if let Some(&page_top) = page_top
+                && below_gaps
+                && gapped.insert(root)
+            {
+                plan.line_gaps
+                    .entry(root)
+                    .or_insert_with(|| (page_top, Vec::new()))
+                    .1
+                    .push((top, delta));
+            }
+        }
         // A float keeps the extent first planned for it, even once it no
         // longer grows: the lines broken against it move as far again, and a
         // new extent, or none, would break them anew, so that the plan would
