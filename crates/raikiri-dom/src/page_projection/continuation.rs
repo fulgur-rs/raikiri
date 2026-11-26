@@ -182,13 +182,14 @@ impl Document {
             .ancestors(target)
             .any(|id| self.nodes[id].multicol.is_some());
         // Generated `::after` text of a box that began on an earlier page and
-        // ends before the token is content of the page that no token names:
-        // a relayout from the token would leave it out.
+        // ends in the flow before the token is content of the page that no
+        // token names: a relayout from the token would leave it out.
         let generated_tail_before = page.items.iter().any(|item| {
             let node = item.node_id.0 as usize;
             !item.is_repeat
                 && item.fragment_index > 0
                 && !self.is_ancestor_or_self(node, target)
+                && !outside_normal_flow(self, cascade, node)
                 && crate::generated_content::is_in_flow_generated_text(
                     cascade,
                     node,

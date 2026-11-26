@@ -22293,3 +22293,22 @@ fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_
         in_positioned_span
     ));
 }
+
+#[test]
+fn has_sibling_cell_needs_another_cell_in_the_row() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let pair = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let first = doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    let single = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let lone = doc.append_element(Some(single), "td", Some("display:table-cell"));
+    doc.mark_in_document_flags();
+    crate::layout::test_support::with_bridged_session(&mut doc, |session| {
+        assert!(has_sibling_cell(session, first));
+        assert!(!has_sibling_cell(session, lone));
+        assert!(!has_sibling_cell(session, body));
+    });
+}

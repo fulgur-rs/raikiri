@@ -4227,8 +4227,18 @@ fn clear_floats_at_forced_breaks<'name>(
         {
             // A block inside an inline box ends no line of the parent's
             // own: the generated text shares the line the inline box ends,
-            // which takes no break (Chromium).
+            // which takes no break (Chromium). A flex or grid container lays
+            // its `::after` box out as an item beside the others, and a cell
+            // beside other cells of its row does not move its lines on alone.
             if !after_forced_break
+                && matches!(
+                    document.nodes[parent].display(),
+                    DisplayValue::Block
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                        | DisplayValue::TableCell
+                )
+                && !has_sibling_cell(document, parent)
                 && document
                     .ancestors(block)
                     .take_while(|&id| id != parent)
@@ -4974,6 +4984,16 @@ pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Opt
         Some(raikiri_style::property::PageValue::Named(name)) => Some(name.0.as_str()),
         _ => None,
     }
+}
+
+/// Whether `node_id` is a table cell with another cell in its row.
+fn has_sibling_cell(document: &Document, node_id: usize) -> bool {
+    document.nodes[node_id].display() == DisplayValue::TableCell
+        && document.parent_of(node_id).is_some_and(|row| {
+            document.nodes[row].children.iter().any(|&cell| {
+                cell != node_id && document.nodes[cell].display() == DisplayValue::TableCell
+            })
+        })
 }
 
 /// The page type of the flow inside `node_id`: its own used page value, or
