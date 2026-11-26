@@ -1027,10 +1027,10 @@ fn collect(
         // One that avoids breaks, or that a cut would paint wrong, goes whole
         // to a column that holds it.
         if sized && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
-            sized_leaf |= lineless::slices_sized_leaf(tree, child);
+            let sliced = lineless::slices_sized_leaf(tree, child);
+            sized_leaf |= sliced;
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
-            let sliced = lineless::slices_sized_leaf(tree, child);
             paragraphs.push(Some(Paragraph {
                 opens: None,
                 closes: false,
@@ -1636,8 +1636,11 @@ fn fill_chunk_with(
                 // block-end border and padding falls where its content ends
                 // instead, and they go on alone at the top of the next
                 // column, when it holds them.
+                // Only the first piece ends early: the pieces after it fill
+                // their columns, as their painting assumes.
                 let (leading, trailing) = paragraph.slice_edges;
-                let ends_early = left > room + f32::EPSILON
+                let ends_early = fragments.is_empty()
+                    && left - room >= SLICE_MIN_ROOM
                     && left - room < trailing
                     && left - trailing > f32::EPSILON
                     && trailing <= height;
@@ -1648,11 +1651,10 @@ fn fill_chunk_with(
                 // So does a box below content whose border and padding above
                 // its content leave none of it room in this column.
                 let moves_whole = fragments.is_empty()
-                    && top > 0.0
-                    && left > room + f32::EPSILON
+                    && column_has_content
+                    && left - room >= SLICE_MIN_ROOM
                     && (room <= leading + f32::EPSILON
                         || ends_early
-                            && column_has_content
                             && paragraph.held_lines.is_some()
                             && left - trailing <= paragraph.held_reach + f32::EPSILON);
                 if let Some(line_end) = lines

@@ -1322,8 +1322,10 @@ fn place_columns(
                 // a column that is taller than what is left, the next column
                 // offers no more room, so the border and padding are cut like
                 // any other box.
-                let room = match item.slice {
-                    Some((_, trailing))
+                // The border and padding of the wrappers that end with the
+                // box follow its own, and go on with them.
+                let room = match item.slice.map(|(_, trailing)| trailing + item.edges) {
+                    Some(trailing)
                         if left > room + EPSILON
                             && left - room < trailing - EPSILON
                             && (cursor > 0.0 || left - trailing > EPSILON) =>
@@ -2161,25 +2163,27 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
             }
         });
     let monolithic = is_monolithic_scroll_box(tree, child);
+    let splittable = !monolithic
+        && !matches!(
+            node.break_inside,
+            BreakInside::Avoid | BreakInside::AvoidColumn
+        );
     Item {
         height,
         margin_top,
         margin_bottom,
-        splittable: !monolithic
-            && !matches!(
-                node.break_inside,
-                BreakInside::Avoid | BreakInside::AvoidColumn
-            ),
+        splittable,
         // A box with effects sized from the whole box, or with block-axis
         // borders or padding that its pieces do not slice, sits whole in the
         // next column when it fits there: a piece that does not slice them
         // would repeat them at each break. One taller than a column is cut
         // only where its pieces slice the decorations. A box whose pieces
         // slice them breaks at a column end like any other (CSS
-        // Fragmentation 3, 5.4). A monolithic box is never cut.
+        // Fragmentation 3, 5.4), unless it avoids breaks. A monolithic box
+        // is never cut.
         whole: monolithic
             || node.paints_whole_box_effects
-            || (has_block_edge_decorations(&style) && slice.is_none()),
+            || (has_block_edge_decorations(&style) && (slice.is_none() || !splittable)),
         monolithic,
         slice,
         edges: 0.0,
