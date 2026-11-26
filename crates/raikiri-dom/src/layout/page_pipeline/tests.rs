@@ -155,6 +155,39 @@ fn a_block_taller_than_a_page_is_judged_by_its_first_line() {
 }
 
 #[test]
+fn a_free_break_keeps_no_minimum_of_lines_on_either_side() {
+    // Six 10px lines from y=60 on pages 100px tall: four fit the first page
+    // and leave two, fewer than the three widows.
+    let lines = [
+        (0.0, 10.0),
+        (10.0, 20.0),
+        (20.0, 30.0),
+        (30.0, 40.0),
+        (40.0, 50.0),
+        (50.0, 60.0),
+    ];
+    let pages = PageOrigins::new(&[], 100.0);
+    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 3, 3, 0.0);
+    assert!(fit.violates_line_constraints);
+    assert_eq!(
+        super::paragraph_line_moves(&lines, 60.0, 0, &fit, &pages),
+        vec![(3, 10.0, 1)]
+    );
+    // Free before the fifth line, the natural break stays.
+    let fit = fit.with_free_break(Some(4));
+    assert!(!fit.violates_line_constraints);
+    assert!(super::paragraph_line_moves(&lines, 60.0, 0, &fit, &pages).is_empty());
+    // Too few orphans before a free break do not move the paragraph either.
+    let fit = ParagraphLineFit::measure(&lines, 80.0, 0.0, 100.0, 3, 3, 0.0);
+    assert!(fit.leaves_too_few_orphans());
+    assert!(!fit.with_free_break(Some(2)).leaves_too_few_orphans());
+    // Free before another line, the break keeps its minimums.
+    let fit =
+        ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 3, 3, 0.0).with_free_break(Some(2));
+    assert!(fit.violates_line_constraints);
+}
+
+#[test]
 fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     // Four 10px lines from y=70 on a page that ends at 100: three fit.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
@@ -22292,4 +22325,23 @@ fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_
         paragraph,
         in_positioned_span
     ));
+}
+
+#[test]
+fn has_sibling_cell_needs_another_cell_in_the_row() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let pair = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let first = doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    let single = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let lone = doc.append_element(Some(single), "td", Some("display:table-cell"));
+    doc.mark_in_document_flags();
+    crate::layout::test_support::with_bridged_session(&mut doc, |session| {
+        assert!(has_sibling_cell(session, first));
+        assert!(!has_sibling_cell(session, lone));
+        assert!(!has_sibling_cell(session, body));
+    });
 }
