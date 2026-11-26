@@ -6356,6 +6356,25 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    if inputs.run_mode == RunMode::PerformLayout
+        && inputs.known_dimensions.height.is_none()
+        && rows_follow_area_percentages(tree, usize::from(node_id))
+    {
+        let measured = grid_layout(
+            tree,
+            node_id,
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: RequestedAxis::Vertical,
+                ..inputs
+            },
+        );
+        // The height stays indefinite for the items, as it is for an `auto`
+        // container.
+        let mut sized = inputs;
+        sized.known_dimensions.height = Some(measured.size.height);
+        return grid_layout(tree, node_id, sized);
+    }
     let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
     let inputs = if grid_oof::right_to_left(tree, usize::from(node_id)).is_some() {
         with_vertical_keyword_height(tree, node_id, inputs, grid_layout_sized)
@@ -6391,6 +6410,51 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
             grid_layout_sized(tree, node_id, inputs)
         },
     )
+}
+
+/// Whether the horizontal grid container `idx` has an in-flow item with an
+/// aspect ratio whose `height`, `min-height` or `max-height` is a percentage
+/// of its grid area.
+///
+/// Such an item contributes to the rows once at the height an unknown area
+/// gives it, and again, with its percentage resolved, after the columns are
+/// sized against those rows. The library then makes an `auto` container as
+/// tall as the rows of the second pass, but Chromium keeps the height of the
+/// first and lets the rows overflow it: `aspect-ratio: 2/1; height: 50%` with
+/// 25px borders above a 75px item makes a 100px grid 150px tall, though its
+/// rows come to 87.5px and 75px. The size the library reports when only asked
+/// for the size of the container is that first height, so the container is
+/// laid out at it. Only the ratio carries the resolved height over to a new
+/// width, and rows that repeat to fill the height would be counted again for
+/// one that is known.
+fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    if grid_oof::right_to_left(tree, idx).is_some()
+        || tree.nodes[idx].used_writing_mode.is_vertical()
+        || crate::layout::taffy_adapter::RowSizing::repeat_to_fill(&tree.physical_style(idx))
+    {
+        return false;
+    }
+    tree.child_ids(NodeId::from(idx)).any(|child| {
+        let child = usize::from(child);
+        if tree.nodes[child].layout_display() == Display::None
+            || tree.nodes[child].layout_position() == Position::Absolute
+        {
+            return false;
+        }
+        let style = tree.physical_style(child);
+        if style.stated_aspect_ratio().is_none() {
+            return false;
+        }
+        let depends = |basis: f32| {
+            let basis = Some(basis);
+            [
+                style.size().height.maybe_resolve(basis),
+                style.min_size().height.maybe_resolve(basis),
+                style.max_size().height.maybe_resolve(basis),
+            ]
+        };
+        depends(0.0) != depends(1.0e3)
+    })
 }
 
 /// Give a flex or grid container with a preferred aspect ratio and an `auto`

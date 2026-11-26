@@ -500,6 +500,19 @@ fn clip_holds_breaks(
     before: bool,
     at: f32,
 ) -> bool {
+    let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+    clip_holds_breaks_in_flow(document, env, node_id, before, at - relative)
+}
+
+/// [`clip_holds_breaks`] for a break at `at` where the normal flow puts it,
+/// with the relative offsets already taken off.
+fn clip_holds_breaks_in_flow(
+    document: &super::context::LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    node_id: usize,
+    before: bool,
+    at: f32,
+) -> bool {
     let FlowEnv {
         cascade,
         body_id,
@@ -521,7 +534,6 @@ fn clip_holds_breaks(
     {
         edge = parent;
     }
-    let at = at - accumulated_relative_offset_y(document, cascade, body_id, node_id);
     let page = if before {
         page_origins.page_index_for_y(at)
     } else {
@@ -3211,7 +3223,7 @@ fn positioned_text_start_y(
 /// moved, sends its lines where the flow puts them and the lines after
 /// follow, because an earlier box of the paragraph may have grown.
 fn place_text_candidate(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     text_lines: &TextLineIndex,
     node_id: usize,
     moved_root: Option<(usize, f32)>,
@@ -3238,7 +3250,7 @@ fn place_text_candidate(
 /// moved box's own position changes; content that follows it is moved by the
 /// flow shift the caller applies to later candidates.
 fn shift_text_candidate(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     text_lines: &TextLineIndex,
     node_id: usize,
     moved_root: Option<usize>,
@@ -9101,7 +9113,7 @@ fn materialize_table_row_y(document: &mut Document, row: usize, desired_y: f32) 
 /// page: they, the lines after them and the paragraph's boxes below their
 /// top move down by `delta`.
 fn follow_moved_ifc_text(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     root: usize,
     text: usize,
     delta: f32,
@@ -9159,15 +9171,17 @@ fn follow_moved_ifc_text(
             document.pagination_local_y(b) + layout.size.height + layout.margin.bottom
         })
         .fold(f32::NEG_INFINITY, f32::max);
+    let grows = lines_move_grows_box(document, root);
+    let (_, max_height) = border_box_height_bounds(document, root);
     let layout = &mut document.table_layout_node_mut(root).layout;
-    if let Some(end) = last_line_end {
+    if let Some(end) = last_line_end.filter(|_| grows) {
         let height = (layout.border.top
             + layout.padding.top
             + end
             + layout.padding.bottom
             + layout.border.bottom)
             .max(floats_end + layout.padding.bottom + layout.border.bottom);
-        layout.size.height = layout.size.height.max(height);
+        layout.size.height = layout.size.height.max(height.min(max_height));
         document.mark_pagination_extent_dirty(root);
     }
 }
