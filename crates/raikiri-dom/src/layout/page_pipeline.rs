@@ -4231,13 +4231,7 @@ fn clear_floats_at_forced_breaks<'name>(
             // its `::after` box out as an item beside the others, and a cell
             // beside other cells of its row does not move its lines on alone.
             if !after_forced_break
-                && matches!(
-                    document.nodes[parent].display(),
-                    DisplayValue::Block
-                        | DisplayValue::FlowRoot
-                        | DisplayValue::ListItem
-                        | DisplayValue::TableCell
-                )
+                && !document.nodes[parent].display().is_flex_or_grid_container()
                 && !has_sibling_cell(document, parent)
                 && document
                     .ancestors(block)
@@ -11491,9 +11485,9 @@ impl PendingBreak {
         }) {
             self.source = None;
             self.line_peers.clear();
-            if let Some(outer) = self.enclosing.pop() {
-                self.restore(outer);
-            }
+            // The break forced after a box around those is pending again.
+            let outer = self.enclosing.pop();
+            outer.into_iter().for_each(|outer| self.restore(outer));
         }
     }
 
