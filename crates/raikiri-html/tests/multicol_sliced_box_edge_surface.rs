@@ -190,6 +190,15 @@ fn a_cut_inside_the_edge_below_the_content_falls_where_the_content_ends() {
              <div style='height:10px'>Z</div></div>",
             "Z@100,25 | (0,60,100,30)(100,0,100,20)",
         ),
+        // The wrapper's piece in the first column ends where the box's
+        // content does, and its padding follows the box's in the second.
+        (
+            "<div class=m style='column-fill:auto'><div style='height:60px'></div>\
+             <div style='padding-bottom:5px;background:green'>\
+             <div style='height:50px;padding-bottom:20px'></div></div>\
+             <div style='height:10px'>Z</div></div>",
+            "Z@100,25 | (0,60,100,30)(100,0,100,25) (0,60,100,30)(100,0,100,20)",
+        ),
     ];
     for (body, expected) in cases {
         assert_eq!(layout_of(body), expected, "{body}");

@@ -89,12 +89,24 @@ impl Group {
         // it leaves, as a paragraph broken there does.
         // One whose padding below went whole to a later column ends in the
         // column it leaves where its content does (Chromium).
-        let content_end = end.moved_whole.then_some((end.entry_column, end.entry_y));
+        // So does one whose last box is cut where its content ends, its own
+        // padding and border below going on alone to the next column.
+        let last_box_ends_early = (index + 1..close)
+            .rev()
+            .find(|&inner| flow.roles[inner] == Role::Box)
+            .and_then(|inner| self.placements.get(inner)?.as_ref())
+            .filter(|last| last.sliced && last.fragments.len() > 1)
+            .map(|last| (last.first_column, last.first_y + last.first_height))
+            .filter(|&(_, y)| y < self.height - f32::EPSILON);
+        let content_end = end
+            .moved_whole
+            .then_some((end.entry_column, end.entry_y))
+            .or(last_box_ends_early);
         let padding_moved = content_end.is_some_and(|(column, _)| column == first.first_column);
         let first_height = if end_column == first.first_column {
             end_y - first.first_y
         } else if padding_moved {
-            end.entry_y - first.first_y
+            content_end.map_or(0.0, |(_, y)| y) - first.first_y
         } else {
             self.height - first.first_y
         };
