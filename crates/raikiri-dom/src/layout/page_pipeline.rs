@@ -3043,14 +3043,8 @@ fn merge_forced_line_breaks(breaks: &mut Vec<ForcedLineBreak>) {
     });
 }
 
-/// The moves that forced page breaks between the lines of a paragraph ask
-/// for, in line order: each moves the line after its break, and the lines
-/// after that, down so that what the break is before starts the next page,
-/// below the margin `gap` it keeps there. `breaks` are as for
-/// [`forced_line_breaks`], and `line_metrics` and `effective_y` as for
-/// [`widows_break_on_next_page`]. A break that has no line on either side
-/// stays at the edge of the paragraph, and a page edge that already falls
-/// before what the break is before is the break.
+/// [`forced_line_moves_below`] with nothing above the lines on the pages
+/// they move to.
 #[cfg(test)]
 fn forced_line_moves(
     breaks: &[ForcedLineBreak],
@@ -3061,9 +3055,16 @@ fn forced_line_moves(
     forced_line_moves_below(breaks, line_metrics, effective_y, page_origins, 0.0)
 }
 
-/// [`forced_line_moves`], with each page the lines move to opening with
-/// `head` of other content above them, as a copy of a table's repeated
-/// header above the lines of a cell.
+/// The moves that forced page breaks between the lines of a paragraph ask
+/// for, in line order: each moves the line after its break, and the lines
+/// after that, down so that what the break is before starts the next page,
+/// below the margin `gap` it keeps there. `breaks` are as for
+/// [`forced_line_breaks`], and `line_metrics` and `effective_y` as for
+/// [`widows_break_on_next_page`]. A break that has no line on either side
+/// stays at the edge of the paragraph, and a page edge that already falls
+/// before what the break is before is the break.
+/// Each page the lines move to opens with `head` of other content above
+/// them, as a copy of a table's repeated header above the lines of a cell.
 fn forced_line_moves_below(
     breaks: &[ForcedLineBreak],
     line_metrics: &[(f32, f32)],

@@ -646,16 +646,15 @@ impl PaginationState {
                 // The corrections of the paragraphs the rows hold come first:
                 // lines moved inside a cell taller than them grow the flow
                 // after the cell by less than they moved.
-                if let Some(page) = self.deferred_shifts.apply_reached(
+                let reached = self.deferred_shifts.apply_reached(
                     document,
                     env.text_lines,
                     node_id,
                     None,
                     self.current_page,
                     &mut self.flow_shift,
-                ) {
-                    self.current_page = self.current_page.max(page);
-                }
+                );
+                self.current_page = self.current_page.max(reached.unwrap_or(0));
                 if let Some(page) =
                     self.subtree_shifts
                         .leave(document, node_id, &mut self.flow_shift)
