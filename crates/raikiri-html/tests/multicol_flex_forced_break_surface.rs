@@ -287,3 +287,49 @@ fn a_break_at_an_item_of_a_row_container_falls_before_or_after_its_line() {
         );
     }
 }
+
+#[test]
+fn a_break_after_boxes_with_no_block_size_still_starts_the_next_column() {
+    let two = |content: &str| {
+        format!("<div style='columns:2;column-gap:0;width:200px;height:100px'>{content}</div>")
+    };
+    expect(
+        &two(
+            "<div id=o style='margin-bottom:20px'></div><div id=f style='display:flex;break-before:column'>\
+             <div id=a style='height:10px;width:10px'></div></div>",
+        ),
+        &[("f", &[(100, 0, 100, 10)])],
+    );
+    expect(
+        &two(
+            "<div id=f style='display:flex;flex-direction:column'><div id=a style='break-after:column'></div>\
+             <div id=b style='height:10px'></div></div>",
+        ),
+        &[
+            ("f", &[(0, 0, 100, 10), (100, 0, 100, 10)]),
+            ("b", &[(100, 0, 100, 10)]),
+        ],
+    );
+}
+
+#[test]
+fn columns_with_more_breaks_than_columns_are_as_tall_as_the_tallest_run() {
+    expect(
+        "<div style='columns:2;column-gap:0;width:200px'><div id=f style='display:flex;flex-direction:column'>\
+         <div id=a style='height:10px'></div><div id=b style='height:10px;break-before:column'></div>\
+         <div id=c style='height:10px;break-before:column'></div></div></div>",
+        &[
+            (
+                "f",
+                &[(0, 0, 100, 10), (100, 0, 100, 10), (200, 0, 100, 10)],
+            ),
+            ("c", &[(200, 0, 100, 10)]),
+        ],
+    );
+    // Columns that fill in turn under an auto height still break.
+    expect(
+        "<div style='columns:2;column-fill:auto;column-gap:0;width:200px'><div id=o style='height:20px'></div>\
+         <div id=f style='display:flex;break-before:column'><div id=a style='height:10px;width:10px'></div></div></div>",
+        &[("o", &[(0, 0, 100, 20)]), ("f", &[(100, 0, 100, 10)])],
+    );
+}

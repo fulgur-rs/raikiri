@@ -2405,10 +2405,13 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     // A forced column break before or after a flex item falls between the
     // items, or before or after the container.
     for held in [
-        "display:block;width:10px;break-before:column",
-        "display:block;width:10px;break-after:column",
+        "display:block;width:10px;height:150px;break-before:column",
+        "display:block;width:10px;height:150px;break-after:column",
     ] {
-        assert!(supported(sized, &[held], true), "{held}");
+        assert!(supported("display:flex", &[held], true), "{held}");
+        // A container with a block size of its own would not grow with the
+        // items that a break moves down.
+        assert!(!supported(sized, &[held], true), "{held}");
     }
     for held in [
         "display:block;break-before:avoid",
