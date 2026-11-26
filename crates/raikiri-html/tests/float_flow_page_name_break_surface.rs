@@ -109,6 +109,13 @@ fn text_or_a_box_after_a_named_box_in_a_float_starts_another_page() {
         &format!("{FLOAT}'><div style='page:foo'>H</div>K</div>Z"),
         &["100: H@0,0 Z@40,0", "100: K@0,0"],
     );
+    // An avoided break does not hold the boxes on either side together.
+    expect(
+        &format!(
+            "{FLOAT}'><div style='break-after:avoid'>A</div><div style='page:foo'>H</div></div>Z"
+        ),
+        &["100: A@0,0 Z@40,0", "100: H@0,0"],
+    );
     expect(
         &format!("{FLOAT}'><div style='page:foo'>H</div><div style='page:bar'>K</div></div>Z"),
         &["100: H@0,0 Z@40,0", "100: K@0,0"],
@@ -163,6 +170,15 @@ fn a_float_that_holds_its_flow_together_is_not_split() {
     // A float that clips its content to a height of its own is monolithic.
     expect(
         &format!("{FLOAT};overflow:hidden;height:80px'>F<div style='page:foo'>H</div></div>Z"),
+        &["100: F@0,0 H@0,30 Z@40,0"],
+    );
+    // A multicol container takes a change of page type in its columns.
+    expect(
+        &format!("{FLOAT};columns:1'>F<div style='page:foo'>H</div></div>Z"),
+        &["100: F@0,0 H@0,30 Z@40,0"],
+    );
+    expect(
+        &format!("{FLOAT}'><div style='columns:1'>F<div style='page:foo'>H</div></div></div>Z"),
         &["100: F@0,0 H@0,30 Z@40,0"],
     );
     // A float inside the float, and an absolutely positioned box, are no

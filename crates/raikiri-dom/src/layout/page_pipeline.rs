@@ -3898,9 +3898,21 @@ fn clear_floats_at_forced_breaks<'name>(
     let mut cleared_lines_to_float_floor = Vec::new();
     let mut named_break_floats = Vec::new();
     let mut trailing_floats = HashMap::new();
-    // The floats the walk passes, each with the page value its content
-    // inherits.
+    // The floats the walk passes that pagination may split, each with the
+    // page value its content inherits.
     let mut float_flows = Vec::new();
+    // Whether a change of page type inside the float or the box `id` in a
+    // float's flow can break the page: pagination does not break inside a
+    // monolithic box, and a multicol container takes it in its columns.
+    let splits_at_page_names = |document: &Document, id: usize| {
+        document.nodes[id].multicol.is_none()
+            && !is_monolithic_for_pagination_with_transposed_axes(
+                document,
+                cascade,
+                id,
+                pagination_on_transposed_axes,
+            )
+    };
     let mut pending = vec![(0_usize, None::<&str>, false)];
     while let Some((parent, inherited, at_page_start_float)) = pending.pop() {
         let mut after_forced_break = false;
@@ -3991,7 +4003,14 @@ fn clear_floats_at_forced_breaks<'name>(
                 continue;
             }
             if is_float(document, child) {
-                if has_named_pages {
+                // A page value inside a multicol container falls in its
+                // columns, which take no change of page type.
+                if has_named_pages
+                    && splits_at_page_names(document, child)
+                    && !document
+                        .layout_ancestors(child)
+                        .any(|id| document.nodes[id].multicol.is_some())
+                {
                     float_flows.push((child, selected_page_name(cascade, child).or(inherited)));
                 }
                 let carries_flow_break = after_forced_break && !float_after_break;
@@ -4196,7 +4215,9 @@ fn clear_floats_at_forced_breaks<'name>(
             };
             let own_page_name = selected_page_name(cascade, child).or(inherited);
             if is_float(document, child) {
-                float_flows.push((child, own_page_name));
+                if splits_at_page_names(document, child) {
+                    float_flows.push((child, own_page_name));
+                }
                 continue;
             }
             let (_, start_page_name) = propagated_start_page_name_with_transposed_axes(
@@ -4211,12 +4232,7 @@ fn clear_floats_at_forced_breaks<'name>(
             }
             last_block = Some(child);
             previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
-            if !is_monolithic_for_pagination_with_transposed_axes(
-                document,
-                cascade,
-                child,
-                pagination_on_transposed_axes,
-            ) {
+            if splits_at_page_names(document, child) {
                 float_flows.push((child, own_page_name));
             }
         }
@@ -4555,8 +4571,10 @@ fn row_takes_cell_break(
 }
 
 /// Whether `node_id` forces a page break before (`before`) or after itself
-/// in the page flow: its own forced break, unless it lies at the edge of a
-/// table cell, or one that a row takes from the edge of one of its cells.
+/// in the page flow: its own forced break, or a change of page type at that
+/// edge in the flow of a float (see `clear_floats_at_forced_breaks`), unless
+/// it lies at the edge of a table cell, or one that a row takes from the
+/// edge of one of its cells.
 fn forces_page_break(
     document: &Document,
     cascade: &CascadeResult,
@@ -7705,8 +7723,19 @@ fn boxes_are_tied(
 ) -> bool {
     let (forced_after, avoided_after) = page_edge_constraint(document, cascade, before, false);
     let (forced_before, avoided_before) = page_edge_constraint(document, cascade, after, true);
+    // A change of page type in the flow of a float breaks the page there,
+    // though the names inside a float meet for the page flow.
+    let named_in_float_flow = document
+        .float_flow_named_breaks
+        .binary_search(&(before, false))
+        .is_ok()
+        || document
+            .float_flow_named_breaks
+            .binary_search(&(after, true))
+            .is_ok();
     !forced_after
         && !forced_before
+        && !named_in_float_flow
         && (avoided_after || avoided_before)
         && (!document.style_views.names_pages(cascade)
             || super::page::page_names_meet(

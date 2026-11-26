@@ -1662,9 +1662,10 @@ fn propagated_start_page_name_with_order<'name>(
 ///
 /// Pagination leaves `page` alone where Chromium ignores it: on the items of
 /// a flex or grid container, and inside a multicol container, a float or an
-/// absolutely positioned box. Names there force no break, so they meet. The
-/// own value of a flex item does not pass to the start or end value of its
-/// container either, while boxes nested inside it still pass theirs, and a
+/// absolutely positioned box. Names there force no break in the page flow,
+/// so they meet; a change of page type in the flow of a float still breaks
+/// the page there (see `boxes_are_tied`). The own value of a flex item does
+/// not pass to the start or end value of its container either, while boxes nested inside it still pass theirs, and a
 /// grid item's own value does. The own value of a multicol container still
 /// counts.
 pub(crate) fn page_names_meet(

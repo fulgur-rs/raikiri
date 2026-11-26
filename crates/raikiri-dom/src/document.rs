@@ -337,10 +337,10 @@ pub struct Document {
     /// before them, as the text after them does. Sorted, and dirties the
     /// layout cache the same way.
     pub(crate) named_break_floats: Vec<usize>,
-    /// The boxes in the flow of a float that a change of page type between
-    /// them and the box or text before (`true`) or after (`false`) them, in
-    /// that flow, breaks the page at, as the last paged layout took them.
-    /// Sorted, and dirties the layout cache the same way.
+    /// The boxes in the flow of a float where a change of page type forces
+    /// a page break before (`true`) or after (`false`) them, as the last
+    /// paged layout found them. Sorted, and dirties the layout cache the same
+    /// way.
     pub(crate) float_flow_named_breaks: Vec<(usize, bool)>,
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
