@@ -333,3 +333,34 @@ fn columns_with_more_breaks_than_columns_are_as_tall_as_the_tallest_run() {
         &[("o", &[(0, 0, 100, 20)]), ("f", &[(100, 0, 100, 10)])],
     );
 }
+
+#[test]
+fn a_break_at_the_first_item_of_a_nested_flex_item_falls_before_it() {
+    expect(
+        "<div style='columns:2;column-fill:auto;column-gap:0;width:200px;height:300px'>\
+         <div id=f style='display:flex;flex-direction:column'><div id=g style='display:flex;flex-direction:column'>\
+         <div id=a style='height:50px'></div><div id=b style='height:50px'></div></div>\
+         <div id=h style='display:flex;flex-direction:column'><div id=c style='height:50px;break-before:column'></div>\
+         <div id=d style='height:50px'></div></div></div></div>",
+        &[
+            ("f", &[(0, 0, 100, 300), (100, 0, 100, 100)]),
+            ("c", &[(100, 0, 100, 50)]),
+            ("d", &[(100, 50, 100, 50)]),
+        ],
+    );
+}
+
+#[test]
+fn a_box_placed_from_the_top_of_the_container_stays_when_a_break_moves_the_items() {
+    expect(
+        "<div style='columns:2;column-gap:0;width:200px;height:100px;column-fill:auto'>\
+         <div id=f style='display:flex;flex-direction:column;position:relative'><div id=a style='height:30px'></div>\
+         <div id=b style='height:20px;break-before:column'></div>\
+         <div id=x style='position:absolute;top:40px;height:10px;width:10px'></div></div></div>",
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 20)]),
+            ("b", &[(100, 0, 100, 20)]),
+            ("x", &[(0, 40, 10, 10)]),
+        ],
+    );
+}

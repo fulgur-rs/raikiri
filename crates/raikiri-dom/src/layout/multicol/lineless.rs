@@ -532,7 +532,7 @@ fn sliceable_flex_container(
         inner_breaks |= id != child
             && (node.break_before == BreakBetween::Column
                 || node.break_after == BreakBetween::Column);
-        holds_absolute |= is_absolute_box(node);
+        holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
         sized |= has_block_size(&style);
@@ -543,7 +543,7 @@ fn sliceable_flex_container(
         // not be the first one laid out, so a break inside a flex item that
         // is itself a flex container does not reach the item.
         let in_flow = in_flow_elements(tree, id);
-        let (first, last) = if id == child || is_block_flow(node) {
+        let (first, last) = if id == child || passes_breaks_on(tree, id) {
             (in_flow.first().copied(), in_flow.last().copied())
         } else {
             (None, None)
@@ -592,9 +592,38 @@ fn sliceable_flex_container(
     Some(sized)
 }
 
-/// Whether `node` lays its children out in a block flow, one below another.
-fn is_block_flow(node: &crate::Node) -> bool {
-    matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+/// Whether a forced break before the first box in flow inside `id`, or
+/// after the last, is one before or after `id`: `id` lays them out in a
+/// block flow, or is a single-line flex container that lays them out in
+/// the order of the tree.
+fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
+    match layout_node(tree, id).display() {
+        DisplayValue::Block | DisplayValue::FlowRoot => true,
+        DisplayValue::Flex => {
+            let style = style_of(tree, id);
+            let cascade = tree.style_views.cascade();
+            !style.flex_wraps()
+                && !style.flex_direction_is_reversed()
+                && in_flow_elements(tree, id)
+                    .iter()
+                    .all(|&item| cascade.computed[item].order == 0)
+        }
+        _ => false,
+    }
+}
+
+/// Whether an absolutely positioned box with `style` is placed a fixed
+/// length below the top of its containing block, with a block size of its
+/// own or from its content, so that it stays where it is when the block
+/// grows.
+fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
+    let inset = style.inset();
+    let top = inset.top.maybe_resolve(Some(0.0));
+    let height = style.size().height;
+    top.is_some()
+        && top == inset.top.maybe_resolve(Some(1.0))
+        && inset.bottom.is_auto()
+        && (height.is_auto() || style_dimension_length(height).is_some())
 }
 
 /// Whether `id`, a flex container or a box inside one, can be sliced with
@@ -690,7 +719,7 @@ fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) ->
         if value == BreakBetween::Column {
             return true;
         }
-        if !is_block_flow(node) {
+        if !passes_breaks_on(tree, id) {
             return false;
         }
         let children = in_flow_elements(tree, id);
