@@ -6365,7 +6365,6 @@ fn anonymous_row_cut(
                 && !is_row_or_row_group(node)
                 && is_block_level_flow_box(node.display())
                 && !is_out_of_flow_positioned(document, child)
-                && !document.pagination_style(child).float().is_floated()
                 && current_abs_y(document, child) >= start - 0.001
                 && bottom(child) <= end + 0.001
         })
@@ -6407,6 +6406,7 @@ fn held_anonymous_row_end(
     // before that break, text included. The leading anonymous row is held
     // already; a break after its last block ends it. A break after the last
     // box of the group, with nothing of it below, is at the group's end.
+    // The breaks of floats are those `forces_page_break` gives them.
     let bottom = |id: usize| current_abs_y(document, id) + document.nodes[id].layout.size.height;
     let layout = &document.nodes[owner].layout;
     let content_end = bottom(owner) - layout.padding.bottom - layout.border.bottom;
@@ -6418,7 +6418,6 @@ fn held_anonymous_row_end(
         if node.kind() != NodeKind::Element
             || !row && !is_block_level_flow_box(node.display())
             || is_out_of_flow_positioned(document, child)
-            || document.pagination_style(child).float().is_floated()
         {
             continue;
         }
@@ -6438,7 +6437,11 @@ fn held_anonymous_row_end(
         previous = Some(child);
     }
     match previous.filter(|&held| forces_page_break(document, cascade, held, false)) {
-        Some(held) if bottom(held) < content_end - 0.001 => bottom(held),
+        Some(held)
+            if bottom(held) + document.nodes[held].layout.margin.bottom < content_end - 0.001 =>
+        {
+            bottom(held).max(anonymous_end)
+        }
         _ => bottom(owner),
     }
 }
