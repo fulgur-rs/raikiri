@@ -28,6 +28,14 @@ pub(super) struct Placement {
     /// Whether the entry is a box with no lines that the column ends slice:
     /// each piece but the last fills its column to the end.
     pub(super) sliced: bool,
+    /// Whether the entry is the padding below the last box of a wrapper,
+    /// which went whole to the next column, as the rest of its column was
+    /// too short for it.
+    pub(super) moved_whole: bool,
+    /// For a wrapper whose padding below its last box went whole to a later
+    /// column, the column and block offset where its content ends: its piece
+    /// in that column ends there.
+    pub(super) content_end: Option<(usize, f32)>,
 }
 
 impl Group {
@@ -79,8 +87,14 @@ impl Group {
         let (end_column, end_y) = Self::border_box_end(end);
         // A wrapper that runs into a later column reaches the end of the ones
         // it leaves, as a paragraph broken there does.
+        // One whose padding below went whole to a later column ends in the
+        // column it leaves where its content does (Chromium).
+        let content_end = end.moved_whole.then_some((end.entry_column, end.entry_y));
+        let padding_moved = content_end.is_some_and(|(column, _)| column == first.first_column);
         let first_height = if end_column == first.first_column {
             end_y - first.first_y
+        } else if padding_moved {
+            end.entry_y - first.first_y
         } else {
             self.height - first.first_y
         };
@@ -94,6 +108,8 @@ impl Group {
             entry_column: start.entry_column,
             entry_y: start.entry_y,
             sliced: false,
+            moved_whole: false,
+            content_end,
         })
     }
 
@@ -1514,6 +1530,8 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: false,
+                moved_whole: false,
+                content_end: None,
             });
             continue;
         }
@@ -1597,11 +1615,32 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: true,
+                moved_whole: false,
+                content_end: None,
             });
             continue;
         }
         if paragraph.sliced {
             let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
+            // In columns of a definite height, which go on in overflow
+            // columns, the padding below the last box of a wrapper goes
+            // whole to the next column when the rest of this one is too short
+            // for it, as the edge below a paragraph's last line does
+            // (Chromium). Balanced columns grow instead.
+            // Padding taller than a column stays whole there, overflowing
+            // its end, as the edge below a paragraph's last line does.
+            let moved_whole = paragraph.closes
+                && context.column_count == usize::MAX
+                && column_has_content
+                && top + left > height + f32::EPSILON;
+            if moved_whole {
+                // These columns go on past the last one, so there is always
+                // a next column.
+                maximum = maximum.max(cursor);
+                column = column.checked_add(1)?;
+                top = 0.0;
+                column_has_content = false;
+            }
             let mut fragments: Vec<MulticolTextFragment> = Vec::new();
             let (mut first_column, mut first_y, mut first_height) = (column, top, 0.0);
             // The lines that earlier pieces of the box hold.
@@ -1627,7 +1666,8 @@ fn fill_chunk_with(
                     if fragments.len() >= MAX_SLICED_PIECES {
                         return None;
                     }
-                    let used = left.min(room);
+                    let used = if moved_whole { left } else { left.min(room) };
+                    overflowed |= used > room + f32::EPSILON;
                     if fragments.is_empty() {
                         (first_column, first_y, first_height) = (column, top, used);
                     }
@@ -1683,6 +1723,8 @@ fn fill_chunk_with(
                 entry_column,
                 entry_y,
                 sliced: true,
+                moved_whole,
+                content_end: None,
             });
             continue;
         }
@@ -1763,6 +1805,27 @@ fn fill_chunk_with(
                 end = line_count;
                 overflowed = true;
             }
+            // The last line and the edge below it do not fit one column
+            // together, and nothing comes before the line in its column, so
+            // no break is left that the columns could take instead: they
+            // break between the line and the edge, which goes on alone at the
+            // top of the next column (Chromium). The padding below the
+            // wrappers that end with the paragraph follows as entries of its
+            // own. Balanced columns grow instead.
+            let edge_alone = end <= start
+                && held_with_edge
+                && !column_has_content
+                && !paragraph.cloned
+                && !strict;
+            // The edge of the paragraph itself may fit below the line, and
+            // only the padding of the wrappers after it not: the edge then
+            // stays with the line.
+            let edge_split = edge_alone
+                && paragraph.extents[line_count - 1].1 - origin + lead + paragraph.edge_end
+                    > available + f32::EPSILON;
+            if edge_alone {
+                end = line_count;
+            }
             if end <= start {
                 // An unforced break at a block boundary discards both adjoining
                 // margins. A too-tall paragraph at an empty column fails this trial.
@@ -1786,7 +1849,7 @@ fn fill_chunk_with(
                 first_y = top;
                 continue;
             }
-            let trail = if end == line_count || paragraph.cloned {
+            let trail = if end == line_count && !edge_split || paragraph.cloned {
                 paragraph.edge_end
             } else {
                 0.0
@@ -1815,6 +1878,24 @@ fn fill_chunk_with(
             column_has_content = true;
             maximum = maximum.max(cursor);
             start = end;
+            if edge_split {
+                // The piece that holds the edge alone holds no line.
+                column = column
+                    .checked_add(1)
+                    .filter(|&next| next < context.column_count)?;
+                fragments.push(MulticolTextFragment {
+                    line_start: line_count,
+                    line_end: line_count,
+                    fragmentainer: column,
+                    x: context.column_offset_x(column) - context.column_offset_x(first_column),
+                    y: -first_y - paragraph.edge_start,
+                });
+                cursor = paragraph.edge_end;
+                maximum = maximum.max(cursor);
+                // An edge taller than a column stays whole there,
+                // overflowing its end, as a monolithic box does.
+                overflowed |= cursor > height + f32::EPSILON;
+            }
             if start < line_count {
                 column = column.checked_add(1)?;
                 if column >= context.column_count {
@@ -1828,6 +1909,8 @@ fn fill_chunk_with(
                         entry_column,
                         entry_y,
                         sliced: false,
+                        moved_whole: false,
+                        content_end: None,
                     });
                     return Some(Chunk {
                         group: finish_group(placements, height),
@@ -1852,6 +1935,8 @@ fn fill_chunk_with(
             entry_column,
             entry_y,
             sliced: false,
+            moved_whole: false,
+            content_end: None,
         });
     }
     let used = maximum.max(if trailing_margin {

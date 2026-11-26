@@ -6777,15 +6777,25 @@ fn a_middle_piece_has_neither_edge_and_both_fall_outside_its_column() {
 }
 
 #[test]
-fn a_line_taller_than_a_column_with_its_edge_is_left_to_the_other_strategies() {
-    // The last line and the 60px of padding below it fit no column: the
-    // planner gives up instead of cutting the padding, and the paragraph stays
-    // whole in the first column, past its end, as on the path that places
-    // it without slicing.
+fn a_last_line_that_fits_no_column_with_its_edge_breaks_before_the_edge() {
+    // The last line and the 60px of padding below it fit no column. The
+    // columns break between the lines first, so the last line starts the
+    // second column, and then between it and the padding, which goes on alone
+    // in the third, as Chromium breaks them. Each piece runs down its column
+    // to the edge below the box and the column clips it: the first to the
+    // column's end, the second to its line, and the third, which holds the
+    // padding, to the padding's end.
     let (doc, _, paragraph) = padded_paragraph_columns("padding-bottom:60px;background:green", 3);
     let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
-    assert_eq!(ranges, [(0, 3, 0)]);
-    assert_eq!(boxes, [(0.0, 90.0, None)]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1), (3, 3, 2)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 110.0, Some((0.0, 50.0))),
+            (0.0, 70.0, Some((0.0, 10.0))),
+            (0.0, 60.0, Some((0.0, 60.0)))
+        ]
+    );
 }
 
 #[test]
