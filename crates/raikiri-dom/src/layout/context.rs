@@ -225,6 +225,10 @@ pub(crate) struct LayoutContext {
     pub(crate) content_limit_measures:
         HashMap<crate::layout::dispatch::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
+    /// The measures that hold a state only the running keyword-size layouts
+    /// set up, dropped when the outermost of them ends.
+    pub(crate) content_limit_transient_measures:
+        Vec<crate::layout::dispatch::content_limits::MeasureKey>,
     /// How many keyword-size measures were laid out, for tests that check a
     /// box is not measured again.
     #[cfg(test)]
@@ -460,6 +464,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.safe_static_positions.clear();
             self.context.vertical_block_size_seeds.clear();
             self.context.variant_caches.clear();
+            self.context.content_limit_measures.clear();
             self.document.layout_dirty = false;
         }
     }

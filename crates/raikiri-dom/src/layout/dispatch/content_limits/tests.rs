@@ -2275,10 +2275,15 @@ fn nested_ratio_flex_and_grid_containers_measure_each_box_a_few_times() {
     // Each container's ratio width is floored by its min-content width. A box
     // measured once keeps that measure for the layouts of every container
     // around it, so the measures grow with the depth, not with its square.
-    let depth = 16;
     for display in ["flex", "grid"] {
-        let (runs, width, height) = nested_ratio_containers(display, depth);
-        assert_eq!((width, height), (125.0, 125.0), "{display}");
-        assert!(runs <= 4 * depth, "{display}: {runs} measures");
+        let (shallow, width, height) = nested_ratio_containers(display, 8);
+        assert_eq!((width, height), (165.0, 165.0), "{display}");
+        let (deep, width, height) = nested_ratio_containers(display, 32);
+        assert_eq!((width, height), (45.0, 45.0), "{display}");
+        assert!(deep <= 8 * 32, "{display}: {deep} measures");
+        assert!(
+            deep <= 5 * shallow,
+            "{display}: {shallow} then {deep} measures"
+        );
     }
 }

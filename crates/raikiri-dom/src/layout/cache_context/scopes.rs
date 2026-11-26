@@ -73,6 +73,7 @@ impl LayoutSession<'_> {
     ) -> R {
         self.sync_layout_cache_mutations();
         self.cache_edges_changed(idx, local);
+        crate::layout::dispatch::content_limits::forget_measures_around(self, &[idx]);
         if resolve_border && crate::layout::dispatch::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
         }
@@ -94,6 +95,7 @@ impl LayoutSession<'_> {
         }
         self.context.resolved_edge_bases.pop();
         self.end_edge_recording(idx, previous_basis);
+        crate::layout::dispatch::content_limits::forget_measures_around(self, &[idx]);
         match result {
             Ok(value) => value,
             Err(payload) => std::panic::resume_unwind(payload),

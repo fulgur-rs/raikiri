@@ -223,8 +223,11 @@ pub(crate) fn forget_measures_around(tree: &mut LayoutSession<'_>, changed: &[us
 /// items measures them again, and a chain of nested containers would measure
 /// the innermost boxes once for each container above them. A measure stays
 /// for as long as nothing it depends on changes outside these layouts, see
-/// [`forget_measures_around`]; the overrides these layouts install are the
-/// ones they install again each time they run.
+/// [`forget_measures_around`], and until the root is laid out again. A
+/// measure taken while one of these layouts overrides a style for something
+/// other than a measure, or inside a fragmentainer or a percentage-basis
+/// scope, holds a state the next layout may not set up again, so it lasts
+/// only until the outermost of these layouts ends.
 fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>) -> R) -> R {
     tree.context.content_limit_depth += 1;
     let checkpoint = tree.override_checkpoint();
@@ -241,6 +244,11 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.context.content_limit_measures.clear();
     }
     tree.context.content_limit_depth -= 1;
+    if tree.context.content_limit_depth == 0 {
+        for key in std::mem::take(&mut tree.context.content_limit_transient_measures) {
+            tree.context.content_limit_measures.remove(&key);
+        }
+    }
     match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
@@ -3218,7 +3226,12 @@ fn probe(
     {
         tree.context.content_limit_measure_runs += 1;
     }
-    let output = with_size_overrides(tree, idx, neutral, |tree| {
+    let key_of_box = tree.nodes.box_key(idx).expect("live content-limit box");
+    let neutral = neutral
+        .into_iter()
+        .map(|entry| (key_of_box, entry))
+        .collect();
+    let output = tree.with_measure_overrides(neutral, |tree| {
         tree.context.content_limit_probes.push(idx);
         let cache = tree.take_layout_cache(idx);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3236,6 +3249,14 @@ fn probe(
     } else {
         output.size.height
     };
+    // A measure taken under a style or a fragmentainer that only this layout
+    // sets up is good only until the outermost keyword-size layout ends.
+    if tree.transient_overrides_active()
+        || !tree.context.fragmentation_stack.is_empty()
+        || !tree.context.resolved_edge_bases.is_empty()
+    {
+        tree.context.content_limit_transient_measures.push(key);
+    }
     tree.context.content_limit_measures.insert(key, size);
     size
 }
