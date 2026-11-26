@@ -29,6 +29,7 @@ pub(super) fn supports(
     let mut needs_break_flow = false;
     let mut projected_floats = 0usize;
     let mut projected_text_lines = false;
+    let mut edged_wrappers = false;
     while let Some((id, depth, projected, inside_formatting_context)) = pending.pop() {
         if depth >= 128 {
             return false;
@@ -104,6 +105,14 @@ pub(super) fn supports(
         if projected && has_box_constraints(tree, id) {
             return false;
         }
+        // The block-axis edges of a wrapper are placed around the flow boxes
+        // it holds, so a wrapper with edges needs one to hold.
+        if projected && !atomic(tree, id) && has_block_edges(tree, id) {
+            if !has_in_flow_element_child(tree, id) {
+                return false;
+            }
+            edged_wrappers = true;
+        }
         // Keep existing strategies for contexts whose only constraints are
         // inside avoidance, line breaking or sizing. This seam handles the
         // between-box constraints that require rollback and propagation.
@@ -140,7 +149,11 @@ pub(super) fn supports(
     }
     // A full-width float can push lines below itself without narrowing any
     // final line. Preserve that shared vertical placement as well.
-    visible && needs_break_flow && !(projected_floats > 0 && projected_text_lines)
+    // Floats take no block-flow advance here, so the edges of a wrapper
+    // would not be placed around them.
+    visible
+        && needs_break_flow
+        && !(projected_floats > 0 && (projected_text_lines || edged_wrappers))
 }
 
 /// A box that holds flow boxes and has no height of its own to place.
@@ -151,6 +164,71 @@ struct Wrapper {
     offset: f32,
     /// The inline size of its border box.
     width: f32,
+    edges: BlockEdges,
+}
+
+/// The block-axis margins of a wrapper, and its padding and border above and
+/// below its content. With `box-decoration-break: slice`, the top edge is on
+/// its first fragment only and the bottom edge on its last.
+#[derive(Clone, Copy, Default)]
+struct BlockEdges {
+    margin_top: f32,
+    top: f32,
+    bottom: f32,
+    margin_bottom: f32,
+}
+
+impl BlockEdges {
+    /// The edges of the wrapper `id`, with percentages of the inline size of
+    /// the column content box `basis` it is laid out in. An inline box that
+    /// holds blocks takes no room for them (CSS 2, 10.8.1).
+    fn of(tree: &LayoutSession<'_>, id: usize, basis: f32) -> Self {
+        if tree.nodes[id].display() == DisplayValue::Inline {
+            return Self::default();
+        }
+        let style = style_of(tree, id);
+        let (margin, padding, border) = (style.margin(), style.padding(), style.border());
+        let basis = basis.max(0.0);
+        let inset = |padding: LengthPercentage, border: LengthPercentage| {
+            super::multicol_resolve_inset(tree, padding, basis)
+                + super::multicol_resolve_inset(tree, border, basis)
+        };
+        let resolve = |value: LengthPercentageAuto| {
+            value
+                .maybe_resolve(Some(basis))
+                .filter(|value| value.is_finite())
+                .unwrap_or(0.0)
+        };
+        Self {
+            margin_top: resolve(margin.top),
+            top: inset(padding.top, border.top),
+            bottom: inset(padding.bottom, border.bottom),
+            margin_bottom: resolve(margin.bottom),
+        }
+    }
+}
+
+/// Adjoining block-axis margins, which collapse into the largest positive one
+/// plus the most negative one (CSS 2, 8.3.1).
+#[derive(Clone, Copy, Default)]
+struct Margins {
+    positive: f32,
+    negative: f32,
+}
+
+impl Margins {
+    fn add(&mut self, margin: f32) {
+        self.positive = self.positive.max(margin);
+        self.negative = self.negative.min(margin);
+    }
+
+    fn take(&mut self) -> f32 {
+        std::mem::take(self).collapsed()
+    }
+
+    fn collapsed(self) -> f32 {
+        self.positive + self.negative
+    }
 }
 
 /// The content box that the boxes being collected are placed in, as an inline
@@ -184,12 +262,38 @@ struct FlowBox {
     after: BreakBetween,
     floated: bool,
     splittable: bool,
+    /// How many of the innermost `ancestors` start at this box, which places
+    /// their top margins and edges before it.
+    opens: usize,
+    /// How many of the innermost `ancestors` end at this box, which places
+    /// their bottom edges and margins after it.
+    closes: usize,
+}
+
+impl FlowBox {
+    /// The top edges of the wrappers that start at the box.
+    fn lead_edges(&self) -> f32 {
+        self.ancestors[self.ancestors.len() - self.opens..]
+            .iter()
+            .map(|wrapper| wrapper.edges.top)
+            .sum()
+    }
+
+    /// The bottom edges of the wrappers that end at the box.
+    fn trail_edges(&self) -> f32 {
+        self.ancestors[self.ancestors.len() - self.closes..]
+            .iter()
+            .map(|wrapper| wrapper.edges.bottom)
+            .sum()
+    }
 }
 
 /// Whether the box has a margin, padding, border, inset or clearance, or,
 /// unless it is atomic, a block-axis size limit or a clip. Of a box that is not
-/// atomic, the inline-axis margin, padding, border and size are no constraint
-/// here: [`collect`] places such a wrapper in its column by its inline box.
+/// atomic, the margin, padding, border and inline size are no constraint here:
+/// [`collect`] places such a wrapper in its column by its inline box, and
+/// [`layout`] adds its block-axis edges before its first box and after its
+/// last one.
 fn has_box_constraints(tree: &LayoutSession<'_>, id: usize) -> bool {
     let zero = LengthPercentageAuto::length(0.0);
     let style = style_of(tree, id);
@@ -213,15 +317,23 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     ((node.used_writing_mode.is_vertical() || node.display() == DisplayValue::Inline)
         && has_inline_constraints(tree, id))
-        || margin.top != zero
+        || (node.used_writing_mode.is_vertical() && has_block_edges(tree, id))
+        || !style.min_size().height.is_auto()
+        || !style.max_size().height.is_auto()
+        || style.overflow() != visible
+}
+
+/// Whether the box has a margin, padding or border above or below it.
+fn has_block_edges(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let zero = LengthPercentageAuto::length(0.0);
+    let style = style_of(tree, id);
+    let (margin, padding, border) = (style.margin(), style.padding(), style.border());
+    margin.top != zero
         || margin.bottom != zero
         || padding.top != LengthPercentage::ZERO
         || padding.bottom != LengthPercentage::ZERO
         || border.top != LengthPercentage::ZERO
         || border.bottom != LengthPercentage::ZERO
-        || !style.min_size().height.is_auto()
-        || !style.max_size().height.is_auto()
-        || style.overflow() != visible
 }
 
 /// Whether the box has a margin, padding, border or size along the inline
@@ -306,6 +418,18 @@ fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
     .and_then(|ancestor| tree.nodes[ancestor].ifc.as_ref())
     .and_then(|root| root.lines.as_ref())
     .is_some_and(|lines| !lines.lines.is_empty())
+}
+
+/// Whether a child of the box is an element in normal flow.
+fn has_in_flow_element_child(tree: &LayoutSession<'_>, id: usize) -> bool {
+    flow_children(tree, id).into_iter().any(|child| {
+        let node = &tree.nodes[child];
+        node.is_in_document()
+            && !node.is_display_none()
+            && matches!(node.data, NodeData::Element(_))
+            && node.layout_position() != Position::Absolute
+            && !is_floated(tree, child)
+    })
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
@@ -485,6 +609,8 @@ fn collect(
                     tree.nodes[id].break_inside,
                     BreakInside::Avoid | BreakInside::AvoidColumn
                 ),
+            opens: 0,
+            closes: 0,
         });
         return;
     }
@@ -496,6 +622,7 @@ fn collect(
                 node: id,
                 offset: content.start,
                 width: content.width,
+                edges: BlockEdges::default(),
             },
             ContentBox {
                 start: 0.0,
@@ -503,7 +630,12 @@ fn collect(
             },
         )
     };
+    let wrapper = Wrapper {
+        edges: BlockEdges::of(tree, id, content.width),
+        ..wrapper
+    };
     let start = out.len();
+    let depth = ancestors.len();
     ancestors.push(wrapper);
     for child in flow_children(tree, id) {
         collect(tree, child, context, inner, ancestors, out);
@@ -516,6 +648,15 @@ fn collect(
         out[start].before = propagated(before, out[start].before);
         let last = out.len() - 1;
         out[last].after = propagated(after, out[last].after);
+        // The wrapper starts at its first flow box and ends at its last one,
+        // and so do the wrappers it holds that start or end there.
+        let flow = start..out.len();
+        if let Some(first) = flow.clone().find(|&index| !out[index].floated) {
+            out[first].opens = out[first].opens.max(out[first].ancestors.len() - depth);
+        }
+        if let Some(last) = flow.rev().find(|&index| !out[index].floated) {
+            out[last].closes = out[last].closes.max(out[last].ancestors.len() - depth);
+        }
     }
 }
 
@@ -561,6 +702,7 @@ fn wrapper_boxes(
             node: id,
             offset,
             width,
+            edges: BlockEdges::default(),
         },
         ContentBox {
             start,
@@ -709,40 +851,100 @@ pub(super) fn layout(
         if item.floated {
             continue;
         }
+        let extent = item.lead_edges() + item.height + item.trail_edges();
         let connected = previous.is_some_and(|prior| {
             !forced(boxes[prior].after)
                 && !forced(item.before)
                 && (avoided(boxes[prior].after) || avoided(item.before))
         });
         if connected {
-            advance += item.height;
+            advance += extent;
             runs.insert(start, advance);
         } else {
             start = index;
-            advance = item.height;
+            advance = extent;
         }
         previous = Some(index);
     }
+    let column_bottom = content_origin.y + height;
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut previous_after = BreakBetween::Auto;
     let mut saw_flow_box = false;
+    // The margins that adjoin the next flow box, not yet placed.
+    let mut margins = Margins::default();
     let mut wrappers = HashMap::<(usize, usize), (usize, f32)>::new();
+    // The last fragment of each wrapper, which reaches the end of its column
+    // once the wrapper continues in a later one.
+    let mut last_wrapper_fragment = HashMap::<usize, (usize, f32)>::new();
     for (index, item) in boxes.iter().enumerate() {
-        let run = runs.get(&index).copied().unwrap_or(item.height);
+        let opened = &item.ancestors[item.ancestors.len() - item.opens..];
+        // The margins and top edges of the wrappers that start at the box.
+        let lead = {
+            let mut margins = margins;
+            let mut lead = 0.0;
+            for wrapper in opened {
+                margins.add(wrapper.edges.margin_top);
+                if wrapper.edges.top > 0.0 {
+                    lead += margins.take() + wrapper.edges.top;
+                }
+            }
+            lead + margins.collapsed()
+        };
+        // A run of boxes kept together moves to the next column whole when it
+        // fits there, unless its first box breaks where the column ends: the
+        // run is kept together after that break. A single box breaks there.
+        let breaks_inside = item.splittable && cursor + lead + item.height > height;
+        let run = runs
+            .get(&index)
+            .filter(|_| !breaks_inside)
+            .map(|run| run + lead - item.lead_edges());
+        let extent = lead + item.height;
         // A forced edge on prior normal flow also determines an adjacent
         // float's column. Consume it once without charging float height to flow.
-        if (saw_flow_box && forced(previous_after))
+        let forced_break = (saw_flow_box && forced(previous_after))
+            || (!item.floated && saw_flow_box && forced(item.before));
+        // The margins next to an unforced break are truncated (CSS
+        // Fragmentation 3, 5.2); those after a forced break are kept.
+        let mut truncated = false;
+        if forced_break
             || (!item.floated
-                && ((saw_flow_box && forced(item.before))
-                    || (cursor > 0.0
-                        && ((run <= height && cursor + run > height)
-                            || (cursor + item.height > height
-                                && (item.height <= height || !item.splittable))))))
+                && (cursor > 0.0
+                    && (run.is_some_and(|run| run <= height && cursor + run > height)
+                        || (cursor + extent > height && !item.splittable))))
         {
             column = column.saturating_add(1);
             cursor = 0.0;
             previous_after = BreakBetween::Auto;
+            truncated = !forced_break;
+        }
+        // The top of the border box of each wrapper that starts at the box. A
+        // wrapper without a top edge is where the margins below it end.
+        let mut tops = vec![0.0f32; opened.len()];
+        if !item.floated {
+            // The margins before a break end at it, whatever broke there.
+            if cursor == 0.0 && column > 0 {
+                margins = Margins::default();
+            }
+            let mut waiting = 0;
+            for (position, wrapper) in opened.iter().enumerate() {
+                if !truncated {
+                    margins.add(wrapper.edges.margin_top);
+                }
+                if wrapper.edges.top > 0.0 {
+                    cursor += margins.take();
+                    truncated = false;
+                    for top in &mut tops[waiting..=position] {
+                        *top = content_origin.y + cursor;
+                    }
+                    waiting = position + 1;
+                    cursor += wrapper.edges.top;
+                }
+            }
+            cursor += margins.take();
+            for top in &mut tops[waiting..] {
+                *top = content_origin.y + cursor;
+            }
         }
         let mut remaining = item.height;
         let mut first = true;
@@ -760,7 +962,8 @@ pub(super) fn layout(
             let y = content_origin.y + cursor;
             let mut parent_fragment = container;
             let mut parent_y = 0.0;
-            for &ancestor in &item.ancestors {
+            let first_opened = item.ancestors.len() - item.opens;
+            for (depth, &ancestor) in item.ancestors.iter().enumerate() {
                 let (id, top) = if let Some(&(id, top)) = wrappers.get(&(column, ancestor.node)) {
                     if !item.floated {
                         tree.fragment_tree.fragments[id].rect.height =
@@ -768,6 +971,11 @@ pub(super) fn layout(
                     }
                     (id, top)
                 } else {
+                    let top = if first && depth >= first_opened && !item.floated {
+                        tops[depth - first_opened]
+                    } else {
+                        y
+                    };
                     let Some(id) = tree.fragment_tree.try_push(fragment(
                         ancestor.node,
                         Some(parent_fragment),
@@ -778,15 +986,21 @@ pub(super) fn layout(
                             } else {
                                 ancestor.offset
                             },
-                            y: y - parent_y,
+                            y: top - parent_y,
                             width: ancestor.width,
-                            height: if item.floated { 0.0 } else { used },
+                            height: if item.floated { 0.0 } else { y + used - top },
                         },
                     )) else {
                         return fallback.height;
                     };
-                    wrappers.insert((column, ancestor.node), (id, y));
-                    (id, y)
+                    wrappers.insert((column, ancestor.node), (id, top));
+                    if let Some((earlier, earlier_top)) =
+                        last_wrapper_fragment.insert(ancestor.node, (id, top))
+                    {
+                        let rect = &mut tree.fragment_tree.fragments[earlier].rect;
+                        rect.height = rect.height.max(column_bottom - earlier_top);
+                    }
+                    (id, top)
                 };
                 parent_fragment = id;
                 parent_y = top;
@@ -838,6 +1052,24 @@ pub(super) fn layout(
             cursor = 0.0;
         }
         if !item.floated {
+            // The bottom edges and margins of the wrappers that end at the box,
+            // from the innermost out. A bottom edge holds the margins before
+            // it inside the wrappers around it.
+            let closing = item.ancestors.len() - item.closes;
+            for depth in (closing..item.ancestors.len()).rev() {
+                let edges = item.ancestors[depth].edges;
+                if edges.bottom > 0.0 {
+                    cursor += margins.take() + edges.bottom;
+                    let end = content_origin.y + cursor;
+                    for ancestor in &item.ancestors[..=depth] {
+                        if let Some(&(id, top)) = wrappers.get(&(column, ancestor.node)) {
+                            let rect = &mut tree.fragment_tree.fragments[id].rect;
+                            rect.height = rect.height.max(end - top);
+                        }
+                    }
+                }
+                margins.add(edges.margin_bottom);
+            }
             previous_after = item.after;
             saw_flow_box = true;
         }

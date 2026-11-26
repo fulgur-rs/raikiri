@@ -107,7 +107,7 @@ fn nested_break_avoidance_resumes_a_wrapper_in_the_next_column() {
     );
     assert_eq!(
         boxes(&doc, "wrapper"),
-        vec![(0, 0.0, 0.0, 50.0, 100.0), (1, 50.0, 0.0, 50.0, 50.0)]
+        vec![(0, 0.0, 0.0, 50.0, 160.0), (1, 50.0, 0.0, 50.0, 50.0)]
     );
     assert_eq!(boxes(&doc, "third"), vec![(1, 0.0, 0.0, 50.0, 50.0)]);
     assert_eq!(boxes(&doc, "last"), vec![(1, 50.0, 50.0, 50.0, 50.0)]);
@@ -290,12 +290,7 @@ fn excessive_wrapper_depth_keeps_the_bounded_fallback() {
 
 #[test]
 fn decorated_and_positioned_boxes_keep_the_existing_geometry_strategy() {
-    for decoration in [
-        "margin-bottom:10px",
-        "padding-top:10px",
-        "border-top:2px solid",
-        "position:relative;top:10px",
-    ] {
+    for decoration in ["position:relative;top:10px"] {
         let markup = format!(
             "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='{decoration}'><div style='height:20px'></div><div style='height:20px;break-before:avoid'></div></div></div>"
         );
@@ -1080,7 +1075,12 @@ fn review_rtl_columns_progress_leftward_including_overflow_columns() {
         "<div style='direction:rtl;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='first' style='height:60px'></div><div id='second' style='height:60px;break-before:avoid'></div><div id='third' style='height:60px;break-before:column'></div></div>",
     );
     assert_eq!(boxes(&doc, "first"), vec![(0, 50.0, 0.0, 50.0, 60.0)]);
-    assert_eq!(boxes(&doc, "second"), vec![(1, 0.0, 0.0, 50.0, 60.0)]);
+    // A splittable box that does not fit the rest of the column breaks
+    // inside it instead of moving, so the avoided edge before it holds.
+    assert_eq!(
+        boxes(&doc, "second"),
+        vec![(0, 50.0, 60.0, 50.0, 40.0), (1, 0.0, 0.0, 50.0, 20.0)]
+    );
     assert_eq!(boxes(&doc, "third"), vec![(2, -50.0, 0.0, 50.0, 60.0)]);
 }
 
@@ -1154,10 +1154,13 @@ fn review_nested_rtl_column_wrapper_keeps_local_inline_alignment() {
     );
     assert_eq!(
         boxes(&doc, "wrapper"),
-        vec![(0, 60.0, 0.0, 50.0, 60.0), (1, 0.0, 0.0, 50.0, 60.0)]
+        vec![(0, 60.0, 0.0, 50.0, 100.0), (1, 0.0, 0.0, 50.0, 20.0)]
     );
     assert_eq!(boxes(&doc, "first"), vec![(0, 30.0, 0.0, 20.0, 60.0)]);
-    assert_eq!(boxes(&doc, "second"), vec![(1, 30.0, 0.0, 20.0, 60.0)]);
+    assert_eq!(
+        boxes(&doc, "second"),
+        vec![(0, 30.0, 60.0, 20.0, 40.0), (1, 30.0, 0.0, 20.0, 20.0)]
+    );
 }
 
 #[test]
@@ -1309,7 +1312,7 @@ fn review_resumed_wrappers_keep_the_content_origin_only_at_the_root_edge() {
     );
     assert_eq!(
         boxes(&doc, "wrapper"),
-        vec![(0, 15.0, 15.0, 50.0, 20.0), (1, 65.0, 15.0, 50.0, 20.0)]
+        vec![(0, 15.0, 15.0, 50.0, 100.0), (1, 65.0, 15.0, 50.0, 20.0)]
     );
     assert_eq!(boxes(&doc, "first"), vec![(0, 0.0, 0.0, 50.0, 20.0)]);
     assert_eq!(boxes(&doc, "next"), vec![(1, 0.0, 0.0, 50.0, 20.0)]);
@@ -1616,10 +1619,13 @@ fn a_wrapper_with_padding_split_between_columns_is_placed_in_each_of_them() {
     );
     assert_eq!(
         placed(&doc, "wrapper"),
-        vec![(0, 0.0, 0.0, 50.0, 60.0), (1, 60.0, 0.0, 50.0, 60.0)]
+        vec![(0, 0.0, 0.0, 50.0, 100.0), (1, 60.0, 0.0, 50.0, 20.0)]
     );
     assert_eq!(placed(&doc, "first"), vec![(0, 5.0, 0.0, 40.0, 60.0)]);
-    assert_eq!(placed(&doc, "second"), vec![(1, 65.0, 0.0, 40.0, 60.0)]);
+    assert_eq!(
+        placed(&doc, "second"),
+        vec![(0, 5.0, 60.0, 40.0, 40.0), (1, 65.0, 0.0, 40.0, 20.0)]
+    );
 }
 
 #[test]
@@ -1635,9 +1641,6 @@ fn a_plain_wrapper_inside_a_padded_one_fills_its_content_box() {
 #[test]
 fn block_axis_boxes_and_orthogonal_wrappers_keep_the_existing_strategy() {
     for css in [
-        "padding:3px 5px",
-        "border-top:2px solid;padding:0 5px",
-        "margin:5px 7px",
         "min-height:60px;padding:0 5px",
         "overflow:hidden;padding:0 5px",
         "writing-mode:vertical-rl;width:30px",
