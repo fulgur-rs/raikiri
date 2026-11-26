@@ -24,7 +24,7 @@ use super::{
     push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
     unplaced_line_after_block,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How much of the content of an absolutely positioned box that starts past
 /// the edge of the clip that contains it is kept, in px: the box is hidden
@@ -297,6 +297,10 @@ pub(super) struct ElementContext {
     /// follow the box only while it ends inside the block (see
     /// [`super::capped_edges_follow`]).
     pub(super) capped_edges_block: Option<usize>,
+    /// For the first atomic inline of a line in a paragraph that no text
+    /// places: the box takes the page break before that line (see
+    /// [`super::leading_inline::assign`]).
+    pub(super) textless_line: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -453,6 +457,11 @@ impl BoxContext {
     pub(super) fn leading_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_piece_end)
+    }
+
+    pub(super) fn textless_line(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.textless_line)
     }
 
     pub(super) fn leading_block_piece_end(self) -> Option<f32> {
@@ -1058,6 +1067,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     enclosing_line_clips: HashMap<usize, Option<usize>>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    /// For each paragraph looked at, the first atomic inline of each of its
+    /// lines when no text places them (see
+    /// [`super::leading_inline::textless_first_atoms`]).
+    textless_first_atoms: HashMap<usize, HashSet<usize>>,
     /// Whether each flex container looked at holds a sole table that
     /// fragments as block flow does, so that its items are not scanned again
     /// for each of them.
@@ -1092,6 +1105,28 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
 pub(super) type PrecedingBottoms = HashMap<usize, (usize, f32)>;
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
+    /// Whether `node` is an atomic inline, or an inline replaced box, that
+    /// comes first on a line of a paragraph that no text places.
+    fn first_on_textless_line(&mut self, node: usize) -> bool {
+        let document = self.document;
+        let display = document.nodes[node].display();
+        if !display.is_atomic_inline_level()
+            && !(display.is_inline_level()
+                && crate::layout::is_replaced_for_pagination(document, node))
+        {
+            return false;
+        }
+        document
+            .layout_ancestors(node)
+            .find(|&parent| document.nodes[parent].is_ifc_root())
+            .is_some_and(|root| {
+                self.textless_first_atoms
+                    .entry(root)
+                    .or_insert_with(|| super::leading_inline::textless_first_atoms(document, root))
+                    .contains(&node)
+            })
+    }
+
     pub(super) fn new(
         document: &'a LayoutSession<'doc>,
         cascade: &'a CascadeResult,
@@ -1113,6 +1148,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             enclosing_line_clips: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
+            textless_first_atoms: HashMap::new(),
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             run_breaks: HashMap::new(),
@@ -2246,7 +2282,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_flex
                     && (direct_body_child || can_move_nested)
                     && !document.context.pagination_on_transposed_axes
-                    && super::leading_inline::first_on_textless_line(document, node_id);
+                    && self.first_on_textless_line(node_id);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
@@ -2459,6 +2495,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 first_grid_row,
                                 leading_block_piece_end: leading_block_piece,
                                 leading_column_replaced_piece_end: column_replaced_piece,
+                                textless_line: textless_line_candidate,
                                 run_tail_edges: if run_tail_candidate {
                                     frame.closing_edges
                                 } else {

@@ -1219,15 +1219,6 @@ impl PaginationState {
     ) -> Result<(), Halt> {
         let relative =
             accumulated_relative_offset_y(document, env.cascade, env.body_id, owner.root);
-        let requested = owner;
-        let owner =
-            super::leading_inline::crossing_blank_line(document, owner, relative, env.page_origins)
-                .unwrap_or(owner);
-        let (top, height) = super::leading_inline::bounds(document, owner);
-        let flow_top = top - relative;
-        let natural = env.page_origins.page_index_for_y(flow_top);
-        let start = env.page_origins.origin(natural);
-        let end = start + env.page_origins.step_at(natural);
         let pending = self.pending_break.applies_to(document, candidate.node_id);
         let named_page_change = box_changes_page_name(
             entry.name_context_seen,
@@ -1236,6 +1227,21 @@ impl PaginationState {
             self.last_named.joins_transition(candidate),
         );
         let page_transition = (pending || named_page_change) && self.saw_child;
+        let requested = owner;
+        // A forced or named-page break falls before the line of the box
+        // itself, not before the blank lines above it.
+        let textless = candidate.context.textless_line();
+        let owner = if page_transition || !textless {
+            owner
+        } else {
+            super::leading_inline::crossing_blank_line(document, owner, relative, env.page_origins)
+                .unwrap_or(owner)
+        };
+        let (top, height) = super::leading_inline::bounds(document, owner);
+        let flow_top = top - relative;
+        let natural = env.page_origins.page_index_for_y(flow_top);
+        let start = env.page_origins.origin(natural);
+        let end = start + env.page_origins.step_at(natural);
         let target = if page_transition {
             forced_target_page(self.current_page, natural)
         } else if flow_top > start + 0.001
@@ -1271,7 +1277,7 @@ impl PaginationState {
         // lines than the orphans on the page; then all its lines on the page
         // go, as a paragraph of text breaks. A line that starts its page
         // exactly ends the lines of the page before in the same way.
-        let kept_break = if page_transition {
+        let kept_break = if page_transition || !textless {
             None
         } else if target > natural && shift > 0.0 {
             Some((start, target))
@@ -1296,14 +1302,15 @@ impl PaginationState {
             // Below nothing but margins, or the edges of the boxes it begins, a
             // paragraph has no break before it: its natural break stays.
             .filter(|(kept, page_start, _)| {
-                !kept.whole
-                    || follows_box_on_page(
-                        document,
-                        env.cascade,
-                        env.body_id,
-                        kept.line.root,
-                        *page_start,
-                    )
+                kept.shift > 0.0
+                    && (!kept.whole
+                        || follows_box_on_page(
+                            document,
+                            env.cascade,
+                            env.body_id,
+                            kept.line.root,
+                            *page_start,
+                        ))
             });
         let (owner, shift) = kept
             .as_ref()
