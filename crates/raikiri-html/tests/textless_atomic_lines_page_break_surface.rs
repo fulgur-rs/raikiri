@@ -324,3 +324,15 @@ fn a_line_moved_down_with_its_widows_breaks_again_at_the_next_page_end() {
         [(0, 'A', 0, 5), (1, 'B', 0, 5), (2, 'C', 0, 5)]
     );
 }
+
+#[test]
+fn a_line_moved_down_with_a_blank_line_breaks_again_at_the_next_page_end() {
+    // The blank line crosses the end of the first page and starts the
+    // second; the line after it then crosses the end of that page in turn.
+    assert_eq!(
+        glyphs(
+            r#"<style>i{vertical-align:top;height:60px;font:20px/30px Ahem}</style><div style="font:0/60px Ahem;orphans:1;widows:1"><i>A</i><br><br><i>C</i></div>"#
+        ),
+        [(0, 'A', 0, 5), (2, 'C', 0, 5)]
+    );
+}

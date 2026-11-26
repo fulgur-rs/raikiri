@@ -1278,10 +1278,22 @@ impl PaginationState {
         // A forced or named-page break falls before the line of the box
         // itself, not before the blank lines above it.
         let textless = candidate.context.textless_line();
+        // A line that crosses the end of the page a blank line above it
+        // starts or lies on breaks there itself.
+        let crosses_after = |blank: super::leading_inline::LeadingInlineLine| {
+            let (top, height) = super::leading_inline::bounds(document, owner);
+            let flow_top = top - relative;
+            let page = env.page_origins.page_index_for_y(flow_top);
+            let end = env.page_origins.origin(page) + env.page_origins.step_at(page);
+            flow_top + height > end + 0.001
+                && super::leading_inline::bounds(document, blank).0 - relative
+                    >= env.page_origins.origin(page) - 0.001
+        };
         let owner = if page_transition || !textless {
             owner
         } else {
             super::leading_inline::crossing_blank_line(document, owner, relative, env.page_origins)
+                .filter(|&blank| !crosses_after(blank))
                 .unwrap_or(owner)
         };
         let (top, height) = super::leading_inline::bounds(document, owner);
@@ -1361,7 +1373,6 @@ impl PaginationState {
         let (owner, shift) = kept
             .as_ref()
             .map_or((owner, shift), |(kept, _, _)| (kept.line, kept.shift));
-        let moves_widows = kept.as_ref().is_some_and(|(kept, _, _)| !kept.whole);
         // A paragraph that moves whole takes its box along, with the padding
         // and border above its first line and the boxes it begins, as a
         // paragraph of text moves as a unit.
@@ -1404,10 +1415,10 @@ impl PaginationState {
                 shift,
                 None,
             );
-            // The line that crossed the page end went down with the lines
-            // before it, which the widows took along, and may cross the end
-            // of the page after it in turn.
-            if moves_widows {
+            // The line that crossed the page end went down with a line before
+            // it, a blank one or one the widows took along, and may cross the
+            // end of the page after it in turn.
+            if owner.line != requested.line {
                 return self.place_leading_atomic_line(document, env, candidate, entry, requested);
             }
         }
