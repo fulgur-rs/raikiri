@@ -221,6 +221,7 @@ pub(crate) fn layout_with_boxes_in(
             if own_group {
                 root.options.group_padding = own_group_padding(
                     tree,
+                    idx,
                     &root,
                     geometry,
                     ctx,
@@ -251,6 +252,7 @@ pub(crate) fn layout_with_boxes_in(
             if own_group {
                 root.options.group_padding = own_group_padding(
                     tree,
+                    idx,
                     &root,
                     geometry,
                     &mut ctx,
@@ -310,6 +312,7 @@ fn shortest_remaining(lines: &IfcLines, other: Option<f32>) -> Option<f32> {
 /// it is laid out once, unpadded, and its descendants do not join anything.
 fn own_group_padding(
     tree: &mut LayoutSession<'_>,
+    owner: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -322,6 +325,7 @@ fn own_group_padding(
     } else {
         group_padding(
             tree,
+            owner,
             root,
             geometry,
             ctx,
@@ -335,15 +339,18 @@ fn own_group_padding(
 /// The padding `text-group-align` takes from every line of the root: the
 /// shortest space a line leaves unfilled (CSS Text 4, group alignment). The
 /// lines are laid out once without it to find that space, against a copy of
-/// the float context; group padding only takes space a line leaves, so the
-/// lines break the same with it.
+/// the float context, and with the gaps planned above the lines of `owner`,
+/// the root's node, as the real layout leaves them; group padding only takes
+/// space a line leaves, so the lines break the same with it.
 ///
 /// The lines of descendant blocks in the same block formatting context take
 /// part too, through the group scope of the layout context; a root split
 /// across fragmentainers is not group-aligned. The scope is left applying
 /// the padding for the real layout of the root's block children.
+#[allow(clippy::too_many_arguments)]
 fn group_padding(
     tree: &mut LayoutSession<'_>,
+    owner: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -360,7 +367,7 @@ fn group_padding(
     let saved = ctx.snapshot();
     let probe = run_boxes_segment(
         tree,
-        None,
+        Some(owner),
         root,
         geometry,
         ctx,
@@ -872,6 +879,21 @@ fn run_boxes_segment(
     let mut cursor: Option<FloatCursor> = None;
     let mut first_late: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
+    // The gaps the page walk asks for above the lines it moved past a page
+    // edge, away from the floats beside them: the lines from each gap on are
+    // broken against the floats where they land (see
+    // `float_resumption::Plan::line_gaps`).
+    let line_gaps = owner
+        .filter(|_| fragmentainer.is_none() && root.writing_mode == WritingMode::HorizontalTb)
+        .map_or(&[][..], |owner| {
+            tree.context.float_resumptions.line_gaps(owner)
+        })
+        .to_vec();
+    let mut gap_cursor = 0;
+    // Where the last gap left the flow, and how tall it is: a gap that no
+    // line or block follows, as when the paragraph now ends above it, is
+    // taken back.
+    let mut last_gap: Option<(f32, f32)> = None;
     let mut lines: Vec<shodo::Line> = Vec::new();
     let mut tentative: Vec<TentativeFloat> = Vec::new();
     let mut deferred: Vec<TentativeFloat> = Vec::new();
@@ -966,11 +988,19 @@ fn run_boxes_segment(
         }
         // Where the next line starts if it is a line: below the margins
         // still pending.
-        let line_y = if top_margin_escapes && leading_margin_open {
+        let mut line_y = if top_margin_escapes && leading_margin_open {
             y
         } else {
             y + pending.resolve()
         };
+        if let Some(&(top, gap)) = line_gaps.get(gap_cursor)
+            && line_y >= top - 0.01
+        {
+            gap_cursor += 1;
+            y += gap;
+            line_y += gap;
+            last_gap = Some((y, gap));
+        }
         let base = line_space(
             ctx,
             inline_insets.0,
@@ -1716,6 +1746,9 @@ fn run_boxes_segment(
             }
         }
     }
+    y -= last_gap
+        .filter(|&(after_gap, _)| y == after_gap)
+        .map_or(0.0, |(_, gap)| gap);
     // The margins below a last block child collapse through the root's
     // bottom edge when nothing separates them from the root's own; otherwise
     // the paragraph contains them.

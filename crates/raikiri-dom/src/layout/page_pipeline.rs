@@ -4856,6 +4856,11 @@ fn resolve_document_images(
 /// does not lay the document out once for each box.
 const MAX_BREAK_TOP_ATTEMPTS: usize = 6;
 
+/// How many more page attempts the gaps above lines moved past page edges,
+/// away from the floats beside them, take at most, so that a document with
+/// many such lines is not laid out once for each.
+const MAX_LINE_GAP_ATTEMPTS: usize = 8;
+
 fn layout_pages_core(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -4894,6 +4899,12 @@ fn layout_pages_core(
     // Each float whose growth past a page edge first narrows the lines
     // beside it takes one more attempt to break them there.
     let mut line_extent_floats = HashSet::new();
+    // Each gap left above a line that the walk moved past a page edge, away
+    // from the floats beside it, takes one more attempt to break the lines
+    // after it where they land, up to a bound: a gap dropped and planned
+    // again counts once. Once those are spent, the plan keeps the gaps it
+    // has, and the pages laid out with them stand.
+    let mut line_gaps = HashSet::new();
     let mut break_top_nodes = HashSet::new();
     let mut break_top_growths = 0;
     let mut break_top_settled = None;
@@ -4904,9 +4915,10 @@ fn layout_pages_core(
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
             + 2 * pushed_flows.len()
             + line_extent_floats.len()
+            + line_gaps.len().min(MAX_LINE_GAP_ATTEMPTS)
     {
         attempts += 1;
-        let next = layout_pages_attempt(
+        let mut next = layout_pages_attempt(
             document,
             cascade,
             page_box,
@@ -4921,6 +4933,12 @@ fn layout_pages_core(
                 spanner_growth: &spanner_growth,
             },
         )?;
+        // Once the gaps have taken all the attempts they may, the plan
+        // keeps the gaps it has: the pages laid out with them stand, though
+        // the lines after the last gap keep the room they were broken for.
+        if line_gaps.len() >= MAX_LINE_GAP_ATTEMPTS {
+            next.resumptions.keep_line_gaps_of(&resumptions);
+        }
         let settled_apart_from_flows = !next.moved_columns
             && next.resumptions.same_apart_from_pushed_flows(&resumptions)
             && next.spanning_origins == spanning_origins
@@ -4928,6 +4946,7 @@ fn layout_pages_core(
             && next.spanner_growth == spanner_growth;
         pushed_flows.extend(next.resumptions.pushed_flows());
         line_extent_floats.extend(next.resumptions.line_extent_floats());
+        line_gaps.extend(next.resumptions.planned_line_gaps());
         let known_break_tops = break_top_nodes.len();
         break_top_nodes.extend(next.resumptions.break_top_nodes());
         let break_tops_grew = break_top_nodes.len() > known_break_tops;
@@ -20116,21 +20135,144 @@ fn note_lines_left_by_floats(
     delta: f32,
     from: f32,
 ) {
-    // Only block flow lays its children out at a planned top; a block in a
-    // table cell, a flex or grid item, or an inline block is placed by
-    // other layout.
-    let plain = |id: usize| {
-        let node = &document.nodes[id];
-        matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
-            && matches!(
-                node.position(),
-                PositionValue::Static | PositionValue::Relative
-            )
-            && cascade.computed[id].float == FloatValue::None
-            && !node.used_writing_mode.is_vertical()
-            && node.multicol.is_none()
+    let noted = lines_follow_floats_where_they_land(document, cascade, moved, block_id);
+    if noted {
+        document.context.pushed_flows.push((moved, delta, from));
+    } else {
+        document.context.flows_moved_otherwise.push(moved);
+    }
+}
+
+/// Notes a gap above the line `line` of the paragraph `root`, which the page
+/// walk moved down by `delta` past a page edge, when the paragraph's lines
+/// are broken beside floats: laid out again with that gap, the lines from
+/// there on are broken against the floats beside them where they land, as
+/// Chromium breaks them. A float the walk grew past a page edge already has
+/// the lines beside its continuation broken against it (see
+/// [`float_resumption::LineGrowth`]); the lines of its formatting context are
+/// left as they are, as are those beside a float planned to break them below
+/// its end. So are
+/// those of a paragraph with a float of its own below the gap, which the walk
+/// places in turn.
+fn note_line_gap(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    root: usize,
+    line: usize,
+    delta: f32,
+) {
+    let floats = own_floats(document, cascade, root);
+    if document
+        .context
+        .float_line_growth
+        .iter()
+        .any(|(float, growth)| growth.context == root || floats.contains(float))
+        || document
+            .context
+            .float_resumptions
+            .line_extent_floats()
+            .any(|float| floats.contains(&float))
+        || !std::iter::once(root)
+            .chain(document.layout_ancestors(root).take_while(|&id| id != 0))
+            .all(|id| lays_out_at_planned_top(document, cascade, id))
+    {
+        return;
+    }
+    let Some((ifc, lines)) = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| Some((ifc, ifc.lines.as_ref()?)))
+        .filter(|(_, lines)| lines.beside_floats)
+        .filter(|(_, lines)| line < lines.lines.len())
+    else {
+        return;
     };
-    let noted = plain(block_id)
+    let top = lines.lines[line].block_offset();
+    // Where the walk had the line before this move: the floats it moved
+    // earlier are there too.
+    let walked = lines.line_top(line) - delta;
+    let layout = &document.nodes[root].layout;
+    let content_top = current_abs_y(document, root) + layout.border.top + layout.padding.top;
+    let floats_above = floats
+        .into_iter()
+        .all(|float| current_abs_y(document, float) < content_top + walked - 0.01);
+    // Only a line that floats narrowed, or one after it, breaks differently
+    // where it lands: once the floats end above the lines, a page edge they
+    // cross moves them with the room they already have.
+    // The room a line had is its content and what it left unfilled, with
+    // the text indent of an indented line, which neither counts.
+    let text_indent = ifc.options.text_indent;
+    let indent = crate::layout::ifc::flow::resolve_indent(ifc.indent, lines.width);
+    let narrowed = (line..lines.lines.len()).any(|index| {
+        let after_break = index > 0 && lines.lines[index - 1].forced_break().is_some();
+        let indented = (index == 0 || text_indent.each_line && after_break) != text_indent.hanging;
+        let room = lines.lines[index].inline_size()
+            + lines.lines[index].remaining_inline_size()
+            + if indented { indent } else { 0.0 };
+        room < lines.width - 0.5
+    });
+    if floats_above && narrowed {
+        document.context.line_gaps.push((root, top, delta));
+    }
+}
+
+/// Notes where the content box of the paragraph `root` starts on its page
+/// in the page walk, `content_top`, which the gaps planned above its lines
+/// were found for. Once the paragraph starts elsewhere on its page, as when
+/// an earlier layout put it lower before a margin was truncated at a page
+/// start, its lines no longer fall where the walk moved them, and the gaps
+/// planned for them are dropped.
+fn note_paragraph_page_top(
+    document: &mut super::context::LayoutSession<'_>,
+    page_origins: &PageOrigins,
+    root: usize,
+    content_top: f32,
+) {
+    let page_top =
+        content_top - page_origins.origin(page_origins.page_index_for_y(content_top + 0.001));
+    if document
+        .context
+        .float_resumptions
+        .line_gaps_page_top(root)
+        .is_some_and(|planned| (planned - page_top).abs() > 0.01)
+    {
+        document.context.stale_line_gaps.push(root);
+    }
+    document.context.paragraph_page_tops.insert(root, page_top);
+}
+
+/// Whether block flow lays the box `id` out at a planned top: a block in a
+/// table cell, a flex or grid item, or an inline block is placed by other
+/// layout.
+fn lays_out_at_planned_top(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    id: usize,
+) -> bool {
+    let node = &document.nodes[id];
+    matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
+        && cascade.computed[id].float == FloatValue::None
+        && !node.used_writing_mode.is_vertical()
+        && node.multicol.is_none()
+}
+
+/// Whether the lines of the paragraph `block_id`, moved down with the box
+/// `moved` that holds them (or is the paragraph itself), are broken against
+/// the floats beside them where they land when laid out again: block flow
+/// alone lays them out at a planned top, and the floats they were broken
+/// beside must stay where they are.
+fn lines_follow_floats_where_they_land(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    moved: usize,
+    block_id: usize,
+) -> bool {
+    let plain = |id: usize| lays_out_at_planned_top(document, cascade, id);
+    plain(block_id)
         && document
             .layout_ancestors(block_id)
             .take_while(|&id| id != 0)
@@ -20157,12 +20299,7 @@ fn note_lines_left_by_floats(
                     .take_while(|&id| id != moved),
             )
             .chain((moved != block_id).then_some(moved))
-            .any(|id| holds_floats(document, cascade, id));
-    if noted {
-        document.context.pushed_flows.push((moved, delta, from));
-    } else {
-        document.context.flows_moved_otherwise.push(moved);
-    }
+            .any(|id| holds_floats(document, cascade, id))
 }
 
 /// A validated first-child forced boundary that carries its plain holder.
