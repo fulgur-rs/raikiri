@@ -30,7 +30,7 @@ pub(super) fn supports(
     let mut projected_floats = 0usize;
     let mut projected_text_lines = false;
     let mut edged_wrappers = false;
-    // The last flag is whether the parent is a grid that [`collect`] places
+    // The last flag is whether the parent is a grid that `collect` places
     // row by row.
     while let Some((id, depth, projected, inside_formatting_context, in_row_grid)) = pending.pop() {
         if depth >= 128 {
@@ -52,7 +52,7 @@ pub(super) fn supports(
         }
         // Flex/grid item breaks need their own row/order propagation rules.
         // Only outer constraints enter this measured-context projection,
-        // except the items of a grid that [`collect`] places row by row.
+        // except the items of a grid that `collect` places row by row.
         if inside_formatting_context
             && (node.break_before != BreakBetween::Auto
                 || node.break_after != BreakBetween::Auto
