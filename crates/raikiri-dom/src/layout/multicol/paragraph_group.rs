@@ -32,6 +32,10 @@ pub(super) struct Placement {
     /// which went whole to the next column, as the rest of its column was
     /// too short for it.
     pub(super) moved_whole: bool,
+    /// For a wrapper whose padding below its last box went whole to a later
+    /// column, the column and block offset where its content ends: its piece
+    /// in that column ends there.
+    pub(super) content_end: Option<(usize, f32)>,
 }
 
 impl Group {
@@ -85,7 +89,8 @@ impl Group {
         // it leaves, as a paragraph broken there does.
         // One whose padding below went whole to a later column ends in the
         // column it leaves where its content does (Chromium).
-        let padding_moved = end.moved_whole && end.entry_column == first.first_column;
+        let content_end = end.moved_whole.then_some((end.entry_column, end.entry_y));
+        let padding_moved = content_end.is_some_and(|(column, _)| column == first.first_column);
         let first_height = if end_column == first.first_column {
             end_y - first.first_y
         } else if padding_moved {
@@ -104,6 +109,7 @@ impl Group {
             entry_y: start.entry_y,
             sliced: false,
             moved_whole: false,
+            content_end,
         })
     }
 
@@ -1525,6 +1531,7 @@ fn fill_chunk_with(
                 entry_y,
                 sliced: false,
                 moved_whole: false,
+                content_end: None,
             });
             continue;
         }
@@ -1609,6 +1616,7 @@ fn fill_chunk_with(
                 entry_y,
                 sliced: true,
                 moved_whole: false,
+                content_end: None,
             });
             continue;
         }
@@ -1716,6 +1724,7 @@ fn fill_chunk_with(
                 entry_y,
                 sliced: true,
                 moved_whole,
+                content_end: None,
             });
             continue;
         }
@@ -1901,6 +1910,7 @@ fn fill_chunk_with(
                         entry_y,
                         sliced: false,
                         moved_whole: false,
+                        content_end: None,
                     });
                     return Some(Chunk {
                         group: finish_group(placements, height),
@@ -1926,6 +1936,7 @@ fn fill_chunk_with(
             entry_y,
             sliced: false,
             moved_whole: false,
+            content_end: None,
         });
     }
     let used = maximum.max(if trailing_margin {

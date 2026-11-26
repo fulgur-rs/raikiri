@@ -195,11 +195,20 @@ fn balanced_columns_break_between_the_last_line_and_the_edge_too() {
 
 #[test]
 fn the_padding_below_a_wrapper_goes_on_alone_in_the_next_column() {
-    let cases = [(
-        "<div class=m><div style='padding-bottom:60px;background:green'><div>xxxxx</div></div>\
+    let cases = [
+        (
+            "<div class=m><div style='padding-bottom:60px;background:green'><div>xxxxx</div></div>\
              <div class=z>Z</div></div>",
-        "xxxxx@0,20 Z@50,60 | (0,0,50,50)(50,0,50,60)",
-    )];
+            "xxxxx@0,20 Z@50,60 | (0,0,50,50)(50,0,50,60)",
+        ),
+        // The content runs into a second column before the padding goes on
+        // to a third: the wrapper's piece there ends with the content too.
+        (
+            "<div class=m style='columns:3;width:99px'><div style='padding-bottom:80px;background:green'>\
+             <div style='orphans:1;widows:1'>xxx yyy zzz</div></div><div class=z>Z</div></div>",
+            "xxx@0,20 yyy@0,70 zzz@33,20 Z@66,80 | (0,0,33,100)(33,0,33,50)(66,0,33,80) (0,0,33,100)(33,0,33,50)",
+        ),
+    ];
     for (body, expected) in cases {
         assert_eq!(layout_of(body), expected, "{body}");
     }

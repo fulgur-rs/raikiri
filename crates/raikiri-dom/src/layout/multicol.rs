@@ -2775,11 +2775,10 @@ fn record_wrapped_fragments(
 /// Give `wrapper`, a wrapper whose boxes joined the flow, a piece in each
 /// column its border box reaches, from where `placement` starts it, its
 /// first column and block offset, to `end`, where it ends, in columns
-/// `column_height` tall: its first piece `first_fragment`, as tall as
-/// `placement` makes it, which holds its
+/// `column_height` tall: its first piece `first_fragment`, which holds its
 /// boxes, and one more for each column after it, which paint its background
-/// and borders there. The first piece ends above the end of its column when
-/// the padding below the wrapper went whole to a later column. A
+/// and borders there. The piece in the column its content ends in ends there
+/// when the padding below the wrapper went whole to a later column. A
 /// wrapper that paints neither keeps its one piece. A wrapper that slices
 /// its block-axis border and padding paints whole in each piece, moved up by
 /// what the earlier pieces took, and the column clips it. `None` when the
@@ -2794,7 +2793,6 @@ fn push_wrapper_pieces(
     context: FragmentationContext,
 ) -> Option<()> {
     let start = (placement.first_column, placement.first_y);
-    let first_height = placement.first_height;
     if !paragraph_group::paints_pieces(tree, wrapper) || end.0 <= start.0 {
         return Some(());
     }
@@ -2804,12 +2802,12 @@ fn push_wrapper_pieces(
     let heights: Vec<f32> = (start.0..=end.0)
         .map(|column| {
             let top = if column == start.0 { start.1 } else { 0.0 };
-            let bottom = if column == end.0 {
-                end.1
-            } else if column == start.0 {
-                (start.1 + first_height).min(column_height)
-            } else {
-                column_height
+            let bottom = match placement.content_end {
+                _ if column == end.0 => end.1,
+                Some((content_column, y)) if column == content_column => y.min(column_height),
+                // Columns past the one the content ends in hold none of it.
+                Some((content_column, _)) if column > content_column => top,
+                _ => column_height,
             };
             (bottom - top).max(0.0)
         })
@@ -2839,9 +2837,9 @@ fn push_wrapper_pieces(
         } else {
             0.0
         };
-        // A first piece that ends above its column's end is cut there.
-        let window = if index == 0 && index + 1 < count {
-            (start.1 + height).min(column_height)
+        // A piece that ends above its column's end is cut there.
+        let window = if index + 1 < count {
+            (top + height).min(column_height)
         } else {
             column_height
         };
@@ -3012,6 +3010,7 @@ fn sliced_leaf_placement(
         entry_y: top,
         sliced: true,
         moved_whole: false,
+        content_end: None,
     })
 }
 
