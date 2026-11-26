@@ -283,6 +283,67 @@ fn text_in_a_group_that_avoids_breaks_holds_the_group() {
 }
 
 #[test]
+fn a_forced_break_in_a_group_that_avoids_breaks_ends_what_the_text_holds() {
+    let group = |rows: &str| {
+        format!(
+            r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">A{rows}</div><div style="display:table-row"><div style="display:table-cell">T</div></div></div>"#
+        )
+    };
+    let row = |glyph: char, style: &str| {
+        format!(
+            r#"<div style="display:table-row;{style}"><div style="display:table-cell">{glyph}</div></div>"#
+        )
+    };
+    // The break before the second row leaves the text with the first one.
+    let first = group(&(row('R', "") + &row('S', "break-before:page")));
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(10, open, &first, close), &[]),
+            [
+                (0, 'A', 45),
+                (0, 'H', 15),
+                (0, 'R', 75),
+                (0, 'Y', 5),
+                (1, 'S', 5),
+                (1, 'T', 35),
+                (1, 'Z', 65)
+            ],
+            "{open}"
+        );
+        assert_eq!(
+            glyph_tops(&document(20, open, &first, close), &[]),
+            [
+                (0, 'Y', 5),
+                (1, 'A', 35),
+                (1, 'H', 5),
+                (1, 'R', 65),
+                (2, 'S', 5),
+                (2, 'T', 35),
+                (2, 'Z', 65)
+            ],
+            "{open}"
+        );
+    }
+    // A break before the first row leaves the text alone.
+    let alone = group(&(row('R', "break-before:page") + &row('S', "")));
+    for (open, close) in WRAPPERS {
+        assert_eq!(
+            glyph_tops(&document(40, open, &alone, close), &[]),
+            [
+                (0, 'A', 75),
+                (0, 'H', 45),
+                (0, 'Y', 5),
+                (1, 'R', 5),
+                (1, 'S', 35),
+                (1, 'T', 65),
+                (2, 'Z', 5)
+            ],
+            "{open}"
+        );
+    }
+}
+
+#[test]
 fn generated_content_stays_tied_across_a_forced_break_before_the_rows() {
     let table = r#"<table class="b"><tr style="break-before:page"><td>R</td></tr><tr><td>S</td></tr></table>"#;
     for (open, close) in WRAPPERS {

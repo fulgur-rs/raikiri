@@ -6302,7 +6302,7 @@ fn leading_anonymous_row_end(
             let end = if owner != table
                 && avoids_page_break_inside(cascade.computed[owner].break_inside)
             {
-                current_abs_y(document, owner) + document.nodes[owner].layout.size.height
+                held_group_end(document, cascade, owner, top + height)
             } else {
                 top + height
             };
@@ -6321,6 +6321,35 @@ fn leading_anonymous_row_end(
         .filter(|&&(_, cell_top, _)| (cell_top - top).abs() <= 0.001)
         .map(|&(_, _, end)| end)
         .max_by(f32::total_cmp)
+}
+
+/// The block end, before pagination, of what a row group that avoids breaks
+/// inside it holds together with an anonymous row of it that ends at
+/// `anonymous_end`: the whole group, or its rows up to the first forced break
+/// between them, which splits it.
+fn held_group_end(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    group: usize,
+    anonymous_end: f32,
+) -> f32 {
+    let rows: Vec<usize> = document
+        .children_through_contents(group)
+        .into_iter()
+        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+        .collect();
+    let mut end = anonymous_end;
+    let mut previous: Option<usize> = None;
+    for &row in &rows {
+        if forces_page_break(document, cascade, row, true)
+            || previous.is_some_and(|held| forces_page_break(document, cascade, held, false))
+        {
+            return end;
+        }
+        end = end.max(current_abs_y(document, row) + document.nodes[row].layout.size.height);
+        previous = Some(row);
+    }
+    current_abs_y(document, group) + document.nodes[group].layout.size.height
 }
 
 /// The block end, before pagination, of the first row of each plain block
