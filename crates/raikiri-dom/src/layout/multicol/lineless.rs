@@ -29,11 +29,13 @@ pub(super) use paged::{PagedPiece, paginate};
 /// their own handling at a break, so containers with them keep the other
 /// strategies. A scroll container with a height of its own is no such
 /// box: it is monolithic, so the stream places it whole in one column (see
-/// [`is_monolithic_scroll_box`]). A `position: relative` box with insets is
-/// sliced like any other: its column location carries no offset, which the
-/// painter adds. That holds only for a box with nothing rendered inside it, so
-/// one that holds blocks or absolutely positioned boxes keeps the other
-/// strategies when it has insets, and so does a box inside a wrapper.
+/// [`is_monolithic_scroll_box`]), and so is a column container that the
+/// columns around it grow to fit (see [`is_unbroken_column_container`]).
+/// A `position: relative` box with insets is sliced like any other: its
+/// column location carries no offset, which the painter adds. That holds only
+/// for a box with nothing rendered inside it, so one that holds blocks or
+/// absolutely positioned boxes keeps the other strategies when it has insets,
+/// and so does a box inside a wrapper.
 ///
 /// With `out_of_flow`, a child may also hold absolutely positioned boxes
 /// that it is the containing block of; [`layout`] breaks them across the
@@ -84,7 +86,8 @@ fn supported_with_wrapped_blocks(
         }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
-        let monolithic = is_monolithic_scroll_box(tree, child);
+        let monolithic =
+            is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -293,6 +296,83 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
         && node.multicol.is_none()
         && !is_right_aligned_in_parent(tree, child)
         && holds_no_fragmenting_box(tree, child)
+}
+
+/// Whether `child` is a column container of plain blocks that the stream
+/// places whole in one column, at the height its own columns balance to.
+/// Chromium breaks such a container across the outer columns only when its
+/// balanced height does not fit them; whole, it lands where Chromium puts it
+/// whenever the outer columns balance to at least that height, and the
+/// stream keeps the boxes after it in the columns that follow.
+///
+/// Only the columns of an outermost container that balance with nothing to
+/// limit their height grow to fit it, so only such a container holds it
+/// whole. Columns that a height or the page fills in turn, and columns nested
+/// in other columns, cut it, which their own strategies do.
+pub(super) fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    let in_flow = matches!(
+        node.layout_position(),
+        Position::Relative | Position::Static
+    );
+    node.multicol.is_some()
+        && column_owner(tree, child).is_some_and(|owner| balances_without_limit(tree, owner))
+        && block_margins(&style).is_some()
+        && style.inset() == Edges::splat(LengthPercentageAuto::auto())
+        && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+        && is_horizontal(node)
+        && in_flow
+        && !style.float().is_floated()
+        && style.clear() == Clear::None
+        && !node.size_containment.height
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        && style.overflow().x == TaffyOverflow::Visible
+        && style.overflow().y == TaffyOverflow::Visible
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
+        && !is_right_aligned_in_parent(tree, child)
+        && supported(tree, child, false).is_some()
+}
+
+/// Whether one of `children` is a column container the stream keeps whole
+/// (see [`is_unbroken_column_container`]).
+pub(super) fn holds_unbroken_column_container(
+    tree: &LayoutSession<'_>,
+    children: &[usize],
+) -> bool {
+    children
+        .iter()
+        .any(|&child| is_unbroken_column_container(tree, child))
+}
+
+/// The multicol container whose stream holds `child`: its nearest ancestor
+/// that is not `display: contents`, when that ancestor is a column container.
+fn column_owner(tree: &LayoutSession<'_>, child: usize) -> Option<usize> {
+    let mut owner = tree.nodes[child].parent?;
+    while layout_node(tree, owner).display() == DisplayValue::Contents {
+        owner = tree.nodes[owner].parent?;
+    }
+    tree.nodes[owner].multicol.is_some().then_some(owner)
+}
+
+/// Whether the columns of `owner` balance with no maximum, aspect ratio or
+/// outer column to stop them, so they grow to fit a box that is never cut. A
+/// definite height stops them too, which the caller that resolves it checks.
+fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let style = style_of(tree, owner);
+    tree.nodes[owner]
+        .multicol
+        .as_ref()
+        .is_some_and(|columns| columns.column_fill != ColumnFillValue::Auto)
+        && style.max_size().height.is_auto()
+        && style.aspect_ratio().is_none()
+        && std::iter::successors(tree.nodes[owner].parent, |&id| tree.nodes[id].parent)
+            .all(|id| tree.nodes[id].multicol.is_none())
 }
 
 /// Whether nothing inside `child` takes part in the fragmentation of the
@@ -591,7 +671,10 @@ fn wrapped_block_tree(
         node.display() == DisplayValue::FlowRoot || node.roots_block_context();
     let children_in_multicol_context = in_multicol_context && !independent_context;
     let has_edges = has_block_edge_decorations(&style);
-    if independent_context && !allow_sliced_wrappers
+    // A column container lays its blocks out in columns of its own, not
+    // stacked in the stream (see `is_unbroken_column_container`).
+    if node.multicol.is_some()
+        || independent_context && !allow_sliced_wrappers
         || has_edges
             && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
         || node.paints_whole_box_effects
@@ -1151,7 +1234,8 @@ struct Item {
     whole: bool,
     /// A box a column end never cuts and that stays in a column only where it
     /// starts it, with no margin before it either: a scroll container (see
-    /// [`is_monolithic_scroll_box`]).
+    /// [`is_monolithic_scroll_box`]) or a nested column container (see
+    /// [`is_unbroken_column_container`]).
     monolithic: bool,
     /// The block-start and block-end border and padding of a box whose
     /// pieces slice them: it is cut where it is taller than a column, but
@@ -2109,6 +2193,7 @@ pub(super) fn slices_sized_leaf(tree: &LayoutSession<'_>, idx: usize) -> bool {
     ) && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Whether a box cut at a column end slices its block-axis borders and
@@ -2122,6 +2207,7 @@ pub(super) fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Where the block-axis border and padding of a box whose pieces slice them
@@ -2162,7 +2248,8 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
                 )
             }
         });
-    let monolithic = is_monolithic_scroll_box(tree, child);
+    let monolithic =
+        is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
     let splittable = !monolithic
         && !matches!(
             node.break_inside,
@@ -2554,6 +2641,14 @@ pub(super) fn layout(
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }
+    // A nested column container is kept whole only where the columns grow to
+    // fit it; one that a maximum keeps them below is cut by the strategies
+    // that break it at the outer column end.
+    if children.iter().zip(&sizes).any(|(&child, size)| {
+        size.height > column_height + EPSILON && is_unbroken_column_container(tree, child)
+    }) {
+        return None;
+    }
     // A box that must stay whole falls back to the other strategies whole
     // when it would be cut, which is not a layout failure; running out of
     // fragments before that is.
@@ -2768,6 +2863,11 @@ pub(super) fn layout(
                 line_start: None,
                 line_end: None,
             })?;
+            // A nested column container is not cut, so the fragments its own
+            // layout placed hang under its single piece.
+            if pieces.len() == 1 && tree.nodes[child].multicol.is_some() {
+                tree.fragment_tree.reparent_roots(child, record);
+            }
             records.push(record);
             taken += consumed[index];
         }
