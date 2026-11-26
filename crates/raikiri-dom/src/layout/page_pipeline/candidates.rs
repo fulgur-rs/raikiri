@@ -2236,6 +2236,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     leading_block_piece.filter(|_| direct_body_child || can_move_nested);
                 let column_replaced_piece =
                     column_replaced_piece.filter(|_| direct_body_child || can_move_nested);
+                // The first atomic inline of a line in a paragraph that no
+                // text places takes the page break before that line, as the
+                // text of a line does (see `leading_inline::assign`).
+                let textless_line_candidate = participates_in_flow
+                    && !inside_float
+                    && !out_of_flow_subtree
+                    && !inside_table
+                    && !inside_flex
+                    && (direct_body_child || can_move_nested)
+                    && !document.context.pagination_on_transposed_axes
+                    && super::leading_inline::first_on_textless_line(document, node_id);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
@@ -2337,6 +2348,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || run_tail_candidate
                         || run_break_candidate
                         || line_after_block_candidate
+                        || textless_line_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
                         || leading_block_piece.is_some()

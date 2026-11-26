@@ -4,6 +4,7 @@ pub(crate) use break_flow::block_in_inline_wrapper;
 mod column_line_boxes;
 mod column_lines;
 mod constrained_chain;
+pub(crate) use constrained_chain::piece_end;
 mod lineless;
 mod paged_spanning;
 mod paragraph_group;

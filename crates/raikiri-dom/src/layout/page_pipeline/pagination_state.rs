@@ -1217,9 +1217,13 @@ impl PaginationState {
         entry: &CandidateEntry,
         owner: super::leading_inline::LeadingInlineLine,
     ) -> Result<(), Halt> {
-        let (top, height) = super::leading_inline::bounds(document, owner);
         let relative =
             accumulated_relative_offset_y(document, env.cascade, env.body_id, owner.root);
+        let requested = owner;
+        let owner =
+            super::leading_inline::crossing_blank_line(document, owner, relative, env.page_origins)
+                .unwrap_or(owner);
+        let (top, height) = super::leading_inline::bounds(document, owner);
         let flow_top = top - relative;
         let natural = env.page_origins.page_index_for_y(flow_top);
         let start = env.page_origins.origin(natural);
@@ -1262,6 +1266,79 @@ impl PaginationState {
             flow_top
         };
         let shift = (env.page_origins.origin(target) - placed_top).max(0.0);
+        // In a paragraph that no text places, the lines before the moved one
+        // go with it when the widows ask for them, unless that leaves fewer
+        // lines than the orphans on the page; then all its lines on the page
+        // go, as a paragraph of text breaks. A line that starts its page
+        // exactly ends the lines of the page before in the same way.
+        let kept_break = if page_transition {
+            None
+        } else if target > natural && shift > 0.0 {
+            Some((start, target))
+        } else if target == natural && natural > 0 && (flow_top - start).abs() <= 0.001 {
+            Some((env.page_origins.origin(natural - 1), natural))
+        } else {
+            None
+        };
+        let kept = kept_break
+            .and_then(|(page_start, next)| {
+                super::leading_inline::kept_lines_break(
+                    document,
+                    env.cascade,
+                    owner,
+                    page_start,
+                    relative,
+                    env.page_origins.origin(next),
+                    env.page_origins.step_at(next),
+                )
+                .map(|kept| (kept, page_start, next))
+            })
+            // Below nothing but margins, or the edges of the boxes it begins, a
+            // paragraph has no break before it: its natural break stays.
+            .filter(|(kept, page_start, _)| {
+                !kept.whole
+                    || follows_box_on_page(
+                        document,
+                        env.cascade,
+                        env.body_id,
+                        kept.line.root,
+                        *page_start,
+                    )
+            });
+        let (owner, shift) = kept
+            .as_ref()
+            .map_or((owner, shift), |(kept, _, _)| (kept.line, kept.shift));
+        // A paragraph that moves whole takes its box along, with the padding
+        // and border above its first line and the boxes it begins, as a
+        // paragraph of text moves as a unit.
+        if let Some((kept, page_start, next)) = kept
+            && kept.whole
+        {
+            reach_page(env.control, next)?;
+            let root = owner.root;
+            let nested = document.layout_parent_of(root) != Some(env.roots.contents_box);
+            let from_y = current_abs_y(document, root) - relative;
+            let (delta, consumed) = move_line_block(
+                document,
+                env.cascade,
+                env.body_id,
+                root,
+                nested,
+                from_y,
+                env.page_origins.origin(next),
+                page_start,
+                &mut self.subtree_shifts,
+                entry.page_before_candidate,
+                &mut self.float_gaps,
+            );
+            self.flow_shift += delta;
+            self.queue_prefixes(consumed, next);
+            // Its lines are judged again where they landed, as a later
+            // fragment, as they may break on the page after it in turn.
+            if delta > 0.0 {
+                return self.place_leading_atomic_line(document, env, candidate, entry, requested);
+            }
+        }
         if shift > 0.0 {
             self.move_delegated_line(
                 document,
