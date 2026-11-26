@@ -3,8 +3,9 @@
 //! A grid row that holds an item with `break-inside: avoid` moves to the next
 //! column whole, with the other items of the row, when it does not fit the
 //! rest of the column; a row of items that split breaks where the column
-//! ends. The expected rectangles are what Chromium reports through
-//! `getClientRects()` for each fragment, on a page with an 8px body margin.
+//! ends. A row gap at a break is truncated. The expected rectangles are what
+//! Chromium reports through `getClientRects()` for each fragment, on a page
+//! with an 8px body margin.
 //!
 //! https://drafts.csswg.org/css-grid-1/#pagination
 
@@ -150,6 +151,24 @@ const CASES: &[(&str, Expected)] = &[
             ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 50.0]]),
             ("a", &[[8.0, 8.0, 50.0, 60.0]]),
             ("b", &[[58.0, 8.0, 50.0, 50.0]]),
+        ],
+    ),
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;row-gap:20px'><div id=a style='height:40px'></div><div id=b style='height:40px;break-inside:avoid'></div><div id=c style='height:40px'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 40.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 40.0]]),
+            ("b", &[[8.0, 68.0, 50.0, 40.0]]),
+            ("c", &[[58.0, 8.0, 50.0, 40.0]]),
+        ],
+    ),
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;row-gap:20px'><div id=a style='height:50px'></div><div id=b style='height:40px;break-inside:avoid'></div><div id=c style='height:40px'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 100.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 50.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 40.0]]),
+            ("c", &[[58.0, 68.0, 50.0, 40.0]]),
         ],
     ),
 ];

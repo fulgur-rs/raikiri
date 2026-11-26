@@ -23,14 +23,16 @@ pub(super) fn supports(
     }
     let mut pending: Vec<_> = flow_children(tree, root)
         .into_iter()
-        .map(|id| (id, 0usize, true, false))
+        .map(|id| (id, 0usize, true, false, false))
         .collect();
     let mut visible = false;
     let mut needs_break_flow = false;
     let mut projected_floats = 0usize;
     let mut projected_text_lines = false;
     let mut edged_wrappers = false;
-    while let Some((id, depth, projected, inside_formatting_context)) = pending.pop() {
+    // The last flag is whether the parent is a grid that [`collect`] places
+    // row by row.
+    while let Some((id, depth, projected, inside_formatting_context, in_row_grid)) = pending.pop() {
         if depth >= 128 {
             return false;
         }
@@ -55,9 +57,7 @@ pub(super) fn supports(
             && (node.break_before != BreakBetween::Auto
                 || node.break_after != BreakBetween::Auto
                 || node.break_inside != BreakInside::Auto)
-            && !tree
-                .taffy_parent_of(id)
-                .is_some_and(|parent| row_grid(tree, parent))
+            && !in_row_grid
         {
             return false;
         }
@@ -132,7 +132,7 @@ pub(super) fn supports(
             || avoided(node.break_after)
             || matches!(node.break_inside, BreakInside::AvoidColumn)
             // The other strategies do not place a grid row by its items.
-            || (inside_formatting_context && node.break_inside != BreakInside::Auto);
+            || (in_row_grid && node.break_inside != BreakInside::Auto);
         if node.multicol.is_some()
             || !(node.display().is_block_flex_or_grid_container()
                 || matches!(
@@ -150,12 +150,14 @@ pub(super) fn supports(
         let descendants_projected = projected && !atomic(tree, id);
         let descendants_inside_context =
             inside_formatting_context || node.display().is_block_flex_or_grid_container();
+        let rows = projected && !is_floated(tree, id) && row_grid(tree, id);
         pending.extend(flow_children(tree, id).into_iter().map(|child| {
             (
                 child,
                 depth + 1,
                 descendants_projected,
                 descendants_inside_context,
+                rows,
             )
         }));
     }
@@ -280,6 +282,8 @@ struct FlowBox {
     /// How many of the innermost `ancestors` end at this box, which places
     /// their bottom edges and margins after it.
     closes: usize,
+    /// The gap above a grid row, which joins the margins before it.
+    gap: f32,
     /// The items of a grid row that the box stands for, placed in place of
     /// `node`. A row splits where the column ends only when all its items do.
     row: Vec<RowItem>,
@@ -336,6 +340,14 @@ fn row_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
         || is_floated(tree, id)
         || has_box_constraints(tree, id)
         || style_of(tree, id).size().height != Dimension::auto()
+        || !style_of(tree, id).min_size().height.is_auto()
+        || !style_of(tree, id).max_size().height.is_auto()
+        || style_of(tree, id).overflow()
+            != (Point {
+                x: TaffyOverflow::Visible,
+                y: TaffyOverflow::Visible,
+            })
+        || row_gap(tree, id).is_none()
         || style_of(tree, id).aspect_ratio().is_some()
         || node.grid_item_rows.is_empty()
         || node
@@ -365,29 +377,42 @@ fn row_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
     breaks && items == node.grid_item_rows.len()
 }
 
+/// The row gap of the grid `id`, when it is a length: a percentage resolves
+/// against a height the rows give, which this strategy does not settle.
+fn row_gap(tree: &LayoutSession<'_>, id: usize) -> Option<f32> {
+    match style_of(tree, id).gap().height.expand() {
+        ExpandedLengthPercentage::Length(gap) => Some(gap.max(0.0)),
+        ExpandedLengthPercentage::Percent(percent) => (percent == 0.0).then_some(0.0),
+        ExpandedLengthPercentage::Calc(_) => None,
+    }
+}
+
 /// The rows of the grid `id`, laid out `height` tall, as flow boxes holding
-/// their items. Each row reaches down to the next one, so the rows cover the
-/// grid with the gaps between them. `None` when the layout reports an item
-/// that is not in a row.
+/// their items. The gap above a row goes before it like a margin, which a
+/// break between columns truncates (CSS Grid 1, 12). Each row reaches down
+/// to the gap below it; the first one starts at the top of the grid. `None`
+/// when the layout reports a row position that is not a number.
 fn grid_row_boxes(tree: &LayoutSession<'_>, id: usize, height: f32) -> Option<Vec<FlowBox>> {
-    let mut rows: Vec<(u16, f32)> = tree.nodes[id]
-        .grid_item_rows
-        .iter()
-        .map(|row| (row.start, row.block_start))
-        .collect();
-    rows.sort_by_key(|&(start, _)| start);
-    rows.dedup_by_key(|&mut (start, _)| start);
-    let mut boxes = Vec::with_capacity(rows.len());
-    for (index, &(start, top)) in rows.iter().enumerate() {
-        let top = if index == 0 { 0.0 } else { top };
-        let bottom = rows.get(index + 1).map_or(height, |&(_, next)| next);
+    let gap = row_gap(tree, id)?;
+    let mut items: Vec<_> = tree.nodes[id].grid_item_rows.iter().copied().collect();
+    items.sort_by_key(|row| row.start);
+    let mut boxes: Vec<FlowBox> = Vec::new();
+    let mut tops: Vec<f32> = Vec::new();
+    let mut index = 0;
+    while index < items.len() {
+        let start = items[index].start;
+        let top = if boxes.is_empty() {
+            0.0
+        } else {
+            items[index].block_start
+        };
+        if !top.is_finite() {
+            return None;
+        }
         let mut row = Vec::new();
         let (mut before, mut after) = (BreakBetween::Auto, BreakBetween::Auto);
-        for grid_row in tree.nodes[id].grid_item_rows.iter() {
-            if grid_row.start != start {
-                continue;
-            }
-            let item = grid_row.item;
+        while index < items.len() && items[index].start == start {
+            let item = items[index].item;
             let layout = tree.nodes[item].layout;
             row.push(RowItem {
                 node: item,
@@ -398,15 +423,13 @@ fn grid_row_boxes(tree: &LayoutSession<'_>, id: usize, height: f32) -> Option<Ve
             });
             before = propagated(before, descendant_edge(tree, item, true, 0));
             after = propagated(after, descendant_edge(tree, item, false, 0));
-        }
-        if !top.is_finite() || !bottom.is_finite() {
-            return None;
+            index += 1;
         }
         boxes.push(FlowBox {
             node: row.first()?.node,
             ancestors: Vec::new(),
             width: 0.0,
-            height: (bottom - top).max(0.0),
+            height: 0.0,
             inline_offset: 0.0,
             before,
             after,
@@ -415,8 +438,17 @@ fn grid_row_boxes(tree: &LayoutSession<'_>, id: usize, height: f32) -> Option<Ve
             splittable: row.iter().all(|item| splits_as_leaf(tree, item.node)),
             opens: 0,
             closes: 0,
+            gap: if tops.is_empty() { 0.0 } else { gap },
             row,
         });
+        tops.push(top);
+    }
+    for (index, row) in boxes.iter_mut().enumerate() {
+        let bottom = tops
+            .get(index + 1)
+            .map_or(height, |&next| next - gap)
+            .max(tops[index]);
+        row.height = bottom - tops[index];
     }
     Some(boxes)
 }
@@ -433,6 +465,7 @@ impl FlowBox {
                 lead += margins.take() + wrapper.edges.top;
             }
         }
+        margins.add(self.gap);
         lead + margins.take()
     }
 
@@ -793,6 +826,7 @@ fn collect(
             splittable: !floated && splits_as_leaf(tree, id),
             opens: 0,
             closes: 0,
+            gap: 0.0,
             row: Vec::new(),
         });
         return;
@@ -1124,6 +1158,10 @@ pub(super) fn layout(
                     cursor += wrapper.edges.top;
                 }
             }
+            // The gap above a grid row is truncated like a margin.
+            if !truncated {
+                margins.add(item.gap);
+            }
             if item.height > 0.0 || waiting > 0 {
                 cursor += margins.take();
             } else {
@@ -1137,6 +1175,8 @@ pub(super) fn layout(
         let start_column = column;
         let mut remaining = item.height;
         let mut first = true;
+        // Which items of a grid row have a fragment yet.
+        let mut placed = vec![false; item.row.len()];
         loop {
             if cursor >= height && !item.floated {
                 column = column.saturating_add(1);
@@ -1209,10 +1249,16 @@ pub(super) fn layout(
                 } else {
                     start + used
                 };
-                for row_item in &item.row {
-                    let top = row_item.y.max(start);
+                for (row_item, placed) in item.row.iter().zip(&mut placed) {
+                    // An item starts in the part its top falls in, and the
+                    // first part also holds what sticks out above the row.
+                    let top = if *placed || start > 0.0 {
+                        row_item.y.max(start)
+                    } else {
+                        row_item.y
+                    };
                     let bottom = (row_item.y + row_item.height).min(end);
-                    if bottom <= top && !(first && row_item.height <= 0.0) {
+                    if (*placed && bottom <= top) || (!*placed && row_item.y >= end) {
                         continue;
                     }
                     let Some(id) = tree.fragment_tree.try_push(fragment(
@@ -1228,7 +1274,8 @@ pub(super) fn layout(
                     )) else {
                         return fallback.height;
                     };
-                    if top == row_item.y {
+                    if !*placed {
+                        *placed = true;
                         let mut layout = tree.nodes[row_item.node].layout;
                         layout.location = Point {
                             x: origin + row_item.x,
