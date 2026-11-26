@@ -148,6 +148,23 @@ fn the_last_row_leaves_room_for_the_footer_copy() {
         ),
         &["100: F@0,59 X@1,1 Y@1,33", "100: A@1,1 B@1,31 F@0,57"],
     );
+    // Lines that move in two cells of the last row grow it once.
+    expect(
+        &format!(
+            "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>A<br>B</td><td>C<br>D</td></tr></table>"
+        ),
+        &["100: A@1,33 C@23,33 F@0,75 X@1,1", "100: B@1,0 D@23,0 F@0,26"],
+    );
+    expect(
+        &format!(
+            "{TABLE}{FOOTER}<tr><td>X</td></tr><tr><td>A<br>B<br>C<br>D<br>E</td><td>P<br>Q<br>R<br>S<br>T</td></tr></table>"
+        ),
+        &[
+            "100: A@1,33 F@0,75 P@23,33 X@1,1",
+            "100: B@1,0 C@1,30 F@0,75 Q@23,0 R@23,30",
+            "100: D@1,0 E@1,30 F@0,56 S@23,0 T@23,30",
+        ],
+    );
     // With a header too, every page the row crosses keeps both copies.
     expect(
         &format!(

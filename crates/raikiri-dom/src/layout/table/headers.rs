@@ -87,6 +87,9 @@ pub(crate) struct HeaderRepeats {
     /// the caption alone to the next page with the edges that close the
     /// table's parent, the page opens with a copy of the header above it.
     pub(crate) tail_captions: HashMap<usize, (usize, f32)>,
+    /// How far lines moved inside each paragraph of a body row, by row: the
+    /// row grows by the most any of its cells needs, not by the sum.
+    row_line_shifts: HashMap<usize, HashMap<usize, f32>>,
     owners: Vec<Option<usize>>,
 }
 
@@ -438,17 +441,30 @@ impl HeaderRepeats {
         }
     }
 
-    /// Moves the end of body row `row`, the last body row placed so far, down
-    /// by `shift` when lines inside it move: the footer's copy on the page
-    /// the row ends on goes below it. `page_of` gives the page of a position.
-    pub(crate) fn grow_last_row(&mut self, row: usize, shift: f32, page_of: impl Fn(f32) -> u32) {
-        if let Some(footer) = self
+    /// Records that lines of the paragraph `paragraph` in body row `row`, the
+    /// last body row placed so far, moved down by `shift`, and moves the end
+    /// of the row down as far as it grows: the footer's copy on the page the
+    /// row ends on goes below it. The row grows by the most that lines moved
+    /// in any one of its paragraphs. `page_of` gives the page of a position.
+    pub(crate) fn grow_last_row(
+        &mut self,
+        (row, paragraph): (usize, usize),
+        shift: f32,
+        page_of: impl Fn(f32) -> u32,
+    ) {
+        let Some(footer) = self
             .footer_rows
             .get(&row)
             .and_then(|id| self.headers.get_mut(id))
-            && let Some((_, bottom)) = footer.last_row
-        {
-            let bottom = bottom + shift;
+        else {
+            return;
+        };
+        let shifts = self.row_line_shifts.entry(row).or_default();
+        let before = shifts.values().copied().fold(0.0, f32::max);
+        *shifts.entry(paragraph).or_default() += shift;
+        let growth = shifts.values().copied().fold(0.0, f32::max) - before;
+        if let Some((_, bottom)) = footer.last_row {
+            let bottom = bottom + growth;
             footer.last_row = Some((page_of(bottom - 0.001), bottom));
         }
     }

@@ -6472,7 +6472,7 @@ impl PaginationState {
                 let head = self.table_headers.repeated_height_before(row);
                 let left = origins.page_index_for_y(origins.origin(page) + head - shift + 0.001);
                 self.table_headers
-                    .grow_last_row(row, shift, |y| origins.page_index_for_y(y));
+                    .grow_last_row((row, block_id), shift, |y| origins.page_index_for_y(y));
                 for left in left.min(page.saturating_sub(1))..page {
                     let next = left + 1;
                     self.table_headers.place_copies_around_row_break(
