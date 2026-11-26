@@ -915,6 +915,9 @@ pub(super) fn layout(
     // The last fragment of each wrapper, which reaches the end of its column
     // once the wrapper continues in a later one.
     let mut last_wrapper_fragment = HashMap::<usize, (usize, f32)>::new();
+    // The column of the first fragment of each wrapper, which holds its top
+    // edge.
+    let mut first_columns = HashMap::<usize, usize>::new();
     for (index, item) in boxes.iter().enumerate() {
         let opened = &item.ancestors[item.ancestors.len() - item.opens..];
         // The margins and top edges of the wrappers that start at the box.
@@ -1029,6 +1032,7 @@ pub(super) fn layout(
                         return fallback.height;
                     };
                     wrappers.insert((column, ancestor.node), (id, top));
+                    first_columns.entry(ancestor.node).or_insert(column);
                     if let Some((earlier, earlier_top)) =
                         last_wrapper_fragment.insert(ancestor.node, (id, top))
                     {
@@ -1095,14 +1099,32 @@ pub(super) fn layout(
             // it inside the wrappers around it.
             let closing = item.ancestors.len() - item.closes;
             for depth in (closing..item.ancestors.len()).rev() {
-                let edges = item.ancestors[depth].edges;
+                let wrapper = item.ancestors[depth];
+                let edges = wrapper.edges;
                 if edges.bottom > 0.0 {
-                    cursor += margins.take() + edges.bottom;
+                    cursor += margins.take();
+                    // Negative margins move the bottom edge up, but not above
+                    // the top of the content box of the wrapper.
+                    if let Some(&(_, top)) = wrappers.get(&(column, wrapper.node)) {
+                        let top_edge = if first_columns.get(&wrapper.node) == Some(&column) {
+                            edges.top
+                        } else {
+                            0.0
+                        };
+                        cursor = cursor.max(top - content_origin.y + top_edge);
+                    }
+                    cursor += edges.bottom;
                     let end = content_origin.y + cursor;
-                    for ancestor in &item.ancestors[..=depth] {
+                    // The wrapper ends at its bottom edge, whatever its
+                    // children reach; the wrappers around it hold that edge.
+                    for (position, ancestor) in item.ancestors[..=depth].iter().enumerate() {
                         if let Some(&(id, top)) = wrappers.get(&(column, ancestor.node)) {
                             let rect = &mut tree.fragment_tree.fragments[id].rect;
-                            rect.height = rect.height.max(end - top);
+                            rect.height = if position == depth {
+                                end - top
+                            } else {
+                                rect.height.max(end - top)
+                            };
                         }
                     }
                 }
