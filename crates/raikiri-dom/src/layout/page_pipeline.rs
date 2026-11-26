@@ -20317,29 +20317,33 @@ fn gaps_keep_line_breaks(
             .map(|&(start, end)| start < bottom - 0.01 && end > top + 0.01)
             .collect::<Vec<_>>()
     };
-    // How far the noted moves through line `index`, this one included,
-    // moved it.
-    let noted = |index: usize| -> f32 {
-        earlier
-            .iter()
-            .copied()
-            .chain(std::iter::once((line, delta)))
-            .filter(|&(moved, _)| moved <= index)
-            .map(|(_, delta)| delta)
-            .sum()
-    };
+    // The noted moves, this one last, in the order of their lines.
+    let notes: Vec<(usize, f32)> = earlier
+        .iter()
+        .copied()
+        .chain(std::iter::once((line, delta)))
+        .collect();
+    // How far the noted moves through the line reached so far, that line
+    // included, moved it; the lines are visited in order, so the sum grows
+    // from one line to the next.
+    let mut next_note = 0;
+    let mut noted = 0.0;
     // What the walk moved every line by before the noted moves.
     let base = lines.shift_of(0);
     ordered
         && !extents.is_empty()
         && (0..=line).all(|index| {
+            while let Some(&(_, moved)) = notes.get(next_note).filter(|&&(at, _)| at <= index) {
+                noted += moved;
+                next_note += 1;
+            }
             let current = &lines.lines[index];
             let top = current.block_offset() + base;
             let bottom = top + current.block_size();
             let here = beside(top, bottom);
             // The line lands below the gaps of the noted moves above it.
-            let shift = noted(index) - if index == line { delta } else { 0.0 };
-            (lines.shift_of(index) - noted(index) - base).abs() <= 0.01
+            let shift = noted - if index == line { delta } else { 0.0 };
+            (lines.shift_of(index) - noted - base).abs() <= 0.01
                 && here.iter().any(|&by| by) == line_is_narrowed(ifc, lines, index)
                 && (index < first || here == beside(top + shift, bottom + shift))
         })
