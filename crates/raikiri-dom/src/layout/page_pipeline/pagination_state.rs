@@ -4235,13 +4235,17 @@ impl PaginationState {
                     .add_to_pending(node_id, 0.0, self.current_page);
             }
         }
+        // A float that comes in with a line of a paragraph takes the flow to
+        // no page of its own: the line, which the walk places in turn, is
+        // where the flow is, whatever puts the float below it.
+        let on_line = !forced_before && document.context.float_anchors.contains_key(&node_id);
         // A box that starts below the end of a clip around it paints
         // nothing there, and the flow does not reach its page.
         let hidden = candidate.context.clip_box().is_some_and(|owner| {
             super::moved_clip_end(document, cascade, body_id, owner, env.root_flow_offset)
                 <= position.effective_y + 0.001
         });
-        if !float_landed && !hidden {
+        if !float_landed && !on_line && !hidden {
             self.current_page = self.current_page.max(natural_page);
         }
         Ok(())
