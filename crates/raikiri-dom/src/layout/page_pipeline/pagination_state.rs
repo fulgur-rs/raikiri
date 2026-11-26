@@ -1295,7 +1295,6 @@ impl PaginationState {
                     page_start,
                     relative,
                     env.page_origins.origin(next),
-                    env.page_origins.step_at(next),
                 )
                 .map(|kept| (kept, page_start, next))
             })
@@ -1318,6 +1317,7 @@ impl PaginationState {
         // A paragraph that moves whole takes its box along, with the padding
         // and border above its first line and the boxes it begins, as a
         // paragraph of text moves as a unit.
+        let mut moved_whole = 0.0;
         if let Some((kept, page_start, next)) = kept
             && kept.whole
         {
@@ -1340,11 +1340,12 @@ impl PaginationState {
             );
             self.flow_shift += delta;
             self.queue_prefixes(consumed, next);
-            // Its lines are judged again where they landed, as a later
-            // fragment, as they may break on the page after it in turn.
-            if delta > 0.0 {
-                return self.place_leading_atomic_line(document, env, candidate, entry, requested);
-            }
+            moved_whole = delta;
+        }
+        // Its lines are judged again where they landed, as a later fragment,
+        // as they may break on the page after it in turn.
+        if moved_whole > 0.0 {
+            return self.place_leading_atomic_line(document, env, candidate, entry, requested);
         }
         if shift > 0.0 {
             self.move_delegated_line(

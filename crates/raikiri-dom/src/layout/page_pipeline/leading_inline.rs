@@ -200,12 +200,12 @@ fn paragraph_lines(document: &Document, root: usize) -> Option<&[shodo::Line]> {
 /// The line that a page break before the line `owner` of a paragraph that
 /// no text places falls before once the `orphans` and `widows` of the
 /// paragraph are kept (CSS Fragmentation 3 section 3.3), with how far that
-/// line moves to start the next page at `next_start`, of block size
-/// `next_step`. `page_start` is where the page of `owner` starts in the flow
-/// and `relative` the relative offset of the paragraph. `None` when the break
-/// stays before `owner`: enough lines follow it, the paragraph continues
-/// from the page before, or the lines the widows ask for do not fit on the
-/// next page.
+/// line moves to start the next page at `next_start`. `page_start` is where
+/// the page of `owner` starts in the flow and `relative` the relative offset
+/// of the paragraph. `None` when the break stays before `owner`: enough lines
+/// follow it, or the paragraph continues from the page before. The widows
+/// move lines even when they do not fit on the next page together, as in
+/// Chromium.
 pub(super) fn kept_lines_break(
     document: &Document,
     cascade: &CascadeResult,
@@ -213,7 +213,6 @@ pub(super) fn kept_lines_break(
     page_start: f32,
     relative: f32,
     next_start: f32,
-    next_step: f32,
 ) -> Option<KeptBreak> {
     let root = owner.root;
     let total = paragraph_lines(document, root)?.len();
@@ -258,17 +257,6 @@ pub(super) fn kept_lines_break(
     // Orphans win over widows, as in columns.
     let line = crate::layout::multicol::piece_end(first, owner.line, total, (orphans, widows));
     if line == owner.line {
-        return None;
-    }
-    // The widows move lines only when they all fit on the next page.
-    let last = bounds(
-        document,
-        LeadingInlineLine {
-            root,
-            line: total - 1,
-        },
-    );
-    if last.0 - relative + last.1 - top(line) > next_step + 0.001 {
         return None;
     }
     Some(KeptBreak {

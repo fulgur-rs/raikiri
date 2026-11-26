@@ -240,3 +240,75 @@ fn lines_that_moved_whole_break_again_on_the_next_page() {
         ]
     );
 }
+
+#[test]
+fn a_long_paragraph_breaks_again_on_each_page() {
+    // Twelve lines of one inline-block each run over four pages; each page
+    // after the first holds three of them, as their orphans and widows allow.
+    let boxes: Vec<String> = ('A'..='L')
+        .map(|glyph| format!(r#"<i style="width:60px">{glyph}</i>"#))
+        .collect();
+    let expected: Vec<(u32, char, i32, i32)> = ('A'..='L')
+        .enumerate()
+        .map(|(index, glyph)| {
+            let index = index as i32;
+            if index < 3 {
+                (0, glyph, 0, 15 + 30 * index)
+            } else {
+                ((index / 3) as u32, glyph, 0, 5 + 30 * (index % 3))
+            }
+        })
+        .chain(std::iter::once((4, 'Z', 0, 5)))
+        .collect();
+    assert_eq!(
+        glyphs(&format!(
+            r#"<div style="height:10px"></div><div style="orphans:3;widows:3">{}</div><div>Z</div>"#,
+            boxes.join(" ")
+        )),
+        expected
+    );
+}
+
+#[test]
+fn widows_move_lines_that_do_not_fit_one_page_together() {
+    // Lines of 40px from 10px: the third crosses the page end, and the four
+    // widows take the second along, although the four lines need more than
+    // a page; they break again there.
+    assert_eq!(
+        glyphs(
+            r#"<div style="height:10px"></div><div style="orphans:1;widows:4"><i style="width:60px;height:40px">A</i> <i style="width:60px;height:40px">B</i> <i style="width:60px;height:40px">C</i> <i style="width:60px;height:40px">D</i> <i style="width:60px;height:40px">E</i></div><div>Z</div>"#
+        ),
+        [
+            (0, 'A', 0, 15),
+            (1, 'B', 0, 5),
+            (1, 'C', 0, 45),
+            (2, 'D', 0, 5),
+            (2, 'E', 0, 45),
+            (3, 'Z', 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn a_ruby_annotation_is_text_on_its_line() {
+    // The annotation over the first inline-block is text, so the paragraph
+    // breaks as one with text: it starts the next page whole for its orphans.
+    let glyphs: Vec<_> = glyphs(
+        r#"<div style="height:70px"></div><div><ruby><i>A</i><rt>rr</rt></ruby> <i>B</i> <i>C</i> <i>D</i> <i>E</i> <i>F</i></div><div>Z</div>"#,
+    )
+    .into_iter()
+    .filter(|&(_, glyph, _, _)| glyph != 'r')
+    .collect();
+    assert_eq!(
+        glyphs,
+        [
+            (1, 'A', 0, 15),
+            (1, 'B', 60, 15),
+            (1, 'C', 0, 45),
+            (1, 'D', 60, 45),
+            (1, 'E', 0, 75),
+            (1, 'F', 60, 75),
+            (2, 'Z', 0, 5),
+        ]
+    );
+}
