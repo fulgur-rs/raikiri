@@ -3831,6 +3831,61 @@ fn a_grid_broken_into_column_pieces_is_drawn_in_each_column() {
     }
 }
 
+/// A table whose cells hold no lines, which layout breaks into column
+/// pieces, is drawn in each of them, caption, rows and all, not cut off at
+/// the bottom of the first column.
+#[test]
+fn a_table_broken_into_column_pieces_is_drawn_in_each_column() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px} table{border-spacing:0;width:100%}</style></head><body><article><table><caption style="height:30px;background:#0f0"></caption><tr style="height:170px"><td style="background:#00f"></td></tr></table></article></body></html>"#,
+    );
+    let caption = visible_fill_bounds(&scene, (0, 255, 0));
+    assert_eq!(caption.len(), 1, "{caption:?}");
+    assert_eq!(
+        (
+            caption[0].0.x0,
+            caption[0].0.y0,
+            caption[0].0.width(),
+            caption[0].0.height()
+        ),
+        (0.0, 0.0, 50.0, 30.0),
+        "{caption:?}"
+    );
+    let mut rows = visible_fill_bounds(&scene, (0, 0, 255));
+    rows.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    for (row, (x, y, height)) in rows.iter().zip([(0.0, 30.0, 70.0), (50.0, 0.0, 100.0)]) {
+        assert_eq!(
+            (row.0.x0, row.0.y0, row.0.width(), row.0.height()),
+            (x, y, 50.0, height),
+            "{rows:?}"
+        );
+    }
+}
+
+/// A caption below the rows of a table broken into column pieces continues
+/// where the rows end, in the column the break puts it in.
+#[test]
+fn a_caption_below_a_table_broken_into_column_pieces_follows_its_rows() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px} table{border-spacing:0;width:100%}</style></head><body><article><table><caption style="caption-side:bottom;height:40px;background:#0f0"></caption><tr style="height:90px"><td style="background:#00f"></td></tr></table></article></body></html>"#,
+    );
+    let shown = |rgb| {
+        let mut fills: Vec<_> = visible_fill_bounds(&scene, rgb)
+            .into_iter()
+            .filter(|fill| fill.0.height() > 0.0)
+            .map(|fill| (fill.0.x0, fill.0.y0, fill.0.width(), fill.0.height()))
+            .collect();
+        fills.sort_by(|a, b| a.0.total_cmp(&b.0));
+        fills
+    };
+    assert_eq!(shown((0, 255, 0)), [(50.0, 25.0, 50.0, 40.0)]);
+    assert_eq!(
+        shown((0, 0, 255)),
+        [(0.0, 0.0, 50.0, 65.0), (50.0, 0.0, 50.0, 25.0)]
+    );
+}
+
 /// What overflows a grid or a table in columns shows beside it and above it
 /// whether the box has an outline or not (CSS Multi-column 1, section 8): the
 /// columns cut the box off at the bottom only.

@@ -224,7 +224,9 @@ fn public_rule_slices_respect_page_margins_on_every_page() {
         "@page{margin:20px}.mc{height:260px;column-rule:2px solid red}",
     );
     assert_eq!(document.page_count(), 3);
-    for (page_index, height, origin) in [(0, 120.0, 20.0), (1, 120.0, -100.0), (2, 20.0, -220.0)] {
+    // Each page's columns are a row of their own, whose rule starts its
+    // pattern at the top of the page's columns.
+    for (page_index, height) in [(0, 120.0), (1, 120.0), (2, 20.0)] {
         let page = document.page(page_index).unwrap();
         let rules = page
             .paint_order()
@@ -239,8 +241,8 @@ fn public_rule_slices_respect_page_margins_on_every_page() {
             rules[0].rect,
             raikiri_traits::PaintRect::new(69.0, 20.0, 2.0, height)
         );
-        assert_eq!(rules[0].pattern_origin, origin);
-        assert_eq!(rules[0].pattern_height, 260.0);
+        assert_eq!(rules[0].pattern_origin, 20.0);
+        assert_eq!(rules[0].pattern_height, height);
     }
 }
 
@@ -292,7 +294,7 @@ fn public_rule_is_inside_owner_opacity_and_overflow_but_outside_its_columns() {
 }
 
 #[test]
-fn rule_slices_keep_the_original_pattern_across_pages() {
+fn rule_slices_start_their_pattern_on_each_page() {
     let letters = (b'A'..=b'Z')
         .map(|letter| (letter as char).to_string())
         .collect::<Vec<_>>()
@@ -302,7 +304,9 @@ fn rule_slices_keep_the_original_pattern_across_pages() {
         ".mc{height:260px;column-rule:2px dashed red}",
     );
     assert_eq!(document.page_count(), 2);
-    for (page_index, height, pattern_origin) in [(0, 160.0, 0.0), (1, 100.0, -160.0)] {
+    // The lines fill the columns page by page, so each page's columns are a
+    // row with a rule of its own, down to the end of the definite height.
+    for (page_index, height) in [(0, 160.0), (1, 100.0)] {
         let page = document.page(page_index).unwrap();
         let rules = page
             .paint_order()
@@ -317,8 +321,8 @@ fn rule_slices_keep_the_original_pattern_across_pages() {
             rules[0].rect,
             raikiri_traits::PaintRect::new(49.0, 0.0, 2.0, height)
         );
-        assert_eq!(rules[0].pattern_origin, pattern_origin);
-        assert_eq!(rules[0].pattern_height, 260.0);
+        assert_eq!(rules[0].pattern_origin, 0.0);
+        assert_eq!(rules[0].pattern_height, height);
     }
 }
 
@@ -666,4 +670,34 @@ fn an_atomic_inline_in_a_column_reports_its_box_and_text_in_that_column() {
             ("X", (60.0, 16.0)),
         ]
     );
+}
+
+#[test]
+fn a_page_whose_lines_fill_one_column_has_no_rule() {
+    let letters = (b'A'..=b'I')
+        .map(|letter| (letter as char).to_string())
+        .collect::<Vec<_>>()
+        .join("<br>");
+    let document = lay_out(
+        &format!("<div style='height:80px'></div><div class=mc>{letters}</div>"),
+        ".mc{orphans:2;widows:2;column-rule:2px solid red}",
+    );
+    assert_eq!(document.page_count(), 2);
+    let page_rules = |index| {
+        document
+            .page(index)
+            .unwrap()
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::ColumnRule(rule) => Some(rule.rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        page_rules(0),
+        [raikiri_traits::PaintRect::new(49.0, 80.0, 2.0, 80.0)]
+    );
+    assert!(page_rules(1).is_empty());
 }
