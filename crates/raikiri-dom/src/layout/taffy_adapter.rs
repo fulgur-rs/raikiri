@@ -43,6 +43,39 @@ pub(crate) use grid_info::{GridInfo, GridRowCounts};
 pub(crate) use grid_rows::columns_follow_their_items;
 pub(crate) use grid_rows::{RowSizing, columns_have_no_content_minimum, rows_size_to_content};
 pub(crate) use margin_set::CollapsibleMarginSet;
+
+/// Note that the layout library starts laying out the grid container `node`.
+///
+/// The library reads each item's style once to build the item it places and
+/// sizes the tracks with, and again later to align it. The first read of an
+/// item, found by [`placement_read`], may then tell the track sizing what the
+/// alignment does not see. Pair each call with [`leave_grid_placement`].
+pub(crate) fn enter_grid_placement(context: &crate::layout::context::LayoutContext, node: usize) {
+    context
+        .grid_placements
+        .borrow_mut()
+        .push((node, std::collections::HashSet::new()));
+}
+
+/// Note that the layout library is done with the innermost grid container.
+pub(crate) fn leave_grid_placement(context: &crate::layout::context::LayoutContext) {
+    context.grid_placements.borrow_mut().pop();
+}
+
+/// Whether this read of the style of `item`, a child of `parent`, is the one
+/// the layout library builds the placed item from: the first read of it
+/// while its parent is the innermost grid container being laid out.
+pub(crate) fn placement_read(
+    context: &crate::layout::context::LayoutContext,
+    parent: Option<usize>,
+    item: usize,
+) -> bool {
+    let mut placements = context.grid_placements.borrow_mut();
+    match placements.last_mut() {
+        Some((container, read)) if parent == Some(*container) => read.insert(item),
+        _ => false,
+    }
+}
 pub(crate) use oof_candidates::{OofBatch, OofCandidates, OofSpan};
 
 #[cfg(test)]
