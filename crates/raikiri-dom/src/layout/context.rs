@@ -188,6 +188,10 @@ pub(crate) struct LayoutContext {
     /// measured before the ratio carries its height over to their width (see
     /// `grid_ratio_content` in [`crate::layout::dispatch`]).
     pub(crate) grid_ratio_content: Vec<usize>,
+    /// The grid containers the layout library is laying out, innermost last,
+    /// each with the items whose style it has read there (see
+    /// [`crate::layout::taffy_adapter::placing_grid`]).
+    pub(crate) grid_placements: std::cell::RefCell<Vec<(usize, HashSet<usize>)>>,
     /// Original column contribution constraints and their isolated cache domains.
     pub(crate) column_cross_constraints:
         Vec<crate::layout::dispatch::column_cross_measure::Constraints>,

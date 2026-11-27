@@ -28,9 +28,10 @@ pub(super) use paged::{PagedPiece, paginate};
 /// Inline margins, generated content, forced or avoided breaks between
 /// boxes, absolutely positioned or floated boxes and replaced elements need
 /// their own handling at a break, so containers with them keep the other
-/// strategies. A scroll container with a height of its own is no such
-/// box: it is monolithic, so the stream places it whole in one column (see
-/// [`is_monolithic_scroll_box`]), and so is a column container that the
+/// strategies. A scroll container that a height, a maximum height or an
+/// aspect ratio bounds is no such box: it is monolithic, so the stream places
+/// it whole in one column (see [`is_monolithic_scroll_box`]), and so is a
+/// column container that the
 /// columns around it grow to fit (see [`is_unbroken_column_container`]).
 /// A `position: relative` box with insets is sliced like any other: its
 /// column location carries no offset, which the painter adds. That holds only
@@ -47,7 +48,7 @@ pub(super) fn supported(
     parent: usize,
     out_of_flow: bool,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
+    supported_with_wrapped_blocks(tree, parent, None, out_of_flow, false)
 }
 
 /// [`supported`] for an outermost multicol container. Its stream may also
@@ -56,12 +57,26 @@ pub(super) fn supported_with_wrappers(
     tree: &LayoutSession<'_>,
     parent: usize,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, true, true)
+    supported_with_wrapped_blocks(tree, parent, None, true, true)
+}
+
+/// The children of `parent` in `segment` (the boxes between two spanners,
+/// or after the last, which form a row of columns of their own) when the
+/// stream places them all as boxes of their own: sized plain blocks and
+/// boxes that no break goes through, with no wrapper whose boxes would join
+/// the stream in its place.
+pub(super) fn supported_plain_segment(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+    segment: &[usize],
+) -> Option<Vec<usize>> {
+    supported_with_wrapped_blocks(tree, parent, Some(segment), false, false)
 }
 
 fn supported_with_wrapped_blocks(
     tree: &LayoutSession<'_>,
     parent: usize,
+    segment: Option<&[usize]>,
     out_of_flow: bool,
     allow_wrapped_blocks: bool,
 ) -> Option<Vec<usize>> {
@@ -75,7 +90,19 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     let mut sized_flex = false;
-    for child in rendered_elements(tree, parent) {
+    // A scroll container is placed whole at the height layout gives it, so
+    // it has a block size to place even when only a maximum bounds it.
+    let mut scroll_box = false;
+    let candidates: Box<dyn Iterator<Item = usize>> = match segment {
+        Some(segment) => Box::new(
+            segment
+                .iter()
+                .copied()
+                .filter(|&child| is_rendered_element(tree, child)),
+        ),
+        None => Box::new(rendered_elements(tree, parent)),
+    };
+    for child in candidates {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
             .then(|| sliceable_flex_container(tree, child, None))
@@ -87,14 +114,19 @@ fn supported_with_wrapped_blocks(
         }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
-        let monolithic =
-            is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
+        let scrolls = is_monolithic_scroll_box(tree, child);
+        let monolithic = scrolls || is_unbroken_column_container(tree, child);
+        scroll_box |= scrolls;
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
             && has_rendered_content(tree, child, false);
+        // The insets of a sticky box are no relative offset: the columns
+        // place it where the flow puts it, with no offset.
+        let sticky = node.layout_position() == Position::Sticky;
         if !(plain_block || plain_wrapper || monolithic)
             || has_inset
+                && !(sticky && monolithic)
                 && (!super::insets_are_a_relative_offset(tree, child)
                     || has_rendered_content(tree, child, false))
         {
@@ -115,9 +147,10 @@ fn supported_with_wrapped_blocks(
         }
         children.push(child);
     }
-    let sized = boxes
-        .iter()
-        .any(|&child| has_block_size(&style_of(tree, child)));
+    let sized = scroll_box
+        || boxes
+            .iter()
+            .any(|&child| has_block_size(&style_of(tree, child)));
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
@@ -141,7 +174,7 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
 pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     layout_node(tree, child).display() == DisplayValue::Block
-        && is_plain_box_but_clearance(tree, child, false)
+        && is_plain_box_but_clearance(tree, child, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
         && block_margins(&style) == Some((0.0, 0.0))
@@ -190,12 +223,15 @@ pub(super) fn rendered_elements<'a>(
     tree: &'a LayoutSession<'_>,
     parent: usize,
 ) -> impl Iterator<Item = usize> + 'a {
-    flow_children(tree, parent).into_iter().filter(|&child| {
-        let node = layout_node(tree, child);
-        node.is_in_document()
-            && !node.is_display_none()
-            && matches!(node.data, NodeData::Element(_))
-    })
+    flow_children(tree, parent)
+        .into_iter()
+        .filter(|&child| is_rendered_element(tree, child))
+}
+
+/// Whether `child` is an element in the document that renders a box.
+fn is_rendered_element(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    node.is_in_document() && !node.is_display_none() && matches!(node.data, NodeData::Element(_))
 }
 
 /// Whether `id` starts at the top of the first column of the multicol
@@ -257,15 +293,23 @@ fn is_plain_block_with_display(
         && is_plain_block_apart_from_margins(tree, child, allow_flow_root, allow_lines)
 }
 
-/// Whether `child` is a scroll container with a height of its own and nothing
-/// that needs handling at a break: a box a column end never cuts, whatever it
-/// holds. A scroll container is monolithic content (CSS Fragmentation 3,
-/// `monolithic`), so it moves to the next column when it does not fit below
-/// what comes before it, and one taller than a column overflows the column it
-/// starts at the top of (CSS Fragmentation 3, 4.4). What it holds scrolls
-/// inside it, so the stream does not look at it, unless that content could
-/// reach out of it: see [`holds_no_fragmenting_box`]. A box whose height
-/// follows its content keeps the other strategies.
+/// Whether `child` is a scroll container with nothing that needs handling at
+/// a break: a box a column end never cuts, whatever it holds. A scroll
+/// container is monolithic content (CSS Fragmentation 3, `monolithic`), so it
+/// moves to the next column when it does not fit below what comes before it,
+/// and one taller than a column overflows the column it starts at the top of
+/// (CSS Fragmentation 3, 4.4). What it holds scrolls inside it, so the stream
+/// does not look at it, unless that content could reach out of it: see
+/// [`holds_no_fragmenting_box`]. A `position: sticky` box is placed where the
+/// flow puts it, with no offset, as the columns place every sticky box.
+///
+/// The box needs a height, a maximum height or an aspect ratio that bounds
+/// it; [`layout`] measures the height it ends up with before it places the
+/// box, which is whole even below its maximum, as Chromium shows it on
+/// screen. Chromium prints a scroll container in columns cut at the column
+/// end, like a box that does not scroll; a box with nothing to bound its
+/// height, such as a paragraph that clips its overflow, keeps the other
+/// strategies, which break it between its lines as the printed columns do.
 ///
 /// Keep the checks that leave the box out in step with
 /// [`is_plain_block_apart_from_margins`].
@@ -274,16 +318,20 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     let scrolls = |overflow| !matches!(overflow, TaffyOverflow::Visible | TaffyOverflow::Clip);
     let overflow = style.overflow();
+    let bounded = style_dimension_length(style.size().height).is_some()
+        || style_dimension_length(style.max_size().height.into()).is_some()
+        || style.aspect_ratio().is_some();
     (scrolls(overflow.x) || scrolls(overflow.y))
-        && style_dimension_length(style.size().height).is_some()
+        && bounded
         && block_margins(&style).is_some()
-        && style.inset() == Edges::splat(LengthPercentageAuto::auto())
+        && (style.inset() == Edges::splat(LengthPercentageAuto::auto())
+            || node.layout_position() == Position::Sticky)
         && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
         && is_horizontal(node)
         && !node.size_containment.height
         && matches!(
             node.layout_position(),
-            Position::Relative | Position::Static
+            Position::Relative | Position::Static | Position::Sticky
         )
         && !style.float().is_floated()
         && style.clear() == Clear::None
@@ -377,18 +425,34 @@ fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
 }
 
 /// Whether nothing inside `child` takes part in the fragmentation of the
-/// columns around it: no box is absolutely positioned, as its containing block
-/// can lie outside `child` and then it breaks across the columns with that
-/// block, and no box is a column container, which lays itself out as part of
-/// the columns it sits in.
+/// columns around it: no absolutely positioned box has its containing block
+/// outside `child`, as it then breaks across the columns with that block, and
+/// no box is a column container, which lays itself out as part of the columns
+/// it sits in. An absolutely positioned box whose containing block is `child`
+/// or a box inside it moves with `child`, whole, like the rest of what it
+/// holds.
 fn holds_no_fragmenting_box(tree: &LayoutSession<'_>, child: usize) -> bool {
-    let mut pending = layout_node(tree, child).children.clone();
-    while let Some(id) = pending.pop() {
+    // Each pending box carries whether a box from `child` down to its parent
+    // is the containing block of absolutely positioned boxes.
+    let contains = |id: usize| layout_node(tree, id).layout_position() != Position::Static;
+    let mut pending: Vec<(usize, bool)> = layout_node(tree, child)
+        .children
+        .iter()
+        .map(|&id| (id, contains(child)))
+        .collect();
+    while let Some((id, contained)) = pending.pop() {
         let node = layout_node(tree, id);
-        if node.layout_position() == Position::Absolute || node.multicol.is_some() {
+        // A fixed box's containing block is the viewport, or an ancestor
+        // that a transform or filter makes one, so it is left out whatever
+        // holds it.
+        if node.layout_position() == Position::Absolute
+            && (!contained || matches!(node.position(), PositionValue::Fixed))
+            || node.multicol.is_some()
+        {
             return false;
         }
-        pending.extend(node.children.iter().copied());
+        let contained = contained || contains(id);
+        pending.extend(node.children.iter().map(|&id| (id, contained)));
     }
     true
 }
@@ -415,12 +479,29 @@ pub(super) fn is_plain_box_apart_from_display(
     allow_lines: bool,
 ) -> bool {
     style_of(tree, child).clear() == Clear::None
-        && is_plain_box_but_clearance(tree, child, allow_lines)
+        && is_plain_box_but_clearance(tree, child, allow_lines, false)
+}
+
+/// [`is_plain_box_apart_from_display`] for a box that holds no lines and may
+/// force a column break before or after itself, for a caller that starts a
+/// column there.
+pub(super) fn is_plain_box_apart_from_display_and_breaks(
+    tree: &LayoutSession<'_>,
+    child: usize,
+) -> bool {
+    style_of(tree, child).clear() == Clear::None
+        && is_plain_box_but_clearance(tree, child, false, true)
 }
 
 /// [`is_plain_box_apart_from_display`] for a box that may clear floats, for
-/// a caller that places it below them.
-fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_lines: bool) -> bool {
+/// a caller that places it below them. With `breaks`, the box may force a
+/// column break before or after itself.
+fn is_plain_box_but_clearance(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_lines: bool,
+    breaks: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     // An orthogonal flow is monolithic in the column's block axis.
@@ -440,8 +521,9 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        || sets_break_in_columns(node.break_before)
-        || sets_break_in_columns(node.break_after)
+        || [node.break_before, node.break_after]
+            .into_iter()
+            .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
@@ -1553,8 +1635,7 @@ fn absolute_pieces(
         let first = pieces.first()?;
         let last = pieces.last()?;
         // A flex container is sliced whole, with the absolutely positioned
-        // boxes it holds. Boxes inside monolithic content stay in it, as the
-        // column height found for them assumes (see [`out_of_flow_height`]).
+        // boxes it holds, and monolithic content keeps its boxes inside it.
         if flex || column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child) {
             all.push(own);
             continue;

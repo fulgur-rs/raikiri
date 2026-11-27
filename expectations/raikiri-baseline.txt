@@ -5252,6 +5252,7 @@ css/css-break/root-margin-001-print.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-017.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-025.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-026.html
+css/css-sizing/aspect-ratio/grid-aspect-ratio-027.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-028.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-029.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-040.html

@@ -196,11 +196,20 @@ impl LayoutGridContainer for LayoutSession<'_> {
     }
 
     fn get_grid_child_style(&self, child_node_id: taffy::NodeId) -> Self::GridItemStyle<'_> {
-        TaffyStyle::new(table::item_style(
-            self,
-            usize::from(child_node_id),
-            ReadRole::GridItem,
-        ))
+        let item = usize::from(child_node_id);
+        let view = table::item_style(self, item, ReadRole::GridItem);
+        // The track sizing of the library carries an aspect ratio over to an
+        // auto size before it looks for the automatic minimum size, so a
+        // scroll container would contribute the carried size instead of the
+        // zero of CSS Grid 1 §6.6. The item it sizes the tracks with is built
+        // from the first read, so only that read hides the ratio; the item's
+        // own layout and its alignment still use it.
+        if scrolls_at_a_carried_size(&view)
+            && super::placement_read(&self.context, self.taffy_parent_of(item), item)
+        {
+            return TaffyStyle::new(view.with_hidden_aspect_ratio());
+        }
+        TaffyStyle::new(view)
     }
 
     fn set_detailed_grid_info(
@@ -278,3 +287,17 @@ impl TraversePartialTree for LayoutSession<'_> {
 }
 
 impl TraverseTree for LayoutSession<'_> {}
+
+/// Whether a grid item has an aspect ratio that carries its definite size in
+/// one axis over to an auto size in the other, where it is a scroll container.
+fn scrolls_at_a_carried_size(view: &raikiri_layout_style::LayoutStyleView<'_>) -> bool {
+    if view.aspect_ratio().is_none()
+        || view.position() == raikiri_layout_style::values::Position::Absolute
+    {
+        return false;
+    }
+    let size = view.size();
+    let overflow = view.overflow();
+    (size.width.is_auto() && !size.height.is_auto() && overflow.x.is_scroll_container())
+        || (size.height.is_auto() && !size.width.is_auto() && overflow.y.is_scroll_container())
+}
