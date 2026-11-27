@@ -13227,13 +13227,14 @@ fn lineless_piece(
     // piece of content fits a page only above them. Where they leave no room
     // for content, the box moves to the next page whole, as Chromium prints
     // it, rather than leaving its top edges alone on the page.
-    let cloned_below =
-        if depth == 0 && node.clones_box_decorations && node.display() != DisplayValue::InlineBlock
-        {
-            layout.border.bottom + layout.padding.bottom
-        } else {
-            0.0
-        };
+    let root_in_flow = depth == 0
+        && node.display() != DisplayValue::InlineBlock
+        && !is_floating_box_for_pagination(document, cascade, node_id);
+    let cloned_below = if root_in_flow && node.clones_box_decorations {
+        layout.border.bottom + layout.padding.bottom
+    } else {
+        0.0
+    };
     let Some(child) = first else {
         // The box holds no box of its own, so the edges above its content are
         // the whole of what comes first. A box with nothing but edges (no
@@ -13264,10 +13265,14 @@ fn lineless_piece(
     };
     // The page breaks before the relative offset moves the box.
     let top = normal_flow_y(document, cascade, body_id, child);
-    let piece = if depth == 0 && node.multicol.is_some() && document.nodes[child].is_ifc_root() {
+    let piece = if root_in_flow && node.multicol.is_some() && document.nodes[child].is_ifc_root() {
         // The walk does not read the lines that columns hold, so the first
         // piece of a paragraph that starts them is its first `orphans` lines,
         // which the first column holds below the edges, as far as it reaches.
+        // A forced break before the paragraph takes the page break there.
+        if forces_page_break(document, cascade, child, true) {
+            return None;
+        }
         let lines = first_piece_end(document, cascade, body_id, child, depth + 1)?;
         let column = layout.size.height - layout.border.bottom - layout.padding.bottom - top;
         LinelessPiece {
@@ -13286,7 +13291,7 @@ fn lineless_piece(
     let end = top + piece.end;
     Some(LinelessPiece {
         end: if piece.monolithic {
-            end.min(layout.size.height)
+            (end + cloned_below).min(layout.size.height)
         } else {
             end + cloned_below
         },

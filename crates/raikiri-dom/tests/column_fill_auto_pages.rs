@@ -1024,9 +1024,9 @@ fn columns_of_lines_go_on_whole_when_their_first_lines_do_not_fit() {
     );
 }
 
-/// A block without columns that clones its decorations goes to the next page
-/// whole on the same terms, when its content would start inside its bottom
-/// padding on the first page.
+/// A block without columns that clones its decorations and holds boxes
+/// without lines goes to the next page whole on the same terms, when its
+/// content would start inside its bottom padding on the first page.
 #[test]
 fn cloned_blocks_without_columns_go_on_whole_below_late_starts() {
     let body = |before: u32| {
@@ -1044,4 +1044,62 @@ fn cloned_blocks_without_columns_go_on_whole_below_late_starts() {
     };
     assert_eq!(first(171), [(0, 171.0), (0, 181.0)]);
     assert_eq!(first(172), [(1, 0.0), (1, 10.0)]);
+}
+
+/// The first child of a cloned block that no break goes through keeps the
+/// cloned bottom edges with it: the block stays where the child and those
+/// edges fit on the page, and goes to the next page whole where they do not.
+#[test]
+fn cloned_blocks_keep_their_bottom_edges_with_a_monolithic_first_child() {
+    let body = |before: u32| {
+        format!(
+            "<div style='height: {before}px'></div><div id=c style='padding: 10px; \
+             box-decoration-break: clone'><div id=m style='height: 50px; contain: size'></div>\
+             <div id=a style='height: 100px'></div></div>{AFTER}"
+        )
+    };
+    let first = |before: u32| {
+        let (_, pieces) = pieces_of(&body(before));
+        let (_, own) = pieces.iter().find(|(id, _)| id == "m").expect("#m");
+        own[0]
+    };
+    assert_eq!(first(120), (0, 10.0, 130.0, 50.0));
+    assert_eq!(first(130), (1, 10.0, 10.0, 50.0));
+}
+
+/// Columns of lines followed by a spanner go on whole too, and a paragraph
+/// that forces a page break before it takes the container with it.
+#[test]
+fn columns_of_lines_with_a_spanner_or_a_forced_break_go_on_whole() {
+    let words = vec!["XXXX"; 40].join(" ");
+    let body = |content: &str| {
+        format!(
+            "<div style='height: 175px'></div><div id=c style='{COLUMNS}; padding: 10px; \
+             font: 10px/10px Ahem'>{content}</div>{AFTER}"
+        )
+    };
+    check(
+        "spanner",
+        &body(&format!(
+            "<p id=p style='margin: 0'>{words}</p>\
+             <div id=s style='column-span: all; height: 10px'></div>"
+        )),
+        2,
+        &[
+            ("c", &[(1, 0.0, 0.0, 100.0)]),
+            ("s", &[(1, 10.0, 80.0, 10.0)]),
+            ("k", &[(1, 0.0, 100.0, 16.0)]),
+        ],
+    );
+    check(
+        "forced break",
+        &body(&format!(
+            "<p id=p style='break-before: page; margin: 0'>{words}</p>"
+        )),
+        2,
+        &[
+            ("c", &[(1, 0.0, 0.0, 160.0)]),
+            ("k", &[(1, 0.0, 160.0, 16.0)]),
+        ],
+    );
 }
