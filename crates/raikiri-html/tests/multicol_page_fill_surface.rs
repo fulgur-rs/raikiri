@@ -2,8 +2,8 @@
 //! The positions are the ones Chromium prints for the same documents.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 use std::collections::BTreeMap;
@@ -34,8 +34,8 @@ fn articles() -> String {
         .collect()
 }
 
-/// The page, left edge, top and text of every line the pages report.
-fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
+/// The pages of `body` with `css`, in Ahem on 200px pages.
+fn pages(body: &str, css: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -59,6 +59,12 @@ fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
     .unwrap() else {
         panic!("layout must complete")
     };
+    result
+}
+
+/// The page, left edge, top and text of every line the pages report.
+fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
+    let result = pages(body, css);
     let mut lines = Vec::new();
     for index in 0..12 {
         let Some(page) = result.page(index) else {
@@ -872,4 +878,88 @@ fn the_last_page_of_decorated_paragraphs_balances_to_the_lines_a_break_keeps() {
         ],
         "plain"
     );
+}
+
+/// The page, left edge, top and bottom of what the clips around it leave
+/// visible of each box of the element with id `id`.
+fn visible_boxes(body: &str, css: &str, id: &str) -> Vec<(u32, i32, i32, i32)> {
+    let result = pages(body, css);
+    let mut boxes = Vec::new();
+    for page in result.pages() {
+        let dom = page.dom();
+        let mut clips: Vec<(f32, f32)> = Vec::new();
+        for event in page.paint_order() {
+            match event {
+                PaintEvent::PushClip(clip, _) => clips.push(if clip.clip_y {
+                    (clip.rect.y, clip.rect.y + clip.rect.height)
+                } else {
+                    (f32::MIN, f32::MAX)
+                }),
+                PaintEvent::PopClip => {
+                    clips.pop();
+                }
+                PaintEvent::Box(fragment) if dom.attr(fragment.node(), "id") == Some(id) => {
+                    let rect = fragment.rect();
+                    let (top, bottom) = clips
+                        .iter()
+                        .fold((rect.y, rect.y + rect.height), |(top, bottom), clip| {
+                            (top.max(clip.0), bottom.min(clip.1))
+                        });
+                    if bottom > top {
+                        boxes.push((
+                            page.index(),
+                            rect.x.round() as i32,
+                            top.round() as i32,
+                            bottom.round() as i32,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    boxes
+}
+
+#[test]
+fn a_bottom_border_that_goes_on_alone_shows_in_the_next_column_only() {
+    // The line and the border below it do not fit one column together, and
+    // no break comes before the line, so the columns break between them: the
+    // border goes on alone at the top of the next column (Chromium).
+    let body = mc(&format!("<p id=x>X1</p>{}", par("M", 1, 30)));
+    let css = "p{background:#ccc}#x{border-bottom:190px solid blue}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: X1@0",
+            "p1 x0: M1-M10@0",
+            "p1 x100: M11-M20@0",
+            "p2 x0: M21-M25@0",
+            "p2 x100: M26-M30@0",
+        ],
+        "lines"
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "x"),
+        [(0, 0, 0, 20), (0, 100, 0, 190)],
+        "boxes"
+    );
+}
+
+#[test]
+fn the_last_page_columns_are_as_tall_as_the_orphans_a_break_keeps() {
+    // Three lines left under `orphans: 3` make the columns three lines tall;
+    // the bottom border cannot follow the third line there, so that line
+    // goes on with it, and the piece before runs to the column end
+    // (Chromium).
+    let body = mc(&format!("{}<p id=m>{}</p>", par("L", 1, 12), {
+        let lines: Vec<_> = (1..=28).map(|n| format!("M{n}")).collect();
+        lines.join("<br>")
+    }));
+    let css = "p{background:#ccc;border:2px solid blue;padding:2px;widows:3;orphans:3}";
+    let last: Vec<_> = visible_boxes(&body, css, "m")
+        .into_iter()
+        .filter(|piece| piece.0 == 2)
+        .collect();
+    assert_eq!(last, [(2, 0, 0, 60), (2, 100, 0, 24)]);
 }

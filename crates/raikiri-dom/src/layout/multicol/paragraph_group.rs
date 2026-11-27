@@ -2751,9 +2751,17 @@ pub(super) fn paginate(
             let Some(paragraph) = &paragraphs[index] else {
                 continue; // cov:ignore: fill_chunk only creates placements for present paragraphs.
             };
-            for range in placement.fragments {
+            let mut ranges = placement.fragments.into_iter().peekable();
+            while let Some(range) = ranges.next() {
                 work.charge(1)?;
                 let y = placement.first_y + range.y;
+                // The piece before one that holds the edge below the last
+                // line alone ends with that line, as the column breaks
+                // between them: its clip hides the edge there.
+                let edge_follows = ranges
+                    .peek()
+                    .is_some_and(|next| next.line_start >= next.line_end);
+                let goes_on = range.line_end < paragraph.extents.len() || edge_follows;
                 // A piece that the paragraph goes on from runs to the end of
                 // its column. With sliced edges its box goes on past there by
                 // the edge below the last line, and a piece after the first
@@ -2806,26 +2814,26 @@ pub(super) fn paginate(
                     // paragraph begins or ends has no neighbour behind it,
                     // so what the box paints there, an outline for one,
                     // stays visible too.
-                    clip: (range.line_start > 0 || range.line_end < paragraph.extents.len()).then(
-                        || {
-                            let top = if range.line_start == 0 {
-                                group_y - BLOCK_INK_REACH
-                            } else {
-                                group_y
-                            };
-                            let bottom = if range.line_end >= paragraph.extents.len() {
-                                group_y + height + BLOCK_INK_REACH
-                            } else {
-                                group_y + height
-                            };
-                            inline_open_clip(crate::fragment::FragmentRect {
-                                x,
-                                y: top,
-                                width: context.column_width,
-                                height: bottom - top,
-                            })
-                        },
-                    ),
+                    clip: (range.line_start > 0 || goes_on).then(|| {
+                        let top = if range.line_start == 0 {
+                            group_y - BLOCK_INK_REACH
+                        } else {
+                            group_y
+                        };
+                        let bottom = if edge_follows {
+                            group_y + y + box_height - paragraph.edge_end
+                        } else if !goes_on {
+                            group_y + height + BLOCK_INK_REACH
+                        } else {
+                            group_y + height
+                        };
+                        inline_open_clip(crate::fragment::FragmentRect {
+                            x,
+                            y: top,
+                            width: context.column_width,
+                            height: bottom - top,
+                        })
+                    }),
                 });
             }
         }
