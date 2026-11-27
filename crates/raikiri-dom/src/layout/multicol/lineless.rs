@@ -18,6 +18,7 @@ use raikiri_layout_style::values::ExpandedLengthPercentage;
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
+mod monolithic;
 mod paged;
 pub(super) use paged::{PagedPiece, paginate};
 
@@ -606,8 +607,11 @@ fn sliceable_flex_container(
     let mut pulled = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
+        // A monolithic box moves whole to the next column where it does not
+        // fit (see [`monolithic::Shape`]).
+        let monolithic = id != child && monolithic::is_monolithic_leaf(tree, id);
         if boxes > MAX_SLICED_FLEX_BOXES
-            || !is_sliceable_flex_box(tree, id, contained, (before, after))
+            || !(monolithic || is_sliceable_flex_box(tree, id, contained, (before, after)))
         {
             return None;
         }
@@ -617,6 +621,10 @@ fn sliceable_flex_container(
             {
                 return None;
             }
+        }
+        if monolithic {
+            sized |= has_block_size(&style_of(tree, id));
+            continue;
         }
         let node = layout_node(tree, id);
         inner_breaks |= id != child
@@ -1762,6 +1770,10 @@ struct Item {
 }
 
 pub(super) const EPSILON: f32 = 0.001;
+
+/// How many taller column heights balancing tries when monolithic boxes move
+/// to later columns, before leaving the container to the other strategies.
+const MAX_MONOLITHIC_BALANCE_ATTEMPTS: usize = 8;
 
 /// Why a placement stopped before the end of the stream.
 #[derive(Debug, PartialEq)]
@@ -3087,6 +3099,25 @@ pub(super) fn layout(
         .zip(&sliced_flex)
         .map(|((&child, size), &flex)| flex.then(|| flex_breaks(tree, child, size.height)))
         .collect::<Vec<_>>();
+    // The monolithic boxes of each sliced flex container, which move to the
+    // next column where they do not fit. A container whose forced breaks
+    // already cut it into parts keeps the other strategies.
+    let mut shapes = Vec::with_capacity(children.len());
+    for ((&child, &flex), breaks) in children.iter().zip(&sliced_flex).zip(&flex_breaks) {
+        let shape = if flex {
+            monolithic::Shape::build(tree, child).ok()?
+        } else {
+            None
+        };
+        if shape.is_some()
+            && breaks
+                .as_ref()
+                .is_some_and(|breaks| !breaks.parts.is_empty())
+        {
+            return None;
+        }
+        shapes.push(shape);
+    }
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
     let mut wrapped: Vec<Option<WrappedBlockTree>> = children
@@ -3240,14 +3271,86 @@ pub(super) fn layout(
     // A box that must stay whole falls back to the other strategies whole
     // when it would be cut, which is not a layout failure; running out of
     // fragments before that is.
-    let placements = match place(&items, column_height, max_pieces) {
-        Ok(placements) => placements,
-        Err(Stop::Cut) => return None,
+    let place_items = |tree: &mut LayoutSession<'_>, items: &[Item], column_height: f32| match place(
+        items,
+        column_height,
+        max_pieces,
+    ) {
+        Ok(placements) => Some(placements),
+        Err(Stop::Cut) => None,
         Err(Stop::Exhausted) => {
             tree.fragment_tree.limit_exceeded = true;
-            return None;
+            None
         }
     };
+    // The monolithic boxes of each flex container move where the container
+    // starts, which the containers before it settle; a container grows by
+    // the space they leave (see [`monolithic::Shape::push`]).
+    let push_all = |tree: &mut LayoutSession<'_>,
+                    items: &mut Vec<Item>,
+                    sizes: &mut Vec<Size<f32>>,
+                    column_height: f32|
+     -> Option<Vec<Option<monolithic::Pushes>>> {
+        let mut pushes = Vec::with_capacity(shapes.len());
+        for (order, shape) in shapes.iter().enumerate() {
+            let Some(shape) = shape else {
+                pushes.push(None);
+                continue;
+            };
+            let placements = place_items(tree, items, column_height)?;
+            let start = placements.pieces[spans[order].start].first()?.top;
+            let moved = shape.push(tree, start, column_height, sizes[order].height)?;
+            items[spans[order].start].height += moved.growth;
+            sizes[order].height += moved.growth;
+            pushes.push(Some(moved));
+        }
+        Some(pushes)
+    };
+    let mut column_height = column_height;
+    let mut pushes = Vec::new();
+    if shapes.iter().any(Option::is_some) {
+        // Balanced columns are as short as they can be with the moves
+        // (CSS Multi-column 1, 7.1): where the moved boxes need more columns
+        // than there are, the columns grow to what the grown boxes balance
+        // to, up to a definite height or a maximum, past which the content
+        // continues in overflow columns.
+        let limit = definite_height.or(maximum.map(|maximum| maximum.max(minimum_content)));
+        let balances = context.column_fill != ColumnFillValue::Auto
+            || definite_height.is_none() && maximum.is_none();
+        let (base_items, base_sizes) = (items.clone(), sizes.clone());
+        if balances {
+            // No balanced column is shorter than a box it cannot break.
+            let tallest = shapes
+                .iter()
+                .flatten()
+                .map(|shape| shape.tallest(tree))
+                .fold(column_height, f32::max);
+            column_height = limit.map_or(tallest, |limit| tallest.min(limit));
+        }
+        let mut attempts = 0;
+        loop {
+            items.clone_from(&base_items);
+            sizes.clone_from(&base_sizes);
+            pushes = push_all(tree, &mut items, &mut sizes, column_height)?;
+            if !balances || limit.is_some_and(|limit| column_height >= limit - EPSILON) {
+                break;
+            }
+            let placements = place_items(tree, &items, column_height)?;
+            if placements.columns_used() <= context.column_count {
+                break;
+            }
+            attempts += 1;
+            let taller =
+                balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0);
+            let taller = limit.map_or(taller, |limit| taller.min(limit));
+            if attempts > MAX_MONOLITHIC_BALANCE_ATTEMPTS || !taller.is_finite() {
+                return None;
+            }
+            column_height = taller;
+        }
+    }
+    let column_height = column_height;
+    let placements = place_items(tree, &items, column_height)?;
     let (child_pieces, wrapped_leaf_pieces) =
         pieces_of_children(&spans, &wrapped, &placements, column_height)?;
     // The pieces of a flex container that breaks between its items fill
@@ -3323,6 +3426,12 @@ pub(super) fn layout(
     for (id, shift) in moves {
         let mut layout = tree.nodes[id].layout;
         layout.location.y += shift;
+        tree.set_unrounded_layout(NodeId::from(id), &layout);
+    }
+    for &(id, shift, growth) in pushes.iter().flatten().flat_map(|moved| &moved.changes) {
+        let mut layout = tree.nodes[id].layout;
+        layout.location.y += shift;
+        layout.size.height += growth;
         tree.set_unrounded_layout(NodeId::from(id), &layout);
     }
     tree.fragment_tree.retire_previous_roots(parent);
