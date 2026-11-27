@@ -73,6 +73,9 @@ fn assert_cases(cases: &[(&str, &str, &str, Rect)]) {
 
 const TEXT: &str = "xxxx yy";
 
+/// Three items 15px tall and 10px, 15px and 10px wide.
+const WRAPPED: &str = "<div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div>";
+
 /// One word 500px long.
 const LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
@@ -188,6 +191,9 @@ fn a_flex_or_grid_container_takes_the_limit() {
         ("position:relative", "position:absolute;display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
         ("display:grid", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
         ("display:flex;align-items:start", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        // A wrapping column is as tall as its lines side by side are wide at
+        // its stated width.
+        ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:max-content", WRAPPED, (8.0, 8.0, 20.0, 45.0)),
         // A keyword width limit is the block size of the content.
         ("", "display:grid;width:5px;height:100px;min-width:min-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
         ("", "display:flex;flex-direction:column;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 30.0, 30.0)),

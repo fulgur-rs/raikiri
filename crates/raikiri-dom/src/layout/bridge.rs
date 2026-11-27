@@ -1067,7 +1067,6 @@ pub(super) fn honors_content_limits(
     }
     if cv.display.is_block_flex_or_grid_container()
         && lays_out_vertically(cascade, idx)
-        && !cv.multicol_flow
         && !crate::paint_rules::is_replaced_element(doc, idx)
         && !in_vertical_block_flow(doc, cascade, idx, cv)
     {

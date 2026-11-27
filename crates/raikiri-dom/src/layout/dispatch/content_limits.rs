@@ -384,8 +384,9 @@ fn vertical_inline_bounds(
         let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
         use LengthProperty::*;
         // A flex or grid container measures its inline size without its
-        // block-axis limits, as `automatic_height` measures a horizontal one
-        // without its inline-axis limits.
+        // block-axis limits but at its stated block size, which a column
+        // container wraps its lines in: a wrapping column of items is as tall
+        // as its lines side by side are wide at that size.
         let properties: &[LengthProperty] = if is_flex_grid_container(tree, idx) {
             &[Height, MinHeight, MaxHeight, MinWidth, MaxWidth]
         } else {
@@ -3357,10 +3358,10 @@ impl MeasureKey {
         let style = tree.physical_style(node);
         let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
         let (padding, border) = (style.padding(), style.border());
-        // A vertical flex or grid container is measured on its own axes,
-        // which keep the sizes across the measured one like any vertical box.
+        // A vertical flex or grid container keeps the sizes across its block
+        // size like any vertical box while that size is measured.
         let flex_grid =
-            is_flex_grid_container(tree, node) && !resolves_on_vertical_axes(tree, node);
+            is_flex_grid_container(tree, node) && !(width && resolves_on_vertical_axes(tree, node));
         // Key only the cross-axis sizes that the probe deliberately preserves.
         let cross_sizes = if width && flex_grid {
             [None; 3]
@@ -3780,14 +3781,7 @@ fn width_bounds(
         };
         let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
         use LengthProperty::*;
-        let vertical_ratio = flex_grid_container
-            && super::block_right_to_left(tree, idx).is_some()
-            && tree.physical_style(idx).stated_aspect_ratio().is_some();
-        // The physical height is the inline size of a vertical box.
-        // Keep its effective value while measuring its block size.
-        let properties: &[LengthProperty] = if vertical_ratio {
-            &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
-        } else if flex_grid_container {
+        let properties: &[LengthProperty] = if flex_grid_container {
             &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
         } else {
             &[Width, MinWidth, MaxWidth]
