@@ -15,7 +15,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
 use raikiri_layout_style::values::ExpandedLengthPercentage;
-use raikiri_style::property::BreakInside;
+use raikiri_style::property::{BorderCollapseValue, BreakInside, VerticalAlign};
 use std::collections::HashMap;
 
 mod paged;
@@ -567,7 +567,7 @@ fn sliceable_flex_container(
     block_size: Option<f32>,
 ) -> Option<bool> {
     let style = style_of(tree, child);
-    if !is_flex_or_grid(tree, child)
+    if !is_sliced_formatting_container(tree, child)
         || style.inset() != Edges::splat(LengthPercentageAuto::auto())
         || style.float().is_floated()
         || style.clear() != Clear::None
@@ -707,13 +707,16 @@ fn sliceable_flex_container(
 /// inside it stays there.
 fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
     let display = layout_node(tree, id).display();
-    debug_assert!(matches!(
-        display,
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
-    ));
+    debug_assert!(
+        matches!(
+            display,
+            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
+        ) || is_table_part(display)
+    );
     let style = style_of(tree, id);
     let cascade = tree.style_views.cascade();
     display != DisplayValue::Grid
+        && !is_table_part(display)
         && (display != DisplayValue::Flex
             || !style.flex_wraps()
                 && !style.flex_direction_is_reversed()
@@ -750,10 +753,11 @@ fn is_sliceable_flex_box(
 ) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
-    matches!(
+    (matches!(
         node.display(),
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
-    ) && is_horizontal(node)
+    ) || is_table_part(node.display()) && is_sliceable_table_part(tree, id))
+        && is_horizontal(node)
         && !node.size_containment.height
         && (matches!(
             node.layout_position(),
@@ -805,13 +809,54 @@ fn breaks_between_items(tree: &LayoutSession<'_>, id: usize) -> bool {
     }
 }
 
-/// Whether `id` is a flex or grid container, which the stream slices whole
-/// when it can (see [`sliceable_flex_container`]).
-fn is_flex_or_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
+/// Whether `id` is a flex, grid or table container, which the stream slices
+/// whole when it can (see [`sliceable_flex_container`]).
+fn is_sliced_formatting_container(tree: &LayoutSession<'_>, id: usize) -> bool {
     matches!(
         layout_node(tree, id).display(),
-        DisplayValue::Flex | DisplayValue::Grid
+        DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
     )
+}
+
+/// Whether `display` is that of a table or of a box inside one.
+fn is_table_part(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::Table
+            | DisplayValue::TableCaption
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+            | DisplayValue::TableCell
+    )
+}
+
+/// Whether a table, or a box inside one, can be cut wherever a column ends
+/// as the rest of the container is, as Chromium cuts the rows and cells of a
+/// table whose cells hold no lines. A break between two rows drops the
+/// vertical border spacing there (CSS Tables 3, 3.8), and a cell whose border
+/// edges or aligned content (CSS Tables 3, 6.3) the break moves would not
+/// match the pieces of a box laid out whole, so those keep the other
+/// strategies.
+fn is_sliceable_table_part(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = &tree.nodes[id];
+    match node.display() {
+        DisplayValue::Table => {
+            node.border_collapse == BorderCollapseValue::Collapse
+                || node.border_spacing.vertical.0 <= 0.0
+        }
+        DisplayValue::TableCell => {
+            let style = style_of(tree, id);
+            let zero = LengthPercentage::length(0.0);
+            let border = style.border();
+            border.top == zero
+                && border.bottom == zero
+                && (in_flow_elements(tree, id).is_empty()
+                    || layout_node(tree, id).table_vertical_align == VerticalAlign::Top)
+        }
+        _ => true,
+    }
 }
 
 /// The rendered element children of `id` in flow.
@@ -3068,14 +3113,14 @@ pub(super) fn layout(
         .iter()
         .zip(&sizes)
         .map(|(&child, size)| {
-            is_flex_or_grid(tree, child)
+            is_sliced_formatting_container(tree, child)
                 && sliceable_flex_container(tree, child, Some(size.height)).is_some()
         })
         .collect();
     if children
         .iter()
         .zip(&sliced_flex)
-        .any(|(&child, &flex)| is_flex_or_grid(tree, child) && !flex)
+        .any(|(&child, &flex)| is_sliced_formatting_container(tree, child) && !flex)
     {
         return None;
     }

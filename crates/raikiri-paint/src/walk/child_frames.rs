@@ -655,16 +655,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let (document, cascade) = (self.document, self.cascade);
         match plan.multicol_clip_height {
             // A grid or table that layout placed whole is cut at the column
-            // end. A grid that layout broke into column pieces is drawn in
-            // them; tables are never broken that way.
+            // end. One that layout broke into column pieces is drawn in them.
             Some(clip_height)
                 if document.get_node(child).is_some_and(|child_node| {
                     (cascade.computed[child].display.is_grid_container()
-                        && !self.split_nodes.contains(&child)
                         || matches!(
                             cascade.computed[child].display,
                             DisplayValue::Table | DisplayValue::InlineTable
-                        )) && child_node.kind() == NodeKind::Element
+                        ))
+                        && !self.split_nodes.contains(&child)
+                        && child_node.kind() == NodeKind::Element
                 }) =>
             {
                 Some(clip_height)
