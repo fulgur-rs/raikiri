@@ -1516,17 +1516,21 @@ fn text_under_a_moved_clip_in_columns_has_no_runs_and_a_warning() {
         "",
         "i",
     );
+}
+
+#[test]
+fn a_column_fragment_clip_moves_with_its_own_offset() {
     // The painter clips each column fragment of a padded paragraph where it
-    // draws that fragment.
-    assert_omitted(
+    // draws that fragment, its own offset included, so the clip keeps the
+    // lines it holds.
+    assert_cases_match_paint(&[(
         &format!(
             "<p>kept</p><div style=\"columns: 2; height: 40px\">\
              <p id=\"f\" style=\"position: relative; left: 4px; top: 3px; padding: 2px 0\">{}</p></div>",
             vec!["word"; 40].join(" ")
         ),
         "",
-        "f",
-    );
+    )]);
 }
 
 #[test]

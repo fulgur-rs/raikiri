@@ -12,28 +12,66 @@ const ORIGIN: FragmentRect = FragmentRect {
     height: 0.0,
 };
 
-/// Whether `fragments` cut a paragraph that paints with an offset of its own,
-/// a `position: relative` inset or a transform. A cut piece is clipped at its
-/// column and the painter moves the offset inside that clip, so the page
-/// would not report the runs of its lines; such a paragraph stays in the
-/// columns that the pages cut.
-fn cuts_shifted_paragraph(
+/// Whether `fragments` cut a paragraph whose own offset, a `position:
+/// relative` inset or a translation, the pages cannot follow. The painter
+/// places the column clip of a cut piece from where it paints the
+/// paragraph, so the clip moves with the lines and each piece still shows
+/// the lines it holds. A line is reported on the page that holds its
+/// middle, so an offset of half a line or more would report the edge lines
+/// of a piece on another page than the one that paints them. A transform
+/// that does more than translate, or translates by a percentage, resolves
+/// against the size of the box, which the pieces of a filled page do not
+/// keep.
+fn shift_leaves_its_pages(
     tree: &LayoutSession<'_>,
     fragments: &[paragraph_group::PagedFragment],
 ) -> bool {
     let cascade = tree.style_views.cascade();
-    fragments.iter().any(|fragment| {
-        fragment.clip.is_some()
-            && (crate::layout::used_relative_offset_for_layout(
+    fragments
+        .iter()
+        .filter(|fragment| fragment.clip.is_some())
+        .any(|fragment| {
+            let mut dy = crate::layout::used_relative_offset_for_layout(
                 tree.document,
                 cascade,
                 fragment.child,
-            ) != (0.0, 0.0)
-                || cascade
-                    .computed
-                    .get(fragment.child)
-                    .is_some_and(|values| !values.transform.is_empty()))
-    })
+            )
+            .1;
+            if let Some(values) = cascade.computed.get(fragment.child)
+                && !values.transform.is_empty()
+            {
+                if !crate::page_projection::paint_transform::translation_only(values)
+                    || values
+                        .transform
+                        .iter()
+                        .any(|function| function.translates_by_percent())
+                {
+                    return true;
+                }
+                dy += values
+                    .transform
+                    .iter()
+                    .map(|function| function.translation(0.0, 0.0).unwrap_or_default().1 as f32)
+                    .sum::<f32>();
+            }
+            if dy == 0.0 {
+                return false;
+            }
+            let shortest = tree.nodes[fragment.child]
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .and_then(|lines| {
+                    lines
+                        .lines
+                        .get(fragment.line_start..fragment.line_end)?
+                        .iter()
+                        .map(|line| line.block_size())
+                        .reduce(f32::min)
+                })
+                .unwrap_or(0.0);
+            dy.abs() >= shortest / 2.0 - EPSILON
+        })
 }
 
 /// Whether `owner`, or a box around it, is an atomic inline such as an
@@ -311,7 +349,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 columns_page_for,
                 work,
             )?
-            .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
+            .filter(|planned| !shift_leaves_its_pages(tree, &planned.fragments))
             {
                 let new_end = planned.end;
                 if let Some((spanner, first, natural)) = first_content

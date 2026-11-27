@@ -536,22 +536,61 @@ fn a_paragraph_that_is_shifted_keeps_its_runs_where_it_stays_whole() {
 }
 
 #[test]
-fn a_paragraph_that_is_cut_and_shifted_keeps_its_runs() {
-    // A piece of a paragraph is clipped at its column, and the painter moves
-    // the paragraph's own offset inside that clip, so the runs of the pieces
-    // are not reported. The paragraph stays in the columns that the pages cut,
-    // where all its lines are reported.
-    for shift in [
-        "p{position:relative;top:3px}",
-        "p{transform:translate(5px,3px)}",
+fn a_paragraph_that_is_cut_and_shifted_fills_each_page_in_column_order() {
+    // The painter moves the clip of each piece with the paragraph's own
+    // offset, so the pages report the runs of every piece where the
+    // paragraph's own offset puts them.
+    for (shift, x, y) in [
+        ("p{position:relative;top:3px}", 0, 3),
+        ("p{position:relative;top:-9px}", 0, -9),
+        ("p{position:relative;left:7px}", 7, 0),
+        ("p{transform:translate(5px,3px)}", 5, 3),
     ] {
-        let mut texts: Vec<_> = lines(&mc(&par("L", 1, 45)), shift)
-            .into_iter()
-            .map(|line| line.3)
-            .collect();
+        let right = 100 + x;
+        assert_eq!(
+            columns(&mc(&par("L", 1, 45)), shift),
+            [
+                format!("p0 x{x}: L1-L10@{y}"),
+                format!("p0 x{right}: L11-L20@{y}"),
+                format!("p1 x{x}: L21-L30@{y}"),
+                format!("p1 x{right}: L31-L40@{y}"),
+                format!("p2 x{x}: L41-L43@{y}"),
+                format!("p2 x{right}: L44-L45@{y}"),
+            ],
+            "{shift}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_shifted_past_its_pages_stays_in_the_columns_the_pages_cut() {
+    // An offset of half a line or more would report the edge lines of a
+    // piece on another page than the one that paints them. Such a paragraph
+    // stays in the columns that the pages cut, where every line is reported
+    // once.
+    for (shift, y) in [
+        ("p{position:relative;top:-15px}", -15),
+        ("p{position:relative;top:10px}", 10),
+        ("p{transform:translate(0,10px)}", 10),
+    ] {
+        let lines = lines(&mc(&par("L", 1, 45)), shift);
+        let mut texts: Vec<_> = lines.iter().map(|line| line.3.clone()).collect();
         texts.sort_by_key(|text| text[1..].parse::<u32>().unwrap());
         let expected: Vec<_> = (1..=45).map(|n| format!("L{n}")).collect();
         assert_eq!(texts, expected, "{shift}");
+        let right = lines
+            .iter()
+            .filter(|line| line.0 == 0 && line.1 == 100)
+            .min_by_key(|line| line.2)
+            .unwrap();
+        assert_eq!((right.2, right.3.as_str()), (y, "L24"), "{shift}");
+    }
+    // A transform that does more than translate, or translates by a
+    // percentage, resolves against the box size the pieces of a filled page
+    // do not keep. The runs of a transformed paragraph in columns are not
+    // reported either way.
+    for shift in ["p{transform:translate(0,10%)}", "p{transform:rotate(1deg)}"] {
+        assert!(lines(&mc(&par("L", 1, 45)), shift).is_empty(), "{shift}");
     }
 }
 
