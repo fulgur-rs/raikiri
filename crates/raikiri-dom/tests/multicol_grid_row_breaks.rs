@@ -210,6 +210,15 @@ const CASES: &[(&str, Expected)] = &[
             ("b", &[[58.0, 8.0, 50.0, 30.0]]),
         ],
     ),
+    // An empty track between rows goes with the row above it.
+    (
+        "<div style='width:100px;height:100px;columns:2;column-gap:0;column-fill:auto'><div id=g style='display:grid;grid-template-rows:30px 40px 50px'><div id=a style='grid-row:1'></div><div id=b style='grid-row:3;break-inside:avoid'></div></div></div>",
+        &[
+            ("g", &[[8.0, 8.0, 50.0, 100.0], [58.0, 8.0, 50.0, 50.0]]),
+            ("a", &[[8.0, 8.0, 50.0, 30.0]]),
+            ("b", &[[58.0, 8.0, 50.0, 50.0]]),
+        ],
+    ),
 ];
 
 #[test]

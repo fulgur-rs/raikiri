@@ -1810,3 +1810,13 @@ fn security_fragment_budget_stops_inside_a_grid_row() {
     assert!(fragments.iter().any(|fragment| fragment.node_id == first));
     assert!(fragments.iter().all(|fragment| fragment.node_id != last));
 }
+
+#[test]
+fn a_forced_break_beside_an_empty_grid_track_keeps_the_existing_strategy() {
+    for (edge, rows) in [("break-after:column", false), ("break-inside:avoid", true)] {
+        let doc = laid_out(&format!(
+            r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px"><div id="grid" style="display:grid;grid-template-rows:30px 40px 50px"><div style="grid-row:1;{edge}"></div><div style="grid-row:3;break-inside:avoid"></div></div></div>"#
+        ));
+        assert_eq!(boxes(&doc, "grid").len() == 2, rows, "{edge}");
+    }
+}

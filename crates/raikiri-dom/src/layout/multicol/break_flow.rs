@@ -392,6 +392,26 @@ fn row_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
                     || item.break_after != BreakBetween::Auto
                     || item.break_inside != BreakInside::Auto
             })
+        // A forced break next to an empty track is not where a row box that
+        // absorbs the track would put it.
+        && (rows_are_contiguous(&node.grid_item_rows)
+            || !items.iter().map(|&item| layout_node(tree, item)).any(|item| {
+                forced(item.break_before) || forced(item.break_after)
+            }))
+}
+
+/// Whether the items fill every row from the top of the grid down. The row
+/// boxes absorb an empty track between or above them.
+fn rows_are_contiguous(rows: &[crate::node::GridItemRow]) -> bool {
+    let mut starts: Vec<_> = rows.iter().map(|row| row.start).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    rows.iter()
+        .filter(|row| Some(&row.start) == starts.first())
+        .all(|row| row.block_start <= 0.0)
+        && starts
+            .windows(2)
+            .all(|pair| pair[0].checked_add(1) == Some(pair[1]))
 }
 
 /// The row gap of the grid `id`, when it is a length: a percentage resolves
