@@ -337,11 +337,12 @@ pub struct Document {
     /// before them, as the text after them does. Sorted, and dirties the
     /// layout cache the same way.
     pub(crate) named_break_floats: Vec<usize>,
-    /// The boxes in the flow of a float where a change of page type forces
-    /// a page break before (`true`) or after (`false`) them, as the last
-    /// paged layout found them. Sorted, and dirties the layout cache the same
+    /// The boxes where a change of page type that no box or text of the
+    /// page flow takes forces a page break before (`true`) or after
+    /// (`false`) them: in the flow of a float, and before generated
+    /// `::after` text, as the last paged layout found them. Sorted, and dirties the layout cache the same
     /// way.
-    pub(crate) float_flow_named_breaks: Vec<(usize, bool)>,
+    pub(crate) page_name_breaks: Vec<(usize, bool)>,
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
@@ -646,7 +647,7 @@ impl Document {
             forced_break_float_floor: Vec::new(),
             forced_break_line_float_floor: Vec::new(),
             named_break_floats: Vec::new(),
-            float_flow_named_breaks: Vec::new(),
+            page_name_breaks: Vec::new(),
             clearance_breaks: None,
             ifc: None,
             normal_line_height: None,
@@ -2146,7 +2147,7 @@ impl Document {
             forced_break_float_floor: _,
             forced_break_line_float_floor: _,
             named_break_floats: _,
-            float_flow_named_breaks: _,
+            page_name_breaks: _,
             clearance_breaks: _,
             ifc,
             normal_line_height,
