@@ -183,30 +183,6 @@ fn has_block_size(style: &LayoutStyleView<'_>) -> bool {
         || style.aspect_ratio().is_some()
 }
 
-/// Whether a row of the grid laid out with `style` is at least a positive
-/// length tall whatever its items hold: an explicit row, or with `items` an
-/// implicit one, whose minimum track size is such a length. Percentages are
-/// left out, as the grid's own block size is what they would resolve
-/// against.
-fn rows_have_a_length(style: &LayoutStyleView<'_>, items: bool) -> bool {
-    use taffy::{GenericRepetition as _, GridContainerStyle as _};
-    let style = raikiri_layout_style::TaffyStyle::new(*style);
-    let length = |track: taffy::TrackSizingFunction| {
-        track
-            .min
-            .definite_value(None, |_, _| 0.0)
-            .is_some_and(|px| px > 0.0)
-    };
-    style.grid_template_rows().is_some_and(|mut components| {
-        components.any(|component| match component {
-            taffy::GenericGridTemplateComponent::Single(track) => length(track),
-            taffy::GenericGridTemplateComponent::Repeat(repetition) => {
-                repetition.tracks().any(length)
-            }
-        })
-    }) || items && style.grid_auto_rows().any(length)
-}
-
 /// The rendered element children of `parent`, with those of a `display:
 /// contents` child in its place. Text that renders gives a box lines, which
 /// the callers refuse, so any other node is collapsible white space.
@@ -579,7 +555,11 @@ fn sliceable_flex_container(
         }
         // Rows of a length give a grid container a block size of its own.
         sized |= has_block_size(&style)
-            || grid && rows_have_a_length(&style, !in_flow_elements(tree, id).is_empty());
+            || grid
+                && crate::layout::taffy_adapter::RowSizing::have_a_length(
+                    &style,
+                    !in_flow_elements(tree, id).is_empty(),
+                );
         // A break before the first box in flow inside a block, or after the
         // last, is a break before or after the block itself (CSS
         // Fragmentation 3, 3.1), and one before or after a flex item falls
