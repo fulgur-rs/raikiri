@@ -318,3 +318,22 @@ fn the_last_group_fills_in_turn_below_a_maximum_height() {
         ],
     );
 }
+
+#[test]
+fn a_minimum_height_above_the_maximum_bounds_the_last_group() {
+    assert_boxes(
+        "<div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;min-height:60px;max-height:40px'><span id=a>A</span><br><span id=b>B</span><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br><span id=l2>L</span><br><span id=l3>L</span><br><span id=l4>L</span><br><span id=l5>L</span><br><span id=l6>L</span><br><span id=l7>L</span><br><span id=l8>L</span><br><span id=l9>L</span><br></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 60.0]),
+            ("a", [8.0, 8.0, 10.0, 10.0]),
+            ("b", [108.0, 8.0, 10.0, 10.0]),
+            ("s", [8.0, 18.0, 200.0, 10.0]),
+            ("l0", [8.0, 28.0, 10.0, 10.0]),
+            ("l3", [8.0, 58.0, 10.0, 10.0]),
+            ("l4", [108.0, 28.0, 10.0, 10.0]),
+            ("l7", [108.0, 58.0, 10.0, 10.0]),
+            ("l8", [208.0, 28.0, 10.0, 10.0]),
+            ("l9", [208.0, 38.0, 10.0, 10.0]),
+        ],
+    );
+}

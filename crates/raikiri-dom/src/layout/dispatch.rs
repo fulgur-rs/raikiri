@@ -3096,7 +3096,8 @@ fn measure_ifc_root(
                 // The groups fill no more than what the used height leaves
                 // of the content box, or a maximum height when the height
                 // is auto, and go on in more columns past it.
-                let maximum = Some(measure.height_bounds.1).filter(|height| height.is_finite());
+                let maximum = Some(measure.height_bounds.1.max(measure.height_bounds.0))
+                    .filter(|height| height.is_finite());
                 let context = crate::fragment::FragmentationContext {
                     available_height: measure.definite_height.or(maximum),
                     ..context
