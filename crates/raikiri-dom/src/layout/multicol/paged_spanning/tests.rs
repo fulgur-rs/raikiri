@@ -215,6 +215,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         &entries,
         context,
         0.0,
+        None,
         &|_| (0, 0.0, 60.0),
         &mut work,
     );
@@ -227,6 +228,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
             &entries,
             context,
             0.0,
+            None,
             &|_| (0, 0.0, height),
             &mut work,
         );

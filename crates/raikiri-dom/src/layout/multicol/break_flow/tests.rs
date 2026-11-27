@@ -1741,3 +1741,82 @@ fn justify_self_places_wrappers_and_monolithic_boxes_in_their_column() {
     assert_eq!(boxes(&doc, "wrapper"), vec![(0, 30.0, 0.0, 20.0, 150.0)]);
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 65.0, 0.0, 20.0, 50.0)]);
 }
+
+#[test]
+fn grid_rows_split_only_for_grids_this_strategy_can_settle() {
+    for (grid, item, rows) in [
+        ("row-gap:10px", "", true),
+        ("row-gap:0%", "", true),
+        ("row-gap:10%", "", false),
+        ("row-gap:calc(10% + 1px)", "", false),
+        ("", "x", false),
+        ("", "<div></div>", false),
+        ("", "<div style=\"break-inside:avoid\"></div>", false),
+    ] {
+        let doc = laid_out(&format!(
+            r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px"><div id="grid" style="display:grid;{grid}"><div style="height:60px">{item}</div><div style="height:50px;break-inside:avoid"></div></div></div>"#
+        ));
+        assert_eq!(boxes(&doc, "grid").len() == 2, rows, "{grid} {item}");
+    }
+}
+
+#[test]
+fn security_fragment_budget_stops_inside_a_grid_row() {
+    let mut markup = String::from(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='display:grid;grid-template-columns:repeat(4,25px)'>",
+    );
+    for index in 0..8 {
+        markup.push_str(&format!(
+            "<div id='item-{index}' style='height:10px;break-inside:avoid'></div>"
+        ));
+    }
+    markup.push_str("</div></div>");
+    // Enough nodes that the work allowance outgrows the fragment cap.
+    markup.push_str(&"<div style='display:none'></div>".repeat(3000));
+    let mut doc = laid_out(&markup);
+    let root = id(&doc, "columns");
+    let first = id(&doc, "item-0");
+    let last = id(&doc, "item-7");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    let filler = fragment(
+        root,
+        None,
+        0,
+        FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        },
+    );
+    let limit = doc.fragment_tree.limit;
+    doc.fragment_tree.clear();
+    doc.fragment_tree
+        .replace_finalized_fragments(vec![filler; limit - 4]);
+    layout(
+        &mut doc,
+        root,
+        context,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+        Point::ZERO,
+    );
+    let fragments = &doc.layout_fragments()[limit - 4..];
+    assert!(doc.fragment_tree.limit_exceeded);
+    assert!(fragments.iter().any(|fragment| fragment.node_id == first));
+    assert!(fragments.iter().all(|fragment| fragment.node_id != last));
+}
+
+#[test]
+fn a_forced_break_beside_an_empty_grid_track_keeps_the_existing_strategy() {
+    for (edge, rows) in [("break-after:column", false), ("break-inside:avoid", true)] {
+        let doc = laid_out(&format!(
+            r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px"><div id="grid" style="display:grid;grid-template-rows:30px 40px 50px"><div style="grid-row:1;{edge}"></div><div style="grid-row:3;break-inside:avoid"></div></div></div>"#
+        ));
+        assert_eq!(boxes(&doc, "grid").len() == 2, rows, "{edge}");
+    }
+}

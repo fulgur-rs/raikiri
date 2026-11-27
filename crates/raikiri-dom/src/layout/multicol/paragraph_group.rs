@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
 type Measurement = (usize, LayoutOutput, BoxLayout, f32, f32, f32);
@@ -599,6 +600,14 @@ struct Paragraph {
     /// A forced column break comes before the box, from its own
     /// `break-before` or the `break-after` of the box before it.
     break_before: bool,
+    /// A paragraph that avoids breaks between columns inside it
+    /// (`break-inside: avoid` or `avoid-column`): it goes on whole to the
+    /// next column when the rest of its column is too short for it, and
+    /// breaks between its lines only in a column that holds nothing before
+    /// it, as no other break is left there (Chromium). `avoid-page` asks
+    /// nothing of the breaks between columns, even those that end a page
+    /// (Chromium).
+    avoids_break: bool,
 }
 
 impl Paragraph {
@@ -632,6 +641,7 @@ impl Paragraph {
             overflows: false,
             sliced: false,
             slice_edges: (0.0, 0.0),
+            avoids_break: false,
         }
     }
 
@@ -701,6 +711,7 @@ fn balanced(
         .filter(|paragraph| paragraph.overflows)
         .map(|paragraph| paragraph.extents[0].1)
         .fold(0.0, f32::max);
+    let monolithic = monolithic.max(avoided_height(paragraphs, FlowCursor::default(), None));
     // A break between the lines of a paragraph leaves at least its `orphans`
     // before it and its `widows` after it, so the columns are at least as
     // tall as those lines, as Chromium balances them. The widows give way to
@@ -764,6 +775,43 @@ fn balanced(
     };
     let height = divided.max(least);
     Some((group, height))
+}
+
+/// The height of the tallest of the paragraphs from `resume` up to `until`
+/// that avoid breaks inside them: balanced columns are at least that tall,
+/// where they may be, so that no column end cuts such a paragraph
+/// (Chromium). A paragraph that an earlier break cut sets none. The first
+/// paragraph of the flow takes the margins above it too, which no break
+/// before it cuts.
+fn avoided_height(
+    paragraphs: &[Option<Paragraph>],
+    resume: FlowCursor,
+    until: Option<FlowCursor>,
+) -> f32 {
+    let from = resume.paragraph + usize::from(resume.line > 0);
+    let to = until.map_or(paragraphs.len(), |next| next.paragraph);
+    let mut leading = (resume == FlowCursor::default()).then(Margins::default);
+    let mut tallest = 0.0f32;
+    for paragraph in paragraphs.iter().take(to).skip(from).flatten() {
+        let lines = paragraph.extents.first().zip(paragraph.extents.last());
+        let above = match leading {
+            Some(margins) => {
+                let margins = margins.with(paragraph.margin_top);
+                leading = if lines.is_some() {
+                    None
+                } else {
+                    Some(margins.with(paragraph.margin_bottom))
+                };
+                margins.value().max(0.0)
+            }
+            None => 0.0,
+        };
+        if let Some((first, last)) = lines.filter(|_| paragraph.avoids_break) {
+            tallest =
+                tallest.max(above + last.1 - first.0 + paragraph.edge_start + paragraph.edge_end);
+        }
+    }
+    tallest
 }
 
 /// The height of the paragraphs from `resume` in one column, with the margins
@@ -1049,6 +1097,7 @@ fn collect(
                 held_extents: Vec::new(),
                 overflows: false,
                 sliced: separates,
+                avoids_break: false,
             }));
             continue;
         }
@@ -1233,12 +1282,12 @@ fn collect(
                 let overflow = style_of(tree, child).overflow();
                 overflow.x == Overflow::Visible && overflow.y == Overflow::Visible
             };
-        if !can_balance_paragraph_box(tree, child, edges)
+        if !can_balance_paragraph_shape(tree, child, edges)
             || (!empty
                 && !if atomics {
-                    can_balance_atomic_paragraph(tree, child, edges)
+                    can_balance_atomic_paragraph_shape(tree, child, edges)
                 } else {
-                    can_balance_single_paragraph(tree, child)
+                    can_balance_single_paragraph_shape(tree, child)
                 })
             || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                 || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
@@ -1274,6 +1323,7 @@ fn collect(
                 held_extents: Vec::new(),
                 overflows: false,
                 sliced: false,
+                avoids_break: false,
             }));
             continue;
         }
@@ -1310,6 +1360,10 @@ fn collect(
             held_extents: Vec::new(),
             overflows: false,
             sliced: false,
+            avoids_break: matches!(
+                node.break_inside,
+                BreakInside::Avoid | BreakInside::AvoidColumn
+            ),
         }));
         paragraph_count += 1;
     }
@@ -1527,6 +1581,7 @@ fn fill_strictly(
         FlowCursor::default(),
         false,
         true,
+        false,
     )?;
     chunk.next.is_none().then_some(chunk.group)
 }
@@ -1541,12 +1596,23 @@ fn fill_chunk(
     resume: FlowCursor,
     trailing_margin: bool,
 ) -> Option<Chunk> {
-    fill_chunk_with(paragraphs, context, height, resume, trailing_margin, false)
+    fill_chunk_with(
+        paragraphs,
+        context,
+        height,
+        resume,
+        trailing_margin,
+        false,
+        false,
+    )
 }
 
 /// [`fill_chunk`] that, when `strict` is set, places a remainder below a
 /// layout unit that a sliced box leaves past a column end in the next column,
-/// which it drops as rounding otherwise.
+/// which it drops as rounding otherwise. With `follows_content`, content on
+/// the page comes before the first column, so a break before the columns is
+/// left: a paragraph that avoids breaks inside it and that the first column
+/// cannot hold fails the fill, and the columns go on at the next page.
 fn fill_chunk_with(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
@@ -1554,6 +1620,7 @@ fn fill_chunk_with(
     resume: FlowCursor,
     trailing_margin: bool,
     strict: bool,
+    follows_content: bool,
 ) -> Option<Chunk> {
     let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
@@ -1962,6 +2029,19 @@ fn fill_chunk_with(
                     };
                 }
             }
+            // A paragraph that avoids breaks inside it goes on whole to the
+            // next column when this one, below what comes before it, is too
+            // short for it, however tall it is: the break before it is the
+            // one that avoids breaking inside it (Chromium).
+            // So does one in the first column of a page below other content,
+            // which goes on at the next page with the columns.
+            let avoided = paragraph.avoids_break
+                && start == 0
+                && end < line_count
+                && (column_has_content || follows_content && column == 0);
+            if avoided {
+                end = start;
+            }
             // A monolithic box taller than an empty column stays there whole.
             // One that fits a column, but not below its top margin, goes to
             // the next column, where the break cuts the margin (Chromium).
@@ -1981,6 +2061,7 @@ fn fill_chunk_with(
             // wrappers that end with the paragraph follows as entries of its
             // own. Balanced columns grow instead.
             let edge_alone = end <= start
+                && !avoided
                 && held_with_edge
                 && !column_has_content
                 && !paragraph.cloned
@@ -2282,7 +2363,7 @@ pub(super) fn fill_rows(
         let mut divided = 0.0;
         if balance {
             let next = chunk.next;
-            let mut low = 0.0;
+            let mut low = avoided_height(&paragraphs, resume, next).min(capacity);
             let mut high = capacity;
             for _ in 0..32 {
                 if high - low <= 0.001 {
@@ -2431,6 +2512,7 @@ pub(super) fn paginate(
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
+    break_before: Option<u32>,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<Option<PagedGroup>, LayoutError> {
@@ -2493,6 +2575,10 @@ pub(super) fn paginate(
         if !work.page_available(page_index)? {
             break;
         }
+        // The columns of a page start no higher than its origin, which is
+        // below the end of the last page when the container repeats its
+        // border and padding there.
+        absolute_y = absolute_y.max(page_origin);
         let capacity = page_origin + page_height - absolute_y;
         if !capacity.is_finite() || capacity <= 0.0 {
             return Ok(None);
@@ -2500,7 +2586,20 @@ pub(super) fn paginate(
         // A fill visits the paragraphs from `resume` until the page's columns
         // are full; charge what it visited. Placing lines is logarithmic in
         // a paragraph's lines, and each placed range is charged below.
-        let filled = fill_chunk(&paragraphs, context, capacity, resume, false);
+        // Content before the columns on their first page, the page
+        // `break_before` names, leaves a break before them.
+        let follows_content = break_before == Some(page_index)
+            && resume == FlowCursor::default()
+            && absolute_y > page_origin + 0.001;
+        let filled = fill_chunk_with(
+            &paragraphs,
+            context,
+            capacity,
+            resume,
+            false,
+            false,
+            follows_content,
+        );
         work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
         let Some(mut chunk) = filled else {
             // A short remainder can contain fewer lines than the paragraph's
@@ -2514,7 +2613,7 @@ pub(super) fn paginate(
         };
         let mut divided = 0.0;
         if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
-            let mut low = 0.0;
+            let mut low = avoided_height(&paragraphs, resume, None).min(capacity);
             let mut high = capacity;
             for _ in 0..32 {
                 if high - low <= 0.001 {

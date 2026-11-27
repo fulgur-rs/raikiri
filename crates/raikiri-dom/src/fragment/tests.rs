@@ -393,3 +393,40 @@ pub(super) fn record_index_work(kind: usize, count: usize) {
         work.set(counts);
     });
 }
+
+#[test]
+fn a_column_width_with_a_count_repeats_the_larger_of_it_and_the_content() {
+    // The max-content width of each column is the larger of the column width
+    // and the content, and the min-content width is not repeated.
+    let style = intrinsic_style(Some(3), Some(30.0));
+    assert_eq!(
+        style.intrinsic_inline_sizes((40.0, 640.0), (0.0, 0.0)),
+        (30.0, 1940.0)
+    );
+    assert_eq!(
+        style.intrinsic_inline_sizes((20.0, 20.0), (0.0, 0.0)),
+        (20.0, 110.0)
+    );
+}
+
+#[test]
+fn a_column_width_caps_the_column_count_at_the_columns_that_fit() {
+    let style = |count, width| MulticolStyle {
+        gap_percent: None,
+        ..intrinsic_style(count, width)
+    };
+    // Two 30px columns and their gap need 70px; 30px holds one.
+    let context = FragmentationContext::resolve(30.0, None, style(Some(2), Some(30.0)))
+        .expect("a positive width resolves");
+    assert_eq!(context.column_count, 1);
+    assert_eq!(context.column_width, 30.0);
+    // A count below what fits is kept.
+    let context = FragmentationContext::resolve(200.0, None, style(Some(2), Some(30.0)))
+        .expect("a positive width resolves");
+    assert_eq!(context.column_count, 2);
+    // Neither property: one column as wide as the container.
+    let context = FragmentationContext::resolve(200.0, None, style(None, None))
+        .expect("a positive width resolves");
+    assert_eq!(context.column_count, 1);
+    assert_eq!(context.column_width, 200.0);
+}
