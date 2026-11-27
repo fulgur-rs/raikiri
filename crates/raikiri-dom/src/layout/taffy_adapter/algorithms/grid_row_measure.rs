@@ -36,9 +36,12 @@ pub(crate) fn grid_item_row_rooms(
         })
         .map(NodeId::from_taffy)
         .collect::<Vec<_>>();
-    crate::layout::taffy_adapter::enter_grid_placement(&probe.tree.context, usize::from(node));
-    taffy::compute_grid_layout(&mut probe, node.into_taffy(), inputs.into_taffy());
-    crate::layout::taffy_adapter::leave_grid_placement(&probe.tree.context);
+    crate::layout::taffy_adapter::placing_grid(
+        &mut probe,
+        |probe| &probe.tree.context,
+        usize::from(node),
+        |probe| taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy()),
+    );
     let report = probe.report.expect("grid row measure reports its tracks");
     items
         .into_iter()
@@ -101,10 +104,12 @@ fn native_layout(
 ) -> LayoutOutput {
     probe.flex_calls = (!grid).then(Vec::new);
     let mut output = LayoutOutput::from_taffy(if grid {
-        crate::layout::taffy_adapter::enter_grid_placement(&probe.tree.context, usize::from(node));
-        let output = taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy());
-        crate::layout::taffy_adapter::leave_grid_placement(&probe.tree.context);
-        output
+        crate::layout::taffy_adapter::placing_grid(
+            probe,
+            |probe| &probe.tree.context,
+            usize::from(node),
+            |probe| taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy()),
+        )
     } else {
         taffy::compute_flexbox_layout(probe, node.into_taffy(), inputs.into_taffy())
     });

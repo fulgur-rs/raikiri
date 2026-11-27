@@ -3675,11 +3675,13 @@ fn automatic_height(
     // content-based minimum of an `auto` minimum height leaves them alone. A
     // ratio that a stated height leaves nothing to do still gives them once
     // that height is set aside. The automatic minimum of a flex item, measured
-    // here too, keeps the height of its content.
+    // here too, keeps the height of its content. Replaced content resolves
+    // its keywords with its natural ratio apart from this.
     let own = tree.nodes[idx].content_limits;
     let authored = |size: Dimension| !size.is_auto() && !is_stretch(size);
     let style = tree.physical_style(idx);
     if (authored(own.min.height) || authored(own.max.height))
+        && !is_replaced_content(tree, idx)
         && let Some(ratio) = style.stated_aspect_ratio()
     {
         if style.block_aspect_ratio().is_none() {

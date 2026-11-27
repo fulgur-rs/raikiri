@@ -156,9 +156,12 @@ pub(crate) fn compute_grid_layout(
         .direction()
         .is_rtl();
     with_overflow_direction(tree, node, reversed, |tree| {
-        super::enter_grid_placement(&tree.context, usize::from(node));
-        let output = taffy::compute_grid_layout(tree, node.into_taffy(), inputs.into_taffy());
-        super::leave_grid_placement(&tree.context);
+        let output = super::placing_grid(
+            tree,
+            |tree| &tree.context,
+            usize::from(node),
+            |tree| taffy::compute_grid_layout(tree, node.into_taffy(), inputs.into_taffy()),
+        );
         LayoutOutput::from_taffy(output)
     })
 }

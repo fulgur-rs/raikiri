@@ -204,8 +204,8 @@ impl LayoutGridContainer for LayoutSession<'_> {
         // zero of CSS Grid 1 §6.6. The item it sizes the tracks with is built
         // from the first read, so only that read hides the ratio; the item's
         // own layout and its alignment still use it.
-        if super::placement_read(&self.context, self.taffy_parent_of(item), item)
-            && scrolls_at_a_carried_size(&view)
+        if scrolls_at_a_carried_size(&view)
+            && super::placement_read(&self.context, self.taffy_parent_of(item), item)
         {
             return TaffyStyle::new(view.with_hidden_aspect_ratio());
         }

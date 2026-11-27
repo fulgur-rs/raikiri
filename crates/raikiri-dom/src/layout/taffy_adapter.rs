@@ -44,22 +44,30 @@ pub(crate) use grid_rows::columns_follow_their_items;
 pub(crate) use grid_rows::{RowSizing, columns_have_no_content_minimum, rows_size_to_content};
 pub(crate) use margin_set::CollapsibleMarginSet;
 
-/// Note that the layout library starts laying out the grid container `node`.
+/// Run `layout`, the layout library's layout of the grid container `node`,
+/// with `node` noted as the innermost grid container being laid out.
 ///
 /// The library reads each item's style once to build the item it places and
 /// sizes the tracks with, and again later to align it. The first read of an
 /// item, found by [`placement_read`], may then tell the track sizing what the
-/// alignment does not see. Pair each call with [`leave_grid_placement`].
-pub(crate) fn enter_grid_placement(context: &crate::layout::context::LayoutContext, node: usize) {
-    context
+/// alignment does not see. The note is taken off again even when `layout`
+/// panics, as the other stacks around native layout are.
+pub(crate) fn placing_grid<T, R>(
+    tree: &mut T,
+    context: for<'a> fn(&'a T) -> &'a crate::layout::context::LayoutContext,
+    node: usize,
+    layout: impl FnOnce(&mut T) -> R,
+) -> R {
+    context(tree)
         .grid_placements
         .borrow_mut()
         .push((node, std::collections::HashSet::new()));
-}
-
-/// Note that the layout library is done with the innermost grid container.
-pub(crate) fn leave_grid_placement(context: &crate::layout::context::LayoutContext) {
-    context.grid_placements.borrow_mut().pop();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(tree)));
+    context(tree).grid_placements.borrow_mut().pop();
+    match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// Whether this read of the style of `item`, a child of `parent`, is the one
