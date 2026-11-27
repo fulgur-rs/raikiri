@@ -2017,8 +2017,15 @@ fn multicol_has_min_constrained_child(tree: &LayoutSession<'_>, node_id: usize) 
     })
 }
 
+#[cfg(test)]
 fn can_balance_single_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
-    can_balance_atomic_paragraph(tree, child, BlockEdges::Refused)
+    can_balance_single_paragraph_shape(tree, child) && breaks_inside_freely(tree, child)
+}
+
+/// Whether `child` is a paragraph of text alone whose lines break between
+/// columns, whatever its `break-inside`.
+fn can_balance_single_paragraph_shape(tree: &LayoutSession<'_>, child: usize) -> bool {
+    can_balance_atomic_paragraph_shape(tree, child, BlockEdges::Refused)
         && tree.nodes[child].ifc_boxes().is_empty()
 }
 
@@ -2027,7 +2034,16 @@ fn can_balance_single_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool 
 /// each goes to the column of its line. With `edges`, the paragraph may have
 /// block-edge padding and border (see [`can_balance_paragraph_box`]).
 fn can_balance_atomic_paragraph(tree: &LayoutSession<'_>, child: usize, edges: BlockEdges) -> bool {
-    can_balance_paragraph_box(tree, child, edges)
+    can_balance_atomic_paragraph_shape(tree, child, edges) && breaks_inside_freely(tree, child)
+}
+
+/// [`can_balance_atomic_paragraph`] whatever the `break-inside` of `child`.
+fn can_balance_atomic_paragraph_shape(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    edges: BlockEdges,
+) -> bool {
+    can_balance_paragraph_shape(tree, child, edges)
         && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
         && paragraph_boxes_are_atomic(tree, child)
 }
@@ -2048,6 +2064,17 @@ fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
 /// places the pieces with their edges has: with `edges`, the padding and border
 /// are accepted when the pieces can carry them (see [`cuts_block_edges`]).
 fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: BlockEdges) -> bool {
+    can_balance_paragraph_shape(tree, child, edges) && breaks_inside_freely(tree, child)
+}
+
+/// Whether `child` imposes no constraint on the breaks inside it
+/// (`break-inside: auto`).
+fn breaks_inside_freely(tree: &LayoutSession<'_>, child: usize) -> bool {
+    layout_node(tree, child).break_inside == raikiri_style::property::BreakInside::Auto
+}
+
+/// [`can_balance_paragraph_box`] whatever the `break-inside` of `child`.
+fn can_balance_paragraph_shape(tree: &LayoutSession<'_>, child: usize, edges: BlockEdges) -> bool {
     let node = layout_node(tree, child);
     let layout = node.layout;
     let undecorated = layout.padding.top == 0.0
@@ -2062,7 +2089,6 @@ fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize, edges: Bloc
             // does; an empty one starts a formatting context, so margins do
             // not collapse through it.
             || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
-        && node.break_inside == raikiri_style::property::BreakInside::Auto
         && {
             let style = style_of(tree, child);
             style.size().height.is_auto()

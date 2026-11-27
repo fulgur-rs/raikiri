@@ -199,9 +199,16 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     &mut shifts,
                 );
                 delta = planned.end - (old.context.origin_y + old.height);
-            } else if let Some(planned) =
-                paragraph_group::paginate(tree, &entries, context, owner_y, page_for, work)?
-                    .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
+            } else if let Some(planned) = paragraph_group::paginate(
+                tree,
+                &entries,
+                context,
+                owner_y,
+                previous_spanner.is_some() || has_content_before(tree, owner),
+                page_for,
+                work,
+            )?
+            .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
                 let new_end = planned.end;
                 if let Some((spanner, first, natural)) = first_content
@@ -857,6 +864,36 @@ impl FragmentEdits {
         tree.fragment_tree.replace_finalized_fragments(updated);
         Ok(())
     }
+}
+
+/// Whether in-flow content comes before `owner` in the flow that holds it,
+/// or before one of its ancestors: a break before the columns is left there
+/// (CSS Fragmentation 3, 4.4).
+fn has_content_before(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let mut node = owner;
+    while let Some(parent) = tree.parent_of(node) {
+        let before = tree.children_through_contents(parent);
+        let content = before
+            .iter()
+            .take_while(|&&child| child != node)
+            .any(|&child| {
+                let sibling = &tree.nodes[child];
+                let in_flow_box = sibling.kind() == NodeKind::Element
+                    && !crate::layout::page_pipeline::is_out_of_flow_positioned(tree, child)
+                    && !style_of(tree, child).float().is_floated();
+                // Text other than white space between blocks makes lines.
+                let text = sibling.kind() == NodeKind::Text
+                    && sibling
+                        .text_content()
+                        .is_some_and(|text| !text.trim_ascii().is_empty());
+                sibling.is_in_document() && !sibling.is_display_none() && (in_flow_box || text)
+            });
+        if content {
+            return true;
+        }
+        node = parent;
+    }
+    false
 }
 
 #[cfg(test)]
