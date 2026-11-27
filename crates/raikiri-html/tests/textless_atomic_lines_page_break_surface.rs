@@ -2,19 +2,19 @@
 //! inline-blocks alone, break at a page end as lines of text do: a line that
 //! crosses the page end starts the next page, the `orphans` and `widows` of
 //! the paragraph count its lines, blank ones left by `<br>` included, and a
-//! paragraph that moves whole takes its box along. Where each glyph falls is
-//! what Chromium prints for the same documents on pages 100px square, with
-//! Ahem glyphs of 20px on lines of 30px.
+//! paragraph that moves whole takes its box along. A paragraph of `<br>`
+//! line breaks alone breaks between its blank lines the same way. Where each
+//! glyph and box falls is what Chromium prints for the same documents on
+//! pages 100px square, with Ahem glyphs of 20px on lines of 30px.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
+    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// The page, glyph, left edge and glyph top of every glyph of text in
-/// `body`, laid out on the pages and with the font of the Chromium documents.
-fn glyphs(body: &str) -> Vec<(u32, char, i32, i32)> {
+/// `body` laid out on the pages and with the font of the Chromium documents.
+fn lay_out(body: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -36,6 +36,13 @@ fn glyphs(body: &str) -> Vec<(u32, char, i32, i32)> {
     .unwrap() else {
         panic!("layout must complete")
     };
+    result
+}
+
+/// The page, glyph, left edge and glyph top of every glyph of text in
+/// `body`.
+fn glyphs(body: &str) -> Vec<(u32, char, i32, i32)> {
+    let result = lay_out(body);
     let mut glyphs = Vec::new();
     for index in 0..result.page_count() {
         let page = result.page(index).unwrap();
@@ -335,4 +342,71 @@ fn a_line_moved_down_with_a_blank_line_breaks_again_at_the_next_page_end() {
         ),
         [(0, 'A', 0, 5), (2, 'C', 0, 5)]
     );
+}
+
+/// The page, top and bottom of each fragment of the box with `id` in `body`.
+fn extents(body: &str, id: &str) -> Vec<(u32, f32, f32)> {
+    let result = lay_out(body);
+    let mut extents = Vec::new();
+    for index in 0..result.page_count() {
+        let page = result.page(index).unwrap();
+        let dom = page.dom();
+        for fragment in page.fragments() {
+            if dom.attr(fragment.node(), "id") == Some(id) {
+                let rect = fragment.rect();
+                extents.push((index, rect.y, rect.y + rect.height));
+            }
+        }
+    }
+    extents
+}
+
+/// A box of `height` above a paragraph `p` of `breaks` line breaks alone,
+/// styled with `style`, and a box `z` of 10px below it.
+fn blank_lines(height: u32, style: &str, breaks: usize) -> String {
+    format!(
+        "<div style='height:{height}px'></div><div id=p style='{style}'>{}</div>\
+         <div id=z style='height:10px'></div>",
+        "<br>".repeat(breaks)
+    )
+}
+
+#[test]
+fn a_paragraph_of_blank_lines_short_of_its_orphans_and_widows_moves_whole() {
+    // Two lines leave no break with two lines on each side.
+    let body = blank_lines(80, "", 2);
+    assert_eq!(extents(&body, "p"), [(1, 0.0, 60.0)]);
+    assert_eq!(extents(&body, "z"), [(1, 60.0, 70.0)]);
+    // With one line on each side, the first line crosses the page end and
+    // takes the paragraph along.
+    assert_eq!(
+        extents(&blank_lines(80, "orphans:1;widows:1", 2), "p"),
+        [(1, 0.0, 60.0)]
+    );
+}
+
+#[test]
+fn blank_lines_break_between_them_at_the_page_end() {
+    // The third line crosses the page end and starts the next page.
+    let body = blank_lines(20, "", 4);
+    assert_eq!(extents(&body, "p"), [(0, 20.0, 100.0), (1, 0.0, 60.0)]);
+    assert_eq!(extents(&body, "z"), [(1, 60.0, 70.0)]);
+    // Three widows take the second line along.
+    assert_eq!(
+        extents(&blank_lines(20, "widows:3", 5), "z"),
+        [(1, 90.0, 100.0)]
+    );
+}
+
+#[test]
+fn a_long_paragraph_of_blank_lines_breaks_again_on_each_page() {
+    // The first two lines cross the end of the first page, so the paragraph
+    // moves whole; its widows then take a line along to the last page.
+    let body = blank_lines(50, "", 7);
+    assert_eq!(
+        extents(&body, "p"),
+        [(1, 0.0, 100.0), (2, 0.0, 100.0), (3, 0.0, 60.0)]
+    );
+    assert_eq!(extents(&body, "z"), [(3, 60.0, 70.0)]);
+    assert_eq!(extents(&blank_lines(20, "", 7), "z"), [(2, 60.0, 70.0)]);
 }

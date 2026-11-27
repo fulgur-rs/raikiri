@@ -1727,21 +1727,23 @@ impl PaginationState {
             );
             return self.break_before_line_after_block(document, env, candidate, entry, line);
         }
-        if candidate.context.unplaced_line().is_none() {
+        let Some(line) = candidate.context.unplaced_line() else {
             return Ok(None);
-        }
+        };
         let owner = super::leading_inline::LeadingInlineLine {
             root: node_id,
             line: 0,
         };
         let (top, height) = super::leading_inline::bounds(document, owner);
+        // The first lines of a paragraph of blank lines go on together.
+        let height = height.max(line.end - line.start);
         let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
         let flow_top = top - relative;
         let box_top = current_abs_y(document, node_id) - relative;
         let page_origins = env.page_origins;
         let page = page_origins.page_index_for_y(flow_top + 0.001);
         let next = page.saturating_add(1);
-        if flow_top - box_top <= 0.5
+        let moved = if flow_top - box_top <= 0.5
             || !runs_past_page_end(
                 document,
                 env.cascade,
@@ -1752,20 +1754,99 @@ impl PaginationState {
             || flow_top <= page_origins.origin(page) + 0.001
             || flow_top + height <= page_origins.origin(next) + 0.001
         {
+            false
+        } else {
+            reach_page(env.control, next)?;
+            self.move_delegated_line(
+                document,
+                env,
+                (entry.page_before_candidate, next),
+                owner,
+                page_origins.origin(next) - flow_top,
+                None,
+            );
+            true
+        };
+        if !(self.break_between_blank_lines(document, env, candidate, entry)? || moved) {
             return Ok(None);
         }
-        reach_page(env.control, next)?;
-        self.move_delegated_line(
-            document,
-            env,
-            (entry.page_before_candidate, next),
-            owner,
-            page_origins.origin(next) - flow_top,
-            None,
-        );
         let mut grown = candidate.clone();
         grown.height = document.nodes[node_id].layout.size.height;
         Ok(Some(grown))
+    }
+
+    /// Breaks the page between the lines of the paragraph `candidate` when
+    /// it holds blank lines alone (see `unplaced_blank_line_count`), as
+    /// Chromium breaks between lines of text: before the first line that
+    /// runs past the end of its page, or earlier, to leave `widows` lines
+    /// after the break. A page that would hold fewer than `orphans` of the
+    /// lines takes them all the same: the first lines of the paragraph,
+    /// which the paragraph keeps whole (see `blank_lines_kept_whole`), have
+    /// moved to the page they fit on by then. Returns whether lines moved.
+    fn break_between_blank_lines(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+    ) -> Result<bool, Halt> {
+        let node_id = candidate.node_id;
+        let Some(count) = super::unplaced_blank_line_count(document, env.cascade, node_id) else {
+            return Ok(false);
+        };
+        let (orphans, widows) = super::orphans_and_widows(env.cascade, node_id);
+        let relative = accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+        let page_origins = env.page_origins;
+        let bounds = |document: &LayoutSession<'_>, line: usize| {
+            let (top, height) = super::leading_inline::bounds(
+                document,
+                super::leading_inline::LeadingInlineLine {
+                    root: node_id,
+                    line,
+                },
+            );
+            (top - relative, top - relative + height)
+        };
+        let mut moved = false;
+        let mut from = 0;
+        loop {
+            let page = page_origins.page_index_for_y(bounds(document, from).0 + 0.001);
+            let next = page.saturating_add(1);
+            let end = page_origins.origin(next);
+            let Some(crossing) = (from..count).find(|&line| bounds(document, line).1 > end + 0.001)
+            else {
+                return Ok(moved);
+            };
+            let kept = crossing.min(count.saturating_sub(widows));
+            let at = if kept >= from + orphans {
+                kept
+            } else {
+                crossing
+            };
+            let top = bounds(document, at).0;
+            if at <= from || !runs_past_page_end(document, env.cascade, env.body_id, node_id, end) {
+                return Ok(moved);
+            }
+            // A line that starts the next page already needs no move.
+            if top >= end - 0.001 {
+                from = at;
+                continue;
+            }
+            reach_page(env.control, next)?;
+            self.move_delegated_line(
+                document,
+                env,
+                (entry.page_before_candidate, next),
+                super::leading_inline::LeadingInlineLine {
+                    root: node_id,
+                    line: at,
+                },
+                end - top,
+                None,
+            );
+            moved = true;
+            from = at;
+        }
     }
 
     /// Breaks the page between a block child of the paragraph `candidate` and

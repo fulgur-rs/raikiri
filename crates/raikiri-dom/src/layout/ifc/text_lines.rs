@@ -174,6 +174,33 @@ pub(crate) fn single_unplaced_line(
     unplaced_line_at(doc, cascade, root, lines, 0)
 }
 
+/// The number of lines of the paragraph rooted at `root` when it has more
+/// lines than one and each of them is a glyphless line that no text node
+/// places (see [`single_unplaced_line`]), such as a paragraph of `br` line
+/// breaks alone. No text candidate places these lines either, so pagination
+/// breaks between them by the paragraph's own `orphans` and `widows`, as
+/// Chromium breaks between the lines of text.
+pub(crate) fn unplaced_blank_line_count(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Option<usize> {
+    let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.multicol_fragments.is_some() {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    let count = lines.lines.len();
+    (count > 1
+        && lines.block_line_starts.is_empty()
+        && (0..count).all(|index| {
+            glyph_owners(&lines.lines[index]).is_empty()
+                && unplaced_line_at(doc, cascade, root, lines, index)
+                    .is_some_and(|line| !line.atomic)
+        }))
+    .then_some(count)
+}
+
 /// The lines of the paragraph rooted at `root` from its line `first` to its
 /// last, taken together, when no text node places any of them (see
 /// [`single_unplaced_line`]) and the last holds generated text, whatever
