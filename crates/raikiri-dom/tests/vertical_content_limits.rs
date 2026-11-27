@@ -73,6 +73,9 @@ fn assert_cases(cases: &[(&str, &str, &str, Rect)]) {
 
 const TEXT: &str = "xxxx yy";
 
+/// One word 500px long.
+const LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
 #[test]
 fn a_keyword_height_limit_is_an_inline_size_of_the_content() {
     #[rustfmt::skip]
@@ -158,5 +161,9 @@ fn a_box_with_a_ratio_takes_the_inline_size_the_ratio_gives() {
         // The automatic minimum a flex item carries across its ratio stays
         // within its stated size.
         ("display:flex", "aspect-ratio:1/1;width:50px;height:200px", "xxxx yy zz qq", (8.0, 8.0, 50.0, 200.0)),
+        // The automatic minimum of a column item keeps the inline size of
+        // its content, which an authored keyword gives up for the ratio.
+        ("display:flex;flex-direction:column;height:100px", "aspect-ratio:1/1;width:20px", LONG, (8.0, 8.0, 20.0, 500.0)),
+        ("display:flex;flex-direction:column;height:100px", "aspect-ratio:1/1;width:20px;min-height:min-content", LONG, (8.0, 8.0, 20.0, 20.0)),
     ]);
 }

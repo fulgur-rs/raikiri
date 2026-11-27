@@ -386,11 +386,16 @@ fn vertical_inline_bounds(
         let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
         use LengthProperty::*;
         let mut entries = neutral_size_overrides(&[Height, MinHeight, MaxHeight]);
-        // A box with a ratio has the inline size the ratio gives its block
-        // size, whatever its content holds (CSS Sizing 4 §5.1), as
-        // `automatic_height` finds for a horizontal box.
+        // A keyword the box states with a ratio stands for the inline size
+        // the ratio gives its block size, whatever its content holds (CSS
+        // Sizing 4 §5.1), as `automatic_height` finds for a horizontal box.
+        // The automatic minimum of a flex item keeps the size of its content.
+        let own = tree.nodes[idx].content_limits;
+        let authored = |size: Dimension| !size.is_auto() && !is_stretch(size);
         let style = tree.physical_style(idx);
-        if let Some(ratio) = style.stated_aspect_ratio() {
+        if (authored(own.min.height) || authored(own.max.height))
+            && let Some(ratio) = style.stated_aspect_ratio()
+        {
             if style.block_aspect_ratio().is_none() {
                 entries.push(OwnedPropertyOverride::aspect_ratio(Some(ratio)));
             }
