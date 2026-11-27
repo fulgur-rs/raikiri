@@ -2376,8 +2376,10 @@ fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
         let table = doc.append_element(Some(parent), "div", Some(table));
         let row = doc.append_element(Some(table), "div", Some(row));
         let cell = doc.append_element(Some(row), "div", Some(cell));
-        if let Some(css) = content {
-            doc.append_element(Some(cell), "div", Some(css));
+        // Each `|` in `content` nests the next box in the one before it.
+        let mut holder = cell;
+        for css in content.into_iter().flat_map(|content| content.split('|')) {
+            holder = doc.append_element(Some(holder), "div", Some(css));
         }
         layout_nested_flex_float_fixture(&mut doc);
         with_bridged_session(&mut doc, |session| {
@@ -2470,6 +2472,20 @@ fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
         "display:table-cell;position:relative",
         absolute
     ));
+    // A box of a size of its own in a cell may hold boxes that reach past
+    // the table, which is not laid out yet when the strategy is chosen.
+    let top = "display:table-cell;vertical-align:top";
+    for (held, sliced) in [
+        ("display:block;height:30px|display:block;height:60px", false),
+        (
+            "display:block;max-height:30px|display:block;height:60px",
+            false,
+        ),
+        ("display:block;height:30px", true),
+        ("display:block|display:block;height:60px", true),
+    ] {
+        assert_eq!(supported(table, top, Some(held)), sliced, "{held}");
+    }
     // Lines in a cell keep the table with the other strategies.
     assert!(!supported(
         table,

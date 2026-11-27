@@ -590,6 +590,7 @@ fn sliceable_flex_container(
     };
     let mut boxes = 0usize;
     let mut sized = false;
+    let table = layout_node(tree, child).display() == DisplayValue::Table;
     let breaking_items = breaks_between_items(tree, child);
     // Whether a box on the way down is the containing block of the absolutely
     // positioned boxes below it, so that they are cut with the container, and
@@ -628,6 +629,17 @@ fn sliceable_flex_container(
         holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
+        // Whether a box inside a cell is laid out at a size of its own around
+        // boxes that may reach past it, which the table, laid out before its
+        // boxes, cannot tell yet.
+        if table
+            && !is_table_part(node.display())
+            && (has_block_size(&style)
+                || style_dimension_length(style.max_size().height.into()).is_some())
+            && !in_flow_elements(tree, id).is_empty()
+        {
+            return None;
+        }
         let grid = node.display() == DisplayValue::Grid;
         // A row gap is truncated where a fragmentation break falls in it
         // (CSS Box Alignment 3, 8.1), which a grid sliced whole would not do.
