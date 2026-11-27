@@ -391,6 +391,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             || element.inside_fixed
             || element.fixed_in_viewport
             || flow_band.is_some()
+            // Layout leaves no room for the edges in an absolutely
+            // positioned box, which it lays out whole.
             || !matches!(
                 element.cv.position,
                 PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
