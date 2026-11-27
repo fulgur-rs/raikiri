@@ -93,8 +93,12 @@ fn supported_with_wrapped_blocks(
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
             && has_rendered_content(tree, child, false);
+        // The insets of a sticky box are an offset that the painter adds
+        // once layout is done, so they do not move it in the stream.
+        let sticky = node.layout_position() == Position::Sticky;
         if !(plain_block || plain_wrapper || monolithic)
             || has_inset
+                && !(sticky && monolithic)
                 && (!super::insets_are_a_relative_offset(tree, child)
                     || has_rendered_content(tree, child, false))
         {
@@ -115,9 +119,11 @@ fn supported_with_wrapped_blocks(
         }
         children.push(child);
     }
-    let sized = boxes
-        .iter()
-        .any(|&child| has_block_size(&style_of(tree, child)));
+    // A scroll container is placed whole at the height layout gives it, so
+    // it has a block size to place even when only a maximum bounds it.
+    let sized = boxes.iter().any(|&child| {
+        has_block_size(&style_of(tree, child)) || is_monolithic_scroll_box(tree, child)
+    });
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
@@ -257,15 +263,23 @@ fn is_plain_block_with_display(
         && is_plain_block_apart_from_margins(tree, child, allow_flow_root, allow_lines)
 }
 
-/// Whether `child` is a scroll container with a height of its own and nothing
-/// that needs handling at a break: a box a column end never cuts, whatever it
-/// holds. A scroll container is monolithic content (CSS Fragmentation 3,
-/// `monolithic`), so it moves to the next column when it does not fit below
-/// what comes before it, and one taller than a column overflows the column it
-/// starts at the top of (CSS Fragmentation 3, 4.4). What it holds scrolls
-/// inside it, so the stream does not look at it, unless that content could
-/// reach out of it: see [`holds_no_fragmenting_box`]. A box whose height
-/// follows its content keeps the other strategies.
+/// Whether `child` is a scroll container with nothing that needs handling at
+/// a break: a box a column end never cuts, whatever it holds. A scroll
+/// container is monolithic content (CSS Fragmentation 3, `monolithic`), so it
+/// moves to the next column when it does not fit below what comes before it,
+/// and one taller than a column overflows the column it starts at the top of
+/// (CSS Fragmentation 3, 4.4). What it holds scrolls inside it, so the stream
+/// does not look at it, unless that content could reach out of it: see
+/// [`holds_no_fragmenting_box`]. A `position: sticky` box is placed like a
+/// relatively positioned one: the columns leave its offset alone.
+///
+/// The box needs a height, a maximum height or an aspect ratio that bounds
+/// it; [`layout`] measures the height it ends up with before it places the
+/// box. Chromium prints a scroll container in columns cut at the column end,
+/// like a box that does not scroll, and shows it whole on screen; a box whose
+/// height follows its content, such as a paragraph that clips its overflow,
+/// keeps the other strategies, which break it between its lines as the
+/// printed columns do.
 ///
 /// Keep the checks that leave the box out in step with
 /// [`is_plain_block_apart_from_margins`].
@@ -274,16 +288,20 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     let scrolls = |overflow| !matches!(overflow, TaffyOverflow::Visible | TaffyOverflow::Clip);
     let overflow = style.overflow();
+    let bounded = style_dimension_length(style.size().height).is_some()
+        || style_dimension_length(style.max_size().height.into()).is_some()
+        || style.aspect_ratio().is_some();
     (scrolls(overflow.x) || scrolls(overflow.y))
-        && style_dimension_length(style.size().height).is_some()
+        && bounded
         && block_margins(&style).is_some()
-        && style.inset() == Edges::splat(LengthPercentageAuto::auto())
+        && (style.inset() == Edges::splat(LengthPercentageAuto::auto())
+            || node.layout_position() == Position::Sticky)
         && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
         && is_horizontal(node)
         && !node.size_containment.height
         && matches!(
             node.layout_position(),
-            Position::Relative | Position::Static
+            Position::Relative | Position::Static | Position::Sticky
         )
         && !style.float().is_floated()
         && style.clear() == Clear::None
@@ -377,18 +395,34 @@ fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
 }
 
 /// Whether nothing inside `child` takes part in the fragmentation of the
-/// columns around it: no box is absolutely positioned, as its containing block
-/// can lie outside `child` and then it breaks across the columns with that
-/// block, and no box is a column container, which lays itself out as part of
-/// the columns it sits in.
+/// columns around it: no absolutely positioned box has its containing block
+/// outside `child`, as it then breaks across the columns with that block, and
+/// no box is a column container, which lays itself out as part of the columns
+/// it sits in. An absolutely positioned box whose containing block is `child`
+/// or a box inside it moves with `child`, whole, like the rest of what it
+/// holds.
 fn holds_no_fragmenting_box(tree: &LayoutSession<'_>, child: usize) -> bool {
-    let mut pending = layout_node(tree, child).children.clone();
-    while let Some(id) = pending.pop() {
+    // Each pending box carries whether a box from `child` down to its parent
+    // is the containing block of absolutely positioned boxes.
+    let contains = |id: usize| layout_node(tree, id).layout_position() != Position::Static;
+    let mut pending: Vec<(usize, bool)> = layout_node(tree, child)
+        .children
+        .iter()
+        .map(|&id| (id, contains(child)))
+        .collect();
+    while let Some((id, contained)) = pending.pop() {
         let node = layout_node(tree, id);
-        if node.layout_position() == Position::Absolute || node.multicol.is_some() {
+        // A fixed box's containing block is the viewport, or an ancestor
+        // that a transform or filter makes one, so it is left out whatever
+        // holds it.
+        if node.layout_position() == Position::Absolute
+            && (!contained || matches!(node.position(), PositionValue::Fixed))
+            || node.multicol.is_some()
+        {
             return false;
         }
-        pending.extend(node.children.iter().copied());
+        let contained = contained || contains(id);
+        pending.extend(node.children.iter().map(|&id| (id, contained)));
     }
     true
 }
