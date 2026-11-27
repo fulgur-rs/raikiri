@@ -371,7 +371,12 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 // holds are placed in it. A wrapper that has no record of its
                 // own leaves them to the nearest one that has.
                 let mut wrappers = HashMap::<usize, (usize, FragmentRect)>::new();
-                let mut pieces = HashMap::<usize, Vec<(usize, usize, FragmentRect)>>::new();
+                // The pieces of each wrapper that has them, by fragmentainer,
+                // and for each wrapper whose boxes go in pieces, the wrapper
+                // that has them: itself, or the nearest one around it when it
+                // has no record of its own.
+                let mut pieces = HashMap::<usize, HashMap<usize, (usize, FragmentRect)>>::new();
+                let mut piece_owner = HashMap::<usize, usize>::new();
                 let rects: HashMap<usize, FragmentRect> = planned
                     .wrappers
                     .iter()
@@ -423,13 +428,9 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 // placed in the piece of its column.
                                 let (record, origin) = wrapper
                                     .wrapper
-                                    .and_then(|outer| pieces.get(&outer))
-                                    .and_then(|outer| {
-                                        outer.iter().find(|(fragmentainer, ..)| {
-                                            *fragmentainer == piece.fragmentainer
-                                        })
-                                    })
-                                    .map_or((record, origin), |&(_, id, rect)| (id, rect));
+                                    .and_then(|outer| piece_owner.get(&outer))
+                                    .and_then(|owner| pieces.get(owner)?.get(&piece.fragmentainer))
+                                    .map_or((record, origin), |&(id, rect)| (id, rect));
                                 let mut clip = piece.clip;
                                 clip.rect.x -= origin.x;
                                 clip.rect.y -= origin.y;
@@ -467,9 +468,19 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 .pieces
                                 .iter()
                                 .zip(edits.records(wrapper.node))
-                                .map(|(piece, id)| (piece.fragmentainer, id, piece.rect))
-                                .collect::<Vec<_>>(),
+                                .map(|(piece, id)| (piece.fragmentainer, (id, piece.rect)))
+                                .collect(),
                         );
+                        piece_owner.insert(wrapper.node, wrapper.node);
+                    } else {
+                        // One with no record of its own leaves them to the
+                        // pieces around it, if it is in a wrapper that has
+                        // some.
+                        let inherited = wrapper
+                            .wrapper
+                            .filter(|_| !had_records)
+                            .and_then(|outer| piece_owner.get(&outer).copied());
+                        piece_owner.extend(inherited.map(|owner| (wrapper.node, owner)));
                     }
                 }
                 let mut per_child = HashMap::<usize, Vec<paragraph_group::PagedFragment>>::new();
@@ -523,16 +534,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
                         );
                         root.multicol_fragment_origins_recorded = true;
                     } // cov:ignore: planned text ranges only originate from a paragraph with an IFC.
-                    let wrapper_pieces = wrapper.and_then(|wrapper| pieces.get(&wrapper));
+                    let wrapper_pieces = wrapper
+                        .and_then(|wrapper| piece_owner.get(&wrapper))
+                        .and_then(|owner| pieces.get(owner));
                     let mut parents = Vec::with_capacity(fragments.len());
                     for fragment in &mut fragments {
                         let (parent, origin) = wrapper_pieces
-                            .and_then(|pieces| {
-                                pieces.iter().find(|(fragmentainer, ..)| {
-                                    *fragmentainer == fragment.fragmentainer
-                                })
-                            })
-                            .map_or((record, origin), |&(_, id, rect)| (id, rect));
+                            .and_then(|pieces| pieces.get(&fragment.fragmentainer))
+                            .map_or((record, origin), |&(id, rect)| (id, rect));
                         parents.push(parent);
                         fragment.rect.x -= origin.x;
                         fragment.rect.y -= origin.y;
