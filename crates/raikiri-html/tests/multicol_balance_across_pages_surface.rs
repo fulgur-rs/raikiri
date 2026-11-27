@@ -317,3 +317,79 @@ fn own_lines_past_a_definite_height_keep_the_columns_the_container_laid_out() {
         assert_eq!(count, 1, "{line}");
     }
 }
+
+#[test]
+fn own_lines_that_leave_too_few_orphans_on_the_page_start_on_the_next() {
+    let body = format!(
+        "<div style='height:140px'></div><div class=mc style='orphans:2;widows:2'>{}</div>{AFTER}",
+        lines(7)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "",
+            "A@0,0 B@0,20 C@0,40 D@0,60 z=0,80 E@60,0 F@60,20 G@60,40",
+        ]
+    );
+}
+
+#[test]
+fn an_own_line_taller_than_the_rest_of_the_page_starts_on_the_next() {
+    let body = format!(
+        "<div style='height:150px'></div><div class=mc>{}</div>{AFTER}",
+        lines(6)
+    );
+    assert_eq!(
+        pages(&body),
+        ["", "A@0,0 B@0,20 C@0,40 z=0,60 D@60,0 E@60,20 F@60,40"]
+    );
+}
+
+#[test]
+fn the_last_column_of_a_page_gives_its_own_lines_to_the_widows_on_the_next() {
+    let body = format!(
+        "<div style='height:80px'></div><div class=mc style='orphans:2;widows:2'>{}</div>{AFTER}",
+        lines(9)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,80 B@0,100 C@0,120 D@0,140 E@60,80 F@60,100 G@60,120",
+            "H@0,0 I@0,20 z=0,40",
+        ]
+    );
+}
+
+#[test]
+fn a_minimum_height_holds_open_the_container_of_page_filled_own_lines() {
+    let body = format!(
+        "<div style='height:120px'></div><div class=mc style='min-height:200px'>{}</div>{AFTER}",
+        lines(10)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,120 B@0,140 C@60,120 D@60,140",
+            "E@0,0 F@0,20 G@0,40 H@60,0 I@60,20 J@60,40",
+            "z=0,0",
+        ]
+    );
+}
+
+#[test]
+fn own_lines_in_the_columns_of_another_container_show_once() {
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc style='width:180px;column-count:1'><div class=mc>{}</div></div>",
+        lines(10)
+    );
+    let pages = pages(&body);
+    for line in 'A'..='J' {
+        let piece = format!("{line}@");
+        let count: usize = pages
+            .iter()
+            .map(|page| page.split(' ').filter(|p| p.starts_with(&piece)).count())
+            .sum();
+        assert_eq!(count, 1, "{line}");
+    }
+}
