@@ -2035,6 +2035,8 @@ css/css-break/grid/grid-item-fragmentation-017.html
 css/css-break/grid/grid-item-fragmentation-018.html
 css/css-break/grid/grid-item-fragmentation-019.html
 css/css-break/grid/grid-item-fragmentation-020.html
+css/css-break/grid/grid-item-fragmentation-028.html
+css/css-break/grid/grid-item-fragmentation-029.html
 css/css-break/grid/grid-item-fragmentation-030.html
 css/css-break/grid/grid-item-fragmentation-031.html
 css/css-break/grid/grid-item-fragmentation-035.html
