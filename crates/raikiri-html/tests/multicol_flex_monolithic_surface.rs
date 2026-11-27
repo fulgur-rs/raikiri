@@ -474,3 +474,37 @@ fn containers_the_moves_do_not_model_still_lay_out() {
         assert!(got.contains_key("m"), "{body}");
     }
 }
+
+#[test]
+fn monolithic_boxes_taller_than_their_columns_are_not_cut() {
+    // A box whose used height is taller than its 100px columns, through a
+    // minimum height, padding outside a content box, flex growth, or
+    // balanced columns bounded by a height of their own, is never cut by a
+    // column end.
+    let pushed = |m: &str| {
+        format!(
+            "<div style='display:flex;flex-direction:column'><div style='height:60px'></div>\
+             <div><div id=m style='contain:size;{m}'></div></div></div>"
+        )
+    };
+    let cases = [
+        columns("auto", &pushed("height:60px;min-height:150px")),
+        columns("balance", &pushed("height:150px")),
+        columns(
+            "auto",
+            &pushed("height:60px;padding-top:90px;box-sizing:content-box"),
+        ),
+        columns(
+            "auto",
+            "<div style='display:flex;flex-direction:column;height:200px'>\
+             <div style='height:50px'></div>\
+             <div id=m style='contain:size;height:60px;flex-grow:1'></div></div>",
+        ),
+    ];
+    for body in cases {
+        let got = crate::multicol_flex_forced_break_surface::visible(&body);
+        let rects = got.get("m").map(Vec::as_slice).unwrap_or_default();
+        assert_eq!(rects.len(), 1, "{body}: {rects:?}");
+        assert_eq!(rects[0].3, 150, "{body}: {rects:?}");
+    }
+}

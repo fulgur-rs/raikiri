@@ -608,12 +608,12 @@ fn sliceable_flex_container(
     // wrong side of the break.
     let mut pulled = false;
     // Whether it holds monolithic boxes, which only some boxes around them
-    // can move (see [`monolithic::supports`]).
+    // can move (see `monolithic::supports`).
     let mut holds_monolithic = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
         // A monolithic box moves whole to the next column where it does not
-        // fit (see [`monolithic::Shape`]).
+        // fit (see `monolithic::Shape`).
         let monolithic = id != child && monolithic::is_monolithic_leaf(tree, id);
         if boxes > MAX_SLICED_FLEX_BOXES
             || !(monolithic || is_sliceable_flex_box(tree, id, contained, (before, after)))
@@ -3431,7 +3431,7 @@ pub(super) fn layout(
     };
     // The monolithic boxes of each flex container move where the container
     // starts, which the containers before it settle; a container grows by
-    // the space they leave (see [`monolithic::Shape::push`]).
+    // the space they leave (see `monolithic::Shape::push`).
     let push_all = |tree: &mut LayoutSession<'_>,
                     items: &mut Vec<Item>,
                     sizes: &mut Vec<Size<f32>>,

@@ -47,23 +47,20 @@ pub(super) fn is_monolithic_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
 /// [`Shape::build`]), and no column is shorter than one of them. A box taller
 /// than its column overflows it, and the fragment of the container around
 /// it grows to hold it, which the pieces of the stream do not model: that
-/// needs columns that balance with nothing to limit them, which grow to the
-/// tallest box, or a content height of their own at least as tall as it.
+/// needs a content height of the column container at least as tall as the
+/// tallest box, or, with no height of its own, columns that balance with
+/// nothing to limit them, which grow to the tallest box.
 pub(super) fn supports(tree: &LayoutSession<'_>, container: usize) -> bool {
     let Ok(Some(shape)) = Shape::build(tree, container) else {
         return false;
     };
     let room = column_owner(tree, container).and_then(|owner| {
-        if balances_without_limit(tree, owner) {
-            return Some(f32::INFINITY);
-        }
         let style = style_of(tree, owner);
-        let height = style_dimension_length(style.size().height)?;
-        // Percentages of the edges count as zero, which leaves more room.
-        let inset = |value| super::super::multicol_resolve_inset(tree, value, 0.0);
-        let (padding, border) = (style.padding(), style.border());
-        let edges =
-            inset(padding.top) + inset(padding.bottom) + inset(border.top) + inset(border.bottom);
+        let Some(height) = style_dimension_length(style.size().height) else {
+            return (style.size().height.is_auto() && balances_without_limit(tree, owner))
+                .then_some(f32::INFINITY);
+        };
+        let edges = block_edges(tree, &style);
         Some(if style.box_sizing() == BoxSizing::BorderBox {
             height - edges
         } else {
@@ -75,9 +72,18 @@ pub(super) fn supports(tree: &LayoutSession<'_>, container: usize) -> bool {
     };
     shape.nodes.iter().all(|node| {
         !matches!(node.kind, Kind::Monolithic)
-            || style_dimension_length(style_of(tree, node.id).size().height)
+            || shape
+                .monolithic_height(tree, node)
                 .is_some_and(|height| height <= room + EPSILON)
     })
+}
+
+/// The sum of the block-axis padding and border of a box, with percentages
+/// counting as zero, which leaves more room.
+fn block_edges(tree: &LayoutSession<'_>, style: &LayoutStyleView<'_>) -> f32 {
+    let inset = |value| super::super::multicol_resolve_inset(tree, value, 0.0);
+    let (padding, border) = (style.padding(), style.border());
+    inset(padding.top) + inset(padding.bottom) + inset(border.top) + inset(border.bottom)
 }
 
 /// How a box of the shape lays out the boxes it holds.
@@ -178,6 +184,31 @@ fn grows_with_content(style: &LayoutStyleView<'_>) -> Option<bool> {
 }
 
 impl Shape {
+    /// The border-box height of `node`, a monolithic box, when its style
+    /// fixes it: a length with no minimum, maximum or aspect ratio, and,
+    /// in a column flex container, no flex basis or growth that would change
+    /// it. Shrinking only makes it shorter.
+    fn monolithic_height(&self, tree: &LayoutSession<'_>, node: &ShapeNode) -> Option<f32> {
+        let style = style_of(tree, node.id);
+        if grows_with_content(&style) != Some(false) {
+            return None;
+        }
+        let in_column_flex = node.parent.is_some_and(|parent| {
+            let parent = self.nodes[parent].id;
+            layout_node(tree, parent).display() == DisplayValue::Flex
+                && !style_of(tree, parent).flex_direction_is_row()
+        });
+        if in_column_flex && (style.flex_grow() > 0.0 || style.flex_basis() != Dimension::auto()) {
+            return None;
+        }
+        let height = style_dimension_length(style.size().height)?;
+        Some(if style.box_sizing() == BoxSizing::BorderBox {
+            height
+        } else {
+            height + block_edges(tree, &style)
+        })
+    }
+
     /// The shape of `container`, a flex container the stream slices whole,
     /// when it holds monolithic boxes; `Ok(None)` when it holds none, and
     /// `Err` when it holds them inside boxes whose growth is not modelled
