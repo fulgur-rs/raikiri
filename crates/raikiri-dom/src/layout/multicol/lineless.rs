@@ -909,32 +909,25 @@ fn block_flow_children(tree: &LayoutSession<'_>, id: usize) -> Vec<usize> {
 /// (after it, unless `before`), set on it or on the first (last) box in flow
 /// of the blocks it starts (ends) with, down to `MAX_WRAPPED_BLOCK_DEPTH`
 /// below the container.
-fn starts_column(tree: &LayoutSession<'_>, mut id: usize, before: bool, mut depth: usize) -> bool {
-    loop {
+fn starts_column(tree: &LayoutSession<'_>, id: usize, before: bool, depth: usize) -> bool {
+    std::iter::successors(Some(id), |&id| {
+        let children = block_flow_children(tree, id);
+        if before {
+            children.first().copied()
+        } else {
+            children.last().copied()
+        }
+    })
+    .take(MAX_WRAPPED_BLOCK_DEPTH.saturating_sub(depth))
+    .any(|id| {
         let node = layout_node(tree, id);
         let value = if before {
             node.break_before
         } else {
             node.break_after
         };
-        if value == BreakBetween::Column {
-            return true;
-        }
-        depth += 1;
-        if depth >= MAX_WRAPPED_BLOCK_DEPTH {
-            return false;
-        }
-        let children = block_flow_children(tree, id);
-        let next = if before {
-            children.first()
-        } else {
-            children.last()
-        };
-        match next {
-            Some(&child) => id = child,
-            None => return false,
-        }
-    }
+        value == BreakBetween::Column
+    })
 }
 
 /// The forced column breaks of a flex container that the stream slices
