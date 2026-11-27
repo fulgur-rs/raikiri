@@ -10830,6 +10830,31 @@ struct GrownHeight {
 fn height_can_grow(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
     document.block_axis(block).height().is_auto()
         || definite_content_height(document, block).is_none()
+        || content_keyword_bounds(document, block) != (false, false)
+}
+
+/// Whether the `min-height` and the `max-height` of `block` are content
+/// keywords (`min-content`, `max-content`, `fit-content`). The content size of
+/// a block container in the block axis is its automatic height, which counts
+/// the room its content takes across the breaks inside it (CSS Sizing 3,
+/// section 5.1; CSS Fragmentation 3, section 4.4), so such a bound follows the
+/// content as it moves down.
+fn content_keyword_bounds(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (bool, bool) {
+    use raikiri_style::resolve::ComputedLengthPercentageOrAuto as Length;
+    let cv = &document.style_views.cascade().computed[block];
+    let keyword = |value: &Length| {
+        matches!(
+            value,
+            Length::MinContent | Length::MaxContent | Length::FitContent
+        )
+    };
+    if super::bridge::lays_out_vertically(document.style_views.cascade(), block) {
+        return (false, false);
+    }
+    (keyword(&cv.min_height), keyword(&cv.max_height))
 }
 
 /// Whether the box of the paragraph `block` can grow when its lines move
@@ -10869,8 +10894,17 @@ pub(in crate::layout) fn border_box_height_bounds(
         resolve_length_percentage_auto(value, containing_height)
             .map_or(auto, |value| value + box_sizing_edges)
     };
+    // A content keyword bound follows the content across breaks (see
+    // `content_keyword_bounds`): the minimum holds what the box had laid out,
+    // and the maximum gives way to the content as it moves down.
+    let (_, max_keyword) = content_keyword_bounds(document, block);
     let min = bound(block_axis.min_height(), 0.0);
-    let max = bound(block_axis.max_height(), f32::INFINITY).max(min);
+    let max = if max_keyword {
+        f32::INFINITY
+    } else {
+        bound(block_axis.max_height(), f32::INFINITY)
+    }
+    .max(min);
     (min, max)
 }
 

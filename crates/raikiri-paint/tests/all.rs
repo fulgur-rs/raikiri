@@ -24,6 +24,7 @@ mod cloned_page_edges;
 mod collapsed_corners;
 mod collapsed_dashed_border;
 mod column_shadow_tests;
+mod content_keyword_bounds_across_breaks;
 mod counter_snapshot_limit;
 mod fieldset_legend;
 mod first_letter;
