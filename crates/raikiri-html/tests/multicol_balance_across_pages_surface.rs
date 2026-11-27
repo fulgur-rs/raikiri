@@ -207,3 +207,33 @@ fn definite_height_columns_of_a_paragraph_fill_each_page() {
         ]
     );
 }
+
+#[test]
+fn content_past_a_definite_height_keeps_the_columns_the_container_laid_out() {
+    // The columns cannot hold the boxes up to the content box, so the
+    // pages cut the columns the container laid out: each box still shows
+    // once, and no two pieces of a page start at the same place.
+    let body = format!(
+        "<div class=mc style='height:300px'>{}</div>",
+        boxes(20, 40, "")
+    );
+    let pages = pages(&body);
+    for id in 'a'..='t' {
+        let piece = format!("{id}=");
+        assert!(
+            pages
+                .iter()
+                .any(|page| page.split(' ').any(|p| p.starts_with(&piece)))
+        );
+    }
+    for page in &pages {
+        let mut places: Vec<&str> = page
+            .split(' ')
+            .map(|piece| piece.split_once('=').unwrap().1)
+            .collect();
+        let count = places.len();
+        places.sort_unstable();
+        places.dedup();
+        assert_eq!(places.len(), count, "{page}");
+    }
+}

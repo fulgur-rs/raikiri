@@ -115,7 +115,9 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // A container of a definite height without a spanner fills the columns
     // of the pages it runs onto up to its content box (CSS Multi-column 1,
     // 8.1). Its height stays as it is.
-    let definite = !style_of(tree, owner).size().height.is_auto();
+    let definite = tree.nodes[owner]
+        .multicol
+        .is_some_and(|columns| columns.height_definite);
     if whole || definite && (!spanner_free || cloned.is_some()) {
         if spanner_free {
             tree.nodes[owner].multicol_groups.clear();
@@ -556,12 +558,9 @@ pub(in crate::layout) fn paginate_spanning_columns(
         && old.min_height > 0.0
     {
         let layout = tree.nodes[owner].layout;
-        let content_end = old.context.origin_y
-            + old.height
-            + delta
-            + layout.border.bottom
-            + layout.padding.bottom;
-        delta = content_end.max(old.min_height) - layout.size.height;
+        let old_end =
+            old.context.origin_y + old.height + layout.border.bottom + layout.padding.bottom;
+        delta = (old_end + delta).max(old.min_height) - old_end.max(old.min_height);
     }
     tree.nodes[owner].multicol_groups = groups;
     tree.nodes[owner].layout.size.height += delta;

@@ -135,8 +135,13 @@ pub(in crate::layout::multicol) fn paginate(
         }
         rows[row]
     };
-    // A row that starts where the content box ends has no room left.
-    let past_limit = |row: usize| limit.is_some_and(|limit| row_at(row).top >= limit - EPSILON);
+    // A row that starts where the content box ends, or that follows the row
+    // the content box ends in, has no room left.
+    let past_limit = |row: usize| {
+        limit.is_some_and(|limit| {
+            row_at(row).top >= limit - EPSILON || row > 0 && row_at(row - 1).end >= limit - EPSILON
+        })
+    };
     let max_pieces = tree
         .fragment_tree
         .limit
@@ -178,6 +183,14 @@ pub(in crate::layout::multicol) fn paginate(
     // Balanced columns fill the pages they run past and balance only in the
     // last page they reach (CSS Multi-column 1, 8.1): the columns there are
     // the shortest that keep what is left in that page's set.
+    // Should the shorter columns cut a box that must stay whole, the page's
+    // columns stay as tall as the page lets them.
+    let last_row = |balanced: Option<(usize, f32)>| {
+        move |column: usize| match balanced {
+            Some((fixed, height)) if column >= fixed => height,
+            _ => height_of(column),
+        }
+    };
     let balanced = (context.column_fill != ColumnFillValue::Auto).then(|| {
         let fixed = (placement.columns_used().max(1) - 1) / columns * columns;
         let capacity = height_of(fixed);
@@ -185,18 +198,13 @@ pub(in crate::layout::multicol) fn paginate(
             balanced_height_after(&items, fixed, &height_of, columns, columns, capacity, true);
         (fixed, height.min(capacity))
     });
-    let height_of = |column: usize| match balanced {
-        Some((fixed, height)) if column >= fixed => height,
-        _ => height_of(column),
+    let rebalanced = match balanced {
+        Some(_) => place(&last_row(balanced))?,
+        None => None,
     };
-    let placement = if balanced.is_some() {
-        let Some(placement) = place(&height_of)? else {
-            return Ok(None);
-        };
-        placement
-    } else {
-        placement
-    };
+    let balanced = balanced.filter(|_| rebalanced.is_some());
+    let placement = rebalanced.unwrap_or(placement);
+    let height_of = last_row(balanced);
     // The pieces of each child: those of its box, or for a wrapper, those
     // from the first box it holds to the last, with its own insets.
     // Where each column starts in the stream, which places the pieces of the
