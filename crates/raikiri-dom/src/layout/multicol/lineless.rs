@@ -776,7 +776,7 @@ fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
 /// the stream honours: one between the container and its neighbours, or
 /// between flex items (see [`flex_breaks`]). `avoids` says whether breaks
 /// that `id` avoids are ones the moves of the container honour (see
-/// `monolithic::Shape`): those of a box inside it.
+/// [`monolithic::Shape`]): those of a box inside it.
 fn is_sliceable_flex_box(
     tree: &LayoutSession<'_>,
     id: usize,

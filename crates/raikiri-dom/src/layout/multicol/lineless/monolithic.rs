@@ -194,9 +194,6 @@ fn block_edges(tree: &LayoutSession<'_>, style: &LayoutStyleView<'_>) -> f32 {
 enum Kind {
     /// A monolithic box (see [`is_monolithic_leaf`]).
     Monolithic,
-    /// A box that avoids breaks inside it, which moves whole where a column
-    /// holds it, and is cut like other boxes where none does.
-    Avoid,
     /// A box whose layout no break changes, which moves as a whole.
     Leaf,
     /// A block, or a single-line column flex container in the order of the
@@ -211,6 +208,10 @@ struct ShapeNode {
     id: usize,
     parent: Option<usize>,
     kind: Kind,
+    /// Whether it avoids breaks inside it: it moves whole like a monolithic
+    /// box, and where no column holds it, it is cut there as the boxes
+    /// inside it allow.
+    avoids: bool,
     /// Whether its block size follows its content. A box with a block size
     /// of its own keeps it: what moves inside it overflows it, and the boxes
     /// after it stay where they are.
@@ -362,11 +363,9 @@ impl Shape {
         {
             return Err(());
         }
+        let avoids = parent.is_some() && avoids_break_inside(layout_node(tree, id).break_inside);
         let kind = if parent.is_some() && is_monolithic_leaf(tree, id) {
             Kind::Monolithic
-        } else if parent.is_some() && avoids_break_inside(layout_node(tree, id).break_inside) {
-            // The boxes inside it, monolithic or not, move with it.
-            Kind::Avoid
         } else if parent.is_some() && !holds_moves(tree, id) {
             Kind::Leaf
         } else {
@@ -408,6 +407,7 @@ impl Shape {
             id,
             parent,
             kind,
+            avoids,
             grows,
             children: Vec::new(),
             lines: Vec::new(),
@@ -522,6 +522,8 @@ impl Shape {
         // The least amount by which taller columns would keep a box from
         // moving down.
         let mut shortage = f32::INFINITY;
+        // The boxes whose space before them a break has truncated.
+        let mut truncated = vec![false; self.nodes.len()];
         for _ in 0..4 * self.nodes.len() + 4 {
             // The earliest break to make: what moves, how far, where, and
             // how much taller the column would have to be for it not to
@@ -588,7 +590,7 @@ impl Shape {
                     // Columns as much taller would keep the break where it is.
                     let above = start + state.region_top(target);
                     consider(target, boundary - above, above, boundary - above);
-                } else if let Some(gap) = gap.filter(|_| !starts_column) {
+                } else if let Some(gap) = gap.filter(|_| !starts_column && !truncated[next]) {
                     // Only the gap and the margin are truncated, not the
                     // free space the container distributes.
                     let truncated = (top - boundary).min(gap + state.layout(prev).margin.bottom);
@@ -600,6 +602,11 @@ impl Shape {
             let Some((target, distance, _, short)) = first else {
                 break;
             };
+            // The space before a box is truncated once: what is left of it
+            // after the gap and the margin is free space that stays.
+            if let (Target::Flow(index), true) = (target, distance < 0.0) {
+                truncated[index] = true;
+            }
             shortage = shortage.min(short);
             state.move_down(target, distance);
         }
@@ -630,8 +637,10 @@ impl Shape {
     /// The indices of the boxes kept whole, monolithic or avoiding breaks
     /// inside them, in order.
     fn kept_whole(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.nodes.len())
-            .filter(|&index| matches!(self.nodes[index].kind, Kind::Monolithic | Kind::Avoid))
+        (0..self.nodes.len()).filter(|&index| {
+            let node = &self.nodes[index];
+            node.avoids || matches!(node.kind, Kind::Monolithic)
+        })
     }
 
     /// The pairs of adjacent boxes in each flow, in order, with the row gap
