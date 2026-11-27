@@ -818,6 +818,39 @@ fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) ->
     }
 }
 
+/// The number of places in the flow of `owner` where a forced column break
+/// starts a new column: each place between two boxes in flow, in `owner` or
+/// in the blocks inside it, where a break falls after the first or before the
+/// second counts once. Breaks below a box that lays out apart, such as a
+/// nested multicol container, are left out.
+pub(super) fn forced_column_starts(tree: &LayoutSession<'_>, owner: usize) -> usize {
+    let mut count = 0;
+    let mut stack = vec![(owner, 0)];
+    while let Some((id, depth)) = stack.pop() {
+        let children = in_flow_elements(tree, id);
+        count += children
+            .windows(2)
+            .filter(|pair| {
+                forced_column_break(tree, pair[0], false)
+                    || forced_column_break(tree, pair[1], true)
+            })
+            .count();
+        if depth + 1 < MAX_WRAPPED_BLOCK_DEPTH {
+            stack.extend(
+                children
+                    .into_iter()
+                    .filter(|&child| {
+                        let node = layout_node(tree, child);
+                        matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+                            && node.multicol.is_none()
+                    })
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+    }
+    count
+}
+
 /// The forced column breaks of a flex container that the stream slices
 /// whole.
 #[derive(Default)]

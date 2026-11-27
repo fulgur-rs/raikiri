@@ -105,13 +105,22 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // and padding on each page it is cut on (CSS Fragmentation 3, 5.4), so
     // its content fits a page only above the bottom ones.
     let cloned = cloned_page_insets(tree, owner);
-    let whole = spanner_free && {
-        let old = &old_groups[0];
-        let top = owner_y + old.context.origin_y;
-        let (_, origin, height) = page_for(top);
-        let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
-        top + old.height <= origin + height - bottom + EPSILON || inside_atomic_inline(tree, owner)
-    };
+    // Forced breaks that start more columns than the container has go on in
+    // the columns of the next page, as Chromium prints them, even when the
+    // content would fit this one.
+    let whole = spanner_free
+        && {
+            let old = &old_groups[0];
+            lineless::forced_column_starts(tree, owner) < old.context.column_count
+        }
+        && {
+            let old = &old_groups[0];
+            let top = owner_y + old.context.origin_y;
+            let (_, origin, height) = page_for(top);
+            let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
+            top + old.height <= origin + height - bottom + EPSILON
+                || inside_atomic_inline(tree, owner)
+        };
     if whole || !style_of(tree, owner).size().height.is_auto() {
         if spanner_free {
             tree.nodes[owner].multicol_groups.clear();
