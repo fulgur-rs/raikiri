@@ -134,3 +134,60 @@ fn a_min_content_minimum_sizes_a_paragraph_in_balanced_columns() {
     assert_eq!(runs_per_page(body, 50), [vec![(0, GRAY), (40, WHITE)]]);
     assert_eq!(runs_per_page(body, 150), [vec![(0, GRAY), (20, WHITE)]]);
 }
+
+#[test]
+fn a_max_content_maximum_above_the_height_keeps_a_set_height_box_whole() {
+    assert_eq!(
+        runs_per_page(
+            &format!(
+                "<div class=b style='height:50px;max-height:max-content'>{}</div>\
+                 <div style='height:20px;background:lime'></div>",
+                lines(15)
+            ),
+            50
+        ),
+        [
+            vec![(0, BLUE), (6, GRAY), (56, RED), (62, LIME), (82, WHITE)],
+            vec![(0, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_min_content_minimum_below_the_height_does_not_grow_the_box_with_its_lines() {
+    assert_eq!(
+        runs_per_page(
+            &format!(
+                "<div style='height:7px'></div>\
+                 <div class=b style='height:400px;min-height:min-content'>{}</div>\
+                 <div style='height:20px;background:lime'></div>",
+                lines(15)
+            ),
+            50
+        ),
+        [
+            vec![(0, WHITE), (7, BLUE), (13, GRAY)],
+            vec![(0, GRAY)],
+            vec![(0, GRAY), (13, RED), (19, LIME), (39, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_max_content_maximum_below_the_height_grows_the_box_with_its_lines() {
+    assert_eq!(
+        runs_per_page(
+            &format!(
+                "<div style='height:7px'></div>\
+                 <div class=b style='height:500px;max-height:max-content'>{}</div>\
+                 <div style='height:20px;background:lime'></div>",
+                lines(15)
+            ),
+            50
+        ),
+        [
+            vec![(0, WHITE), (7, BLUE), (13, GRAY)],
+            vec![(0, GRAY), (120, RED), (126, LIME), (146, WHITE)],
+        ]
+    );
+}

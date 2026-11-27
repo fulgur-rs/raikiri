@@ -10833,28 +10833,45 @@ fn height_can_grow(document: &super::context::LayoutSession<'_>, block: usize) -
         || content_keyword_bounds(document, block) != (false, false)
 }
 
-/// Whether the `min-height` and the `max-height` of `block` are content
-/// keywords (`min-content`, `max-content`, `fit-content`). The content size of
-/// a block container in the block axis is its automatic height, which counts
-/// the room its content takes across the breaks inside it (CSS Sizing 3,
-/// section 5.1; CSS Fragmentation 3, section 4.4), so such a bound follows the
-/// content as it moves down.
+/// Whether a `min-height` and a `max-height` of `block` that are content
+/// keywords (`min-content`, `max-content`, `fit-content`) set its used height.
+/// The content size of a block container in the block axis is its automatic
+/// height, which counts the room its content takes across the breaks inside
+/// it (CSS Sizing 3, section 5.1; CSS Fragmentation 3, section 4.4), so a box
+/// whose height such a bound sets follows its content as it moves down: a
+/// minimum that holds the box taller than its `height`, or a maximum that
+/// holds it shorter. A box that does not resolve the keywords (see
+/// `bridge::honors_content_limits`), and one whose physical height is not the
+/// block axis of the pages, has neither.
 fn content_keyword_bounds(
     document: &super::context::LayoutSession<'_>,
     block: usize,
 ) -> (bool, bool) {
     use raikiri_style::resolve::ComputedLengthPercentageOrAuto as Length;
-    let cv = &document.style_views.cascade().computed[block];
+    let cascade = document.style_views.cascade();
+    let cv = &cascade.computed[block];
     let keyword = |value: &Length| {
         matches!(
             value,
             Length::MinContent | Length::MaxContent | Length::FitContent
         )
     };
-    if super::bridge::lays_out_vertically(document.style_views.cascade(), block) {
+    let (min_keyword, max_keyword) = (keyword(&cv.min_height), keyword(&cv.max_height));
+    if !(min_keyword || max_keyword)
+        || document.context.pagination_on_transposed_axes
+        || document.nodes[block].used_writing_mode.is_vertical()
+        || !super::bridge::honors_content_limits(document, cascade, block, cv)
+    {
         return (false, false);
     }
-    (keyword(&cv.min_height), keyword(&cv.max_height))
+    let old = document.nodes[block].layout.size.height;
+    let height = border_box_length(document, block, |basis| {
+        resolve_dimension(document.block_axis(block).height(), basis)
+    });
+    (
+        min_keyword && height.is_none_or(|height| old > height + 0.001),
+        max_keyword && height.is_none_or(|height| old < height - 0.001),
+    )
 }
 
 /// Whether the box of the paragraph `block` can grow when its lines move
@@ -10867,14 +10884,16 @@ pub(in crate::layout) fn lines_move_grows_box(
     height_can_grow(document, block) && !document.nodes[block].size_containment.height
 }
 
-/// The `min-height` and `max-height` of `block` as border-box heights (CSS 2.1
-/// §10.7); `max` is infinite when nothing caps the height.
-pub(in crate::layout) fn border_box_height_bounds(
+/// A `height`, `min-height` or `max-height` of `block` as a border-box height
+/// (CSS 2.1 §10.7): `resolve` resolves the value against the height of the
+/// containing block when that is definite. `None` when it is `auto`, or a
+/// percentage of a containing block whose height is not definite.
+fn border_box_length(
     document: &super::context::LayoutSession<'_>,
     block: usize,
-) -> (f32, f32) {
+    resolve: impl FnOnce(Option<f32>) -> Option<f32>,
+) -> Option<f32> {
     let layout = &document.nodes[block].layout;
-    let block_axis = document.block_axis(block);
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
     let box_sizing_edges = if document.pagination_style(block).box_sizing() == BoxSizing::ContentBox
@@ -10883,27 +10902,37 @@ pub(in crate::layout) fn border_box_height_bounds(
     } else {
         0.0
     };
-    // A percentage bound resolves against a containing block of definite
-    // height (CSS 2.1 §10.7).
     let containing_height = BoxTree::for_layout(document)
         .parent(block, BoxParentScope::Document)
         .and_then(|containing| definite_content_height(document, containing));
-    // One that does not resolve behaves as `0` for `min-height` and as
+    resolve(containing_height).map(|value| value + box_sizing_edges)
+}
+
+/// The `min-height` and `max-height` of `block` as border-box heights (CSS 2.1
+/// §10.7); `max` is infinite when nothing caps the height.
+pub(in crate::layout) fn border_box_height_bounds(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    let block_axis = document.block_axis(block);
+    // A bound that does not resolve behaves as `0` for `min-height` and as
     // `none` for `max-height`.
-    let bound = |value: LengthPercentageAuto, auto: f32| {
-        resolve_length_percentage_auto(value, containing_height)
-            .map_or(auto, |value| value + box_sizing_edges)
-    };
-    // A content keyword bound follows the content across breaks (see
-    // `content_keyword_bounds`): the minimum holds what the box had laid out,
-    // and the maximum gives way to the content as it moves down.
+    let min = border_box_length(document, block, |basis| {
+        resolve_length_percentage_auto(block_axis.min_height(), basis)
+    })
+    .unwrap_or(0.0);
+    // A content keyword maximum that sets the height follows the content
+    // across breaks (see `content_keyword_bounds`), up to the `height` it
+    // holds the box under.
     let (_, max_keyword) = content_keyword_bounds(document, block);
-    let min = bound(block_axis.min_height(), 0.0);
-    let max = if max_keyword {
-        f32::INFINITY
-    } else {
-        bound(block_axis.max_height(), f32::INFINITY)
-    }
+    let max = border_box_length(document, block, |basis| {
+        if max_keyword {
+            resolve_dimension(block_axis.height(), basis)
+        } else {
+            resolve_length_percentage_auto(block_axis.max_height(), basis)
+        }
+    })
+    .unwrap_or(f32::INFINITY)
     .max(min);
     (min, max)
 }
