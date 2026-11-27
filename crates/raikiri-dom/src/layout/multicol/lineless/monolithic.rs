@@ -90,9 +90,8 @@ enum Kind {
     /// A block, or a single-line column flex container in the order of the
     /// tree, which stacks its boxes in order along the block axis.
     Flow,
-    /// A row flex container, with its flex lines in order, each holding the
-    /// indices of its items and whether each one stretches to the line.
-    Row(Vec<Vec<(usize, bool)>>),
+    /// A row flex container (see [`ShapeNode::lines`]).
+    Row,
 }
 
 #[derive(Debug)]
@@ -106,6 +105,9 @@ struct ShapeNode {
     grows: bool,
     /// The boxes in flow inside it, in order.
     children: Vec<usize>,
+    /// The flex lines of a row flex container, in order, each holding the
+    /// indices of its items and whether each one stretches to the line.
+    lines: Vec<Vec<(usize, bool)>>,
 }
 
 /// The boxes of a sliced flex container on the way to the monolithic boxes
@@ -234,17 +236,18 @@ impl Shape {
                     }
                     Kind::Flow
                 }
-                DisplayValue::Flex if !style.flex_lines_are_reversed() => Kind::Row(Vec::new()),
+                DisplayValue::Flex if !style.flex_lines_are_reversed() => Kind::Row,
                 _ => return Err(()),
             }
         };
-        let descends = matches!(kind, Kind::Flow | Kind::Row(_));
+        let descends = matches!(kind, Kind::Flow | Kind::Row);
         self.nodes.push(ShapeNode {
             id,
             parent,
             kind,
             grows,
             children: Vec::new(),
+            lines: Vec::new(),
         });
         if !descends {
             return Ok(index);
@@ -260,7 +263,7 @@ impl Shape {
         for child in items {
             children.push((child, self.add(tree, child, Some(index))?));
         }
-        if let Kind::Row(lines) = &mut self.nodes[index].kind {
+        if matches!(self.nodes[index].kind, Kind::Row) {
             let align_items = style_of(tree, id).align_items();
             let mut grouped = Vec::new();
             for line in flex_lines(tree, id, children.iter().map(|&(child, _)| child).collect()) {
@@ -293,7 +296,7 @@ impl Shape {
                 }
                 grouped.push(items);
             }
-            *lines = grouped;
+            self.nodes[index].lines = grouped;
         }
         self.nodes[index].children = children.into_iter().map(|(_, index)| index).collect();
         Ok(index)
@@ -331,15 +334,8 @@ impl Shape {
             grown: vec![0.0; self.nodes.len()],
             growth: 0.0,
         };
-        let column_of = |position: f32| {
-            let column = (position / column_height).floor();
-            // A box that ends a column within rounding starts the next one.
-            if position - column * column_height > column_height - EPSILON {
-                column + 1.0
-            } else {
-                column
-            }
-        };
+        // A box that ends a column within rounding starts the next one.
+        let column_of = |position: f32| ((position + EPSILON) / column_height).floor();
         // Each move puts a box at the top of a column, so there are no more
         // moves than boxes; the bound keeps rounding from looping, and what
         // is left unmoved then overflows like a box that is cut.
@@ -419,8 +415,9 @@ impl Shape {
         let mut current = index;
         while let Some(parent) = self.nodes[current].parent {
             match &self.nodes[parent].kind {
-                Kind::Row(lines) => {
-                    let line = lines
+                Kind::Row => {
+                    let line = self.nodes[parent]
+                        .lines
                         .iter()
                         .position(|items| items.iter().any(|&(item, _)| item == current));
                     if tree.nodes[self.nodes[current].id].layout.margin.top > EPSILON {
@@ -506,14 +503,12 @@ impl State<'_, '_> {
     /// The items of the flex line of row container `parent` that holds
     /// `item`, with whether each one stretches.
     fn line_of(&self, parent: usize, item: usize) -> Vec<(usize, bool)> {
-        match &self.shape.nodes[parent].kind {
-            Kind::Row(lines) => lines
-                .iter()
-                .find(|items| items.iter().any(|&(index, _)| index == item))
-                .cloned()
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        }
+        self.shape.nodes[parent]
+            .lines
+            .iter()
+            .find(|items| items.iter().any(|&(index, _)| index == item))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Where the margin box of the line of `item` ends: that of its
@@ -587,7 +582,8 @@ impl State<'_, '_> {
     fn following(&self, parent: usize, child: usize, line: bool) -> Vec<usize> {
         let node = &self.shape.nodes[parent];
         match &node.kind {
-            Kind::Row(lines) => {
+            Kind::Row => {
+                let lines = &node.lines;
                 let at = lines
                     .iter()
                     .position(|items| items.iter().any(|&(item, _)| item == child))
@@ -636,7 +632,7 @@ impl State<'_, '_> {
             return;
         };
         match &self.shape.nodes[parent].kind {
-            Kind::Row(_) => {
+            Kind::Row => {
                 // A stretched item grows with its line; one that does not
                 // stretch grows with its content.
                 let old_end = self.line_end(parent, index);

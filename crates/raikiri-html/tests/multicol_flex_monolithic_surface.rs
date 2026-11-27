@@ -363,6 +363,67 @@ fn any_item_at_the_start_of_a_later_line_moves_the_line() {
 }
 
 #[test]
+fn a_box_starting_an_item_at_the_column_top_moves_alone() {
+    // An item at the top of its column does not move: the monolithic box
+    // after its padding moves alone, and the item grows.
+    expect(
+        &columns(
+            "auto",
+            "<div id=f style='display:flex;flex-direction:column'><div id=a style='padding-top:5px'>\
+             <div id=m1 style='contain:size;height:100px'></div><div id=b style='height:10px'></div></div></div>",
+        ),
+        &[
+            (
+                "f",
+                &[(0, 0, 100, 100), (100, 0, 100, 100), (200, 0, 100, 10)],
+            ),
+            (
+                "a",
+                &[(0, 0, 100, 100), (100, 0, 100, 100), (200, 0, 100, 10)],
+            ),
+            ("m1", &[(100, 0, 100, 100)]),
+            ("b", &[(200, 0, 100, 10)]),
+        ],
+    );
+}
+
+#[test]
+fn an_item_aligned_at_the_line_start_grows_with_its_content() {
+    // An item that does not stretch grows with its content, and the line
+    // with it, which stretches the other items.
+    expect(
+        &columns(
+            "auto",
+            "<div id=f style='display:flex'><div id=a style='width:50px;align-self:flex-start'>\
+             <div id=m1 style='contain:size;height:60px'></div><div id=m2 style='contain:size;height:60px'></div></div>\
+             <div id=b style='width:50px'></div></div>",
+        ),
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 60)]),
+            ("a", &[(0, 0, 50, 100), (100, 0, 50, 60)]),
+            ("m1", &[(0, 0, 50, 60)]),
+            ("m2", &[(100, 0, 50, 60)]),
+            ("b", &[(50, 0, 50, 100), (150, 0, 50, 60)]),
+        ],
+    );
+}
+
+#[test]
+fn a_content_box_container_leaves_its_height_to_the_columns() {
+    expect(
+        "<div style='columns:4;column-gap:0;width:400px;height:100px;column-fill:auto;box-sizing:content-box'>\
+         <div id=f style='display:flex;flex-direction:column'><div id=a><div id=m1 style='contain:size;height:60px'></div>\
+         <div id=m2 style='contain:size;height:60px'></div></div></div></div>",
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 60)]),
+            ("a", &[(0, 0, 100, 100), (100, 0, 100, 60)]),
+            ("m1", &[(0, 0, 100, 60)]),
+            ("m2", &[(100, 0, 100, 60)]),
+        ],
+    );
+}
+
+#[test]
 fn containers_the_moves_do_not_model_still_lay_out() {
     let mono = "<div id=m style='contain:size;height:60px'></div>";
     let pushed = format!("<div id=a style='height:60px'></div><div>{mono}</div>");
@@ -390,6 +451,8 @@ fn containers_the_moves_do_not_model_still_lay_out() {
          <div><div style='height:10px'></div><div id=m style='contain:size;height:150px'></div></div></div>"
             .to_owned(),
         format!("<div style='display:flex;flex-direction:column;height:120px'>{pushed}</div>"),
+        // A relative offset.
+        format!("<div style='display:flex;flex-direction:column'><div style='position:relative;top:5px'>{pushed}</div></div>"),
         // A forced break between the items as well.
         format!(
             "<div style='display:flex;flex-direction:column'>{pushed}\
@@ -402,5 +465,12 @@ fn containers_the_moves_do_not_model_still_lay_out() {
             let got = crate::multicol_flex_forced_break_surface::visible(&body);
             assert!(got.contains_key("m"), "{body}");
         }
+        // Columns that fill in turn with no height of their own to bound
+        // them.
+        let body = format!(
+            "<div style='columns:4;column-gap:0;width:400px;column-fill:auto'>{content}</div>"
+        );
+        let got = crate::multicol_flex_forced_break_surface::visible(&body);
+        assert!(got.contains_key("m"), "{body}");
     }
 }
