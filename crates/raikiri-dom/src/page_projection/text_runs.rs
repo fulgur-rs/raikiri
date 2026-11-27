@@ -846,13 +846,18 @@ pub(super) fn column_clip_owner(
     context: &RunContext,
     id: usize,
 ) -> bool {
-    context.fragment_clipped.contains(&id)
-        || document
-            .get_node(id)
-            .is_some_and(|node| node.is_multicol_container())
-            && cascade.computed.get(id).is_some_and(
-                |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
-            )
+    context.fragment_clipped.contains(&id) || columns_clip_owner(document, cascade, id)
+}
+
+/// Whether element `id` lays its contents out in more than one column,
+/// each of which the painter clips.
+fn columns_clip_owner(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    document
+        .get_node(id)
+        .is_some_and(|node| node.is_multicol_container())
+        && cascade.computed.get(id).is_some_and(
+            |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
+        )
         || used_columns(document, id) > 1
 }
 
@@ -941,11 +946,17 @@ pub(super) fn paint_shift(
             if shift.general {
                 return Err(TextRunOmission::Transform);
             }
-            clipped |= column_clip_owner(document, cascade, context, id)
+            // The painter places the clip of a box's own column fragment
+            // from where it paints that box, its own offset included, so
+            // that offset moves the clip with the lines. Its other clips
+            // and the clips of the boxes inside it stay put.
+            let own_fragment_clip = context.fragment_clipped.contains(&id);
+            let other_clip = columns_clip_owner(document, cascade, id)
                 || crate::paint_rules::element_has_overflow_clip(document, cascade, id);
-            if clipped && shift.offset != (0.0, 0.0) {
+            if (clipped || other_clip) && shift.offset != (0.0, 0.0) {
                 return Err(TextRunOmission::ShiftedClip);
             }
+            clipped |= own_fragment_clip || other_clip;
             dx += shift.offset.0;
             dy += shift.offset.1;
         }

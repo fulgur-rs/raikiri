@@ -12,30 +12,6 @@ const ORIGIN: FragmentRect = FragmentRect {
     height: 0.0,
 };
 
-/// Whether `fragments` cut a paragraph that paints with an offset of its own,
-/// a `position: relative` inset or a transform. A cut piece is clipped at its
-/// column and the painter moves the offset inside that clip, so the page
-/// would not report the runs of its lines; such a paragraph stays in the
-/// columns that the pages cut.
-fn cuts_shifted_paragraph(
-    tree: &LayoutSession<'_>,
-    fragments: &[paragraph_group::PagedFragment],
-) -> bool {
-    let cascade = tree.style_views.cascade();
-    fragments.iter().any(|fragment| {
-        fragment.clip.is_some()
-            && (crate::layout::used_relative_offset_for_layout(
-                tree.document,
-                cascade,
-                fragment.child,
-            ) != (0.0, 0.0)
-                || cascade
-                    .computed
-                    .get(fragment.child)
-                    .is_some_and(|values| !values.transform.is_empty()))
-    })
-}
-
 /// Whether `owner`, or a box around it, is an atomic inline such as an
 /// `inline-block`, whose contents the pages cut as one tall box.
 fn inside_atomic_inline(tree: &LayoutSession<'_>, owner: usize) -> bool {
@@ -310,9 +286,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 ),
                 columns_page_for,
                 work,
-            )?
-            .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
-            {
+            )? {
                 let new_end = planned.end;
                 if let Some((spanner, first, natural)) = first_content
                     && let Some(top) = planned

@@ -536,22 +536,27 @@ fn a_paragraph_that_is_shifted_keeps_its_runs_where_it_stays_whole() {
 }
 
 #[test]
-fn a_paragraph_that_is_cut_and_shifted_keeps_its_runs() {
-    // A piece of a paragraph is clipped at its column, and the painter moves
-    // the paragraph's own offset inside that clip, so the runs of the pieces
-    // are not reported. The paragraph stays in the columns that the pages cut,
-    // where all its lines are reported.
-    for shift in [
-        "p{position:relative;top:3px}",
-        "p{transform:translate(5px,3px)}",
+fn a_paragraph_that_is_cut_and_shifted_fills_each_page_in_column_order() {
+    // The painter moves the clip of each piece with the paragraph's own
+    // offset, so the pages report the runs of every piece where the
+    // paragraph's own offset puts them.
+    for (shift, x) in [
+        ("p{position:relative;top:3px}", 0),
+        ("p{transform:translate(5px,3px)}", 5),
     ] {
-        let mut texts: Vec<_> = lines(&mc(&par("L", 1, 45)), shift)
-            .into_iter()
-            .map(|line| line.3)
-            .collect();
-        texts.sort_by_key(|text| text[1..].parse::<u32>().unwrap());
-        let expected: Vec<_> = (1..=45).map(|n| format!("L{n}")).collect();
-        assert_eq!(texts, expected, "{shift}");
+        let right = 100 + x;
+        assert_eq!(
+            columns(&mc(&par("L", 1, 45)), shift),
+            [
+                format!("p0 x{x}: L1-L10@3"),
+                format!("p0 x{right}: L11-L20@3"),
+                format!("p1 x{x}: L21-L30@3"),
+                format!("p1 x{right}: L31-L40@3"),
+                format!("p2 x{x}: L41-L43@3"),
+                format!("p2 x{right}: L44-L45@3"),
+            ],
+            "{shift}"
+        );
     }
 }
 
