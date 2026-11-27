@@ -1813,34 +1813,40 @@ impl PaginationState {
         };
         let mut moved = false;
         let mut from = 0;
-        loop {
+        while from < count {
             let page = page_origins.page_index_for_y(bounds(document, from).0 + 0.001);
             let next = page.saturating_add(1);
             let end = page_origins.origin(next);
             let Some(crossing) = (from..count).find(|&line| bounds(document, line).1 > end + 0.001)
             else {
-                return Ok(moved);
+                break;
             };
-            let cut = count.saturating_sub(widows);
-            let widows_fit = cut > 0
-                && bounds(document, count - 1).1 - bounds(document, cut).0
-                    <= page_origins.step_at(next) + 0.001;
-            let at = crate::layout::multicol::piece_end(
-                from,
-                crossing,
-                count,
-                (orphans, if widows_fit { widows } else { 1 }),
-            );
-            let top = bounds(document, at.min(count - 1)).0;
-            if at <= from
-                || at >= count
-                || !runs_past_page_end(document, env.cascade, env.body_id, node_id, end)
-            {
-                return Ok(moved);
+            if !runs_past_page_end(document, env.cascade, env.body_id, node_id, end) {
+                break;
             }
+            let at = if crossing == from {
+                // A line that crosses the end of the page it starts moves on
+                // by itself, unless it starts the page or the paragraph,
+                // whose box moves instead: the page then cuts it.
+                crossing
+            } else {
+                let cut = count.saturating_sub(widows);
+                let widows_fit = cut > 0
+                    && bounds(document, count - 1).1 - bounds(document, cut).0
+                        <= page_origins.step_at(next) + 0.001;
+                crate::layout::multicol::piece_end(
+                    from,
+                    crossing,
+                    count,
+                    (orphans, if widows_fit { widows } else { 1 }),
+                )
+            };
+            let top = bounds(document, at).0;
             // A line that starts the next page already needs no move.
-            if top >= end - 0.001 {
-                from = at;
+            if top >= end - 0.001
+                || at == from && (from == 0 || top <= page_origins.origin(page) + 0.001)
+            {
+                from = at.max(from + 1);
                 continue;
             }
             reach_page(env.control, next)?;
@@ -1858,6 +1864,7 @@ impl PaginationState {
             moved = true;
             from = at;
         }
+        Ok(moved)
     }
 
     /// Breaks the page between a block child of the paragraph `candidate` and

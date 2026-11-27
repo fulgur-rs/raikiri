@@ -440,3 +440,36 @@ fn a_long_paragraph_of_blank_lines_breaks_again_on_each_page() {
     assert_eq!(extents(&body, "z"), [(3, 60.0, 70.0)]);
     assert_eq!(extents(&blank_lines(20, "", 7), "z"), [(2, 60.0, 70.0)]);
 }
+
+#[test]
+fn a_blank_line_that_starts_the_next_page_stays() {
+    // The third line starts the second page exactly: nothing moves.
+    let body = blank_lines(40, "", 4);
+    assert_eq!(extents(&body, "p"), [(0, 40.0, 100.0), (1, 0.0, 60.0)]);
+    assert_eq!(extents(&body, "z"), [(1, 60.0, 70.0)]);
+}
+
+#[test]
+fn a_blank_line_taller_than_a_page_is_cut_and_the_next_one_moves_on() {
+    // The first line starts the page and runs over two of them; the second
+    // starts below it and moves to the top of the page after.
+    let body = blank_lines(0, "line-height:120px", 2);
+    assert_eq!(
+        extents(&body, "p"),
+        [
+            (0, 0.0, 100.0),
+            (1, 0.0, 100.0),
+            (2, 0.0, 100.0),
+            (3, 0.0, 20.0)
+        ]
+    );
+    assert_eq!(extents(&body, "z"), [(3, 20.0, 30.0)]);
+}
+
+#[test]
+fn blank_lines_that_overflow_a_box_ending_on_the_page_stay() {
+    // No break falls inside a box that ends on its page.
+    let body = blank_lines(20, "height:40px", 4);
+    assert_eq!(extents(&body, "p"), [(0, 20.0, 60.0)]);
+    assert_eq!(extents(&body, "z"), [(0, 60.0, 70.0)]);
+}
