@@ -26,11 +26,17 @@ use raikiri_style::property::{UnicodeBidi, WhiteSpaceCollapse};
 pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &CascadeResult) {
     let mut wrappers = Vec::new();
     for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind() == NodeKind::Element
-            && doc.nodes[idx].column_span_all
-            && is_spanner_in(doc, cascade, idx)
-        {
-            collect_wrappers(doc, cascade, idx, &mut wrappers);
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        if doc.nodes[idx].column_span_all && is_spanner_in(doc, cascade, idx) {
+            collect_wrappers(doc, cascade, doc.nodes[idx].parent, &mut wrappers);
+        } else if holds_blocks_inline(doc, cascade, idx) {
+            // The blocks an inline box holds go in the columns as if the
+            // container held them, as Chromium balances them; the inline box
+            // is split around them (CSS 2, 9.2.1.1) and leaves nothing of its
+            // own when it is plain.
+            collect_wrappers(doc, cascade, Some(idx), &mut wrappers);
         }
     }
     // A wrapper that holds several spanners is found once for each.
@@ -50,17 +56,32 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
     }
 }
 
-/// Adds to `wrappers` the plain wrappers between the spanner `spanner` and
-/// the multicol container it spans, unless something else lies in between or
-/// no such container is found.
+/// Whether `id` is an inline box that holds a block-level box in the flow.
+fn holds_blocks_inline(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    doc.nodes[id].display() == DisplayValue::Inline
+        && doc.nodes[id].children.iter().any(|&child| {
+            doc.nodes[child].kind() == NodeKind::Element
+                && cascade.computed.get(child).is_some_and(|cv| {
+                    !cv.display.is_inline_level()
+                        && !matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+                        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+                        && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
+                })
+        })
+}
+
+/// Adds to `wrappers` the plain wrappers from `first` up to the multicol
+/// container that holds them, unless something else lies in between or no
+/// such container is found: those around a spanner, which the spanner then
+/// spans, or an inline box around blocks and those around it.
 fn collect_wrappers(
     doc: &Document,
     cascade: &CascadeResult,
-    spanner: usize,
+    first: Option<usize>,
     wrappers: &mut Vec<usize>,
 ) {
     let mut chain = Vec::new();
-    let mut ancestor = doc.nodes[spanner].parent;
+    let mut ancestor = first;
     while let Some(id) = ancestor {
         let node = &doc.nodes[id];
         if node.kind() != NodeKind::Element {
@@ -75,7 +96,7 @@ fn collect_wrappers(
             // container.
             if chain
                 .iter()
-                .all(|&wrapper| keeps_line_layout(doc, cascade, wrapper, id))
+                .all(|&wrapper| keeps_line_layout(doc, cascade, wrapper, id, &chain))
             {
                 wrappers.extend(chain);
             }
@@ -161,12 +182,16 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
         ]
         .into_iter()
         .all(|width| width == 0.0)
-        && size_is_auto(&sized.width)
-        && size_is_auto(&sized.height)
-        && limit_is_none(&sized.min_width)
-        && limit_is_none(min_height)
-        && limit_is_none(&sized.max_width)
-        && limit_is_none(&sized.max_height)
+        // Sizes and their limits do not apply to an inline box that is not
+        // replaced (CSS 2, 10.2 and 10.6.1); replaced elements are left out
+        // below.
+        && (node.display() == DisplayValue::Inline
+            || size_is_auto(&sized.width)
+                && size_is_auto(&sized.height)
+                && limit_is_none(&sized.min_width)
+                && limit_is_none(min_height)
+                && limit_is_none(&sized.max_width)
+                && limit_is_none(&sized.max_height))
         && !node.paints_whole_box_effects
         && !node.paints_background_color
         && !node.claims_absolute_oof
@@ -209,9 +234,15 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
 /// anonymous block of the container, which has the style of a child of the
 /// container that no rule matches: whatever else the wrapper's style says
 /// about text, fonts, decoration or direction would be lost with its box.
-fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, container: usize) -> bool {
+fn keeps_line_layout(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    container: usize,
+    lifted: &[usize],
+) -> bool {
     let (wrapper, container) = (&cascade.computed[id], &cascade.computed[container]);
-    if !holds_lines(doc, cascade, id, container) {
+    if !holds_lines(doc, cascade, id, container, lifted) {
         return true;
     }
     let mut anonymous = ComputedValues::inherit_from(container);
@@ -235,7 +266,8 @@ fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, contain
 }
 
 /// Whether the box of `id` has text that renders, or an inline-level box,
-/// among its children, or among those of a `display: contents` child. Document
+/// among its children, or among those of a `display: contents` child or of a
+/// child in `lifted`, the wrappers that make no box along with it. Document
 /// white space (space, tab and line breaks, CSS Text 3, 4.1.1) makes no line
 /// between blocks when it collapses both in the wrapper and in `container`,
 /// whose anonymous block would take it; any other white space, such as
@@ -245,6 +277,7 @@ fn holds_lines(
     cascade: &CascadeResult,
     id: usize,
     container: &ComputedValues,
+    lifted: &[usize],
 ) -> bool {
     let drops_white_space = |cv: &ComputedValues| {
         matches!(
@@ -264,8 +297,9 @@ fn holds_lines(
                 !text.is_empty() && !dropped
             }),
             NodeKind::Element => cascade.computed.get(child).is_some_and(|cv| {
-                if cv.display == DisplayValue::Contents {
-                    holds_lines(doc, cascade, child, container)
+                // A wrapper lifted with this one makes no box either.
+                if cv.display == DisplayValue::Contents || lifted.contains(&child) {
+                    holds_lines(doc, cascade, child, container, lifted)
                 } else {
                     cv.display.is_inline_level()
                 }

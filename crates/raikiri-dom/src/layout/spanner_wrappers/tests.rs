@@ -521,3 +521,61 @@ fn container_type_wrapper_keeps_its_box_around_a_column_spanner() {
         assert!(doc.nodes[wrapper].roots_block_context(), "{kind}");
     }
 }
+
+#[test]
+fn an_inline_wrapper_of_blocks_makes_no_box_without_a_spanner() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+    let outer = doc.append_element(Some(container), "div", Some(BLOCK));
+    // Sizes do not apply to an inline box that is not replaced.
+    let inner = doc.append_element(Some(outer), "span", Some("display:inline;width:10px"));
+    let first = doc.append_element(Some(inner), "div", Some("display:block;height:20px"));
+    let second = doc.append_element(Some(inner), "div", Some("display:block;height:20px"));
+    lay_out(&mut doc);
+
+    assert!(doc.nodes[outer].generates_no_box());
+    assert!(doc.nodes[inner].generates_no_box());
+    // The two blocks balance into the two columns.
+    assert_eq!(doc.nodes[first].layout.location.x, 0.0);
+    assert_eq!(doc.nodes[second].layout.location.x, 50.0);
+}
+
+#[test]
+fn an_inline_box_of_blocks_outside_columns_or_with_a_box_keeps_it() {
+    for (container_css, inline_css) in [
+        ("display:block;width:100px", INLINE),
+        (COLUMNS, "display:inline;padding-left:5px"),
+        (COLUMNS, "display:inline;background-color:red"),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(container_css));
+        let inline = doc.append_element(Some(container), "span", Some(inline_css));
+        doc.append_element(Some(inline), "div", Some("display:block;height:20px"));
+        lay_out(&mut doc);
+        assert!(
+            !doc.nodes[inline].generates_no_box(),
+            "{container_css} {inline_css}"
+        );
+    }
+    // An inline box that holds only inline content, or blocks out of the
+    // flow, is not split around blocks.
+    for child_css in [
+        "display:inline-block;height:20px",
+        "display:block;height:20px;position:absolute",
+        "display:block;height:20px;float:left",
+        "display:none",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+        let inline = doc.append_element(Some(container), "span", Some(INLINE));
+        doc.append_element(Some(inline), "div", Some(child_css));
+        lay_out(&mut doc);
+        assert!(!doc.nodes[inline].generates_no_box(), "{child_css}");
+    }
+}
