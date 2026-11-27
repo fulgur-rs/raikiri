@@ -324,3 +324,40 @@ fn a_box_that_avoids_breaks_moves_with_the_monolithic_box_it_holds() {
         ],
     );
 }
+
+#[test]
+fn a_gap_longer_than_a_column_is_truncated_at_the_first_column_end() {
+    // The gap crosses two column ends; the break falls at the first, so b
+    // starts the next column, its own block-start margin kept.
+    for (a, margin) in [("contain:size", 0), ("", 10)] {
+        expect(
+            &column_flex(
+                "row-gap:220px",
+                &format!(
+                    "<div id=a style='height:90px;{a}'></div>\
+                     <div id=b style='height:90px;margin-top:{margin}px'></div>"
+                ),
+            ),
+            &[("a", &[(0, 0, 100, 90)]), ("b", &[(100, margin, 100, 90)])],
+        );
+    }
+}
+
+#[test]
+fn a_percentage_gap_resolves_against_the_block_size_of_the_container() {
+    // The gap is 22px, 10% of 220px, and is truncated at the column end.
+    expect(
+        &column_flex(
+            "height:220px;row-gap:10%",
+            "<div id=a style='height:90px;contain:size'></div><div id=b style='height:90px'></div>",
+        ),
+        &[
+            (
+                "f",
+                &[(0, 0, 100, 100), (100, 0, 100, 100), (200, 0, 100, 20)],
+            ),
+            ("a", &[(0, 0, 100, 90)]),
+            ("b", &[(100, 0, 100, 90)]),
+        ],
+    );
+}

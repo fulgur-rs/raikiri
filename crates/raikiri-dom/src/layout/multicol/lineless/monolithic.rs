@@ -380,7 +380,16 @@ impl Shape {
             match node.display() {
                 DisplayValue::Block | DisplayValue::FlowRoot => Kind::Flow,
                 DisplayValue::Flex if !style.flex_direction_is_row() => {
-                    if style.flex_wraps() || style.flex_direction_is_reversed() {
+                    // A percentage gap resolves against a block size that
+                    // the style fixes, not against one its content grows.
+                    if style.flex_wraps()
+                        || style.flex_direction_is_reversed()
+                        || (grows
+                            && !matches!(
+                                style.gap().height.expand(),
+                                ExpandedLengthPercentage::Length(_)
+                            ))
+                    {
                         return Err(());
                     }
                     Kind::Flow
@@ -570,9 +579,11 @@ impl Shape {
                 let end = start + state.top(prev) + state.height(prev);
                 let border = start + state.top(next);
                 let top = border - state.layout(next).margin.top.max(0.0);
-                let column = column_of(top);
+                // The break falls at the first column end after `prev`, even
+                // where the space after it spans more than a column.
+                let column = column_of(end - 2.0 * EPSILON) + 1.0;
                 let boundary = column * column_height;
-                if boundary <= start + EPSILON || boundary < end - EPSILON {
+                if boundary <= start + EPSILON || boundary > top + EPSILON {
                     continue;
                 }
                 let earlier = if self.avoids_break_between(tree, prev, next) {
@@ -645,15 +656,23 @@ impl Shape {
 
     /// The pairs of adjacent boxes in each flow, in order, with the row gap
     /// between them when the flow is that of a flex container, whose breaks
-    /// truncate it. A percentage gap counts as zero.
+    /// truncate it. A percentage gap resolves against the content box of a
+    /// container whose style fixes its block size, the only kind with such
+    /// a gap that holds a flow (see `add`).
     fn flow_pairs(&self, tree: &LayoutSession<'_>) -> Vec<(Option<f32>, usize, usize)> {
         self.nodes
             .iter()
             .filter(|node| matches!(node.kind, Kind::Flow))
             .flat_map(|node| {
                 let gap = (layout_node(tree, node.id).display() == DisplayValue::Flex).then(|| {
+                    let layout = &tree.nodes[node.id].layout;
+                    let content = layout.size.height
+                        - layout.padding.top
+                        - layout.padding.bottom
+                        - layout.border.top
+                        - layout.border.bottom;
                     let gap = style_of(tree, node.id).gap().height;
-                    super::super::multicol_resolve_inset(tree, gap, 0.0).max(0.0)
+                    super::super::multicol_resolve_inset(tree, gap, content.max(0.0))
                 });
                 node.children
                     .windows(2)
