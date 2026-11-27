@@ -719,17 +719,13 @@ fn paginate_own_lines(
             }
         }
         let y = top - start;
+        // Each page repeats the columns of the container: its rules stand
+        // between the same columns, cut by the pages.
         for (column, (line_start, line_end)) in ranges.into_iter().enumerate() {
-            let fragmentainer = (page as usize)
-                .checked_mul(count)
-                .and_then(|base| base.checked_add(column))
-                .ok_or(LayoutError::FragmentLimitExceeded {
-                    limit: tree.fragment_tree.limit,
-                })?;
             fragments.push(MulticolTextFragment {
                 line_start,
                 line_end,
-                fragmentainer,
+                fragmentainer: column,
                 x: context.column_offset_x(column),
                 y,
             });
