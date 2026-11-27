@@ -3006,6 +3006,7 @@ css/css-multicol/multicol-basic-001.html
 css/css-multicol/multicol-basic-002.html
 css/css-multicol/multicol-basic-003.html
 css/css-multicol/multicol-basic-004.html
+css/css-multicol/multicol-contained-absolute.html
 css/css-multicol/multicol-dynamic-add-001.html
 css/css-multicol/multicol-dynamic-add-002.html
 css/css-multicol/multicol-dynamic-add-003.html
