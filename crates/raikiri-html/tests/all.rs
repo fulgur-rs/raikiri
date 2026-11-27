@@ -115,6 +115,7 @@ mod multicol_float_wrapper_surface;
 mod multicol_flow_root_surface;
 mod multicol_forced_column_break_pages_surface;
 mod multicol_grid_slice_surface;
+mod multicol_inline_block_wrapper_surface;
 mod multicol_last_line_edge_surface;
 mod multicol_max_height_balance;
 mod multicol_nested_column_container_surface;
