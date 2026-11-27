@@ -2463,7 +2463,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
-        "display:grid",
         "display:inline-block",
         "display:block;columns:2",
         "display:block;transform:translateX(80px)",
@@ -2477,6 +2476,20 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     ] {
         assert!(!supported(sized, &[held], true), "{held}");
     }
+    // A grid container is sliced as a flex container is, held or holding,
+    // but a forced break inside it stays with the other strategies.
+    assert!(supported(sized, &["display:grid;width:10px"], true));
+    assert!(supported("display:grid;height:150px", &[item], true));
+    assert!(supported(
+        "display:grid;grid-template-rows:150px",
+        &["display:block"],
+        true
+    ));
+    assert!(!supported(
+        "display:grid",
+        &["display:block;width:10px;height:150px;break-before:column"],
+        true
+    ));
     // A background inside the box stays inside the clip, and so do block
     // edges that are cut with the box, or that have nothing to repeat.
     for held in [
@@ -2496,7 +2509,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:flex;height:150px;outline:4px solid blue",
         "display:flex;height:150px;border-top:5px solid red;border-bottom:5px solid red;\
          box-decoration-break:clone",
-        "display:grid;height:150px",
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
     }

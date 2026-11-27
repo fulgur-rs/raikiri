@@ -455,8 +455,10 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// it and the boxes inside it hold no lines, so there is nowhere to break
 /// between lines, and nothing that breaks on its own terms. The container is
 /// laid out whole, and each column shows the part of it that falls in the
-/// column (CSS Flexbox 1, 12). `Some(sized)` says whether any of them has a
-/// block size of its own to slice.
+/// column (CSS Flexbox 1, 12). A grid container whose items hold no lines
+/// is sliced the same way, as Chromium does when it breaks its rows at a
+/// column end. `Some(sized)` says whether any of them has a block size of
+/// its own to slice.
 ///
 /// `block_size` is the block size of the container in this layout, once the
 /// boxes it holds are laid out. Their geometry then tells whether a box
@@ -473,16 +475,16 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, boxes that paint past their own box (a
 /// transform, shadow, outline or filter) or as a whole group, boxes whose
-/// block edges repeat at each break, containers that are not block or flex,
-/// and containers whose content overflows their block start or end.
+/// block edges repeat at each break, containers that are not block, flex or
+/// grid, forced breaks inside a grid container, and containers whose content
+/// overflows their block start or end.
 fn sliceable_flex_container(
     tree: &LayoutSession<'_>,
     child: usize,
     block_size: Option<f32>,
 ) -> Option<bool> {
-    let node = layout_node(tree, child);
     let style = style_of(tree, child);
-    if node.display() != DisplayValue::Flex
+    if !is_flex_or_grid(tree, child)
         || style.inset() != Edges::splat(LengthPercentageAuto::auto())
         || style.float().is_floated()
         || style.clear() != Clear::None
@@ -504,7 +506,7 @@ fn sliceable_flex_container(
     };
     let mut boxes = 0usize;
     let mut sized = false;
-    let breaking_items = breaks_between_items(&style);
+    let breaking_items = breaks_between_items(tree, child);
     // Whether a box on the way down is the containing block of the absolutely
     // positioned boxes below it, so that they are cut with the container, and
     // whether a forced column break before or after it would fall between
@@ -542,7 +544,12 @@ fn sliceable_flex_container(
         holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
-        sized |= has_block_size(&style);
+        // Explicit rows give a grid container a block size of its own.
+        sized |= has_block_size(&style)
+            || node.display() == DisplayValue::Grid
+                && style
+                    .grid_template_rows()
+                    .is_some_and(|rows| rows.len() > 0);
         // A break before the first box in flow inside a block, or after the
         // last, is a break before or after the block itself (CSS
         // Fragmentation 3, 3.1), and one before or after a flex item falls
@@ -603,20 +610,24 @@ fn sliceable_flex_container(
 /// after the last, is one before or after `id`: `id` lays them out in a
 /// block flow, or is a single-line flex container that lays them out in
 /// the order of the tree. `id` is a box that the stream can slice (see
-/// [`is_sliceable_flex_box`]): a block container or a flex container.
+/// [`is_sliceable_flex_box`]): a block, flex or grid container. A grid
+/// container places its items apart from the order of the tree, so a break
+/// inside it stays there.
 fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let display = layout_node(tree, id).display();
     debug_assert!(matches!(
-        layout_node(tree, id).display(),
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+        display,
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
     ));
     let style = style_of(tree, id);
     let cascade = tree.style_views.cascade();
-    layout_node(tree, id).display() != DisplayValue::Flex
-        || !style.flex_wraps()
-            && !style.flex_direction_is_reversed()
-            && in_flow_elements(tree, id)
-                .iter()
-                .all(|&item| cascade.computed[item].order == 0)
+    display != DisplayValue::Grid
+        && (display != DisplayValue::Flex
+            || !style.flex_wraps()
+                && !style.flex_direction_is_reversed()
+                && in_flow_elements(tree, id)
+                    .iter()
+                    .all(|&item| cascade.computed[item].order == 0))
 }
 
 /// Whether an absolutely positioned box with `style` is placed a fixed
@@ -649,7 +660,7 @@ fn is_sliceable_flex_box(
     let style = style_of(tree, id);
     matches!(
         node.display(),
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
     ) && is_horizontal(node)
         && !node.size_containment.height
         && (matches!(
@@ -690,13 +701,25 @@ fn is_sliceable_flex_box(
 /// row container, which take the breaks of their items (CSS Flexbox 1, 12).
 /// A multi-line column container breaks each of its lines on its own, and
 /// one whose lines stack the other way breaks them in the other order, so
-/// both keep the other strategies.
-fn breaks_between_items(style: &LayoutStyleView<'_>) -> bool {
-    if style.flex_direction_is_row() {
+/// both keep the other strategies, and so does a grid container.
+fn breaks_between_items(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    if layout_node(tree, id).display() != DisplayValue::Flex {
+        false
+    } else if style.flex_direction_is_row() {
         !style.flex_lines_are_reversed()
     } else {
         !style.flex_wraps()
     }
+}
+
+/// Whether `id` is a flex or grid container, which the stream slices whole
+/// when it can (see [`sliceable_flex_container`]).
+fn is_flex_or_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
+    matches!(
+        layout_node(tree, id).display(),
+        DisplayValue::Flex | DisplayValue::Grid
+    )
 }
 
 /// The rendered element children of `id` in flow.
@@ -824,7 +847,7 @@ fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> FlexBreak
         after: node.break_after == BreakBetween::Column,
         parts: Vec::new(),
     };
-    if !breaks_between_items(&style) {
+    if !breaks_between_items(tree, child) {
         return breaks;
     }
     let items = in_flow_elements(tree, child);
@@ -2882,14 +2905,14 @@ pub(super) fn layout(
         .iter()
         .zip(&sizes)
         .map(|(&child, size)| {
-            layout_node(tree, child).display() == DisplayValue::Flex
+            is_flex_or_grid(tree, child)
                 && sliceable_flex_container(tree, child, Some(size.height)).is_some()
         })
         .collect();
     if children
         .iter()
         .zip(&sliced_flex)
-        .any(|(&child, &flex)| layout_node(tree, child).display() == DisplayValue::Flex && !flex)
+        .any(|(&child, &flex)| is_flex_or_grid(tree, child) && !flex)
     {
         return None;
     }

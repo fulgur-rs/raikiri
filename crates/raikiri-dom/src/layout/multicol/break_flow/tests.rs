@@ -1272,21 +1272,23 @@ fn review_internal_flex_and_grid_breaks_keep_the_existing_strategy() {
 }
 
 #[test]
-fn review_oversize_grid_stays_monolithic_and_flex_is_sliced() {
+fn review_oversize_grid_and_flex_are_sliced() {
     let atomic = |display: &str| {
         let doc = laid_out(&format!(
             "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='atomic' style='display:{display};width:20px;height:150px;break-before:column'><div style='height:10px'></div></div></div>",
         ));
         boxes(&doc, "atomic")
     };
-    assert_eq!(atomic("grid"), vec![(1, 50.0, 0.0, 20.0, 150.0)]);
-    // A flex container of boxes without lines is sliced whole after the
-    // break, and continues in an overflow column, as in Chromium: each piece
-    // is the whole box moved up by what the pieces before it show.
-    assert_eq!(
-        atomic("flex"),
-        vec![(1, 50.0, 0.0, 20.0, 150.0), (2, 100.0, -100.0, 20.0, 150.0)]
-    );
+    // A flex or grid container of boxes without lines is sliced whole after
+    // the break, and continues in an overflow column, as in Chromium: each
+    // piece is the whole box moved up by what the pieces before it show.
+    for display in ["flex", "grid"] {
+        assert_eq!(
+            atomic(display),
+            vec![(1, 50.0, 0.0, 20.0, 150.0), (2, 100.0, -100.0, 20.0, 150.0)],
+            "{display}"
+        );
+    }
 }
 
 #[test]
