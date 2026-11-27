@@ -5956,6 +5956,12 @@ fn paginate_flow(
             )
         },
     );
+    // Repeated copies move with the relative offsets around their table, as
+    // its rows do.
+    for header in table_headers.headers.values_mut() {
+        header.relative_offset =
+            accumulated_relative_offset_y(document, cascade, body_id, header.table);
+    }
     // The boxes tied to a table's first row tell a repeated header group
     // from the rows of the table (see `first_table_row`).
     document.context.repeated_table_groups = table_headers.headers.keys().copied().collect();
@@ -6176,7 +6182,13 @@ fn paginate_flow(
         }
         return Ok(Vec::new());
     }
-    place_repeated_table_footers(document, cascade, &mut state.table_headers, &page_origins);
+    place_repeated_table_footers(
+        document,
+        cascade,
+        body_id,
+        &mut state.table_headers,
+        &page_origins,
+    );
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
@@ -20225,7 +20237,7 @@ fn place_first_table_header(
         let y = header.source_y + flow_shift;
         materialize_y(document, header_id, y);
         header.source_y = y;
-        let page = page_origins.page_index_for_y(y);
+        let page = page_origins.page_index_for_y(y - header.relative_offset);
         header
             .placements
             .insert(page, (page_origins.origin(page), y));
@@ -20274,7 +20286,7 @@ fn make_room_for_table_header(
         }
         let bottom = row_y + delta + height;
         let end_page = page_origins
-            .page_index_for_y(bottom - 0.001)
+            .page_index_for_y(bottom - footer.relative_offset - 0.001)
             .max(current_page);
         footer.last_row = Some((end_page, bottom));
     }
@@ -20310,9 +20322,10 @@ fn make_room_for_caption_header(
         return 0.0;
     }
     let origin = page_origins.origin(current_page);
-    let delta = (origin + copy - caption_y).max(0.0);
+    let top = origin + header.relative_offset;
+    let delta = (top + copy - caption_y).max(0.0);
     materialize_y(document, caption, caption_y + delta);
-    header.placements.insert(current_page, (origin, origin));
+    header.placements.insert(current_page, (origin, top));
     delta
 }
 
@@ -20342,11 +20355,11 @@ fn make_room_for_header_copy(
         {
             // The first header belongs with the first body row, even
             // when the remaining space cannot fit both intact.
-            let origin = page_origins.origin(current_page);
+            let top = page_origins.origin(current_page) + header.relative_offset;
             let table_y = current_abs_y(document, header.table);
-            materialize_y(document, header.table, table_y + origin - header.source_y);
-            materialize_y(document, header_id, origin);
-            header.source_y = origin;
+            materialize_y(document, header.table, table_y + top - header.source_y);
+            materialize_y(document, header_id, top);
+            header.source_y = top;
             header.placements.clear();
         }
         header.body_started = true;
@@ -20359,9 +20372,10 @@ fn make_room_for_header_copy(
             || header.height + header.gap < step)
     {
         let origin = page_origins.origin(current_page);
-        let delta = (origin + header.height + header.gap - row_y).max(0.0);
+        let top = origin + header.relative_offset;
+        let delta = (top + header.height + header.gap - row_y).max(0.0);
         materialize_table_row_y(document, row, row_y + delta);
-        header.placements.insert(current_page, (origin, origin));
+        header.placements.insert(current_page, (origin, top));
         return delta;
     }
     0.0
@@ -20385,7 +20399,10 @@ fn place_table_footer(
     let after_rows = footer
         .last_row
         .map_or(f32::NEG_INFINITY, |(_, bottom)| bottom + footer.gap);
-    let mut y = natural.max(after_rows);
+    // The pages break the flow without the relative offset of the table,
+    // which the footer is then painted with.
+    let offset = footer.relative_offset;
+    let mut y = natural.max(after_rows) - offset;
     let mut page = page_origins.page_index_for_y(y + 0.001);
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let next = page.saturating_add(1);
@@ -20437,11 +20454,14 @@ fn place_table_footer(
                         && header.height + header.gap + fits <= page_origins.step_at(page) + 0.001
                 })
             {
-                header.placements.insert(page, (y, y));
+                header
+                    .placements
+                    .insert(page, (y, y + header.relative_offset));
                 y += header.height + header.gap;
             }
         }
     }
+    let y = y + offset;
     let footer = table_headers.headers.get_mut(&footer_id).expect("footer");
     materialize_y(document, footer_id, y);
     footer.source_y = y;
@@ -20464,6 +20484,7 @@ fn place_table_footer(
 fn place_repeated_table_footers(
     document: &mut Document,
     cascade: &CascadeResult,
+    body_id: usize,
     table_headers: &mut HeaderRepeats,
     page_origins: &PageOrigins,
 ) {
@@ -20488,7 +20509,9 @@ fn place_repeated_table_footers(
     }
     for index in 0..table_headers.monolithic.len() {
         let (id, groups) = table_headers.monolithic[index];
-        let top = current_abs_y(document, id);
+        // Pages break the flow, which leaves out the relative offsets.
+        let top = current_abs_y(document, id)
+            - accumulated_relative_offset_y(document, cascade, body_id, id);
         let bottom = top + document.nodes[id].layout.size.height;
         let first = page_origins.page_index_for_y(top + 0.001);
         let last = page_origins.page_index_for_y(bottom - 0.001);
@@ -20506,7 +20529,10 @@ fn place_repeated_table_footers(
                 } else {
                     origin
                 };
-                group.placements.entry(page).or_insert((origin, y));
+                group
+                    .placements
+                    .entry(page)
+                    .or_insert((origin, y + group.relative_offset));
             }
         }
     }

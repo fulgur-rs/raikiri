@@ -28,7 +28,6 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
         "display:block;column-count:2",
         "display:block;float:left",
         "display:block;position:absolute",
-        "display:block;position:relative",
         "display:block;position:fixed",
         "display:block;writing-mode:vertical-rl",
         "display:block;height:100px",
@@ -44,6 +43,10 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
         let blocked = doc.append_element(Some(body), "div", Some(css));
         table(&mut doc, blocked);
     }
+    // A relatively positioned block only shifts its box, so its table still
+    // grows with the block flow.
+    let shifted = doc.append_element(Some(body), "div", Some("display:block;position:relative"));
+    let relative = table(&mut doc, shifted);
     for css in [
         "height:100px",
         "min-height:1px",
@@ -100,6 +103,7 @@ fn table_discovery_keeps_source_order_and_stops_at_independent_or_bounded_flows(
             second,
             third,
             ignored_containment,
+            relative,
             flexed,
             stacked,
             beside_hidden,
