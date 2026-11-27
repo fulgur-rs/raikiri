@@ -293,3 +293,14 @@ fn a_sliced_box_inside_a_cloned_block_stays_inside_the_repeated_edges() {
         ]
     );
 }
+
+#[test]
+fn a_cloned_block_of_a_set_height_that_fits_its_page_paints_as_one_box() {
+    for style in ["height:100px", "min-height:100px"] {
+        assert_eq!(
+            runs_per_page(&format!("<div class=b style='{style}'></div>")),
+            [vec![(0, BLUE), (6, GRAY), (106, RED), (112, WHITE)]],
+            "{style}"
+        );
+    }
+}
