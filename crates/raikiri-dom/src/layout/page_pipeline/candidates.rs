@@ -392,8 +392,8 @@ impl BoxContext {
             .is_some_and(|attributes| attributes.is_grid_item)
     }
 
-    /// The single unplaced line that keeps the box whole (see
-    /// [`super::unplaced_line`]).
+    /// The unplaced line, or the first lines of a paragraph of blank lines,
+    /// that keep the box whole (see [`super::unplaced_line`]).
     pub(super) fn unplaced_line(self) -> Option<UnplacedBlockLine> {
         self.element_attributes()
             .and_then(|attributes| attributes.unplaced_line)
