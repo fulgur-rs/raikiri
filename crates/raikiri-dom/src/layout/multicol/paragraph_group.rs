@@ -2401,7 +2401,7 @@ pub(super) fn paginate(
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
-    break_before: bool,
+    break_before: Option<u32>,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<Option<PagedGroup>, LayoutError> {
@@ -2475,10 +2475,11 @@ pub(super) fn paginate(
         // A fill visits the paragraphs from `resume` until the page's columns
         // are full; charge what it visited. Placing lines is logarithmic in
         // a paragraph's lines, and each placed range is charged below.
-        // Content before the columns on their first page, `break_before`,
-        // leaves a break before them.
-        let follows_content =
-            break_before && resume == FlowCursor::default() && absolute_y > page_origin + 0.001;
+        // Content before the columns on their first page, the page
+        // `break_before` names, leaves a break before them.
+        let follows_content = break_before == Some(page_index)
+            && resume == FlowCursor::default()
+            && absolute_y > page_origin + 0.001;
         let filled = fill_chunk_with(
             &paragraphs,
             context,

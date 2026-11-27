@@ -245,7 +245,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 &entries,
                 context,
                 owner_y,
-                previous_spanner.is_some() || has_content_before(tree, owner),
+                break_before_page(
+                    tree,
+                    owner,
+                    owner_y,
+                    &context,
+                    previous_spanner.is_some(),
+                    page_for,
+                ),
                 columns_page_for,
                 work,
             )?
@@ -905,6 +912,27 @@ impl FragmentEdits {
         tree.fragment_tree.replace_finalized_fragments(updated);
         Ok(())
     }
+}
+
+/// The page on which content before the columns leaves a break before them:
+/// a previous spanner, which ends where the columns start, or in-flow content
+/// before the container on the page where its margin box starts. Content that
+/// ends on an earlier page leaves its break at that page's end, where the
+/// container starts its page.
+fn break_before_page(
+    tree: &LayoutSession<'_>,
+    owner: usize,
+    owner_y: f32,
+    context: &FragmentationContext,
+    after_spanner: bool,
+    page_for: &impl Fn(f32) -> (u32, f32, f32),
+) -> Option<u32> {
+    if after_spanner {
+        return Some(page_for(owner_y + context.origin_y).0);
+    }
+    let top = owner_y - tree.nodes[owner].layout.margin.top.max(0.0);
+    let (page, origin, _) = page_for(top);
+    (top > origin + EPSILON && has_content_before(tree, owner)).then_some(page)
 }
 
 /// Whether in-flow content comes before `owner` in the flow that holds it,

@@ -448,18 +448,43 @@ fn columns_with_nothing_before_them_on_the_page_break_inside() {
             ("p1", &whole(0, 100.0, 0.0, 4)),
         ],
     );
-    let after = format!(
-        "{PAGE}<div style='height: 20px'></div><div class=mc>{}</div>",
-        paragraphs(&[(10, "a"), (4, "")])
-    );
-    check(
-        "after a box",
-        &after,
-        &[
-            ("p0", &whole(1, 0.0, 0.0, 10)),
-            ("p1", &whole(1, 100.0, 0.0, 4)),
-        ],
-    );
+    // A `display: contents` box around the columns keeps the box before it
+    // in their flow.
+    for wrapper in [false, true] {
+        let columns = format!("<div class=mc>{}</div>", paragraphs(&[(10, "a"), (4, "")]));
+        let columns = if wrapper {
+            format!("<div style='display: contents'>{columns}</div>")
+        } else {
+            columns
+        };
+        let after = format!("{PAGE}<div style='height: 20px'></div>{columns}");
+        check(
+            "after a box",
+            &after,
+            &[
+                ("p0", &whole(1, 0.0, 0.0, 10)),
+                ("p1", &whole(1, 100.0, 0.0, 4)),
+            ],
+        );
+    }
+    // Content that ends on an earlier page, or whose page the container's
+    // padding leaves, leaves its break there: on the page of the columns,
+    // only the container's padding is above them.
+    for before in [200, 190] {
+        let body = format!(
+            "{PAGE}<div style='height: {before}px'></div>\
+             <div class=mc style='padding-top: 20px'>{}</div>",
+            paragraphs(&[(10, "a"), (4, "")])
+        );
+        check(
+            &format!("after {before}px"),
+            &body,
+            &[
+                ("p0", &[(1, 0.0, 20.0, None), (1, 100.0, 20.0, None)]),
+                ("p1", &whole(1, 100.0, 60.0, 4)),
+            ],
+        );
+    }
 }
 
 #[test]
