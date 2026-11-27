@@ -108,9 +108,12 @@ pub(in crate::layout::multicol) fn paginate(
     // stream reaches them.
     let start = owner_y + context.origin_y;
     let (page, origin, height) = page_for(start);
+    // The columns start no higher than the page origin, which is below the
+    // end of the previous page when the container repeats its border and
+    // padding there.
     let rows = RefCell::new(vec![Row {
         page,
-        top: start,
+        top: start.max(origin),
         end: origin + height,
     }]);
     let row_at = |row: usize| {
