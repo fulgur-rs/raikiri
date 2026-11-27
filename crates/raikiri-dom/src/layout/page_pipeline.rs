@@ -5956,12 +5956,14 @@ fn paginate_flow(
             )
         },
     );
-    // The boxes tied to a table's first row tell a repeated header group
-    // from the rows of the table (see `first_table_row`).
+    // Repeated copies move with the relative offsets around their table, as
+    // its rows do.
     for header in table_headers.headers.values_mut() {
         header.relative_offset =
             accumulated_relative_offset_y(document, cascade, body_id, header.table);
     }
+    // The boxes tied to a table's first row tell a repeated header group
+    // from the rows of the table (see `first_table_row`).
     document.context.repeated_table_groups = table_headers.headers.keys().copied().collect();
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
@@ -6180,7 +6182,13 @@ fn paginate_flow(
         }
         return Ok(Vec::new());
     }
-    place_repeated_table_footers(document, cascade, &mut state.table_headers, &page_origins);
+    place_repeated_table_footers(
+        document,
+        cascade,
+        body_id,
+        &mut state.table_headers,
+        &page_origins,
+    );
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
@@ -20199,7 +20207,7 @@ fn place_first_table_header(
         let y = header.source_y + flow_shift;
         materialize_y(document, header_id, y);
         header.source_y = y;
-        let page = page_origins.page_index_for_y(y);
+        let page = page_origins.page_index_for_y(y - header.relative_offset);
         header
             .placements
             .insert(page, (page_origins.origin(page), y));
@@ -20248,7 +20256,7 @@ fn make_room_for_table_header(
         }
         let bottom = row_y + delta + height;
         let end_page = page_origins
-            .page_index_for_y(bottom - 0.001)
+            .page_index_for_y(bottom - footer.relative_offset - 0.001)
             .max(current_page);
         footer.last_row = Some((end_page, bottom));
     }
@@ -20446,6 +20454,7 @@ fn place_table_footer(
 fn place_repeated_table_footers(
     document: &mut Document,
     cascade: &CascadeResult,
+    body_id: usize,
     table_headers: &mut HeaderRepeats,
     page_origins: &PageOrigins,
 ) {
@@ -20470,7 +20479,9 @@ fn place_repeated_table_footers(
     }
     for index in 0..table_headers.monolithic.len() {
         let (id, groups) = table_headers.monolithic[index];
-        let top = current_abs_y(document, id);
+        // Pages break the flow, which leaves out the relative offsets.
+        let top = current_abs_y(document, id)
+            - accumulated_relative_offset_y(document, cascade, body_id, id);
         let bottom = top + document.nodes[id].layout.size.height;
         let first = page_origins.page_index_for_y(top + 0.001);
         let last = page_origins.page_index_for_y(bottom - 0.001);

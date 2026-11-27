@@ -480,7 +480,8 @@ impl HeaderRepeats {
     /// Moves the end of body row `row`, the last body row placed so far, down
     /// by `growth`, how far the row grew when lines inside it moved: the
     /// footer's copy on the page the row ends on goes below it. `page_of`
-    /// gives the page of a position.
+    /// gives the page of a position in the flow, without the table's
+    /// relative offset, which `last_row` keeps.
     pub(crate) fn grow_last_row(&mut self, row: usize, growth: f32, page_of: impl Fn(f32) -> u32) {
         if let Some(footer) = self
             .footer_rows
@@ -489,13 +490,14 @@ impl HeaderRepeats {
             && let Some((_, bottom)) = footer.last_row
         {
             let bottom = bottom + growth;
-            footer.last_row = Some((page_of(bottom - 0.001), bottom));
+            let page = page_of(bottom - footer.relative_offset - 0.001);
+            footer.last_row = Some((page, bottom));
         }
     }
 
     /// Moves the end of the body rows placed so far down to `bottom`, where
     /// body row `row` now ends, when that is lower. `page_of` gives the page
-    /// of a position.
+    /// of a position in the flow, without the table's relative offset.
     pub(crate) fn extend_last_row(
         &mut self,
         row: usize,
@@ -508,7 +510,8 @@ impl HeaderRepeats {
             .and_then(|id| self.headers.get_mut(id))
             && footer.last_row.is_none_or(|(_, end)| end < bottom)
         {
-            footer.last_row = Some((page_of(bottom - 0.001), bottom));
+            let page = page_of(bottom - footer.relative_offset - 0.001);
+            footer.last_row = Some((page, bottom));
         }
     }
 
