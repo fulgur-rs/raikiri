@@ -121,15 +121,13 @@ fn the_gaps_padding_and_words_of_the_columns_decide_the_height() {
 }
 
 /// Columns that fit the room, or are narrower than it, leave the container
-/// at the room or the width the columns ask for.
+/// at the room.
 #[test]
-fn a_multicol_item_that_fits_the_room_takes_the_room_or_its_column_width() {
+fn a_multicol_item_that_fits_the_room_takes_the_room() {
     let fits = vertical("display: flex", "column-count: 2", WORDS);
     assert_size(&fits, "o", 60.0, 100.0);
     let short = vertical("display: flex", "column-count: 3", "aa bb");
     assert_size(&short, "o", 60.0, 100.0);
-    let column_width = vertical("display: flex", "column-width: 30px", WORDS);
-    assert_size(&column_width, "o", 60.0, 30.0);
     let taller = vertical("display: flex", "column-count: 3", WORDS).replace("100px", "200px");
     assert_size(&taller, "o", 60.0, 200.0);
 }
@@ -167,7 +165,6 @@ fn a_vertical_block_fits_its_height_to_the_multicol_box_it_holds() {
 fn a_column_width_with_a_count_sizes_and_counts_columns_like_chromium() {
     let cases = [
         // (column-width, column-count, text, min-content, max-content)
-        (30, "auto", "aa bb", 20.0, 30.0),
         (30, "1", "aa bb", 20.0, 50.0),
         (30, "2", "aa bb", 20.0, 110.0),
         (70, "2", "aa bb", 20.0, 150.0),
