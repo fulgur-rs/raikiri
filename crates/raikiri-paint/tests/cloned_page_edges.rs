@@ -201,3 +201,28 @@ fn a_cloned_block_inside_an_absolutely_positioned_box_on_one_page_paints_as_one_
         [vec![(0, BLUE), (6, GRAY), (66, RED), (72, WHITE)]]
     );
 }
+
+#[test]
+fn a_nested_cloned_block_breaks_inside_the_edges_its_ancestor_repeats() {
+    const LIME: [u8; 3] = [0, 255, 0];
+    const YELLOW: [u8; 3] = [255, 255, 0];
+    const BLACK: [u8; 3] = [0, 0, 0];
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b><div style='box-decoration-break:clone;border:4px solid lime;\
+             border-bottom-color:black;background:yellow;margin:0 20px'>{}</div></div>",
+            lines(15)
+        )),
+        [
+            vec![(0, BLUE), (6, LIME), (10, YELLOW), (190, BLACK), (194, RED)],
+            vec![
+                (0, BLUE),
+                (6, LIME),
+                (10, YELLOW),
+                (130, BLACK),
+                (134, RED),
+                (140, WHITE)
+            ],
+        ]
+    );
+}

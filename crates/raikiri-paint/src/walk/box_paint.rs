@@ -387,27 +387,28 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             flow_band,
             ..
         } = self.geometry;
-        if element.cv.box_decoration_break != raikiri_style::property::BoxDecorationBreak::Clone
+        if !repeats_cloned_edges(element.cv)
             || element.inside_fixed
             || element.fixed_in_viewport
             || flow_band.is_some()
-            // Layout leaves no room for the edges in an absolutely
-            // positioned box, which it lays out whole.
-            || !matches!(
-                element.cv.position,
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-            )
-            // Layout leaves room for the repeated edges only around the
-            // lines of a box whose height its content sets.
-            || !matches!(element.cv.height, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(
-                element.cv.min_height,
-                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
-            )
             || self.in_positioned_box(element.node_id)
         {
             return own;
         }
+        // The fragment goes inside the edges that the cloned boxes around it
+        // repeat on the page.
+        let (outer_top, outer_bottom) = self
+            .document
+            .ancestors(element.node_id)
+            .filter(|&id| repeats_cloned_edges(&self.cascade.computed[id]))
+            .filter_map(|id| self.document.get_node(id))
+            .fold((0.0, 0.0), |(top, bottom), node| {
+                let layout = node.layout();
+                (
+                    top + layout.border.top + layout.padding.top,
+                    bottom + layout.border.bottom + layout.padding.bottom,
+                )
+            });
         // Relative offsets move the fragments of the box together with it:
         // the box breaks where its place in the flow does.
         let shift: f32 = self
@@ -428,9 +429,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if !from_before && !after || self.in_transformed_box(element.node_id) {
             return own;
         }
-        let top = if from_before { window_top } else { flow_y };
+        let top = if from_before {
+            window_top + outer_top
+        } else {
+            flow_y
+        };
         let bottom = if after {
-            window_bottom
+            window_bottom - outer_bottom
         } else {
             flow_y + own.height
         };
@@ -1395,4 +1400,21 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             0.0
         }
     }
+}
+
+/// Whether a box with the computed values `cv` repeats its padding and
+/// border at the page breaks inside it. Layout leaves room for the repeated
+/// edges only around the content of an in-flow box whose content sets its
+/// height; it lays an absolutely positioned box out whole.
+fn repeats_cloned_edges(cv: &ComputedValues) -> bool {
+    cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
+        && matches!(
+            cv.position,
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
+        && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        && matches!(
+            cv.min_height,
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
+        )
 }
