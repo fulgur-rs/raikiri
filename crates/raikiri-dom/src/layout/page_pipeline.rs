@@ -5853,10 +5853,16 @@ fn paginate_flow(
         .filter(|&(id, node)| {
             !node.multicol_groups.is_empty()
                 || node.multicol.is_some()
-                    && document
+                    && (document
                         .children_through_contents(id)
                         .iter()
                         .any(|&child| super::is_spanner_in(document, cascade, child))
+                        // A paragraph of its own fills its columns page by
+                        // page too.
+                        || node
+                            .ifc
+                            .as_ref()
+                            .is_some_and(|root| root.multicol_fragments.is_some()))
         })
         .map(|(id, _)| (current_abs_y(document, id), id))
         .collect();

@@ -237,3 +237,193 @@ fn content_past_a_definite_height_keeps_the_columns_the_container_laid_out() {
         assert_eq!(places.len(), count, "{page}");
     }
 }
+
+#[test]
+fn definite_height_columns_of_the_container_s_own_lines_fill_each_page() {
+    let body = format!("<div class=mc style='height:300px'>{}</div>", lines(20));
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,0 B@0,20 C@0,40 D@0,60 E@0,80 F@0,100 G@0,120 H@0,140 \
+             I@60,0 J@60,20 K@60,40 L@60,60 M@60,80 N@60,100 O@60,120 P@60,140",
+            "Q@0,0 R@0,20 S@60,0 T@60,20",
+        ]
+    );
+}
+
+#[test]
+fn the_container_s_own_lines_fill_the_rest_of_the_page_and_balance_on_the_next() {
+    let body = format!(
+        "<div style='height:120px'></div><div class=mc style='orphans:2;widows:2'>{}</div>{AFTER}",
+        lines(10)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,120 B@0,140 C@60,120 D@60,140",
+            "E@0,0 F@0,20 G@0,40 z=0,60 H@60,0 I@60,20 J@60,40",
+        ]
+    );
+}
+
+#[test]
+fn the_edges_of_the_container_stay_around_its_own_page_filled_lines() {
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc style='padding:10px 0;border:5px solid'>{}</div>{AFTER}",
+        lines(10)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@5,115 B@5,135 C@65,115 D@65,135",
+            "z=0,75 E@5,0 F@5,20 G@5,40 H@65,0 I@65,20 J@65,40",
+        ]
+    );
+}
+
+#[test]
+fn the_container_s_own_lines_fill_every_page_they_run_across() {
+    let body = format!(
+        "<div style='height:100px'></div><div class=mc>{}</div>{AFTER}",
+        lines(26)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,100 B@0,120 C@0,140 D@60,100 E@60,120 F@60,140",
+            "G@0,0 H@0,20 I@0,40 J@0,60 K@0,80 L@0,100 M@0,120 N@0,140 \
+             O@60,0 P@60,20 Q@60,40 R@60,60 S@60,80 T@60,100 U@60,120 V@60,140",
+            "W@0,0 X@0,20 z=0,40 Y@60,0 Z@60,20",
+        ]
+    );
+}
+
+#[test]
+fn own_lines_past_a_definite_height_keep_the_columns_the_container_laid_out() {
+    // The lines run past the content box, so the pages cut the columns the
+    // container laid out: each line still shows once.
+    let body = format!(
+        "<div style='height:60px'></div><div class=mc style='height:150px'>{}</div>",
+        lines(20)
+    );
+    let pages = pages(&body);
+    for line in 'A'..='T' {
+        let piece = format!("{line}@");
+        let count: usize = pages
+            .iter()
+            .map(|page| page.split(' ').filter(|p| p.starts_with(&piece)).count())
+            .sum();
+        assert_eq!(count, 1, "{line}");
+    }
+}
+
+#[test]
+fn own_lines_that_leave_too_few_orphans_on_the_page_start_on_the_next() {
+    let body = format!(
+        "<div style='height:140px'></div><div class=mc style='orphans:2;widows:2'>{}</div>{AFTER}",
+        lines(7)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "",
+            "A@0,0 B@0,20 C@0,40 D@0,60 z=0,80 E@60,0 F@60,20 G@60,40",
+        ]
+    );
+}
+
+#[test]
+fn an_own_line_taller_than_the_rest_of_the_page_starts_on_the_next() {
+    let body = format!(
+        "<div style='height:150px'></div><div class=mc>{}</div>{AFTER}",
+        lines(6)
+    );
+    assert_eq!(
+        pages(&body),
+        ["", "A@0,0 B@0,20 C@0,40 z=0,60 D@60,0 E@60,20 F@60,40"]
+    );
+}
+
+#[test]
+fn the_last_column_of_a_page_gives_its_own_lines_to_the_widows_on_the_next() {
+    let body = format!(
+        "<div style='height:80px'></div><div class=mc style='orphans:2;widows:2'>{}</div>{AFTER}",
+        lines(9)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,80 B@0,100 C@0,120 D@0,140 E@60,80 F@60,100 G@60,120",
+            "H@0,0 I@0,20 z=0,40",
+        ]
+    );
+}
+
+#[test]
+fn a_minimum_height_holds_open_the_container_of_page_filled_own_lines() {
+    let body = format!(
+        "<div style='height:120px'></div><div class=mc style='min-height:200px'>{}</div>{AFTER}",
+        lines(10)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,120 B@0,140 C@60,120 D@60,140",
+            "E@0,0 F@0,20 G@0,40 H@60,0 I@60,20 J@60,40",
+            "z=0,0",
+        ]
+    );
+}
+
+#[test]
+fn own_lines_in_the_columns_of_another_container_show_once() {
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc style='width:180px;column-count:1'><div class=mc>{}</div></div>",
+        lines(10)
+    );
+    let pages = pages(&body);
+    for line in 'A'..='J' {
+        let piece = format!("{line}@");
+        let count: usize = pages
+            .iter()
+            .map(|page| page.split(' ').filter(|p| p.starts_with(&piece)).count())
+            .sum();
+        assert_eq!(count, 1, "{line}");
+    }
+}
+
+#[test]
+fn own_lines_whose_columns_leave_too_few_widows_on_the_page_start_on_the_next() {
+    let body = format!(
+        "<div style='height:120px'></div>\
+         <div class=mc style='width:160px;column-count:3;widows:3'>{}</div>{AFTER}",
+        lines(16)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "",
+            "A@0,0 B@0,20 C@0,40 D@0,60 E@0,80 F@0,100 z=0,120 \
+             G@60,0 H@60,20 I@60,40 J@60,60 K@60,80 L@60,100 \
+             M@120,0 N@120,20 O@120,40 P@120,60",
+        ]
+    );
+}
+
+#[test]
+fn the_last_page_balances_own_lines_with_widows_in_every_column() {
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc style='width:160px;column-count:3;widows:3'>{}</div>{AFTER}",
+        lines(19)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,100 B@0,120 C@0,140 D@60,100 E@60,120 F@60,140 G@120,100 H@120,120 I@120,140",
+            "J@0,0 K@0,20 L@0,40 M@0,60 z=0,80 N@60,0 O@60,20 P@60,40 Q@120,0 R@120,20 S@120,40",
+        ]
+    );
+}
