@@ -216,9 +216,7 @@ pub(super) fn kept_lines_break(
 ) -> Option<KeptBreak> {
     let root = owner.root;
     let total = paragraph_lines(document, root)?.len();
-    let computed = &cascade.computed[root];
-    let orphans = usize::try_from(computed.orphans.max(1)).unwrap_or(1);
-    let widows = usize::try_from(computed.widows.max(1)).unwrap_or(1);
+    let (orphans, widows) = super::orphans_and_widows(cascade, root);
     let top = |line: usize| bounds(document, LeadingInlineLine { root, line }).0 - relative;
     // The first line of the paragraph on the page of `owner`; the tops of
     // the lines only grow.

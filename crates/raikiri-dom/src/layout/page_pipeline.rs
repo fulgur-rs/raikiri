@@ -40,7 +40,8 @@ use source_walk::{WalkedSources, walk_sources};
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{
-    IfcTextLine, TextLineIndex, glyph_owners, single_unplaced_line, unplaced_lines_from,
+    IfcTextLine, TextLineIndex, UnplacedLine, glyph_owners, single_unplaced_line,
+    unplaced_blank_line_count, unplaced_lines_from,
 };
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -50,7 +51,7 @@ use crate::page_projection::records::OverflowClipSource;
 use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position, ResolveOrZero};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type ProjectedSlices = (
     Vec<PageFragment>,
@@ -6189,8 +6190,12 @@ fn paginate_flow(
         &mut state.table_headers,
         &page_origins,
     );
+    let grown_tables = grow_cells_of_grown_rows(document, &state.subtree_shifts);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
+    for table in grown_tables {
+        super::table::row_moves::finish_grown_table(document, table);
+    }
     update_paginated_block_heights(
         document,
         cascade,
@@ -6219,6 +6224,51 @@ fn paginate_flow(
         &page_origins,
         &state.page_names,
     ))
+}
+
+/// Grows the cells of each table row that content moved down inside its
+/// cells to the row's new end: a cell stretches over its row (CSS 2.1
+/// §17.5.3), so its box, background and borders go on over the pages the
+/// row runs over, as Chromium paints them. Returns the tables of those rows,
+/// whose rows and boxes then grow over the cells. Tables with a cell that
+/// spans rows keep their cells as laid out, and so do the anonymous rows
+/// around cells outside rows.
+fn grow_cells_of_grown_rows(document: &mut Document, shifts: &SubtreeShifts) -> BTreeSet<usize> {
+    // A float that moved in a cell grew the boxes around it already: only
+    // the growth past it is left to the cells.
+    let float_growth: HashMap<(usize, usize), f32> = shifts.float_rows.iter().copied().collect();
+    let mut spanning: HashMap<usize, bool> = HashMap::new();
+    let mut tables = BTreeSet::new();
+    for &((row, end), growth) in &shifts.grown_rows {
+        let growth = growth - float_growth.get(&(row, end)).copied().unwrap_or(0.0);
+        let node = &document.nodes[row];
+        let table = document
+            .table_of_row(row)
+            .filter(|_| {
+                growth > 0.001
+                    && node.display() == DisplayValue::TableRow
+                    && end == node.children.len()
+            })
+            .filter(|&table| {
+                !*spanning.entry(table).or_insert_with(|| {
+                    super::table::row_moves::has_row_spanning_cell(document, table)
+                })
+            });
+        let Some(table) = table else { continue };
+        let target = node.layout.size.height + growth;
+        for cell in document.children_through_contents(row) {
+            let cell_node = &document.nodes[cell];
+            if cell_node.display() == DisplayValue::TableCell
+                && !cell_node.is_display_none()
+                && cell_node.layout.size.height < target
+            {
+                document.nodes[cell].layout.size.height = target;
+                document.mark_pagination_extent_dirty(cell);
+            }
+        }
+        tables.insert(table);
+    }
+    tables
 }
 
 /// Notes where the page begins that holds the static position of each fixed
@@ -12657,7 +12707,9 @@ fn unplaced_line_extent(
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
 /// that no text node places: generated text, a glyphless line, or atomic
-/// inlines alone (see [`single_unplaced_line`]).
+/// inlines alone (see [`single_unplaced_line`]). For a paragraph of blank
+/// lines alone, the first lines that it keeps whole stand for that line (see
+/// [`blank_lines_kept_whole`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
@@ -12710,9 +12762,12 @@ fn paragraph_unplaced_line(
     {
         return None;
     }
-    // A paragraph of more lines may end with lines after a block, past the
-    // lines that their own text or the block place: they move as one.
-    let (unplaced, run) = match single_unplaced_line(document, cascade, node_id) {
+    // A paragraph of blank lines alone keeps its first lines whole. A
+    // paragraph of more lines may also end with lines after a block, past
+    // the lines that their own text or the block place: they move as one.
+    let (unplaced, run) = match single_unplaced_line(document, cascade, node_id)
+        .or_else(|| blank_lines_kept_whole(document, cascade, node_id))
+    {
         Some(unplaced) => (unplaced, false),
         None => {
             let first = first_line_after_last_block(document, node_id)?;
@@ -12740,6 +12795,51 @@ fn paragraph_unplaced_line(
         after_block,
         line_index: u16::try_from(unplaced.line.line).ok()?,
     })
+}
+
+/// The first lines of the paragraph `root` of blank lines alone (see
+/// [`unplaced_blank_line_count`]) that no page break may fall between, as
+/// one unplaced line: the `orphans` lines that a page must hold before a
+/// break, or all of them when there are no more. The paragraph moves whole
+/// when they cross the page end, and the page breaks between the lines
+/// after them (see `PaginationState::break_between_blank_lines`).
+fn blank_lines_kept_whole(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Option<UnplacedLine> {
+    let count = unplaced_blank_line_count(document, cascade, root)?;
+    let kept = orphans_and_widows(cascade, root).0.min(count);
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    let top =
+        lines.line_top(0) - crate::layout::ifc::outside_marker::fit_leading(document, root, 0);
+    let last = kept - 1;
+    let bottom = lines.line_top(last)
+        - crate::layout::ifc::outside_marker::fit_leading(document, root, last)
+        + crate::layout::ifc::outside_marker::fit_height(&lines.lines[last]);
+    Some(UnplacedLine {
+        line: IfcTextLine {
+            line: 0,
+            top,
+            bottom,
+        },
+        atomic: false,
+    })
+}
+
+/// The `orphans` and `widows` of the paragraph `root`, at least 1 each.
+fn orphans_and_widows(cascade: &CascadeResult, root: usize) -> (usize, usize) {
+    let computed = &cascade.computed[root];
+    let at_least_one = |value: i32| usize::try_from(value.max(1)).unwrap_or(1);
+    (
+        at_least_one(computed.orphans),
+        at_least_one(computed.widows),
+    )
 }
 
 /// The first line of the paragraph `root` below the last of its block
@@ -20524,8 +20624,9 @@ fn place_repeated_table_footers(
             };
             for page in pages {
                 let origin = page_origins.origin(page);
+                // A footer copy keeps the table's spacing below it.
                 let y = if group.footer {
-                    origin + page_origins.step_at(page) - group.height
+                    origin + page_origins.step_at(page) - group.gap - group.height
                 } else {
                     origin
                 };

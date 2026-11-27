@@ -105,9 +105,15 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // and padding on each page it is cut on (CSS Fragmentation 3, 5.4), so
     // its content fits a page only above the bottom ones.
     let cloned = cloned_page_insets(tree, owner);
-    // Forced breaks that start more columns than the container has go on in
-    // the columns of the next page, as Chromium prints them, even when the
-    // content would fit this one.
+    // A container of a definite height without a spanner fills the columns
+    // of the pages it runs onto up to its content box (CSS Multi-column 1,
+    // 8.1). Its height stays as it is.
+    let definite = tree.nodes[owner]
+        .multicol
+        .is_some_and(|columns| columns.height_definite);
+    // Forced breaks that start more columns than a container of `auto`
+    // height has go on in the columns of the next page, as Chromium prints
+    // them, even when the content would fit this one.
     let whole = spanner_free
         && (inside_atomic_inline(tree, owner) || {
             let old = &old_groups[0];
@@ -115,9 +121,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let (_, origin, height) = page_for(top);
             let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
             top + old.height <= origin + height - bottom + EPSILON
-                && lineless::forced_column_starts(tree, owner) < old.context.column_count
+                && (definite
+                    || lineless::forced_column_starts(tree, owner) < old.context.column_count)
         });
-    if whole || !style_of(tree, owner).size().height.is_auto() {
+    if whole || definite && (!spanner_free || cloned.is_some()) {
         if spanner_free {
             tree.nodes[owner].multicol_groups.clear();
         }
@@ -222,6 +229,12 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     )
                 })
                 .collect();
+            // The columns of a container of a definite height end with its
+            // content box.
+            let content_end = definite.then(|| {
+                let layout = tree.nodes[owner].layout;
+                layout.size.height - layout.border.bottom - layout.padding.bottom
+            });
             // The boxes after the last spanner of a container that fills its
             // columns in turn fill those of the pages they reach as the boxes
             // of a container without spanners do; the rows before a spanner,
@@ -240,7 +253,15 @@ pub(in crate::layout) fn paginate_spanning_columns(
             if let Some(planned) = leaves
                 .as_deref()
                 .map(|leaves| {
-                    lineless::paginate(tree, leaves, context, owner_y, columns_page_for, work)
+                    lineless::paginate(
+                        tree,
+                        leaves,
+                        context,
+                        owner_y,
+                        content_end,
+                        columns_page_for,
+                        work,
+                    )
                 })
                 .transpose()?
                 .flatten()
@@ -275,6 +296,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 &entries,
                 context,
                 owner_y,
+                content_end,
                 break_before_page(
                     tree,
                     owner,
@@ -532,6 +554,19 @@ pub(in crate::layout) fn paginate_spanning_columns(
             // The columns stay as the source layout made them.
             groups.clear();
         }
+    }
+    // A container with a minimum height keeps it, below the columns that end
+    // higher once the pages fill them (CSS 2, 10.7).
+    if definite {
+        delta = 0.0;
+    } else if spanner_free
+        && let Some(old) = old_groups.first()
+        && old.min_height > 0.0
+    {
+        let layout = tree.nodes[owner].layout;
+        let old_end =
+            old.context.origin_y + old.height + layout.border.bottom + layout.padding.bottom;
+        delta = (old_end + delta).max(old.min_height) - old_end.max(old.min_height);
     }
     tree.nodes[owner].multicol_groups = groups;
     tree.nodes[owner].layout.size.height += delta;

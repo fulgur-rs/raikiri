@@ -92,6 +92,13 @@ pub(crate) struct HeaderRepeats {
     /// the caption alone to the next page with the edges that close the
     /// table's parent, the page opens with a copy of the header above it.
     pub(crate) tail_captions: HashMap<usize, (usize, f32)>,
+    /// The boxes of `monolithic` inside each body part around them: a part
+    /// whose box runs on under a copy is drawn on under it (see
+    /// [`Self::copy_bands`]).
+    unbroken_in: HashMap<usize, Vec<usize>>,
+    /// The bands of [`Self::copy_bands`] by table, rebuilt by
+    /// [`Self::index`].
+    bands: HashMap<usize, Vec<(f32, f32, bool)>>,
     owners: Vec<Option<usize>>,
 }
 
@@ -383,6 +390,15 @@ impl HeaderRepeats {
             {
                 result.anonymous_body_tables.insert(table, header);
             }
+            for &id in &unbroken {
+                for part in document
+                    .inclusive_ancestors(id)
+                    .skip(1)
+                    .take_while(|&part| part != table)
+                {
+                    result.unbroken_in.entry(part).or_default().push(id);
+                }
+            }
             result
                 .monolithic
                 .extend(unbroken.into_iter().map(|id| (id, groups)));
@@ -450,9 +466,10 @@ impl HeaderRepeats {
     /// Places copies of the repeated header and footer groups of the table
     /// of body row `row` around a break inside the row: the footer's at the
     /// end of the page `left`, which starts at `left_origin` and ends at
-    /// `left_end`, and the header's at the top of the page `next`, which
-    /// starts at `next_origin`. The source of the footer follows only the
-    /// last fragment of the table's last body row.
+    /// `left_end`, above the table's spacing there, and the header's at the
+    /// top of the page `next`, which starts at `next_origin`. The source of
+    /// the footer follows only the last fragment of the table's last body
+    /// row.
     pub(crate) fn place_copies_around_row_break(
         &mut self,
         row: usize,
@@ -472,7 +489,7 @@ impl HeaderRepeats {
         {
             footer.placements.entry(left).or_insert((
                 left_origin,
-                left_end - footer.height + footer.relative_offset,
+                left_end - footer.gap - footer.height + footer.relative_offset,
             ));
         }
     }
@@ -542,11 +559,23 @@ impl HeaderRepeats {
     /// Call after the placements are final; page origins increase with the
     /// page index, so the order matches the page order.
     pub(crate) fn index(&mut self) {
+        self.bands.clear();
         for header in self.headers.values_mut() {
             header.by_origin = header.placements.values().copied().collect();
             header
                 .by_origin
                 .sort_by(|left, right| left.0.total_cmp(&right.0));
+            // A header copy keeps the spacing below it.
+            let gap = if header.footer { 0.0 } else { header.gap };
+            self.bands.entry(header.table).or_default().extend(
+                header
+                    .placements
+                    .values()
+                    .map(|&(_, y)| (y, y + header.height + gap, header.footer)),
+            );
+        }
+        for bands in self.bands.values_mut() {
+            bands.sort_by(|left, right| left.0.total_cmp(&right.0));
         }
     }
 
@@ -562,6 +591,50 @@ impl HeaderRepeats {
                 .filter(|&&(origin, _)| (origin - page_origin).abs() <= 0.001)
                 .map(|&(_, y)| y - header.source_y),
         )
+    }
+
+    /// The block ranges in the flow that the copies of the repeated header
+    /// and footer groups of the table around `part`, a body row group, row
+    /// or cell of it, take on the pages the table crosses, sorted, a header
+    /// copy with the spacing below it, and whether each is a footer's.
+    /// Chromium starts the fragments of the body parts that a page break
+    /// splits below the header copies and ends them at the footer copies.
+    /// Empty for any other box, and for a part around a box that does not
+    /// break and runs on under a copy, which Chromium draws on under it.
+    pub(crate) fn copy_bands(&self, document: &Document, part: usize) -> &[(f32, f32, bool)] {
+        if self.bands.is_empty()
+            || self.owner(part).is_some()
+            || !matches!(
+                document.nodes[part].display(),
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+                    | DisplayValue::TableRow
+                    | DisplayValue::TableCell
+            )
+        {
+            return &[];
+        }
+        // An inline box that is not replaced, such as a line break, breaks
+        // with the lines it sits on, which stay clear of the copies.
+        let under_copy = |bands: &[(f32, f32, bool)], id: usize| {
+            let top = absolute_position(document, id).1;
+            let bottom = top + document.nodes[id].layout.size.height;
+            // The bands do not overlap, so their ends are sorted too.
+            let first = bands.partition_point(|&(_, end, _)| end <= top);
+            (document.nodes[id].display() != DisplayValue::Inline
+                || crate::paint_rules::is_replaced_element(document, id))
+                && bands.get(first).is_some_and(|&(start, ..)| start < bottom)
+        };
+        document
+            .table_of_row(part)
+            .and_then(|table| self.bands.get(&table))
+            .filter(|bands| {
+                self.unbroken_in
+                    .get(&part)
+                    .is_none_or(|boxes| !boxes.iter().any(|&id| under_copy(bands, id)))
+            })
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The pages of `source` as a repeated header box: page index, page

@@ -1379,13 +1379,15 @@ fn wrapper_layout(
 }
 
 /// Whether `id` has content of its own, other than the absolutely
-/// positioned children that `skip_absolute` leaves out.
+/// positioned children, and the blocks that carry nothing else (see
+/// [`carries_only_absolute_boxes`]), that `skip_absolute` leaves out.
 fn has_rendered_content(tree: &LayoutSession<'_>, id: usize, skip_absolute: bool) -> bool {
     flow_children(tree, id).into_iter().any(|child| {
         let node = layout_node(tree, child);
         node.is_in_document()
             && !node.is_display_none()
-            && !(skip_absolute && is_absolute_box(node))
+            && !(skip_absolute
+                && (is_absolute_box(node) || carries_only_absolute_boxes(tree, child, 0)))
             && match &node.data {
                 NodeData::Text(text) => !text.text_content.trim().is_empty(),
                 _ => true,
@@ -1401,15 +1403,76 @@ fn is_absolute_box(node: &crate::Node) -> bool {
         && !node.fixed_position
 }
 
-/// The absolutely positioned children of `child` that are rendered.
-fn absolute_children(tree: &LayoutSession<'_>, child: usize) -> Vec<usize> {
-    flow_children(tree, child)
-        .into_iter()
-        .filter(|&id| {
+/// The rendered absolutely positioned boxes that `child` holds as its
+/// children, or inside empty blocks that only carry such boxes (see
+/// [`carries_only_absolute_boxes`]), each with the offset of its parent from
+/// the border box of `child`.
+fn absolute_children(tree: &LayoutSession<'_>, child: usize) -> Vec<(usize, Point<f32>)> {
+    let mut boxes = Vec::new();
+    let mut pending = vec![(child, Point { x: 0.0, y: 0.0 })];
+    while let Some((parent, offset)) = pending.pop() {
+        for id in flow_children(tree, parent) {
             let node = layout_node(tree, id);
-            node.is_in_document() && !node.is_display_none() && is_absolute_box(node)
+            if !node.is_in_document() || node.is_display_none() {
+                continue;
+            }
+            if is_absolute_box(node) {
+                boxes.push((id, offset));
+            } else if carries_only_absolute_boxes(tree, id, 0) {
+                let location = tree.nodes[id].layout.location;
+                pending.push((
+                    id,
+                    Point {
+                        x: offset.x + location.x,
+                        y: offset.y + location.y,
+                    },
+                ));
+            }
+        }
+    }
+    boxes
+}
+
+/// Whether `id` is an in-flow block with no block size that holds nothing
+/// but absolutely positioned boxes whose containing block is outside it,
+/// and blocks like itself. The stream leaves such a block where it is, in
+/// the first piece of the box that holds it, and breaks the absolutely
+/// positioned boxes it carries across the columns of their containing block.
+/// An overflow clip on it does not cut those boxes (CSS 2.1 §11.1.1).
+/// `depth` counts the carrying blocks around `id`; a deeper nest keeps the
+/// other strategies.
+fn carries_only_absolute_boxes(tree: &LayoutSession<'_>, id: usize, depth: usize) -> bool {
+    let node = layout_node(tree, id);
+    depth < MAX_WRAPPED_BLOCK_DEPTH
+        && matches!(node.data, NodeData::Element(_))
+        && node.display() == DisplayValue::Block
+        && node.layout_position() == Position::Static
+        && !node.claims_absolute_oof
+        && !node.contains_absolute_boxes
+        && is_horizontal(node)
+        && !style_of(tree, id).float().is_floated()
+        && node.multicol.is_none()
+        && !node.has_before_or_after_content
+        && !node.column_span_all
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        .collect()
+        && tree.nodes[id].layout.size.height.abs() <= EPSILON
+        && flow_children(tree, id).into_iter().all(|child| {
+            let held = layout_node(tree, child);
+            !held.is_in_document()
+                || held.is_display_none()
+                || match &held.data {
+                    NodeData::Text(text) => text.text_content.trim().is_empty(),
+                    _ => {
+                        is_absolute_box(held) || carries_only_absolute_boxes(tree, child, depth + 1)
+                    }
+                }
+        })
 }
 
 /// The pieces of the absolutely positioned boxes of each child, with the
@@ -1425,6 +1488,10 @@ struct AbsolutePiece {
     parent_piece: usize,
     rect: FragmentRect,
     clip: FragmentRect,
+    /// The offset of the box's parent, a block that carries it (see
+    /// [`carries_only_absolute_boxes`]), from the containing block. The
+    /// painter places the box from its parent, so its fragment leaves it out.
+    carried: Point<f32>,
 }
 
 /// How far the clip of each of `count` pieces of a box reaches left and right,
@@ -1529,7 +1596,7 @@ fn out_of_flow_height(
 ) -> f32 {
     let cascade = tree.style_views.cascade();
     // The positioned boxes the columns hold, for each child.
-    let boxes: Vec<Vec<usize>> = stream
+    let boxes: Vec<Vec<(usize, Point<f32>)>> = stream
         .children
         .iter()
         .zip(stream.sliced_flex)
@@ -1571,8 +1638,9 @@ fn out_of_flow_height(
             } else {
                 first.top
             };
-            for &node in boxes {
+            for &(node, offset) in boxes {
                 let mut layout = tree.nodes[node].layout;
+                layout.location.y += offset.y;
                 let start = top + layout.location.y;
                 // Lines that a column end crosses start the next column, and
                 // the column could instead grow until the first of them fits.
@@ -1651,9 +1719,9 @@ fn absolute_pieces(
         // Which piece starts in each column, read once for a box that has
         // absolutely positioned children.
         let mut piece_of_column: Option<HashMap<usize, usize>> = None;
-        for node in absolute_children(tree, child) {
+        for (node, offset) in absolute_children(tree, child) {
             let mut layout = tree.nodes[node].layout;
-            let start = flow_top + layout.location.y;
+            let start = flow_top + offset.y + layout.location.y;
             // The lines that a column end crosses start the next column.
             if let Some(moves) =
                 column_lines::line_moves(tree, node, start, column_height, last_column)
@@ -1693,24 +1761,27 @@ fn absolute_pieces(
                 };
                 let parent = &pieces[parent_piece];
                 let dx = context.column_offset_x(column) - context.column_offset_x(parent.column);
+                // The box's offset from the containing block, past the
+                // blocks that carry it.
+                let x = offset.x + layout.location.x;
                 own.push(AbsolutePiece {
                     node,
                     column,
                     parent_piece,
                     rect: FragmentRect {
-                        x: dx + layout.location.x,
+                        x: dx + x,
                         y: start - column as f32 * column_height - parent.top,
                         width: layout.size.width,
                         height: layout.size.height,
                     },
+                    carried: offset,
                     clip: FragmentRect {
                         x: dx,
                         y: -parent.top,
-                        width: (layout.location.x
-                            + layout
-                                .size
-                                .width
-                                .max(layout.border.left + layout.scrollable_overflow_rect.right))
+                        width: (x + layout
+                            .size
+                            .width
+                            .max(layout.border.left + layout.scrollable_overflow_rect.right))
                         .max(context.column_width),
                         height: if Some(column) == last_column {
                             (end - column as f32 * column_height).max(column_height)
@@ -3332,12 +3403,13 @@ pub(super) fn layout(
     tree.nodes[parent].multicol_groups.clear();
     tree.nodes[parent].multicol_rows.clear();
     // Columns that fill in turn under an auto height are one column that
-    // nothing limits. Pages that cut the container fill them again, page by
-    // page, from the group kept here.
-    if definite_height.is_none()
-        && maximum.is_none()
-        && minimum <= origin.y + block_end_inset
-        && context.column_fill == ColumnFillValue::Auto
+    // nothing limits, and balanced ones are as tall as their share of the
+    // content, up to a definite height. Pages that cut the container fill
+    // them again, page by page, from the group kept here.
+    let unbounded = definite_height.is_none() && maximum.is_none();
+    let balanced_definite =
+        definite_height.is_some() && context.column_fill == ColumnFillValue::Balance;
+    if (unbounded && context.column_fill != ColumnFillValue::BalanceAll || balanced_definite)
         && outer_height.is_none()
         && tree.context.fragmentation_stack.len() <= 1
         && !tree.context.unpaged_plain_columns
@@ -3360,6 +3432,7 @@ pub(super) fn layout(
                 .collect(),
             slice: None,
             run_start: None,
+            min_height: minimum,
         });
     }
     let container = tree.fragment_tree.try_push(LayoutFragment {
@@ -3517,12 +3590,14 @@ pub(super) fn layout(
                 parent: Some(records[piece.parent_piece]),
                 fragmentainer: context.column_index + piece.column,
                 rect: FragmentRect {
-                    y: piece.rect.y + shift,
+                    x: piece.rect.x - piece.carried.x,
+                    y: piece.rect.y + shift - piece.carried.y,
                     ..piece.rect
                 },
                 fragmentainer_clip: Some(
                     FragmentRect {
-                        y: piece.clip.y + shift,
+                        x: piece.clip.x - piece.carried.x,
+                        y: piece.clip.y + shift - piece.carried.y,
                         ..piece.clip
                     }
                     .into(),
