@@ -108,19 +108,25 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // and padding on each page it is cut on (CSS Fragmentation 3, 5.4), so
     // its content fits a page only above the bottom ones.
     let cloned = cloned_page_insets(tree, owner);
-    let whole = spanner_free && {
-        let old = &old_groups[0];
-        let top = owner_y + old.context.origin_y;
-        let (_, origin, height) = page_for(top);
-        let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
-        top + old.height <= origin + height - bottom + EPSILON || inside_atomic_inline(tree, owner)
-    };
     // A container of a definite height without a spanner fills the columns
     // of the pages it runs onto up to its content box (CSS Multi-column 1,
     // 8.1). Its height stays as it is.
     let definite = tree.nodes[owner]
         .multicol
         .is_some_and(|columns| columns.height_definite);
+    // Forced breaks that start more columns than a container of `auto`
+    // height has go on in the columns of the next page, as Chromium prints
+    // them, even when the content would fit this one.
+    let whole = spanner_free
+        && (inside_atomic_inline(tree, owner) || {
+            let old = &old_groups[0];
+            let top = owner_y + old.context.origin_y;
+            let (_, origin, height) = page_for(top);
+            let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
+            top + old.height <= origin + height - bottom + EPSILON
+                && (definite
+                    || lineless::forced_column_starts(tree, owner) < old.context.column_count)
+        });
     if whole || definite && (!spanner_free || cloned.is_some()) {
         if spanner_free {
             tree.nodes[owner].multicol_groups.clear();

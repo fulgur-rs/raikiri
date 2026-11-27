@@ -114,6 +114,7 @@ mod multicol_flex_forced_break_surface;
 mod multicol_float_wrapper_surface;
 mod multicol_flow_root_surface;
 mod multicol_forced_column_break_pages_surface;
+mod multicol_forced_columns_over_count_pages;
 mod multicol_grid_slice_surface;
 mod multicol_inline_block_wrapper_surface;
 mod multicol_last_line_edge_surface;
