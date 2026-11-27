@@ -405,14 +405,12 @@ fn vertical_inline_bounds(
             | ExpandedDimension::FitContentCalc(_) => {
                 // The limit of `fit-content(<length-percentage>)` stands in
                 // for the room the parent offers, which the margins of the box
-                // take from; a min-content or max-content room sizes the box
-                // to that size.
+                // take from. A vertical box out of a vertical flow is offered
+                // a definite inline size; one that is not keeps its
+                // max-content size.
                 let margins = stretch_margins(tree, idx, inputs.parent_size.width, false);
-                let offered = match inputs.available_space.height {
-                    AvailableSpace::Definite(room) => room - margins,
-                    AvailableSpace::MinContent => 0.0,
-                    AvailableSpace::MaxContent => f32::INFINITY,
-                };
+                let offered = (inputs.available_space.height.into_option())
+                    .map_or(f32::INFINITY, |room| room - margins);
                 let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
                     .unwrap_or(offered);
                 let max_content = measure(tree, AvailableSpace::MaxContent);

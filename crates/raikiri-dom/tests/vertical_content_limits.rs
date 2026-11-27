@@ -129,6 +129,10 @@ fn a_keyword_width_limit_is_the_block_size_of_the_content() {
         ("", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:5px;height:100px;min-width:max-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
+        // `stretch` fills the room the containing block offers, less the
+        // margins.
+        ("width:300px", "width:5px;height:100px;min-width:stretch;margin-left:20px", "xx", (28.0, 8.0, 280.0, 100.0)),
+        ("width:300px", "width:500px;height:100px;max-width:stretch;margin-left:20px", "xx", (28.0, 8.0, 280.0, 100.0)),
         // The block size is measured at the inline size a percentage height
         // gives the box.
         ("position:relative;height:300px", "position:absolute;height:50%;min-width:min-content", "xxxx yy zz qqqqq rr", (8.0, 8.0, 20.0, 150.0)),
