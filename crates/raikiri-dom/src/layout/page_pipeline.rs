@@ -13234,6 +13234,19 @@ fn lineless_piece(
     }
     let layout = &node.layout;
     let edges_above = layout.border.top + layout.padding.top;
+    // A box that clones its decorations repeats its bottom border and padding
+    // on each page that cuts it (CSS Fragmentation 3 §5.4), so its first
+    // piece of content fits a page only above them. Where they leave no room
+    // for content, the box moves to the next page whole, as Chromium prints
+    // it, rather than leaving its top edges alone on the page.
+    let root_in_flow = depth == 0
+        && node.display() != DisplayValue::InlineBlock
+        && !is_floating_box_for_pagination(document, cascade, node_id);
+    let cloned_below = if root_in_flow && node.clones_box_decorations {
+        layout.border.bottom + layout.padding.bottom
+    } else {
+        0.0
+    };
     let Some(child) = first else {
         // The box holds no box of its own, so the edges above its content are
         // the whole of what comes first. A box with nothing but edges (no
@@ -13252,19 +13265,36 @@ fn lineless_piece(
             return None;
         }
         let end = if has_room {
-            edges_above + CUT_ANYWHERE_PIECE
+            edges_above + CUT_ANYWHERE_PIECE + cloned_below
         } else {
             layout.size.height.max(CUT_ANYWHERE_PIECE)
         };
         return Some(LinelessPiece {
             end,
-            has_edges: edges_above > 0.0,
+            has_edges: edges_above + cloned_below > 0.0,
             monolithic: false,
         });
     };
     // The page breaks before the relative offset moves the box.
     let top = normal_flow_y(document, cascade, body_id, child);
-    let piece = lineless_piece(document, cascade, body_id, child, depth + 1)?;
+    let piece = if root_in_flow && node.multicol.is_some() && document.nodes[child].is_ifc_root() {
+        // The walk does not read the lines that columns hold, so the first
+        // piece of a paragraph that starts them is its first `orphans` lines,
+        // which the first column holds below the edges, as far as it reaches.
+        // A forced break before the paragraph takes the page break there.
+        if forces_page_break(document, cascade, child, true) {
+            return None;
+        }
+        let lines = first_piece_end(document, cascade, body_id, child, depth + 1)?;
+        let column = layout.size.height - layout.border.bottom - layout.padding.bottom - top;
+        LinelessPiece {
+            end: lines.min(column),
+            has_edges: false,
+            monolithic: false,
+        }
+    } else {
+        lineless_piece(document, cascade, body_id, child, depth + 1)?
+    };
     // A box that no break goes through and that runs out past the bottom of
     // a block whose height is held below its content is visible overflow of
     // that block there, which the page cuts rather than moving the block on
@@ -13273,9 +13303,9 @@ fn lineless_piece(
     let end = top + piece.end;
     Some(LinelessPiece {
         end: if piece.monolithic {
-            end.min(layout.size.height)
+            (end + cloned_below).min(layout.size.height)
         } else {
-            end
+            end + cloned_below
         },
         // A box that establishes an independent formatting context keeps a
         // positive margin of its first child inside it (CSS 2 §8.3.1), which
@@ -13283,7 +13313,7 @@ fn lineless_piece(
         // content as edges would. Columns start a fragmentation context of
         // their own, which truncates the margin at their top instead.
         has_edges: piece.has_edges
-            || edges_above > 0.0
+            || edges_above + cloned_below > 0.0
             || (top > 0.01
                 && node.multicol.is_none()
                 && !margins_may_collapse_through(document, cascade, node_id)),
