@@ -28,9 +28,10 @@ pub(super) use paged::{PagedPiece, paginate};
 /// Inline margins, generated content, forced or avoided breaks between
 /// boxes, absolutely positioned or floated boxes and replaced elements need
 /// their own handling at a break, so containers with them keep the other
-/// strategies. A scroll container with a height of its own is no such
-/// box: it is monolithic, so the stream places it whole in one column (see
-/// [`is_monolithic_scroll_box`]), and so is a column container that the
+/// strategies. A scroll container that a height, a maximum height or an
+/// aspect ratio bounds is no such box: it is monolithic, so the stream places
+/// it whole in one column (see [`is_monolithic_scroll_box`]), and so is a
+/// column container that the
 /// columns around it grow to fit (see [`is_unbroken_column_container`]).
 /// A `position: relative` box with insets is sliced like any other: its
 /// column location carries no offset, which the painter adds. That holds only
@@ -75,6 +76,9 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     let mut sized_flex = false;
+    // A scroll container is placed whole at the height layout gives it, so
+    // it has a block size to place even when only a maximum bounds it.
+    let mut scroll_box = false;
     for child in rendered_elements(tree, parent) {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
@@ -87,14 +91,15 @@ fn supported_with_wrapped_blocks(
         }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
-        let monolithic =
-            is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
+        let scrolls = is_monolithic_scroll_box(tree, child);
+        let monolithic = scrolls || is_unbroken_column_container(tree, child);
+        scroll_box |= scrolls;
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
             && has_rendered_content(tree, child, false);
-        // The insets of a sticky box are an offset that the painter adds
-        // once layout is done, so they do not move it in the stream.
+        // The insets of a sticky box are no relative offset: the columns
+        // place it where the flow puts it, with no offset.
         let sticky = node.layout_position() == Position::Sticky;
         if !(plain_block || plain_wrapper || monolithic)
             || has_inset
@@ -119,11 +124,10 @@ fn supported_with_wrapped_blocks(
         }
         children.push(child);
     }
-    // A scroll container is placed whole at the height layout gives it, so
-    // it has a block size to place even when only a maximum bounds it.
-    let sized = boxes.iter().any(|&child| {
-        has_block_size(&style_of(tree, child)) || is_monolithic_scroll_box(tree, child)
-    });
+    let sized = scroll_box
+        || boxes
+            .iter()
+            .any(|&child| has_block_size(&style_of(tree, child)));
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
@@ -270,16 +274,16 @@ fn is_plain_block_with_display(
 /// and one taller than a column overflows the column it starts at the top of
 /// (CSS Fragmentation 3, 4.4). What it holds scrolls inside it, so the stream
 /// does not look at it, unless that content could reach out of it: see
-/// [`holds_no_fragmenting_box`]. A `position: sticky` box is placed like a
-/// relatively positioned one: the columns leave its offset alone.
+/// [`holds_no_fragmenting_box`]. A `position: sticky` box is placed where the
+/// flow puts it, with no offset, as the columns place every sticky box.
 ///
 /// The box needs a height, a maximum height or an aspect ratio that bounds
 /// it; [`layout`] measures the height it ends up with before it places the
-/// box. Chromium prints a scroll container in columns cut at the column end,
-/// like a box that does not scroll, and shows it whole on screen; a box whose
-/// height follows its content, such as a paragraph that clips its overflow,
-/// keeps the other strategies, which break it between its lines as the
-/// printed columns do.
+/// box, which is whole even below its maximum, as Chromium shows it on
+/// screen. Chromium prints a scroll container in columns cut at the column
+/// end, like a box that does not scroll; a box with nothing to bound its
+/// height, such as a paragraph that clips its overflow, keeps the other
+/// strategies, which break it between its lines as the printed columns do.
 ///
 /// Keep the checks that leave the box out in step with
 /// [`is_plain_block_apart_from_margins`].
@@ -1519,8 +1523,8 @@ fn absolute_pieces(
         let first = pieces.first()?;
         let last = pieces.last()?;
         // A flex container is sliced whole, with the absolutely positioned
-        // boxes it holds.
-        if flex {
+        // boxes it holds, and monolithic content keeps its boxes inside it.
+        if flex || column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child) {
             all.push(own);
             continue;
         }

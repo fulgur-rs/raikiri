@@ -138,6 +138,17 @@ fn absolutely_positioned_boxes_a_scroll_container_contains_move_with_it() {
         )),
         "s=100,0,100,60 p=100,20,10,10 X@100,0"
     );
+    // A box that reaches past the column end stays whole in the scroll
+    // container, which clips it.
+    assert_eq!(
+        filled(
+            "<div style='height:40px'></div>\
+             <div id=s style='overflow:hidden;position:relative;height:60px'>X\
+             <div id=p style='position:absolute;top:50px;width:10px;height:20px'></div></div>\
+             <div id=b style='height:20px'></div>"
+        ),
+        "s=0,40,100,60 p=0,90,10,20 b=100,0,100,20 X@0,40"
+    );
     // The containing block may also be a box inside the scroll container.
     assert_eq!(
         filled(&format!(
