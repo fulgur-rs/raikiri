@@ -12658,7 +12658,9 @@ fn unplaced_line_extent(
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
 /// that no text node places: generated text, a glyphless line, or atomic
-/// inlines alone (see [`single_unplaced_line`]).
+/// inlines alone (see [`single_unplaced_line`]). For a paragraph of blank
+/// lines alone, the first lines that it keeps whole stand for that line (see
+/// [`blank_lines_kept_whole`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
@@ -12711,8 +12713,9 @@ fn paragraph_unplaced_line(
     {
         return None;
     }
-    // A paragraph of more lines may end with lines after a block, past the
-    // lines that their own text or the block place: they move as one.
+    // A paragraph of blank lines alone keeps its first lines whole. A
+    // paragraph of more lines may also end with lines after a block, past
+    // the lines that their own text or the block place: they move as one.
     let (unplaced, run) = match single_unplaced_line(document, cascade, node_id)
         .or_else(|| blank_lines_kept_whole(document, cascade, node_id))
     {
@@ -12748,22 +12751,16 @@ fn paragraph_unplaced_line(
 /// The first lines of the paragraph `root` of blank lines alone (see
 /// [`unplaced_blank_line_count`]) that no page break may fall between, as
 /// one unplaced line: the `orphans` lines that a page must hold before a
-/// break, or all of them when no break leaves `widows` lines after it. The
-/// paragraph moves whole when they cross the page end, and the page breaks
-/// between the lines after them (see
-/// `PaginationState::break_between_blank_lines`).
+/// break, or all of them when there are no more. The paragraph moves whole
+/// when they cross the page end, and the page breaks between the lines
+/// after them (see `PaginationState::break_between_blank_lines`).
 fn blank_lines_kept_whole(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
 ) -> Option<UnplacedLine> {
     let count = unplaced_blank_line_count(document, cascade, root)?;
-    let (orphans, widows) = orphans_and_widows(cascade, root);
-    let kept = if count < orphans + widows {
-        count
-    } else {
-        orphans
-    };
+    let kept = orphans_and_widows(cascade, root).0.min(count);
     let lines = document
         .ifc_layout_node(root)?
         .ifc

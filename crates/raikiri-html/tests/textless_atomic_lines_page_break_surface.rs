@@ -396,6 +396,36 @@ fn blank_lines_break_between_them_at_the_page_end() {
         extents(&blank_lines(20, "widows:3", 5), "z"),
         [(1, 90.0, 100.0)]
     );
+    // Orphans win over widows: three lines break after the two that fit.
+    assert_eq!(extents(&blank_lines(20, "", 3), "z"), [(1, 30.0, 40.0)]);
+    assert_eq!(
+        extents(&blank_lines(20, "widows:3", 3), "z"),
+        [(1, 30.0, 40.0)]
+    );
+}
+
+#[test]
+fn widows_that_do_not_fit_the_next_page_leave_the_break_alone() {
+    // Four widows would take four lines, more than a page holds, to the
+    // last page: the second page stays full.
+    let body = blank_lines(20, "widows:4", 8);
+    assert_eq!(
+        extents(&body, "p"),
+        [(0, 20.0, 100.0), (1, 0.0, 100.0), (2, 0.0, 90.0)]
+    );
+    assert_eq!(
+        extents(&blank_lines(20, "widows:4", 5), "z"),
+        [(1, 90.0, 100.0)]
+    );
+}
+
+#[test]
+fn blank_lines_kept_by_the_orphans_take_the_padding_above_them_along() {
+    // The two lines below the padding cross the page end: the paragraph
+    // moves whole.
+    let body = blank_lines(50, "padding-top:15px", 4);
+    assert_eq!(extents(&body, "p"), [(1, 0.0, 100.0), (2, 0.0, 60.0)]);
+    assert_eq!(extents(&body, "z"), [(2, 60.0, 70.0)]);
 }
 
 #[test]

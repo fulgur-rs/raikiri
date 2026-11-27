@@ -1694,7 +1694,10 @@ impl PaginationState {
     /// paragraph must run past the page end itself: a box that ends on its
     /// page has no break inside it, and a line that overflows it stays. A box
     /// that no page break goes through keeps its line too. Returns the
-    /// paragraph grown by the move, when it moved.
+    /// paragraph grown by the move, when it moved. In a paragraph of blank
+    /// lines alone, the first lines that it keeps whole stand for that line,
+    /// and the page then breaks between the lines after them too (see
+    /// `break_between_blank_lines`).
     fn break_before_unplaced_line(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1779,10 +1782,11 @@ impl PaginationState {
     /// it holds blank lines alone (see `unplaced_blank_line_count`), as
     /// Chromium breaks between lines of text: before the first line that
     /// runs past the end of its page, or earlier, to leave `widows` lines
-    /// after the break. A page that would hold fewer than `orphans` of the
-    /// lines takes them all the same: the first lines of the paragraph,
-    /// which the paragraph keeps whole (see `blank_lines_kept_whole`), have
-    /// moved to the page they fit on by then. Returns whether lines moved.
+    /// after the break while the page keeps its `orphans` (see
+    /// `multicol::piece_end`). Widows whose lines do not fit the next page
+    /// together are not honored. The first lines of the paragraph, which it
+    /// keeps whole (see `blank_lines_kept_whole`), have moved to the page
+    /// they fit on by then. Returns whether lines moved.
     fn break_between_blank_lines(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1817,14 +1821,21 @@ impl PaginationState {
             else {
                 return Ok(moved);
             };
-            let kept = crossing.min(count.saturating_sub(widows));
-            let at = if kept >= from + orphans {
-                kept
-            } else {
-                crossing
-            };
-            let top = bounds(document, at).0;
-            if at <= from || !runs_past_page_end(document, env.cascade, env.body_id, node_id, end) {
+            let cut = count.saturating_sub(widows);
+            let widows_fit = cut > 0
+                && bounds(document, count - 1).1 - bounds(document, cut).0
+                    <= page_origins.step_at(next) + 0.001;
+            let at = crate::layout::multicol::piece_end(
+                from,
+                crossing,
+                count,
+                (orphans, if widows_fit { widows } else { 1 }),
+            );
+            let top = bounds(document, at.min(count - 1)).0;
+            if at <= from
+                || at >= count
+                || !runs_past_page_end(document, env.cascade, env.body_id, node_id, end)
+            {
                 return Ok(moved);
             }
             // A line that starts the next page already needs no move.
