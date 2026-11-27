@@ -73,6 +73,9 @@ fn assert_cases(cases: &[(&str, &str, &str, Rect)]) {
 
 const TEXT: &str = "xxxx yy";
 
+/// Three items 15px tall and 10px, 15px and 10px wide.
+const WRAPPED: &str = "<div style='width:10px;height:15px'></div><div style='width:15px;height:15px'></div><div style='width:10px;height:15px'></div>";
+
 /// One word 500px long.
 const LONG: &str = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
@@ -165,5 +168,41 @@ fn a_box_with_a_ratio_takes_the_inline_size_the_ratio_gives() {
         // its content, which an authored keyword gives up for the ratio.
         ("display:flex;flex-direction:column;height:100px", "aspect-ratio:1/1;width:20px", LONG, (8.0, 8.0, 20.0, 500.0)),
         ("display:flex;flex-direction:column;height:100px", "aspect-ratio:1/1;width:20px;min-height:min-content", LONG, (8.0, 8.0, 20.0, 20.0)),
+    ]);
+}
+
+#[test]
+fn a_flex_or_grid_container_takes_the_limit() {
+    #[rustfmt::skip]
+    assert_cases(&[
+        ("", "display:grid;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("", "display:grid;width:100px;height:300px;max-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "writing-mode:vertical-rl;display:grid;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:grid;width:100px;height:5px;min-height:min-content;padding:3px;border:2px solid", TEXT, (8.0, 8.0, 100.0, 50.0)),
+        ("height:100px;display:flow-root", "display:grid;width:100px;height:300px;max-height:fit-content", "xxxx yy zz", (8.0, 8.0, 100.0, 100.0)),
+        // The items of a row flex container follow one another along its
+        // inline axis, those of a column one across it.
+        ("", "display:flex;width:100px;height:5px;min-height:min-content", "<div>xxxx</div><div>yy</div>", (8.0, 8.0, 100.0, 60.0)),
+        ("", "display:flex;width:100px;height:5px;min-height:max-content", "<div>xxxx</div><div>yy</div>", (8.0, 8.0, 100.0, 60.0)),
+        ("", "display:flex;flex-direction:column;width:100px;height:5px;min-height:min-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:flex;flex-direction:column;width:100px;height:5px;min-height:max-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 70.0)),
+        ("", "float:left;display:flex;flex-direction:column;width:100px;height:5px;min-height:max-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 70.0)),
+        ("position:relative", "position:absolute;display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("display:grid", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("display:flex;align-items:start", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        // A wrapping column is as tall as its lines side by side are wide at
+        // its stated width.
+        ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:max-content", WRAPPED, (8.0, 8.0, 20.0, 45.0)),
+        // Its min-content height, the tallest line, is not measured: the
+        // box keeps its stated height.
+        ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:30px;min-height:min-content", WRAPPED, (8.0, 8.0, 20.0, 30.0)),
+        // A keyword width limit of a column container is the block size of
+        // its content; a grid or a row container keeps its stated width.
+        ("", "display:grid;width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 300.0, 30.0)),
+        ("", "display:flex;width:5px;height:100px;min-width:max-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 5.0, 100.0)),
+        ("", "display:flex;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 300.0, 30.0)),
+        ("", "display:flex;flex-direction:column;width:5px;height:100px;min-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 10.0, 100.0)),
+        ("", "display:flex;flex-direction:column;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 30.0, 30.0)),
     ]);
 }
