@@ -1045,9 +1045,13 @@ pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
 /// - a vertical box in the flow of a vertical block container is laid out by
 ///   that container on its own axes (see [`in_vertical_block_flow`]).
 ///
+/// - a flex or grid container in a vertical writing mode is sized on axes
+///   that the keywords are not resolved on.
+///
 /// A vertical box resolves the keywords on its own axes: its physical height
 /// is its inline size, its physical width its block size. A vertical flex or
-/// grid item uses them too.
+/// grid item uses them too, even when the keyword `height` of such an item is
+/// not one its layout sizes it by.
 pub(super) fn honors_content_limits(
     doc: &Document,
     cascade: &CascadeResult,
@@ -1070,7 +1074,6 @@ pub(super) fn honors_content_limits(
     {
         return true;
     }
-    let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     let block_sized = matches!(
         cv.display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
@@ -1082,6 +1085,7 @@ pub(super) fn honors_content_limits(
     if table
         || (!block_sized && !non_block_sized && !out_of_flow)
         || in_vertical_block_flow(doc, cascade, idx, cv)
+        || (lays_out_vertically(cascade, idx) && cv.display.is_flex_or_grid_container())
         || cv.multicol_flow
         || !sized_by_content_keyword(doc, cascade, idx, cv)
     {

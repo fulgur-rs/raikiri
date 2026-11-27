@@ -87,6 +87,9 @@ fn a_keyword_height_limit_is_an_inline_size_of_the_content() {
         ("", "width:100px;max-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("", "writing-mode:vertical-rl;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("height:200px", "width:100px;height:5px;min-height:stretch", TEXT, (8.0, 8.0, 100.0, 200.0)),
+        // The margins of the box take from the room `fit-content` fits in.
+        ("height:100px;display:flow-root", "width:100px;height:300px;max-height:fit-content;margin:30px 0", "xxxx yy zz", (8.0, 38.0, 100.0, 40.0)),
+        ("position:relative;height:100px", "position:absolute;width:100px;height:300px;max-height:fit-content", "xxxx yy zz", (8.0, 8.0, 100.0, 100.0)),
         ("", "width:100px;height:5px;min-height:min-content", "<div>xxxx yy</div><div>zzzzzz</div>", (8.0, 8.0, 100.0, 60.0)),
     ]);
 }
@@ -126,6 +129,9 @@ fn a_keyword_width_limit_is_the_block_size_of_the_content() {
         ("", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:5px;height:100px;min-width:max-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
+        // The block size is measured at the inline size a percentage height
+        // gives the box.
+        ("position:relative;height:300px", "position:absolute;height:50%;min-width:min-content", "xxxx yy zz qqqqq rr", (8.0, 8.0, 20.0, 150.0)),
     ]);
 }
 
@@ -138,5 +144,8 @@ fn a_box_with_a_ratio_takes_the_inline_size_the_ratio_gives() {
         ("display:grid;grid-template-columns:auto;width:min-content", "aspect-ratio:2/1;width:100px;height:1%;min-height:min-content", "", (8.0, 8.0, 100.0, 50.0)),
         ("display:grid;grid-template-columns:auto;grid-template-rows:200px;width:min-content", "aspect-ratio:2/1;width:100px;height:1%;min-height:min-content", "", (8.0, 8.0, 100.0, 50.0)),
         ("display:grid;grid-template-rows:200px;width:300px", "aspect-ratio:2/1;width:100px;height:20px;min-height:min-content", "", (8.0, 8.0, 100.0, 50.0)),
+        // The automatic minimum a flex item carries across its ratio stays
+        // within its stated size.
+        ("display:flex", "aspect-ratio:1/1;width:50px;height:200px", "xxxx yy zz qq", (8.0, 8.0, 50.0, 200.0)),
     ]);
 }

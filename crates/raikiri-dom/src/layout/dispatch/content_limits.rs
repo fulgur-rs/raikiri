@@ -404,11 +404,17 @@ fn vertical_inline_bounds(
             | ExpandedDimension::FitContentPercent(_)
             | ExpandedDimension::FitContentCalc(_) => {
                 // The limit of `fit-content(<length-percentage>)` stands in
-                // for the room the parent offers; without a definite room the
-                // box takes its max-content inline size.
+                // for the room the parent offers, which the margins of the box
+                // take from; a min-content or max-content room sizes the box
+                // to that size.
+                let margins = stretch_margins(tree, idx, inputs.parent_size.width, false);
+                let offered = match inputs.available_space.height {
+                    AvailableSpace::Definite(room) => room - margins,
+                    AvailableSpace::MinContent => 0.0,
+                    AvailableSpace::MaxContent => f32::INFINITY,
+                };
                 let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
-                    .or(inputs.available_space.height.into_option())
-                    .unwrap_or(f32::INFINITY);
+                    .unwrap_or(offered);
                 let max_content = measure(tree, AvailableSpace::MaxContent);
                 Some(
                     max_content
@@ -444,15 +450,34 @@ fn vertical_block_bounds(
         along.known_dimensions.width = None;
         along.known_dimensions_are_definite.width = false;
         along.vertical_margins_are_collapsible = Line::FALSE;
-        let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+        let percentage_height_basis = (is_oof_box(tree, idx) || is_flex_grid_item(tree, idx))
+            .then(|| content_percentage_height_basis(tree, idx, inputs))
+            .flatten();
+        let key = MeasureKey::new(
+            tree,
+            idx,
+            true,
+            &along,
+            Bounds::default(),
+            percentage_height_basis,
+        );
+        if let Some(height) = percentage_height_basis {
+            tree.context
+                .content_limit_percentage_height_bases
+                .push((idx, height));
+        }
         use LengthProperty::*;
-        probe(
+        let width = probe(
             tree,
             node_id,
             key,
             along,
             neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
-        )
+        );
+        if percentage_height_basis.is_some() {
+            tree.context.content_limit_percentage_height_bases.pop();
+        }
+        width
     });
     let bound = |tree: &LayoutSession<'_>, size: Dimension| {
         if is_stretch(size) {
@@ -3064,7 +3089,11 @@ fn with_item_content_limits_for_parent_sizes(
                         },
                     );
 
-                    if super::block_right_to_left(tree, idx).is_some() {
+                    // A minimum the ratio of the item carries keeps the
+                    // path below, which caps it at the stated size.
+                    if item.ratio_minimum.is_none()
+                        && super::block_right_to_left(tree, idx).is_some()
+                    {
                         // The inline axis of a vertical item is its height.
                         let height = vertical_inline_bounds(tree, child, &limits, &item_inputs);
                         let adjustment = box_sizing_height_adjustment(
