@@ -132,6 +132,7 @@ mod multicol_break_inside_avoid;
 mod multicol_decorated_wrapper_breaks;
 mod multicol_floats_in_columns;
 mod multicol_formatting_context_boxes;
+mod multicol_grid_row_breaks;
 mod multicol_intrinsic_inline_size;
 mod multicol_moved_spanner_pages;
 mod multicol_out_of_flow_children;
