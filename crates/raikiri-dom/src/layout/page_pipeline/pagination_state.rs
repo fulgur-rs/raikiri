@@ -17,7 +17,7 @@ use super::{
     collapses_through, collapses_with_previous_block, content_end_above, content_overflow,
     current_abs_y, first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
-    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
+    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves_below,
     forced_target_page, generated_content_runs_past, grow_ancestors_below,
     grow_ancestors_for_shift, grow_container_beside_item, has_explicit_positioned_block_ancestor,
     has_fixed_height, has_footnote_ancestor, height_follows_content,
@@ -642,11 +642,25 @@ impl PaginationState {
                 .headers
                 .get(&group)
                 .is_some_and(|footer| footer.footer && footer.visit_shift.is_none())
-                && let Some(page) =
+            {
+                // The corrections of the paragraphs the rows hold come first:
+                // lines moved inside a cell taller than them grow the flow
+                // after the cell by less than they moved.
+                let reached = self.deferred_shifts.apply_reached(
+                    document,
+                    env.text_lines,
+                    node_id,
+                    None,
+                    self.current_page,
+                    &mut self.flow_shift,
+                );
+                self.current_page = self.current_page.max(reached.unwrap_or(0));
+                if let Some(page) =
                     self.subtree_shifts
                         .leave(document, node_id, &mut self.flow_shift)
-            {
-                self.current_page = page;
+                {
+                    self.current_page = page;
+                }
             }
             if self
                 .table_headers
@@ -4713,11 +4727,18 @@ impl PaginationState {
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
-                let moves = forced_line_moves(
+                // A cell's lines go below the copy of its table's header.
+                let head = if blocks.cell_paragraph == Some(block_id) {
+                    self.cell_page_insets(document, block_id).0
+                } else {
+                    0.0
+                };
+                let moves = forced_line_moves_below(
                     &forced_line_breaks(document, cascade, block_id),
                     &line_metrics,
                     text.effective_y,
                     page_origins,
+                    head,
                 );
                 if !moves.is_empty() {
                     return self.move_lines(
@@ -4833,9 +4854,17 @@ impl PaginationState {
                 moved_whole = true;
             }
             // Lines a clip hides after a move are left where they are.
+            // The lines of a cell of a table that repeats a header or footer
+            // group go between the copies of the groups on each page.
+            let page_insets = if cell_paragraph {
+                self.cell_page_insets(document, block_id)
+            } else {
+                (0.0, 0.0)
+            };
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
-                let page_step = page_origins.step_at(page);
+                // The page ends above the copy of a repeated footer.
+                let page_step = page_origins.step_at(page) - page_insets.1;
                 let lines_fit = line_metrics.last().is_some_and(|(_, bottom)| {
                     text.effective_y + bottom <= page_start + page_step + 0.001
                 });
@@ -4854,6 +4883,7 @@ impl PaginationState {
                 )
                 .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
+                line_fit.page_insets = page_insets;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
@@ -4979,7 +5009,7 @@ impl PaginationState {
                         ))
                 {
                     page = page.saturating_add(1);
-                    let shift = page_origins.origin(page) - first_line_top;
+                    let shift = page_origins.origin(page) + page_insets.0 - first_line_top;
                     let moved = self.move_lines(
                         document,
                         env,
@@ -5110,7 +5140,7 @@ impl PaginationState {
                                         text_lines.get(node_id),
                                         first_line_top - (block_effective_y + block_edges),
                                     )))
-                        .then(|| page_origins.origin(page) - first_line_top)
+                        .then(|| page_origins.origin(page) + page_insets.0 - first_line_top)
                         .filter(|shift| *shift > 0.0);
                         if let Some(shift) = below_floats {
                             self.move_lines(
@@ -6449,6 +6479,18 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The block sizes that the copies of the repeated header and footer
+    /// groups of the table around the cell paragraph `block_id` take at the
+    /// top and the bottom of the pages its row goes on to.
+    fn cell_page_insets(&self, document: &LayoutSession<'_>, block_id: usize) -> (f32, f32) {
+        cell_row(document, block_id).map_or((0.0, 0.0), |row| {
+            (
+                self.table_headers.repeated_height_before(row),
+                self.table_headers.footer_copy_height(row),
+            )
+        })
+    }
+
     /// Moves lines of the paragraph `block_id`, which holds the text
     /// `candidate`, down to the pages `moves` name: see [`LineBreakMove`].
     /// Each shift is also taken by the flow after the paragraph, and by the
@@ -6472,8 +6514,35 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
+        let row = (blocks.cell_paragraph == Some(block_id))
+            .then(|| cell_row(document, block_id))
+            .flatten();
         for (line, shift, page) in moves {
             reach_page(control, page)?;
+            if let Some(row) = row {
+                // Each page the lines leave closes with the footer's copy,
+                // and each page they go on to opens with the header's.
+                let origins = env.page_origins;
+                let head = self.table_headers.repeated_height_before(row);
+                let left = origins.page_index_for_y(origins.origin(page) + head - shift + 0.001);
+                for left in left.min(page.saturating_sub(1))..page {
+                    let next = left + 1;
+                    self.table_headers.place_copies_around_row_break(
+                        row,
+                        (left, origins.origin(left), origins.origin(next)),
+                        (next, origins.origin(next)),
+                    );
+                }
+            }
+            // The row grows as far as the moved lines end past the cells'
+            // heights, by the most any of its cells needs.
+            let holder = row.and_then(|_| {
+                document
+                    .inclusive_ancestors(block_id)
+                    .find(|&id| document.nodes[id].display() == DisplayValue::TableCell)
+                    .map(|cell| super::cell_growth_holder(document, cell))
+            });
+            let row_growth_before = holder.map(|holder| self.subtree_shifts.row_growth(holder));
             let growth = move_paragraph_lines(
                 document,
                 cascade,
@@ -6490,6 +6559,14 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            if let (Some(row), Some(holder), Some(before)) = (row, holder, row_growth_before) {
+                let origins = env.page_origins;
+                self.table_headers.grow_last_row(
+                    row,
+                    self.subtree_shifts.row_growth(holder) - before,
+                    |y| origins.page_index_for_y(y),
+                );
+            }
             self.float_shifts
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
             record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
@@ -7918,4 +7995,14 @@ fn break_holders(
         }
     }
     holders
+}
+
+/// The row of the table cell around the paragraph `block_id`.
+fn cell_row(document: &LayoutSession<'_>, block_id: usize) -> Option<usize> {
+    let cell = document
+        .inclusive_ancestors(block_id)
+        .find(|&id| document.nodes[id].display() == raikiri_style::DisplayValue::TableCell)?;
+    document
+        .ancestors(cell)
+        .find(|&id| document.nodes[id].display() != raikiri_style::DisplayValue::Contents)
 }
