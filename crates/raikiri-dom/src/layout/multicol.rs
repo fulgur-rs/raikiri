@@ -1810,23 +1810,6 @@ fn sits_on_column_lines(tree: &Document, container: usize, node: usize) -> bool 
     true
 }
 
-/// Whether the multicol container `multicol` holds a flex or grid container.
-/// The column strategies slice those containers whole, with every box inside
-/// them, and do not suppress the gaps between their lines at a break, which
-/// the full-width path does; so a container that holds one keeps all of its
-/// absolutely positioned boxes in its flow and that path.
-fn keeps_positioned_boxes(tree: &Document, multicol: usize) -> bool {
-    let mut pending = tree.nodes[multicol].children.clone();
-    while let Some(child) = pending.pop() {
-        let node = &tree.nodes[child];
-        if node.formatting_context.is_flex_or_grid() {
-            return true;
-        }
-        pending.extend_from_slice(&node.children);
-    }
-    false
-}
-
 /// Whether `id` is an absolutely positioned (or fixed) element that a
 /// multicol container lays out itself: a child of the container, outside its
 /// lines, whose containing block is therefore the container or a box outside
@@ -1834,8 +1817,7 @@ fn keeps_positioned_boxes(tree: &Document, multicol: usize) -> bool {
 /// fragmentation context of the columns, so the columns neither hold nor
 /// break it (CSS Multi-column 1, 8.1: "the multi-column container is the
 /// containing block"; CSS Fragmentation 3, 4.1). It is left out of the flow
-/// the column strategies lay out, with its own position. A container that
-/// holds a flex or grid container keeps it (see [`keeps_positioned_boxes`]).
+/// the column strategies lay out, with its own position.
 pub(super) fn leaves_the_columns(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
     node.kind() == NodeKind::Element
@@ -1844,7 +1826,6 @@ pub(super) fn leaves_the_columns(tree: &Document, id: usize) -> bool {
             let container = &tree.nodes[parent];
             container.multicol.is_some()
                 && container.formatting_context != FormattingContext::Inline
-                && !keeps_positioned_boxes(tree, parent)
         })
 }
 

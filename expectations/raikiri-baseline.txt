@@ -5582,3 +5582,24 @@ css/css-text/white-space/tab-bidi-001.html
 # --- The minimum and maximum sizes a flex item carries across its aspect ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-11-15) ---
 # A `min-height` reaches the `auto` width of a ratio item through the ratio and raises its flex base size, and a `max-height` caps the width its content gives. Both green boxes are 100px by 50px as in Chromium; the first was 0px wide before the ratio reached the flex base size. `audit-vacuous-passes` returned KEEP in two runs.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-039.html
+
+# --- Breaks that flex items avoid in columns, and absolutely positioned children of a multi-column container that holds a flex container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-27) ---
+# A break before or after an item that it avoids moves to the break before the item above, an item that avoids breaks inside it moves to the next column, and a break truncates the row gap and the block-end margin before it. The absolutely positioned children whose containing block is the multi-column container now leave the columns as they do beside blocks, so the flex container is sliced across the columns instead of being laid out in one.
+css/css-break/flexbox/flex-container-fragmentation-005.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-016.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-019.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-021.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-054.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-062.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-015.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-016.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-017.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-018.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-047.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-048.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-014.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-015.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-016.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-035.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-036.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-037.html

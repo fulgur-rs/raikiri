@@ -2588,11 +2588,17 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         ],
         true
     ));
+    // A box that avoids breaks inside it moves whole to the next column.
+    assert!(supported(
+        sized,
+        &["display:block;break-inside:avoid"],
+        true
+    ));
     for held in [
+        // A break avoided before the first item is one before the container.
         "display:block;break-before:avoid",
-        "display:block;break-inside:avoid",
-        // A container that holds a flex container keeps its absolutely
-        // positioned boxes in its flow.
+        // An absolutely positioned box whose containing block is outside
+        // the container.
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
