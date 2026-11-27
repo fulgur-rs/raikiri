@@ -814,6 +814,55 @@ fn avoided_height(
     tallest
 }
 
+/// The height of the tallest run of lines that a break between the lines of
+/// a paragraph from `resume` on keeps together: its `orphans` before the
+/// break and its `widows` after it, with the padding and border that sit
+/// with them in their columns. The last page's balanced columns are at least
+/// that tall, as Chromium balances them; the widows give way to the orphans
+/// when the lines left cannot hold both. The page stream takes no sized
+/// boxes, so every paragraph here breaks between its own lines.
+fn break_height(paragraphs: &[Option<Paragraph>], resume: FlowCursor) -> f32 {
+    let mut tallest = 0.0f32;
+    for (index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
+        let Some(paragraph) = paragraph else {
+            continue;
+        };
+        let start = if index == resume.paragraph {
+            resume.line
+        } else {
+            0
+        };
+        let lines = &paragraph.extents[start.min(paragraph.extents.len())..];
+        let count = lines.len();
+        if count < 2 {
+            continue;
+        }
+        let lead = if start == 0 || paragraph.cloned {
+            paragraph.edge_start
+        } else {
+            0.0
+        };
+        let orphans = paragraph.orphans.clamp(1, count);
+        let widows = paragraph.widows.min(count - orphans);
+        let (lead_after, tail_before) = if paragraph.cloned {
+            (paragraph.edge_start, paragraph.edge_end)
+        } else {
+            (0.0, 0.0)
+        };
+        let first = lead + lines[orphans - 1].1 - lines[0].0 + tail_before;
+        // Lines too few for the orphans and the widows after them keep the
+        // orphans only, without the edge below the last line: what of that
+        // edge does not fit moves a line on to the next column.
+        let last = if widows == 0 {
+            0.0
+        } else {
+            lead_after + lines[count - 1].1 - lines[count - widows].0 + paragraph.edge_end
+        };
+        tallest = tallest.max(first).max(last);
+    }
+    tallest
+}
+
 /// The height of the paragraphs from `resume` in one column, with the margins
 /// between them and the one below the last, divided among the columns of
 /// `context`. `ceiling` is a height that holds them in one column.
@@ -1287,7 +1336,7 @@ fn collect(
                 && !if atomics {
                     can_balance_atomic_paragraph_shape(tree, child, edges)
                 } else {
-                    can_balance_single_paragraph_shape(tree, child)
+                    can_balance_single_paragraph_shape(tree, child, edges)
                 })
             || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                 || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
@@ -2556,7 +2605,7 @@ pub(super) fn paginate(
         high: ceiling,
         room: false,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Refused, false, None, true)
+    }) = collect(tree, &flow, false, BlockEdges::Sliced, false, None, true)
     else {
         return Ok(None);
     };
@@ -2619,9 +2668,29 @@ pub(super) fn paginate(
             return Ok(None);
         };
         let mut divided = 0.0;
+        // The columns are as tall as the lines a break keeps together where
+        // those set their height, even when the lines that fit them end
+        // higher.
+        let mut kept = 0.0f32;
         if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
             let mut low = avoided_height(&paragraphs, resume, None).min(capacity);
             let mut high = capacity;
+            // When the lines a break keeps together already fit, the columns
+            // are that tall; otherwise the search starts from the avoided
+            // paragraphs.
+            let floor = break_height(&paragraphs, resume).min(capacity);
+            if floor > low {
+                let filled = fill_chunk(&paragraphs, context, floor, resume, false);
+                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                if let Some(candidate) = filled
+                    && candidate.next.is_none()
+                {
+                    high = floor;
+                    low = floor;
+                    kept = floor;
+                    chunk = candidate;
+                }
+            }
             for _ in 0..32 {
                 if high - low <= 0.001 {
                     break;
@@ -2668,7 +2737,7 @@ pub(super) fn paginate(
         let height = if chunk.next.is_some() || broke {
             capacity
         } else {
-            chunk.group.height.max(divided)
+            chunk.group.height.max(divided).max(kept)
         };
         let group_y = absolute_y - owner_y;
         let mut occupied = std::collections::BTreeSet::new();
@@ -2680,15 +2749,39 @@ pub(super) fn paginate(
             let Some(paragraph) = &paragraphs[index] else {
                 continue; // cov:ignore: fill_chunk only creates placements for present paragraphs.
             };
-            for range in placement.fragments {
+            let mut ranges = placement.fragments.into_iter().peekable();
+            while let Some(range) = ranges.next() {
                 work.charge(1)?;
                 let y = placement.first_y + range.y;
-                let natural_height =
-                    paragraph.extents[range.line_end - 1].1 - paragraph.extents[range.line_start].0;
+                // The piece before one that holds the edge below the last
+                // line alone ends with that line, as the column breaks
+                // between them: its clip hides the edge there.
+                let edge_follows = ranges
+                    .peek()
+                    .is_some_and(|next| next.line_start >= next.line_end);
+                let goes_on = range.line_end < paragraph.extents.len() || edge_follows;
+                // A piece that the paragraph goes on from runs to the end of
+                // its column. With sliced edges its box goes on past there by
+                // the edge below the last line, and a piece after the first
+                // begins above its column by the edge above the first line
+                // (`range.y`), so the column hides both where the paragraph
+                // breaks. The last piece ends with the edge below the lines;
+                // a piece that holds that edge alone holds no line.
                 let box_height = if range.line_end < paragraph.extents.len() {
                     (height - y).max(0.0)
+                        + if paragraph.cloned {
+                            0.0
+                        } else {
+                            paragraph.edge_end
+                        }
                 } else {
-                    natural_height
+                    let lines = if range.line_start < range.line_end {
+                        paragraph.extents[range.line_end - 1].1
+                            - paragraph.extents[range.line_start].0
+                    } else {
+                        0.0
+                    };
+                    paragraph.edge_start + lines + paragraph.edge_end
                 };
                 let column = range.fragmentainer;
                 let fragmentainer = (page_index as usize)
@@ -2719,26 +2812,26 @@ pub(super) fn paginate(
                     // paragraph begins or ends has no neighbour behind it,
                     // so what the box paints there, an outline for one,
                     // stays visible too.
-                    clip: (range.line_start > 0 || range.line_end < paragraph.extents.len()).then(
-                        || {
-                            let top = if range.line_start == 0 {
-                                group_y - BLOCK_INK_REACH
-                            } else {
-                                group_y
-                            };
-                            let bottom = if range.line_end >= paragraph.extents.len() {
-                                group_y + height + BLOCK_INK_REACH
-                            } else {
-                                group_y + height
-                            };
-                            inline_open_clip(crate::fragment::FragmentRect {
-                                x,
-                                y: top,
-                                width: context.column_width,
-                                height: bottom - top,
-                            })
-                        },
-                    ),
+                    clip: (range.line_start > 0 || goes_on).then(|| {
+                        let top = if range.line_start == 0 {
+                            group_y - BLOCK_INK_REACH
+                        } else {
+                            group_y
+                        };
+                        let bottom = if edge_follows {
+                            group_y + y + box_height - paragraph.edge_end
+                        } else if !goes_on {
+                            group_y + height + BLOCK_INK_REACH
+                        } else {
+                            group_y + height
+                        };
+                        inline_open_clip(crate::fragment::FragmentRect {
+                            x,
+                            y: top,
+                            width: context.column_width,
+                            height: bottom - top,
+                        })
+                    }),
                 });
             }
         }
