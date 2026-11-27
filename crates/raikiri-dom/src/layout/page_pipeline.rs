@@ -9300,6 +9300,58 @@ fn avoided_box_holder(
     )
 }
 
+/// The padding and border, above and below, that `block` and the boxes
+/// around it that clone their decorations repeat on each page a break inside
+/// them reaches (CSS Fragmentation 3, 5.4).
+///
+/// Only in-flow boxes whose content sets their height repeat them: the
+/// paint of the page fragments of a cloned box covers those alone, and a box
+/// inside an absolutely positioned one is laid out whole.
+pub(super) fn cloned_block_insets(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    let out_of_flow = |id: usize| {
+        matches!(
+            document.nodes[id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    };
+    if document.inclusive_ancestors(block).any(out_of_flow) {
+        return (0.0, 0.0);
+    }
+    document
+        .inclusive_ancestors(block)
+        .filter(|&id| {
+            let block_axis = document.block_axis(id);
+            let min_height = block_axis.min_height();
+            document.nodes[id].clones_box_decorations
+                && block_axis.height().is_auto()
+                && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
+                && !document.nodes[id].size_containment.height
+        })
+        .fold((0.0, 0.0), |(top, bottom), id| {
+            let layout = document.nodes[id].layout;
+            (
+                top + layout.border.top + layout.padding.top,
+                bottom + layout.border.bottom + layout.padding.bottom,
+            )
+        })
+}
+
+/// The part of [`cloned_block_insets`] that `block` repeats itself, apart
+/// from the boxes around it.
+pub(super) fn cloned_own_insets(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    let (top, bottom) = cloned_block_insets(document, block);
+    let (outer_top, outer_bottom) = document
+        .layout_parent_of(block)
+        .map_or((0.0, 0.0), |parent| cloned_block_insets(document, parent));
+    (top - outer_top, bottom - outer_bottom)
+}
+
 /// Whether the lead to a contained box consists only of cloned leading
 /// edges along a static, margin-free chain. Zero-edge holders are transparent.
 /// Keeping that owner is useful even for a tall box: a page that already

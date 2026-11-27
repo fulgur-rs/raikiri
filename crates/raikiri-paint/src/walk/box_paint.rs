@@ -18,6 +18,7 @@ use raikiri_style::property::{
     BackgroundImage, BorderCollapseValue, BorderColor, BorderStyle, DisplayValue, PositionValue,
     VisualBox,
 };
+use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{ComputedBorder, ComputedValues, Sides};
 use raikiri_traits::{PaintInsets, PaintRect};
 
@@ -262,6 +263,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height: grid.map_or(paint_height, |rect| rect.height),
             background_height: grid.map_or(paint_background_height, |rect| rect.height),
         };
+        let (own, cloned_clip) = self.cloned_page_fragment(element, own);
+        if let Some(clip) = cloned_clip {
+            self.scene.push_clip_layer(Affine::IDENTITY, &clip);
+        }
         // The box's own geometry, which its outline follows.
         let (fragment_paint_y, fragment_paint_height) = (own.y, own.height);
         let (own, sliced) = self.open_block_slice(element, own);
@@ -292,6 +297,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.paint_borders(element, &own, paints_own_box, legend_gap);
         let scene = &mut *self.scene;
         if sliced {
+            scene.pop_layer();
+        }
+        if cloned_clip.is_some() {
             scene.pop_layer();
         }
         // Outlines do not consume box-model space and are painted
@@ -370,6 +378,110 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if cut.is_some() {
             scene.pop_layer();
         }
+    }
+
+    /// The part of the box `own` of `element` on this page, as a box of its
+    /// own, when the box clones its decorations and a page break cuts it:
+    /// each fragment then has the whole border and padding, and its
+    /// background, drawn around it (CSS Fragmentation 3, section 5.4).
+    /// Layout leaves room for the repeated edges inside the page area.
+    ///
+    /// A box that a page break cuts inside boxes that repeat their edges and
+    /// that does not repeat its own is instead clipped to the room inside
+    /// those edges, which the returned rectangle gives.
+    fn cloned_page_fragment(
+        &self,
+        element: &ElementBox<'w>,
+        own: OwnBox,
+    ) -> (OwnBox, Option<Rect>) {
+        let PageGeometry {
+            page_top,
+            page_bottom,
+            page_offset_y,
+            flow_band,
+            ..
+        } = self.geometry;
+        let position = &self.cascade.computed[element.node_id].position;
+        if element.inside_fixed
+            || element.fixed_in_viewport
+            || flow_band.is_some()
+            || matches!(position, PositionValue::Absolute | PositionValue::Fixed)
+            || self.in_positioned_box(element.node_id)
+        {
+            return (own, None);
+        }
+        let repeats = self.repeats_cloned_edges(element.node_id);
+        // The fragment goes inside the edges that the cloned boxes around it
+        // repeat on the page.
+        let (outer_top, outer_bottom) = self
+            .document
+            .ancestors(element.node_id)
+            .filter(|&id| self.repeats_cloned_edges(id))
+            .filter_map(|id| self.document.get_node(id))
+            .fold((0.0, 0.0), |(top, bottom), node| {
+                let layout = node.layout();
+                (
+                    top + layout.border.top + layout.padding.top,
+                    bottom + layout.border.bottom + layout.padding.bottom,
+                )
+            });
+        if !repeats && outer_top <= 0.0 && outer_bottom <= 0.0 {
+            return (own, None);
+        }
+        // Relative offsets move the fragments of the box together with it:
+        // the box breaks where its place in the flow does.
+        let shift: f32 = self
+            .document
+            .inclusive_ancestors(element.node_id)
+            .map(|id| {
+                let cv = &self.cascade.computed[id];
+                raikiri_dom::used_relative_offset(self.document, self.cascade, cv, id).1
+            })
+            .sum();
+        let flow_y = own.y - shift;
+        // The span of the flow the page holds, where the box paints.
+        let (window_top, window_bottom) = (page_top + page_offset_y, page_bottom + page_offset_y);
+        let from_before = page_top > 0.0 && flow_y < window_top - 0.01;
+        let after = flow_y + own.height > window_bottom + 0.01;
+        // The coordinates of a box that a transform moves are not those of
+        // the page.
+        if !from_before && !after || self.in_transformed_box(element.node_id) {
+            return (own, None);
+        }
+        if !repeats {
+            const UNBOUNDED: f64 = 1.0e7;
+            let top = if from_before {
+                f64::from(window_top + outer_top + shift)
+            } else {
+                -UNBOUNDED
+            };
+            let bottom = if after {
+                f64::from(window_bottom - outer_bottom + shift)
+            } else {
+                UNBOUNDED
+            };
+            return (own, Some(Rect::new(-UNBOUNDED, top, UNBOUNDED, bottom)));
+        }
+        let top = if from_before {
+            window_top + outer_top
+        } else {
+            flow_y
+        };
+        let bottom = if after {
+            window_bottom - outer_bottom
+        } else {
+            flow_y + own.height
+        };
+        let height = (bottom - top).max(0.0);
+        (
+            OwnBox {
+                y: top + shift,
+                height,
+                background_height: height,
+                ..own
+            },
+            None,
+        )
     }
 
     /// Clip the decorations of `element` to the slice it paints, when it is
@@ -613,6 +725,36 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn in_transformed_box(&self, node_id: usize) -> bool {
         self.document.inclusive_ancestors(node_id).any(|id| {
             raikiri_dom::has_applied_transform(self.document, id, &self.cascade.computed[id])
+        })
+    }
+
+    /// Whether the box of the node `node_id`, in the flow, repeats its
+    /// padding and border at the page breaks inside it. Layout leaves room
+    /// for the repeated edges only around the content of a box whose content
+    /// sets its height. (It lays an absolutely positioned box, and the boxes
+    /// in it, out whole: [`Self::cloned_page_fragment`] leaves those out.)
+    fn repeats_cloned_edges(&self, node_id: usize) -> bool {
+        let cv = &self.cascade.computed[node_id];
+        cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
+            && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+            && matches!(
+                cv.min_height,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
+            )
+            && self
+                .document
+                .get_node(node_id)
+                .is_some_and(|node| !node.height_is_size_contained())
+    }
+
+    /// Whether an ancestor of the node `node_id` is absolutely positioned,
+    /// which layout lays out whole rather than across pages.
+    fn in_positioned_box(&self, node_id: usize) -> bool {
+        self.document.ancestors(node_id).any(|id| {
+            matches!(
+                self.cascade.computed[id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
         })
     }
 
