@@ -18,6 +18,7 @@ mod absolute_box_forced_break_surface;
 mod absolute_box_lines_page_break_surface;
 mod atomic_inline_lines_page_break_surface;
 mod avoided_box_page_break_surface;
+mod avoided_run_table_first_row_surface;
 mod baseline_content_alignment_surface;
 mod bidi_isolate_surface;
 mod border_image_surface;

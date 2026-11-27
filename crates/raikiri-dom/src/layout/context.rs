@@ -317,6 +317,12 @@ pub(crate) struct LayoutContext {
     /// Where an earlier attempt's page walk moved a container whose columns
     /// are filled page by page, which fills them from there.
     pub(crate) page_filled_origins: std::collections::HashMap<usize, f32>,
+    /// The header and footer groups of the tables in the flow being paginated
+    /// that repeat on each page of their table. Pagination fills it before it
+    /// looks for the parts of boxes that a break cannot separate, since a
+    /// repeated header goes along with the first body row below it while
+    /// the rows of one that does not repeat are rows like any other.
+    pub(crate) repeated_table_groups: std::collections::HashSet<usize>,
     /// Accepted owner origins used to replan leading spanners from source layout.
     pub(crate) spanning_page_origins: std::collections::HashMap<usize, f32>,
     /// How far the page walk has moved the columns after each spanner of a
