@@ -248,6 +248,98 @@ fn lines_moved_inside_a_taller_cell_leave_the_footer_on_the_rows_last_page() {
     assert!(pages[1].starts_with("100: B@0,0 F@0,"), "{pages:?}");
 }
 
+/// A cell of a definite height whose content a forced break splits.
+fn split_cell(height: &str) -> String {
+    format!(
+        "<tr><td style='padding:0;vertical-align:top;{height}'><div style='height:30px'>A</div>\
+         <div style='height:30px;break-before:page'>B</div></td></tr>"
+    )
+}
+
+#[test]
+fn a_forced_break_in_a_cell_repeats_the_header_and_footer() {
+    expect(
+        &format!(
+            "{TABLE}{HEADER}{}{FOOTER}</table><div>X</div>",
+            split_cell("height:150px")
+        ),
+        &[
+            "100: A@0,20 F@0,75 H@0,-5",
+            "100: B@0,20 F@0,75 H@0,-5",
+            "100: F@0,45 H@0,-5 X@0,70",
+        ],
+    );
+    expect(
+        &format!(
+            "{TABLE}{HEADER}{}</table><div>X</div>",
+            split_cell("height:150px")
+        ),
+        &["100: A@0,20 H@0,-5", "100: B@0,20 H@0,-5", "100: X@0,0"],
+    );
+}
+
+#[test]
+fn the_copies_count_toward_the_height_of_a_cell_split_by_a_forced_break() {
+    // The row runs on past the page the break opens, with copies on each
+    // page it crosses.
+    expect(
+        &format!(
+            "{TABLE}{HEADER}{}{FOOTER}</table><div>X</div>",
+            split_cell("height:250px")
+        ),
+        &[
+            "100: A@0,20 F@0,75 H@0,-5",
+            "100: B@0,20 F@0,75 H@0,-5",
+            "100: F@0,75 H@0,-5",
+            "100: F@0,75 H@0,-5",
+            "100: F@0,25 H@0,-5 X@0,50",
+        ],
+    );
+    expect(
+        &format!(
+            "{TABLE}{}{FOOTER}</table><div>X</div>",
+            split_cell("height:250px")
+        ),
+        &[
+            "100: A@0,0 F@0,75",
+            "100: B@0,0 F@0,75",
+            "100: F@0,75",
+            "100: F@0,5 X@0,30",
+        ],
+    );
+}
+
+#[test]
+fn rows_after_a_cell_split_by_a_forced_break_follow_its_last_page() {
+    expect(
+        &format!(
+            "{TABLE}{HEADER}{}<tr><td style='padding:0'>Z</td></tr>{FOOTER}</table><div>X</div>",
+            split_cell("height:150px")
+        ),
+        &[
+            "100: A@0,20 F@0,75 H@0,-5",
+            "100: B@0,20 F@0,75 H@0,-5",
+            "100: F@0,75 H@0,-5 Z@0,50",
+            "100: X@0,0",
+        ],
+    );
+}
+
+#[test]
+fn a_footer_written_before_the_rows_repeats_around_a_forced_break_in_a_cell() {
+    expect(
+        &format!(
+            "{TABLE}{FOOTER}<tr><td>Y</td></tr>{}</table><div>X</div>",
+            split_cell("height:150px")
+        ),
+        &[
+            "100: A@0,32 F@0,75 Y@1,1",
+            "100: B@0,0 F@0,75",
+            "100: F@0,17 X@0,42",
+        ],
+    );
+}
+
 #[test]
 fn a_large_header_on_a_row_running_over_many_pages_stays_within_the_fragment_limit() {
     // The copies of a header with many boxes on every page a long row runs

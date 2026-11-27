@@ -22329,6 +22329,27 @@ fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_
 }
 
 #[test]
+fn a_row_ends_below_the_copies_on_the_pages_it_crosses() {
+    use super::pagination_state::row_end_below_copies;
+    let pages = PageOrigins::new(&[], 100.0);
+    // 60px on the first page above a 20px footer copy, then 60px on each
+    // page between a 20px header copy and the footer copy.
+    assert_eq!(
+        row_end_below_copies(20.0, 150.0, (20.0, 20.0), &pages),
+        (250.0, 2)
+    );
+    assert_eq!(
+        row_end_below_copies(20.0, 50.0, (20.0, 20.0), &pages),
+        (70.0, 0)
+    );
+    // A page the copies fill holds the rest of the row.
+    assert_eq!(
+        row_end_below_copies(20.0, 150.0, (50.0, 50.0), &pages),
+        (270.0, 1)
+    );
+}
+
+#[test]
 fn has_sibling_cell_needs_another_cell_in_the_row() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
