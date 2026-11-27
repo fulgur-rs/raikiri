@@ -605,6 +605,9 @@ fn sliceable_flex_container(
     // over the one before it, which a break between them would leave on the
     // wrong side of the break.
     let mut pulled = false;
+    // Whether it holds monolithic boxes, which only some boxes around them
+    // can move (see [`monolithic::supports`]).
+    let mut holds_monolithic = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
         // A monolithic box moves whole to the next column where it does not
@@ -624,6 +627,7 @@ fn sliceable_flex_container(
         }
         if monolithic {
             sized |= has_block_size(&style_of(tree, id));
+            holds_monolithic = true;
             continue;
         }
         let node = layout_node(tree, id);
@@ -701,6 +705,9 @@ fn sliceable_flex_container(
                 style_of(tree, item).inset() != Edges::splat(LengthPercentageAuto::auto())
             }))
     {
+        return None;
+    }
+    if holds_monolithic && !monolithic::supports(tree, child) {
         return None;
     }
     Some(sized)
@@ -3297,9 +3304,29 @@ pub(super) fn layout(
                 pushes.push(None);
                 continue;
             };
-            let placements = place_items(tree, items, column_height)?;
-            let start = placements.pieces[spans[order].start].first()?.top;
-            let moved = shape.push(tree, start, column_height, sizes[order].height)?;
+            let mut placements = place_items(tree, items, column_height)?;
+            let mut outcome = shape.push(
+                tree,
+                placements.pieces[spans[order].start].first()?.top,
+                column_height,
+                sizes[order].height,
+            );
+            // A container that its first box moves to the next column starts
+            // there, as after a break before it.
+            if matches!(outcome, monolithic::Outcome::MovesContainer) {
+                items[spans[order].start].break_before = true;
+                placements = place_items(tree, items, column_height)?;
+                outcome = shape.push(
+                    tree,
+                    placements.pieces[spans[order].start].first()?.top,
+                    column_height,
+                    sizes[order].height,
+                );
+            }
+            let moved = match outcome {
+                monolithic::Outcome::Moves(moved) => moved,
+                _ => monolithic::Pushes::default(),
+            };
             items[spans[order].start].height += moved.growth;
             sizes[order].height += moved.growth;
             pushes.push(Some(moved));

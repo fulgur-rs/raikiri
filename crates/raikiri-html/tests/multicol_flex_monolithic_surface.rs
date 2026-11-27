@@ -245,7 +245,125 @@ fn balanced_columns_stop_at_the_container_height() {
     );
 }
 #[test]
-fn containers_the_moves_do_not_model_keep_the_other_strategies() {
+fn a_monolithic_box_starting_the_container_moves_the_container() {
+    // A monolithic box at the start of the flex container moves the whole
+    // container to the next column.
+    expect(
+        &columns(
+            "auto",
+            "<div id=o style='height:60px'></div>\
+             <div id=f style='display:flex;flex-direction:column'><div id=a>\
+             <div id=m1 style='contain:size;height:60px'></div>\
+             <div id=b style='height:10px'></div></div></div>",
+        ),
+        &[
+            ("o", &[(0, 0, 100, 60)]),
+            ("f", &[(100, 0, 100, 70)]),
+            ("a", &[(100, 0, 100, 70)]),
+            ("m1", &[(100, 0, 100, 60)]),
+            ("b", &[(100, 60, 100, 10)]),
+        ],
+    );
+}
+
+#[test]
+fn a_line_moves_before_the_boxes_inside_its_items() {
+    // A monolithic box at the start of an item moves its whole line, and the
+    // boxes in the other items of the line move with it, not on their own.
+    expect(
+        &columns(
+            "auto",
+            "<div id=f style='display:flex;flex-direction:column'>\
+             <div id=o style='height:70px'></div><div id=r style='display:flex'>\
+             <div id=a style='width:50px'><div id=a1 style='height:5px'></div>\
+             <div id=m1 style='contain:size;height:30px'></div></div>\
+             <div id=b style='width:50px'>\
+             <div id=m2 style='contain:size;height:40px'></div></div></div></div>",
+        ),
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 40)]),
+            ("o", &[(0, 0, 100, 70)]),
+            ("r", &[(100, 0, 100, 40)]),
+            ("a", &[(100, 0, 50, 40)]),
+            ("a1", &[(100, 0, 50, 5)]),
+            ("m1", &[(100, 5, 50, 30)]),
+            ("b", &[(150, 0, 50, 40)]),
+            ("m2", &[(150, 0, 50, 40)]),
+        ],
+    );
+}
+
+#[test]
+fn an_item_below_the_start_of_its_line_moves_alone() {
+    // An item that its margin keeps below the start of its line moves alone,
+    // with its margin truncated; the items beside it stay.
+    expect(
+        &columns(
+            "auto",
+            "<div id=f style='display:flex;flex-wrap:wrap'>\
+             <div id=a style='width:100px;height:70px'></div>\
+             <div id=b style='width:50px;height:10px'></div>\
+             <div id=c style='width:50px;margin-top:10px'>\
+             <div id=m1 style='contain:size;height:30px'></div></div></div>",
+        ),
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 30)]),
+            ("a", &[(0, 0, 100, 70)]),
+            ("b", &[(0, 70, 50, 10)]),
+            ("c", &[(150, 0, 50, 30)]),
+            ("m1", &[(150, 0, 50, 30)]),
+        ],
+    );
+}
+
+#[test]
+fn a_line_starting_the_container_moves_the_container() {
+    // A break before the only line of a row container is one before the
+    // container.
+    expect(
+        &columns(
+            "auto",
+            "<div id=o style='height:70px'></div><div id=f style='display:flex'>\
+             <div id=a style='width:50px'><div id=a1 style='height:5px'></div></div>\
+             <div id=b style='width:50px'>\
+             <div id=m2 style='contain:size;height:40px'></div></div></div>",
+        ),
+        &[
+            ("o", &[(0, 0, 100, 70)]),
+            ("f", &[(100, 0, 100, 40)]),
+            ("a", &[(100, 0, 50, 40)]),
+            ("a1", &[(100, 0, 50, 5)]),
+            ("b", &[(150, 0, 50, 40)]),
+            ("m2", &[(150, 0, 50, 40)]),
+        ],
+    );
+}
+
+#[test]
+fn any_item_at_the_start_of_a_later_line_moves_the_line() {
+    // Any item at the start of a later line moves the whole line, not only
+    // the first one.
+    expect(
+        &columns(
+            "auto",
+            "<div id=f style='display:flex;flex-wrap:wrap'>\
+             <div id=x style='width:100px;height:70px'></div><div id=a style='width:50px'>\
+             <div id=a1 style='height:5px'></div></div><div id=b style='width:50px'>\
+             <div id=m2 style='contain:size;height:40px'></div></div></div>",
+        ),
+        &[
+            ("f", &[(0, 0, 100, 100), (100, 0, 100, 40)]),
+            ("x", &[(0, 0, 100, 70)]),
+            ("a", &[(100, 0, 50, 40)]),
+            ("a1", &[(100, 0, 50, 5)]),
+            ("b", &[(150, 0, 50, 40)]),
+            ("m2", &[(150, 0, 50, 40)]),
+        ],
+    );
+}
+
+#[test]
+fn containers_the_moves_do_not_model_still_lay_out() {
     let mono = "<div id=m style='contain:size;height:60px'></div>";
     let pushed = format!("<div id=a style='height:60px'></div><div>{mono}</div>");
     let cases = [
@@ -265,13 +383,12 @@ fn containers_the_moves_do_not_model_keep_the_other_strategies() {
         // margin.
         format!("<div style='display:flex;align-items:center'><div>{pushed}</div></div>"),
         format!("<div style='display:flex;align-items:start'><div style='margin-top:auto'>{pushed}</div></div>"),
-        // A monolithic box taller than a column.
+        // A monolithic box taller than a column, which overflows it, and one
+        // that moves past the end of a container with a height: the
+        // container is sliced as if they were plain boxes.
         "<div style='display:flex;flex-direction:column'><div style='height:30px'></div>\
          <div><div style='height:10px'></div><div id=m style='contain:size;height:150px'></div></div></div>"
             .to_owned(),
-        // A box that would move the flex container itself.
-        format!("<div style='height:60px'></div><div style='display:flex;flex-direction:column'>{mono}</div>"),
-        // Moved boxes past the end of a container with a height.
         format!("<div style='display:flex;flex-direction:column;height:120px'>{pushed}</div>"),
         // A forced break between the items as well.
         format!(

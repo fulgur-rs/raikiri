@@ -17,7 +17,9 @@ use raikiri_layout_style::values::AlignItemsKeyword;
 /// Whether `id`, a box inside a flex container the stream slices, is a
 /// monolithic box that the stream moves whole: a block with size containment
 /// in the block axis and nothing rendered inside it, in flow, with block
-/// margins of a length and no forced break of its own.
+/// margins of a length, no forced break of its own, and nothing painted past
+/// its box or repeated at a break, which the pieces of the container would
+/// cut (see [`is_sliceable_flex_box`]).
 pub(super) fn is_monolithic_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
@@ -30,7 +32,21 @@ pub(super) fn is_monolithic_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
         && !sets_break_in_columns(node.break_before)
         && !sets_break_in_columns(node.break_after)
         && !node.has_before_or_after_content
+        && !node.paints_whole_box_effects
+        && !(node.clones_box_decorations && has_block_edge_decorations(&style))
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
         && !has_rendered_content(tree, id, false)
+}
+
+/// Whether the monolithic boxes inside `container`, a flex container the
+/// stream slices, sit in boxes whose moves [`Shape`] models (see
+/// [`Shape::build`]).
+pub(super) fn supports(tree: &LayoutSession<'_>, container: usize) -> bool {
+    Shape::build(tree, container).is_ok()
 }
 
 /// How a box of the shape lays out the boxes it holds.
@@ -77,6 +93,35 @@ pub(super) struct Pushes {
     pub(super) growth: f32,
 }
 
+/// What a break before a monolithic box moves.
+#[derive(Clone, Copy, Debug)]
+enum Target {
+    /// A box in a block flow, with the boxes after it.
+    Flow(usize),
+    /// A flex line, with the lines after it, from one of its items: a break
+    /// before an item at the start of its line is one between lines.
+    Line(usize),
+    /// A flex item below the start of its line, alone: the items beside it
+    /// stay where they are, and the line grows to hold it.
+    Item(usize),
+    /// The flex container itself.
+    Container,
+}
+
+/// What the monolithic boxes of a container do where it starts.
+#[derive(Debug)]
+pub(super) enum Outcome {
+    /// They move as [`Pushes`] says.
+    Moves(Pushes),
+    /// The first of them does not fit and starts the container, so the
+    /// container itself moves to the next column.
+    MovesContainer,
+    /// They do what is not modelled here: one is taller than a column and
+    /// overflows it, or one overflows the container. The container is
+    /// sliced as if they were plain boxes.
+    Unmodelled,
+}
+
 /// Whether `id` holds a monolithic box anywhere in flow below it.
 fn holds_monolithic(tree: &LayoutSession<'_>, id: usize) -> bool {
     in_flow_elements(tree, id)
@@ -104,9 +149,10 @@ impl Shape {
     /// The shape of `container`, a flex container the stream slices whole,
     /// when it holds monolithic boxes; `Ok(None)` when it holds none, and
     /// `Err` when it holds them inside boxes whose growth is not modelled
-    /// here: a grid, a box with a block size of its own, a multi-line or
-    /// reordered column flex container, a flex line aligned other than at
-    /// its start or by stretching, or absolutely positioned boxes.
+    /// here: a grid, a box with a minimum or maximum block size, a
+    /// multi-line or reversed column flex container, a flex container with a
+    /// gap between its lines, a flex line aligned other than at its start or
+    /// by stretching, a relative offset, or absolutely positioned boxes.
     pub(super) fn build(tree: &LayoutSession<'_>, container: usize) -> Result<Option<Self>, ()> {
         if !holds_monolithic(tree, container) {
             return Ok(None);
@@ -124,6 +170,13 @@ impl Shape {
     ) -> Result<usize, ()> {
         let index = self.nodes.len();
         let mut grows = false;
+        // Positions in flow decide the breaks, which a relative offset does
+        // not move.
+        if parent.is_some()
+            && style_of(tree, id).inset() != Edges::splat(LengthPercentageAuto::auto())
+        {
+            return Err(());
+        }
         let kind = if parent.is_some() && is_monolithic_leaf(tree, id) {
             Kind::Monolithic
         } else if parent.is_some() && !holds_monolithic(tree, id) {
@@ -187,7 +240,7 @@ impl Shape {
                     let margin = style.margin();
                     let stretched = match style.align_self().unwrap_or(align_items).keyword {
                         AlignItemsKeyword::Normal | AlignItemsKeyword::Stretch => {
-                            style.size().height.is_auto()
+                            grows_with_content(&style) == Some(true)
                                 && !margin.top.is_auto()
                                 && !margin.bottom.is_auto()
                         }
@@ -216,13 +269,6 @@ impl Shape {
         Ok(index)
     }
 
-    /// Where the monolithic boxes move when the border box of the container
-    /// starts `start` below the top of a column, in columns `column_height`
-    /// tall, and how the boxes around them grow. `height` is the block size
-    /// of the container, whose own node does not have it yet. `None` when a
-    /// monolithic
-    /// box is taller than a column, which overflows it, or when the
-    /// container itself would have to move to the next column.
     /// The block size of the tallest monolithic box, which a column must be
     /// at least as tall as to hold it.
     pub(super) fn tallest(&self, tree: &LayoutSession<'_>) -> f32 {
@@ -233,13 +279,21 @@ impl Shape {
             .fold(0.0, f32::max)
     }
 
+    /// Where the monolithic boxes move when the border box of the container
+    /// starts `start` below the top of a column, in columns `column_height`
+    /// tall, and how the boxes around them grow. `height` is the block size
+    /// of the container, whose own node does not have it yet.
+    ///
+    /// The break that moves the highest box is taken first: a box that
+    /// starts a flex line moves the line before the boxes inside its items
+    /// are placed in their new columns.
     pub(super) fn push(
         &self,
         tree: &LayoutSession<'_>,
         start: f32,
         column_height: f32,
         height: f32,
-    ) -> Option<Pushes> {
+    ) -> Outcome {
         let mut state = State {
             shape: self,
             tree,
@@ -256,73 +310,123 @@ impl Shape {
                 column
             }
         };
-        for index in 0..self.nodes.len() {
-            if !matches!(self.nodes[index].kind, Kind::Monolithic) {
-                continue;
-            }
-            let size = state.height(index);
-            if size > column_height + EPSILON {
-                return None;
-            }
-            let position = start + state.top(index);
-            let column = column_of(position);
-            let offset = position - column * column_height;
-            if offset <= EPSILON || offset + size <= column_height + EPSILON {
-                continue;
-            }
-            // A break before the first box of a block or of a flex line is
-            // a break before the block or the line, as far up as that holds
-            // and the box does not start its column.
-            let mut target = index;
-            let mut current = index;
-            while let Some(parent) = self.nodes[current].parent {
-                if !self.starts(parent, current) {
-                    break;
-                }
-                let above = start + state.top(parent);
-                if column_of(above) != column || above - column * column_height <= EPSILON {
-                    break;
-                }
-                if self.nodes[parent].parent.is_none() {
-                    // The container itself would move.
-                    return None;
-                }
-                target = parent;
-                current = parent;
-            }
-            let distance = column_height - (start + state.top(target) - column * column_height);
-            state.move_down(target, distance);
+        if self
+            .monolithic()
+            .any(|index| state.height(index) > column_height + EPSILON)
+        {
+            return Outcome::Unmodelled;
         }
-        // What a box with a block size of its own no longer holds overflows
-        // it, which the pieces of the container show only inside it.
-        let end = height + state.growth;
-        if (0..self.nodes.len()).any(|index| {
-            matches!(self.nodes[index].kind, Kind::Monolithic)
-                && state.top(index) + state.height(index) > end + EPSILON
-        }) {
-            return None;
-        }
-        let mut changes = Vec::new();
-        for (index, node) in self.nodes.iter().enumerate().skip(1) {
-            if state.moved[index] != 0.0 || state.grown[index] != 0.0 {
-                changes.push((node.id, state.moved[index], state.grown[index]));
+        // Each move puts a box at the top of a column, so there are no more
+        // moves than boxes; the bound keeps rounding from looping.
+        for _ in 0..=self.nodes.len() {
+            // The box to move for each monolithic box that does not fit, with
+            // the top of what moves and the column it is in.
+            let mut first: Option<(Target, f32, f32)> = None;
+            for index in self.monolithic() {
+                let position = start + state.top(index);
+                let column = column_of(position);
+                let offset = position - column * column_height;
+                if offset <= EPSILON || offset + state.height(index) <= column_height + EPSILON {
+                    continue;
+                }
+                // A break before the first box of a block or of a flex line
+                // is a break before the block or the line, as far up as that
+                // holds and what moves does not start its column.
+                let mut target = None;
+                for candidate in self.breaks_before(tree, index) {
+                    let above = start + state.region_top(candidate);
+                    if column_of(above) != column || above - column * column_height <= EPSILON {
+                        // A line that starts its column moves no further: the
+                        // item inside it moves alone.
+                        if let (None, Target::Line(item)) = (target, candidate) {
+                            target = Some(Target::Item(item));
+                        }
+                        break;
+                    }
+                    target = Some(candidate);
+                }
+                let target = target.unwrap_or(Target::Flow(index));
+                if matches!(target, Target::Container) {
+                    return Outcome::MovesContainer;
+                }
+                let top = start + state.region_top(target);
+                if first.is_none_or(|(_, earliest, _)| top < earliest - EPSILON) {
+                    first = Some((target, top, column));
+                }
             }
+            let Some((target, top, column)) = first else {
+                // What a box with a block size of its own no longer holds
+                // overflows it, which the pieces of the container show only
+                // inside it.
+                let end = height + state.growth;
+                if self
+                    .monolithic()
+                    .any(|index| state.top(index) + state.height(index) > end + EPSILON)
+                {
+                    return Outcome::Unmodelled;
+                }
+                let changes = self
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .skip(1)
+                    .filter(|&(index, _)| state.moved[index] != 0.0 || state.grown[index] != 0.0)
+                    .map(|(index, node)| (node.id, state.moved[index], state.grown[index]))
+                    .collect();
+                return Outcome::Moves(Pushes {
+                    changes,
+                    growth: state.growth,
+                });
+            };
+            state.move_down(target, (column + 1.0) * column_height - top);
         }
-        Some(Pushes {
-            changes,
-            growth: state.growth,
-        })
+        Outcome::Unmodelled
     }
 
-    /// Whether `child` is the first box inside `parent`, or in its first flex
-    /// line.
-    fn starts(&self, parent: usize, child: usize) -> bool {
-        match &self.nodes[parent].kind {
-            Kind::Row(lines) => lines
-                .first()
-                .is_some_and(|line| line.iter().any(|&(item, _)| item == child)),
-            _ => self.nodes[parent].children.first() == Some(&child),
+    /// The indices of the monolithic boxes, in order.
+    fn monolithic(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.nodes.len()).filter(|&index| matches!(self.nodes[index].kind, Kind::Monolithic))
+    }
+
+    /// What a break before the monolithic box `index` may move, from the
+    /// box itself up: a break before the first box of a block is one before
+    /// the block, one before a flex item at the start of its line is one
+    /// before the line, and one before the first line of a flex container
+    /// is one before the container. An item that a block-start margin keeps
+    /// below the start of its line moves alone, its margin truncated, as in
+    /// Chromium.
+    fn breaks_before(&self, tree: &LayoutSession<'_>, index: usize) -> Vec<Target> {
+        let mut chain = Vec::new();
+        let mut current = index;
+        while let Some(parent) = self.nodes[current].parent {
+            match &self.nodes[parent].kind {
+                Kind::Row(lines) => {
+                    let line = lines
+                        .iter()
+                        .position(|items| items.iter().any(|&(item, _)| item == current));
+                    if tree.nodes[self.nodes[current].id].layout.margin.top > EPSILON {
+                        chain.push(Target::Item(current));
+                        break;
+                    }
+                    chain.push(Target::Line(current));
+                    if line != Some(0) {
+                        break;
+                    }
+                }
+                _ => {
+                    chain.push(Target::Flow(current));
+                    if self.nodes[parent].children.first() != Some(&current) {
+                        break;
+                    }
+                }
+            }
+            if self.nodes[parent].parent.is_none() {
+                chain.push(Target::Container);
+                break;
+            }
+            current = parent;
         }
+        chain
     }
 }
 
@@ -358,6 +462,79 @@ impl State<'_, '_> {
             current = parent;
         }
         top
+    }
+
+    /// Block offset from the border box of the container of the top of what
+    /// `target` moves: the border box of a box, whose margin before a break
+    /// is truncated, and the block-start margin edge of the highest item of
+    /// a flex line, which moves whole.
+    fn region_top(&self, target: Target) -> f32 {
+        match target {
+            Target::Container => 0.0,
+            Target::Flow(index) | Target::Item(index) => self.top(index),
+            Target::Line(index) => {
+                let parent = self.shape.nodes[index].parent.unwrap_or_default();
+                self.top(parent)
+                    + self
+                        .line_of(parent, index)
+                        .iter()
+                        .map(|&(item, _)| self.offset(item) - self.layout(item).margin.top)
+                        .fold(self.offset(index), f32::min)
+            }
+        }
+    }
+
+    /// The items of the flex line of row container `parent` that holds
+    /// `item`, with whether each one stretches.
+    fn line_of(&self, parent: usize, item: usize) -> Vec<(usize, bool)> {
+        match &self.shape.nodes[parent].kind {
+            Kind::Row(lines) => lines
+                .iter()
+                .find(|items| items.iter().any(|&(index, _)| index == item))
+                .cloned()
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Where the margin box of the line of `item` ends: that of its
+    /// lowest item.
+    fn line_end(&self, parent: usize, item: usize) -> f32 {
+        self.line_of(parent, item)
+            .iter()
+            .map(|&(index, _)| self.end(index))
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    /// Lay out again the line of `item` in row container `parent` after its
+    /// items moved or grew, from where it ended, `old_end`: it ends where
+    /// its lowest item now does, a stretched item at the end of its content,
+    /// the items that stretch reach that end, and the lines after it move
+    /// down by as much as it grew, which grows the container too.
+    fn relayout_line(&mut self, parent: usize, item: usize, old_end: f32) {
+        let line = self.line_of(parent, item);
+        let natural_end = |state: &Self, index: usize, stretched: bool| {
+            if stretched {
+                state.offset(index) + state.content_end(index) + state.layout(index).margin.bottom
+            } else {
+                state.end(index)
+            }
+        };
+        let end = line
+            .iter()
+            .map(|&(index, stretched)| natural_end(self, index, stretched))
+            .fold(old_end, f32::max);
+        for &(index, stretched) in &line {
+            if stretched {
+                self.grown[index] += end - self.end(index);
+            }
+        }
+        let grown = end - old_end;
+        if grown > 0.0 {
+            let following = self.following(parent, item, false);
+            self.shift(following, grown);
+            self.content_grew(parent, grown);
+        }
     }
 
     /// Block offset of the block-end margin edge of `index` from the border
@@ -411,15 +588,22 @@ impl State<'_, '_> {
         }
     }
 
-    /// Move `index` down by `distance`, with what follows it in the flow of
-    /// its parent; in a flex line, the whole line moves.
-    fn move_down(&mut self, index: usize, distance: f32) {
-        let parent = self.shape.nodes[index]
-            .parent
-            .expect("the container never moves");
-        let moving = self.following(parent, index, true);
-        self.shift(moving, distance);
-        self.content_grew(parent, distance);
+    /// Move what `target` names down by `distance`: a box with the boxes
+    /// after it in its flow, a flex line with the lines after it, or an
+    /// item alone. The caller moves the container itself (see
+    /// [`Outcome::MovesContainer`]).
+    fn move_down(&mut self, target: Target, distance: f32) {
+        if let Target::Item(index) = target {
+            let parent = self.shape.nodes[index].parent.unwrap_or_default();
+            let old_end = self.line_end(parent, index);
+            self.shift([index], distance);
+            self.relayout_line(parent, index, old_end);
+        } else if let Target::Flow(index) | Target::Line(index) = target {
+            let parent = self.shape.nodes[index].parent.unwrap_or_default();
+            let moving = self.following(parent, index, true);
+            self.shift(moving, distance);
+            self.content_grew(parent, distance);
+        }
     }
 
     /// The content of `index` reaches `distance` further down: it grows, and
@@ -433,40 +617,18 @@ impl State<'_, '_> {
             return;
         };
         match &self.shape.nodes[parent].kind {
-            Kind::Row(lines) => {
-                let line = lines
+            Kind::Row(_) => {
+                // A stretched item grows with its line; one that does not
+                // stretch grows with its content.
+                let old_end = self.line_end(parent, index);
+                if !self
+                    .line_of(parent, index)
                     .iter()
-                    .find(|items| items.iter().any(|&(item, _)| item == index))
-                    .cloned()
-                    .unwrap_or_default();
-                let stretched = line
-                    .iter()
-                    .any(|&(item, stretched)| item == index && stretched);
-                let line_end = line
-                    .iter()
-                    .map(|&(item, _)| self.end(item))
-                    .fold(f32::NEG_INFINITY, f32::max);
-                // A stretched item is as tall as its line, or as its content
-                // when that is taller; the content has grown already.
-                let item_end = if stretched {
-                    self.offset(index) + self.content_end(index) + self.layout(index).margin.bottom
-                } else {
-                    self.end(index) + distance
-                };
-                let grown_line = (item_end - line_end).max(0.0);
-                if !stretched {
+                    .any(|&(item, stretched)| item == index && stretched)
+                {
                     self.grown[index] += distance;
                 }
-                for &(item, stretched) in &line {
-                    if stretched {
-                        self.grown[item] += grown_line;
-                    }
-                }
-                if grown_line > 0.0 {
-                    let following = self.following(parent, index, false);
-                    self.shift(following, grown_line);
-                    self.content_grew(parent, grown_line);
-                }
+                self.relayout_line(parent, index, old_end);
             }
             _ => {
                 self.grown[index] += distance;
