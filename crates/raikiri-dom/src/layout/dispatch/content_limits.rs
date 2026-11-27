@@ -315,12 +315,10 @@ pub(super) fn with_content_limits(
 }
 
 /// Whether the keyword limits of the box `idx` are resolved on vertical axes:
-/// it is laid out on the axes of a vertical writing mode. A vertical flex or
-/// grid container keeps the physical axes: the bridge leaves its keywords
-/// unresolved, and the only limit it carries is the automatic minimum a flex
-/// item takes across its ratio.
+/// it is laid out on the axes of a vertical writing mode, flex and grid
+/// containers included.
 fn resolves_on_vertical_axes(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    super::block_right_to_left(tree, idx).is_some() && !is_flex_grid_container(tree, idx)
+    super::block_right_to_left(tree, idx).is_some()
 }
 
 /// [`with_content_limits`] for a box laid out on vertical axes, whose physical
@@ -385,7 +383,15 @@ fn vertical_inline_bounds(
         along.vertical_margins_are_collapsible = Line::FALSE;
         let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
         use LengthProperty::*;
-        let mut entries = neutral_size_overrides(&[Height, MinHeight, MaxHeight]);
+        // A flex or grid container measures its inline size without its
+        // block-axis limits, as `automatic_height` measures a horizontal one
+        // without its inline-axis limits.
+        let properties: &[LengthProperty] = if is_flex_grid_container(tree, idx) {
+            &[Height, MinHeight, MaxHeight, MinWidth, MaxWidth]
+        } else {
+            &[Height, MinHeight, MaxHeight]
+        };
+        let mut entries = neutral_size_overrides(properties);
         // A keyword the box states with a ratio stands for the inline size
         // the ratio gives its block size, whatever its content holds (CSS
         // Sizing 4 §5.1), as `automatic_height` finds for a horizontal box.
@@ -3351,7 +3357,10 @@ impl MeasureKey {
         let style = tree.physical_style(node);
         let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
         let (padding, border) = (style.padding(), style.border());
-        let flex_grid = is_flex_grid_container(tree, node);
+        // A vertical flex or grid container is measured on its own axes,
+        // which keep the sizes across the measured one like any vertical box.
+        let flex_grid =
+            is_flex_grid_container(tree, node) && !resolves_on_vertical_axes(tree, node);
         // Key only the cross-axis sizes that the probe deliberately preserves.
         let cross_sizes = if width && flex_grid {
             [None; 3]

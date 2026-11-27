@@ -167,3 +167,29 @@ fn a_box_with_a_ratio_takes_the_inline_size_the_ratio_gives() {
         ("display:flex;flex-direction:column;height:100px", "aspect-ratio:1/1;width:20px;min-height:min-content", LONG, (8.0, 8.0, 20.0, 20.0)),
     ]);
 }
+
+#[test]
+fn a_flex_or_grid_container_takes_the_limit() {
+    #[rustfmt::skip]
+    assert_cases(&[
+        ("", "display:grid;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("", "display:grid;width:100px;height:300px;max-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "writing-mode:vertical-rl;display:grid;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:grid;width:100px;height:5px;min-height:min-content;padding:3px;border:2px solid", TEXT, (8.0, 8.0, 100.0, 50.0)),
+        ("height:100px;display:flow-root", "display:grid;width:100px;height:300px;max-height:fit-content", "xxxx yy zz", (8.0, 8.0, 100.0, 100.0)),
+        // The items of a row flex container follow one another along its
+        // inline axis, those of a column one across it.
+        ("", "display:flex;width:100px;height:5px;min-height:min-content", "<div>xxxx</div><div>yy</div>", (8.0, 8.0, 100.0, 60.0)),
+        ("", "display:flex;width:100px;height:5px;min-height:max-content", "<div>xxxx</div><div>yy</div>", (8.0, 8.0, 100.0, 60.0)),
+        ("", "display:flex;flex-direction:column;width:100px;height:5px;min-height:min-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 40.0)),
+        ("", "display:flex;flex-direction:column;width:100px;height:5px;min-height:max-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 70.0)),
+        ("", "float:left;display:flex;flex-direction:column;width:100px;height:5px;min-height:max-content", "<div>xxxx yy</div><div>zzz</div>", (8.0, 8.0, 100.0, 70.0)),
+        ("position:relative", "position:absolute;display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("display:grid", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("display:flex;align-items:start", "display:grid;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        // A keyword width limit is the block size of the content.
+        ("", "display:grid;width:5px;height:100px;min-width:min-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
+        ("", "display:flex;flex-direction:column;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 30.0, 30.0)),
+    ]);
+}

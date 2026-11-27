@@ -1043,15 +1043,16 @@ pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
 ///   other than inline-blocks, form controls and MathML roots measure
 ///   themselves by algorithms of their own;
 /// - a vertical box in the flow of a vertical block container is laid out by
-///   that container on its own axes (see [`in_vertical_block_flow`]).
-///
-/// - a flex or grid container in a vertical writing mode is sized on axes
-///   that the keywords are not resolved on.
+///   that container on its own axes (see [`in_vertical_block_flow`]);
+/// - an inline-level flex or grid container in a vertical writing mode,
+///   whose inline size is measured at its max-content size even when it is
+///   offered min-content room, so its keywords would all stand for that size.
 ///
 /// A vertical box resolves the keywords on its own axes: its physical height
 /// is its inline size, its physical width its block size. A vertical flex or
 /// grid item uses them too, even when the keyword `height` of such an item is
-/// not one its layout sizes it by.
+/// not one its layout sizes it by, and so does a vertical block-level flex or
+/// grid container, as a horizontal one does.
 pub(super) fn honors_content_limits(
     doc: &Document,
     cascade: &CascadeResult,
@@ -1062,6 +1063,14 @@ pub(super) fn honors_content_limits(
         return true;
     }
     if is_supported_flex_grid_container(doc, idx, cv) {
+        return true;
+    }
+    if cv.display.is_block_flex_or_grid_container()
+        && lays_out_vertically(cascade, idx)
+        && !cv.multicol_flow
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && !in_vertical_block_flow(doc, cascade, idx, cv)
+    {
         return true;
     }
     let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
@@ -1085,7 +1094,6 @@ pub(super) fn honors_content_limits(
     if table
         || (!block_sized && !non_block_sized && !out_of_flow)
         || in_vertical_block_flow(doc, cascade, idx, cv)
-        || (lays_out_vertically(cascade, idx) && cv.display.is_flex_or_grid_container())
         || cv.multicol_flow
         || !sized_by_content_keyword(doc, cascade, idx, cv)
     {
