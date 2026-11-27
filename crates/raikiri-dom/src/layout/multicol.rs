@@ -2019,13 +2019,19 @@ fn multicol_has_min_constrained_child(tree: &LayoutSession<'_>, node_id: usize) 
 
 #[cfg(test)]
 fn can_balance_single_paragraph(tree: &LayoutSession<'_>, child: usize) -> bool {
-    can_balance_single_paragraph_shape(tree, child) && breaks_inside_freely(tree, child)
+    can_balance_single_paragraph_shape(tree, child, BlockEdges::Refused)
+        && breaks_inside_freely(tree, child)
 }
 
 /// Whether `child` is a paragraph of text alone whose lines break between
-/// columns, whatever its `break-inside`.
-fn can_balance_single_paragraph_shape(tree: &LayoutSession<'_>, child: usize) -> bool {
-    can_balance_atomic_paragraph_shape(tree, child, BlockEdges::Refused)
+/// columns, whatever its `break-inside`. With `edges`, it may have block-edge
+/// padding and border (see [`can_balance_paragraph_box`]).
+fn can_balance_single_paragraph_shape(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    edges: BlockEdges,
+) -> bool {
+    can_balance_atomic_paragraph_shape(tree, child, edges)
         && tree.nodes[child].ifc_boxes().is_empty()
 }
 

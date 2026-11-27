@@ -604,3 +604,272 @@ fn a_container_in_an_inline_block_is_cut_as_one_tall_box() {
         "inline_block"
     );
 }
+
+/// Paragraphs `prefix`1 through `prefix``sizes[0]`, then the next prefix
+/// letter for the next size, and so on, labeled from `L`.
+fn pars(sizes: &[u32]) -> String {
+    sizes
+        .iter()
+        .zip("LMN".chars())
+        .map(|(&size, prefix)| par(&prefix.to_string(), 1, size))
+        .collect()
+}
+
+/// Labels lines `L1`.. of `count` paragraphs of `size` lines each, numbered
+/// on from one paragraph to the next.
+fn numbered(count: u32, size: u32) -> String {
+    (0..count)
+        .map(|index| par("L", index * size + 1, (index + 1) * size))
+        .collect()
+}
+
+#[test]
+fn paragraphs_with_padding_and_border_fill_each_page_before_the_next_one() {
+    const DECORATED: &str = "p{background:#ccc;border:2px solid blue;padding:2px}";
+    // A piece that goes on in the next column ends at the column end, and the
+    // next piece begins with its first line at the top of its column.
+    assert_eq!(
+        columns(&mc(&numbered(5, 8)), DECORATED),
+        [
+            "p0 x4: L1-L8@4",
+            "p0 x104: L9-L16@4",
+            "p1 x4: L17-L24@4",
+            "p1 x104: L25-L32@4",
+            "p2 x4: L33-L36@4",
+            "p2 x104: L37-L40@0",
+        ],
+        "five"
+    );
+    assert_eq!(
+        columns(&mc(&par("L", 1, 30)), DECORATED),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L19@0",
+            "p1 x4: L20-L25@0",
+            "p1 x104: L26-L30@0",
+        ],
+        "one"
+    );
+    assert_eq!(
+        columns(&mc(&numbered(5, 8)), "p{background:#ccc}"),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L30@0",
+            "p1 x100: L31-L40@0",
+        ],
+        "background"
+    );
+    assert_eq!(
+        columns(&mc(&pars(&[30, 12])), "p{padding:10px 0;background:#cfc}"),
+        [
+            "p0 x0: L1-L9@10",
+            "p0 x100: L10-L19@0",
+            "p1 x0: L20-L28@0",
+            "p1 x100: L29-L30@0 M1-M7@60",
+            "p2 x0: M8-M10@0",
+            "p2 x100: M11-M12@0",
+        ],
+        "padding"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 25])),
+            "p{border-top:4px solid red;border-bottom:6px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L9@4",
+            "p0 x100: L10-L12@0 M1-M6@70",
+            "p1 x0: M7-M16@0",
+            "p1 x100: M17-M25@0",
+        ],
+        "borders"
+    );
+    assert_eq!(
+        columns(
+            &mc(&numbered(6, 7)),
+            "p{margin:10px 0;background:#ccc;border:2px solid blue;padding:3px}"
+        ),
+        [
+            "p0 x5: L1-L7@15",
+            "p0 x105: L8-L14@5",
+            "p1 x5: L15-L21@5",
+            "p1 x105: L22-L28@5",
+            "p2 x5: L29-L35@5",
+            "p2 x105: L36-L42@5",
+        ],
+        "margins"
+    );
+    // The last line stays with a bottom border that a column cannot hold
+    // after it.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[9, 20])),
+            "p{background:#ccc;border-bottom:30px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L7@0",
+            "p0 x100: L8-L9@0 M1-M6@70",
+            "p1 x0: M7-M14@0",
+            "p1 x100: M15-M20@0",
+        ],
+        "bottom_border"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[6, 14, 20])),
+            ".mc p:nth-child(2){background:#ccc;border:4px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L6@0",
+            "p0 x4: M1-M3@124",
+            "p0 x104: M4-M12@0",
+            "p1 x0: N1-N7@44",
+            "p1 x4: M13-M14@0",
+            "p1 x100: N8-N17@0",
+            "p2 x0: N18-N19@0",
+            "p2 x100: N20@0",
+        ],
+        "mixed"
+    );
+}
+
+#[test]
+fn cloned_edges_sit_in_every_piece_of_a_paginated_paragraph() {
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 30)),
+            "p{background:#ccc;border:3px solid blue;padding:2px;box-decoration-break:clone}"
+        ),
+        [
+            "p0 x5: L1-L9@5",
+            "p0 x105: L10-L18@5",
+            "p1 x5: L19-L24@5",
+            "p1 x105: L25-L30@5",
+        ],
+        "clone"
+    );
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 23)),
+            "p{background:#ccc;border:3px solid blue;padding:2px;\
+             box-decoration-break:clone;widows:2;orphans:2}"
+        ),
+        [
+            "p0 x5: L1-L9@5",
+            "p0 x105: L10-L18@5",
+            "p1 x5: L19-L21@5",
+            "p1 x105: L22-L23@5",
+        ],
+        "clone_widows"
+    );
+}
+
+#[test]
+fn decorated_paragraphs_fill_columns_in_sequence_when_asked() {
+    assert_eq!(
+        columns(
+            &mc(&pars(&[25, 5])),
+            "p{background:#ccc;border:2px solid blue;padding:2px}.mc{column-fill:auto}"
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L19@0",
+            "p1 x4: L20-L25@0 M1-M3@128",
+            "p1 x104: M4-M5@0",
+        ],
+        "fill_auto"
+    );
+}
+
+#[test]
+fn the_last_page_of_decorated_paragraphs_balances_to_the_lines_a_break_keeps() {
+    const DECORATED: &str = "p{background:#ccc;border:2px solid blue;padding:2px}";
+    // Four lines left under `orphans: 3` keep three before the break, and
+    // the widows give way.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 30])),
+            &format!("{DECORATED}p{{widows:3;orphans:3}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M26@0",
+            "p2 x4: M27-M29@0",
+            "p2 x104: M30@0",
+        ],
+        "widows"
+    );
+    // Three lines left are as tall as the orphans, and the bottom edge that
+    // the column cannot hold after them moves the last line on.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 28])),
+            &format!("{DECORATED}p{{widows:3;orphans:3}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M25@0",
+            "p2 x4: M26-M27@0",
+            "p2 x104: M28@0",
+        ],
+        "three_left"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 29])),
+            &format!("{DECORATED}p{{widows:1;orphans:5}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M26@0",
+            "p2 x4: M27-M28@0",
+            "p2 x104: M29@0",
+        ],
+        "orphans"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[5, 29])),
+            &format!("{DECORATED}p{{widows:2;orphans:4}}")
+        ),
+        [
+            "p0 x4: L1-L5@4 M1-M4@112",
+            "p0 x104: M5-M14@0",
+            "p1 x4: M15-M22@0",
+            "p1 x104: M23-M29@0",
+        ],
+        "first_page"
+    );
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 24)),
+            "p{background:#ccc;border-bottom:30px solid blue;widows:2;orphans:2}"
+        ),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L22@0",
+            "p1 x100: L23-L24@0",
+        ],
+        "bottom_border"
+    );
+    // Plain paragraphs balance the same way.
+    assert_eq!(
+        columns(&mc(&pars(&[12, 28])), "p{widows:3;orphans:3}"),
+        [
+            "p0 x0: L1-L9@0",
+            "p0 x100: L10-M7@0",
+            "p1 x0: M8-M17@0",
+            "p1 x100: M18-M25@0",
+            "p2 x0: M26-M28@0",
+        ],
+        "plain"
+    );
+}
