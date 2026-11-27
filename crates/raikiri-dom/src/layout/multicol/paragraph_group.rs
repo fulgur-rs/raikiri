@@ -1240,9 +1240,8 @@ fn collect(
             || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                 || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
             || is_right_aligned_in_parent(tree, child)
-            || !forced
-                && (sets_break_in_columns(node.break_before)
-                    || sets_break_in_columns(node.break_after))
+            || refuses_break(node.break_before, forced)
+            || refuses_break(node.break_after, forced)
             || node.has_before_or_after_content
             || multicol_subtree_has_float(tree, child)
             || !margin_top.is_finite()
@@ -1314,23 +1313,34 @@ fn collect(
     if forced {
         // A forced break between two boxes comes before the second, and one
         // before the first box of a wrapper, or after its last, comes before
-        // or after the wrapper (CSS Fragmentation 3, 3.1).
+        // or after the wrapper (CSS Fragmentation 3, 3.1). White space
+        // between them takes no part.
         let mut after = false;
         for index in 0..entries.len() {
+            if paragraphs[index].is_none() {
+                continue;
+            }
             let node = layout_node(tree, entries[index].0);
             let role = flow.roles[index];
             if role == Role::Close {
-                after |= sets_break_in_columns(node.break_after);
+                after |= node.break_after == BreakBetween::Column;
                 continue;
             }
+            // The outermost wrapper that starts with this box.
             let mut start = index;
-            while start > 0 && matches!(flow.roles[start - 1], Role::Open(_)) {
-                start -= 1;
+            let mut probe = index;
+            while let Some(previous) = probe.checked_sub(1) {
+                probe = previous;
+                match flow.roles[probe] {
+                    Role::Open(_) => start = probe,
+                    _ if paragraphs[probe].is_none() => {}
+                    _ => break,
+                }
             }
             if let Some(paragraph) = &mut paragraphs[start] {
-                paragraph.break_before |= after || sets_break_in_columns(node.break_before);
+                paragraph.break_before |= after || node.break_before == BreakBetween::Column;
             }
-            after = role == Role::Box && sets_break_in_columns(node.break_after);
+            after = role == Role::Box && node.break_after == BreakBetween::Column;
         }
     }
     Some(Collected {
@@ -1341,6 +1351,13 @@ fn collect(
         room,
         sized_leaf,
     })
+}
+
+/// Whether a box with `value` before or after it is left to the other
+/// strategies: with `forced`, all but a forced column break, which Chromium
+/// takes, as it does not take `always` inside columns.
+fn refuses_break(value: BreakBetween, forced: bool) -> bool {
+    sets_break_in_columns(value) && !(forced && value == BreakBetween::Column)
 }
 
 /// What [`collect`] makes of the entries of a flow.
@@ -1542,12 +1559,17 @@ fn fill_chunk_with(
     // A monolithic box that runs past the end of its column.
     let mut overflowed = false;
     let mut column_has_content = false;
+    // The column that last took an empty box, which a forced break after it
+    // leaves behind as it does content.
+    let mut empty_box_column = None;
     // The margins that adjoin through empty boxes and the paragraph after them
     // were cut at a break, and stay cut until that paragraph.
     let mut cut_margins = resume != FlowCursor::default()
-        && paragraphs
-            .get(resume.paragraph)
-            .is_some_and(|resumed| resumed.as_ref().is_some_and(|box_| box_.extents.is_empty()));
+        && paragraphs.get(resume.paragraph).is_some_and(|resumed| {
+            resumed
+                .as_ref()
+                .is_some_and(|box_| box_.extents.is_empty() && !box_.break_before)
+        });
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
         placements.push(None);
         let slot = placements.len() - 1;
@@ -1559,9 +1581,13 @@ fn fill_chunk_with(
         } else {
             0
         };
-        // A forced break after content starts the next column, and the
-        // margins before it are cut (CSS Fragmentation 3, 5.2).
-        if paragraph.break_before && initial_line == 0 && column_has_content {
+        // A forced break after content, an empty box included, starts the
+        // next column, and the margins before it are cut (CSS Fragmentation
+        // 3, 5.2).
+        if paragraph.break_before
+            && initial_line == 0
+            && (column_has_content || empty_box_column == Some(column))
+        {
             maximum = maximum.max(cursor);
             column = column.checked_add(1)?;
             if column >= context.column_count {
@@ -1618,6 +1644,7 @@ fn fill_chunk_with(
                 cut_margins = true;
                 adjoining = Margins::default();
             }
+            empty_box_column = Some(column);
             // Retain both extrema across empty boxes: collapsing their summed
             // margins again would lose the negative member of the chain.
             pending_margin = if cut_margins {

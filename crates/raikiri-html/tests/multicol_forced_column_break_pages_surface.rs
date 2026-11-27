@@ -218,4 +218,60 @@ fn a_forced_column_break_ends_a_column_and_the_last_page_balances() {
         ),
         &[(0, 0, 0, "ABCDEFGH"), (0, 100, 0, "IJKLMNOP")],
     );
+    // White space between the boxes keeps a break after the first.
+    assert_columns(
+        &format!(
+            "<div class=mc> <p style=break-after:column>{}</p> <p>{}</p> </div>",
+            w(1, 3),
+            w(4, 16)
+        ),
+        &[
+            (0, 0, 0, "ABC"),
+            (0, 100, 0, "DEFGHIJKLM"),
+            (1, 0, 0, "NO"),
+            (1, 100, 0, "P"),
+        ],
+    );
+    // A break before the first box of a wrapper, after white space, comes
+    // before the wrapper, whose margin stays at the top of the next column.
+    assert_columns(
+        &format!(
+            "<div class=mc><p>{}</p><div style=margin-top:30px> <p style=break-before:column>{}</p></div></div>",
+            w(1, 3),
+            w(4, 16)
+        ),
+        &[
+            (0, 0, 0, "ABC"),
+            (0, 100, 30, "DEFGHIJK"),
+            (1, 0, 0, "LMN"),
+            (1, 100, 0, "OP"),
+        ],
+    );
+    // The margin of a wrapper that a forced break moves to the next page stays.
+    assert_columns(
+        &format!(
+            "<div class=mc><p>{}</p><div style=break-before:column;margin-top:20px><p>{}</p></div></div>",
+            w(1, 12),
+            w(13, 16)
+        ),
+        &[
+            (0, 0, 0, "ABCDEFGHIJ"),
+            (0, 100, 0, "KL"),
+            (1, 0, 20, "MN"),
+            (1, 100, 0, "OP"),
+        ],
+    );
+    // An empty box between two breaks leaves a column of its own.
+    assert_columns(
+        &format!(
+            "<div class=mc><p>{}</p><div style=break-before:column></div><p style=break-before:column>{}</p></div>",
+            w(1, 3),
+            w(4, 16)
+        ),
+        &[
+            (0, 0, 0, "ABC"),
+            (1, 0, 0, "DEFGHIJ"),
+            (1, 100, 0, "KLMNOP"),
+        ],
+    );
 }

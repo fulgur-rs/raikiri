@@ -457,9 +457,9 @@ fn is_plain_box_but_clearance(
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        || !breaks
-            && (sets_break_in_columns(node.break_before)
-                || sets_break_in_columns(node.break_after))
+        || [node.break_before, node.break_after]
+            .into_iter()
+            .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
