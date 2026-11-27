@@ -650,7 +650,7 @@ fn paginate_own_lines(
     // The columns of a container of a definite height end with its content
     // box; lines past there overflow them, which the pages do not fill again.
     let definite = style.height_definite;
-    let limit = definite.then(|| owner_y + layout.size.height - bottom_inset);
+    let limit = definite.then_some(owner_y + layout.size.height - bottom_inset);
     let mut fragments = Vec::new();
     let mut first = 0usize;
     let mut top = start;
