@@ -396,11 +396,22 @@ fn columns_below_other_content_go_on_at_the_next_page_before_a_cut() {
 fn columns_with_nothing_before_them_on_the_page_break_inside() {
     // The container's padding or margin above the columns leaves no break
     // before them, so the paragraph breaks between its lines.
-    for style in ["padding-top: 20px", "margin-top: 20px"] {
-        let body = format!(
-            "{PAGE}<div class=mc style='{style}'>{}</div>",
+    for (style, wrapper) in [
+        ("padding-top: 20px", false),
+        ("margin-top: 20px", false),
+        ("margin-top: 20px", true),
+    ] {
+        let columns = format!(
+            "<div class=mc style='{style}'>{}</div>",
             paragraphs(&[(10, "a"), (4, "")])
         );
+        // A `display: contents` box around the columns adds nothing before
+        // them.
+        let body = if wrapper {
+            format!("{PAGE}<div style='display: contents'>{columns}</div>")
+        } else {
+            format!("{PAGE}{columns}")
+        };
         check(
             style,
             &body,

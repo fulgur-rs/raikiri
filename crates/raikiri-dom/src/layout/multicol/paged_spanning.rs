@@ -871,7 +871,18 @@ impl FragmentEdits {
 /// (CSS Fragmentation 3, 4.4).
 fn has_content_before(tree: &LayoutSession<'_>, owner: usize) -> bool {
     let mut node = owner;
-    while let Some(parent) = tree.parent_of(node) {
+    // The boxes of a `display: contents` ancestor stand in its parent's
+    // flow, where the siblings before it are found.
+    let layout_parent = |node: usize| {
+        let mut parent = tree.parent_of(node);
+        while let Some(contents) =
+            parent.filter(|&parent| tree.nodes[parent].display() == DisplayValue::Contents)
+        {
+            parent = tree.parent_of(contents);
+        }
+        parent
+    };
+    while let Some(parent) = layout_parent(node) {
         let before = tree.children_through_contents(parent);
         let content = before
             .iter()
