@@ -5127,6 +5127,17 @@ impl PaginationState {
                 .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
                 line_fit.page_insets = page_insets;
+                // A first line that starts in the room the cloned boxes
+                // around it keep for their repeated edges at the page end
+                // still starts on this page, and breaks or moves from it.
+                let cloned_room = super::cloned_block_insets(document, block_id).1;
+                let first_top = text.effective_y + line_metrics[0].0;
+                if !line_fit.starts_on_page
+                    && first_top >= page_start + page_step - 0.001
+                    && first_top < page_start + page_step + cloned_room
+                {
+                    line_fit.starts_on_page = true;
+                }
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
@@ -5398,6 +5409,19 @@ impl PaginationState {
                             )?;
                         } else {
                             reach_page(control, page)?;
+                            // It lands below the edges that the cloned boxes
+                            // around the boxes that move repeat on that page.
+                            let moved_box = if nested {
+                                first_box_ancestor_at_start(
+                                    document, cascade, block_id, body_id, page_start,
+                                )
+                            } else {
+                                block_id
+                            };
+                            let cloned_head =
+                                document.layout_parent_of(moved_box).map_or(0.0, |parent| {
+                                    super::cloned_block_insets(document, parent).0
+                                });
                             let (delta, consumed) = move_line_block(
                                 document,
                                 cascade,
@@ -5405,7 +5429,7 @@ impl PaginationState {
                                 block_id,
                                 nested,
                                 block_effective_y,
-                                page_origins.origin(page),
+                                page_origins.origin(page) + cloned_head,
                                 page_start,
                                 &mut self.subtree_shifts,
                                 entry.page_before_candidate,

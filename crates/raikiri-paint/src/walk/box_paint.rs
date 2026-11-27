@@ -263,7 +263,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height: grid.map_or(paint_height, |rect| rect.height),
             background_height: grid.map_or(paint_background_height, |rect| rect.height),
         };
-        let own = self.cloned_page_fragment(element, own);
+        let (own, cloned_clip) = self.cloned_page_fragment(element, own);
+        if let Some(clip) = cloned_clip {
+            self.scene.push_clip_layer(Affine::IDENTITY, &clip);
+        }
         // The box's own geometry, which its outline follows.
         let (fragment_paint_y, fragment_paint_height) = (own.y, own.height);
         let (own, sliced) = self.open_block_slice(element, own);
@@ -294,6 +297,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.paint_borders(element, &own, paints_own_box, legend_gap);
         let scene = &mut *self.scene;
         if sliced {
+            scene.pop_layer();
+        }
+        if cloned_clip.is_some() {
             scene.pop_layer();
         }
         // Outlines do not consume box-model space and are painted
@@ -379,7 +385,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// each fragment then has the whole border and padding, and its
     /// background, drawn around it (CSS Fragmentation 3, section 5.4).
     /// Layout leaves room for the repeated edges inside the page area.
-    fn cloned_page_fragment(&self, element: &ElementBox<'w>, own: OwnBox) -> OwnBox {
+    ///
+    /// A box that a page break cuts inside boxes that repeat their edges and
+    /// that does not repeat its own is instead clipped to the room inside
+    /// those edges, which the returned rectangle gives.
+    fn cloned_page_fragment(
+        &self,
+        element: &ElementBox<'w>,
+        own: OwnBox,
+    ) -> (OwnBox, Option<Rect>) {
         let PageGeometry {
             page_top,
             page_bottom,
@@ -387,14 +401,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             flow_band,
             ..
         } = self.geometry;
-        if !self.repeats_cloned_edges(element.node_id)
-            || element.inside_fixed
+        let position = &self.cascade.computed[element.node_id].position;
+        if element.inside_fixed
             || element.fixed_in_viewport
             || flow_band.is_some()
+            || matches!(position, PositionValue::Absolute | PositionValue::Fixed)
             || self.in_positioned_box(element.node_id)
         {
-            return own;
+            return (own, None);
         }
+        let repeats = self.repeats_cloned_edges(element.node_id);
         // The fragment goes inside the edges that the cloned boxes around it
         // repeat on the page.
         let (outer_top, outer_bottom) = self
@@ -409,6 +425,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     bottom + layout.border.bottom + layout.padding.bottom,
                 )
             });
+        if !repeats && outer_top <= 0.0 && outer_bottom <= 0.0 {
+            return (own, None);
+        }
         // Relative offsets move the fragments of the box together with it:
         // the box breaks where its place in the flow does.
         let shift: f32 = self
@@ -427,7 +446,21 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // The coordinates of a box that a transform moves are not those of
         // the page.
         if !from_before && !after || self.in_transformed_box(element.node_id) {
-            return own;
+            return (own, None);
+        }
+        if !repeats {
+            const UNBOUNDED: f64 = 1.0e7;
+            let top = if from_before {
+                f64::from(window_top + outer_top + shift)
+            } else {
+                -UNBOUNDED
+            };
+            let bottom = if after {
+                f64::from(window_bottom - outer_bottom + shift)
+            } else {
+                UNBOUNDED
+            };
+            return (own, Some(Rect::new(-UNBOUNDED, top, UNBOUNDED, bottom)));
         }
         let top = if from_before {
             window_top + outer_top
@@ -440,12 +473,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             flow_y + own.height
         };
         let height = (bottom - top).max(0.0);
-        OwnBox {
-            y: top + shift,
-            height,
-            background_height: height,
-            ..own
-        }
+        (
+            OwnBox {
+                y: top + shift,
+                height,
+                background_height: height,
+                ..own
+            },
+            None,
+        )
     }
 
     /// Clip the decorations of `element` to the slice it paints, when it is

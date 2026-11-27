@@ -247,3 +247,57 @@ fn a_sliced_paragraph_inside_a_cloned_block_keeps_room_for_its_own_closing_edges
         ]
     );
 }
+
+/// Lines `prefix`1 through `prefix``count` in a paragraph.
+fn named_lines(prefix: &str, count: u32) -> String {
+    let lines: Vec<_> = (1..=count).map(|n| format!("{prefix}{n}")).collect();
+    format!("<p>{}</p>", lines.join("<br>"))
+}
+
+#[test]
+fn a_paragraph_that_starts_in_the_room_kept_for_the_closing_edges_moves_on() {
+    // The second paragraph starts where the repeated padding and border of
+    // the box around it begin at the page end.
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b style='padding:4px 0'>{}{}</div>",
+            named_lines("L", 9),
+            named_lines("M", 3)
+        )),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (74, RED), (80, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_moved_whole_for_its_orphans_goes_below_the_repeated_edges() {
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b style='padding:4px 0'>{}{}</div>",
+            named_lines("L", 8),
+            named_lines("M", 3)
+        )),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (74, RED), (80, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_sliced_box_inside_a_cloned_block_stays_inside_the_repeated_edges() {
+    const YELLOW: [u8; 3] = [255, 255, 0];
+    let text: Vec<_> = (1..=15).map(|n| format!("L{n}")).collect();
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b><p style='background:yellow'>{}</p></div>",
+            text.join("<br>")
+        )),
+        [
+            vec![(0, BLUE), (6, YELLOW), (194, RED)],
+            vec![(0, BLUE), (6, YELLOW), (126, RED), (132, WHITE)],
+        ]
+    );
+}
