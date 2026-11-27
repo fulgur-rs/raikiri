@@ -24,21 +24,24 @@ use std::collections::{HashMap, HashSet};
 type FragmentsByParentAndNode = HashMap<(Option<usize>, usize), Vec<usize>>;
 
 /// Index the `fragments` of the layout: for each parent fragment and node,
-/// the fragments of the node under it in layout order, and the set of nodes
-/// that have a fragment.
+/// the fragments of the node under it in layout order, the set of nodes
+/// that have a fragment, and the set of those that have more than one.
 pub(super) fn index_fragments(
     fragments: &[raikiri_dom::LayoutFragment],
-) -> (FragmentsByParentAndNode, HashSet<usize>) {
+) -> (FragmentsByParentAndNode, HashSet<usize>, HashSet<usize>) {
     let mut by_parent_and_node = FragmentsByParentAndNode::new();
     let mut fragmented_nodes = HashSet::new();
+    let mut split_nodes = HashSet::new();
     for (fragment_id, fragment) in fragments.iter().enumerate() {
-        fragmented_nodes.insert(fragment.node_id);
+        if !fragmented_nodes.insert(fragment.node_id) {
+            split_nodes.insert(fragment.node_id);
+        }
         by_parent_and_node
             .entry((fragment.parent, fragment.node_id))
             .or_default()
             .push(fragment_id);
     }
-    (by_parent_and_node, fragmented_nodes)
+    (by_parent_and_node, fragmented_nodes, split_nodes)
 }
 
 /// Whether a clip was emitted immediately or recorded until its content
@@ -84,6 +87,8 @@ pub(super) struct PaintWalk<'w, S> {
     pub(super) layout_fragments: &'w [raikiri_dom::LayoutFragment],
     pub(super) fragments_by_parent_and_node: FragmentsByParentAndNode,
     pub(super) fragmented_nodes: HashSet<usize>,
+    /// The nodes that layout broke into more than one fragment.
+    pub(super) split_nodes: HashSet<usize>,
     /// The height of the content generated for a node, found once.
     pub(super) generated_flow_heights: HashMap<usize, f32>,
     pub(super) pixel_source: Option<&'w dyn ImagePixelSource>,

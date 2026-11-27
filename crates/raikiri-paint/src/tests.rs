@@ -3812,6 +3812,25 @@ fn a_grid_cut_off_by_the_columns_loses_its_bottom_outline() {
     assert!(bottom.0.height() == 0.0, "{fills:?}");
 }
 
+/// A grid that layout breaks into column pieces is drawn in each of them,
+/// not cut off at the bottom of the first column.
+#[test]
+fn a_grid_broken_into_column_pieces_is_drawn_in_each_column() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px}</style></head><body><article><div style="display:grid;height:200px;background:#00f"></div></article></body></html>"#,
+    );
+    let mut fills = visible_fill_bounds(&scene, (0, 0, 255));
+    fills.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+    assert_eq!(fills.len(), 2, "{fills:?}");
+    for (fill, x) in fills.iter().zip([0.0, 50.0]) {
+        assert_eq!(
+            (fill.0.x0, fill.0.y0, fill.0.width(), fill.0.height()),
+            (x, 0.0, 50.0, 100.0),
+            "{fills:?}"
+        );
+    }
+}
+
 /// What overflows a grid or a table in columns shows beside it and above it
 /// whether the box has an outline or not (CSS Multi-column 1, section 8): the
 /// columns cut the box off at the bottom only.

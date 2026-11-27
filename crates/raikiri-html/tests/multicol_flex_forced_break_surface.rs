@@ -16,7 +16,7 @@ use raikiri_traits::{LayoutConfig, PageDefaults};
 
 const AHEM: &[u8] = include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf");
 
-type Rect = (i32, i32, i32, i32);
+pub(crate) type Rect = (i32, i32, i32, i32);
 
 /// The visible parts `(x, y, width, height)` of the fragments of each element
 /// with an id, in a document whose columns are 100px wide. A piece of the
@@ -101,13 +101,13 @@ fn visible(body: &str) -> BTreeMap<String, Vec<Rect>> {
 
 /// A multi-column container of four columns 100px wide, 100px tall, around
 /// `content`.
-fn columns(fill: &str, content: &str) -> String {
+pub(crate) fn columns(fill: &str, content: &str) -> String {
     format!(
         "<div style='columns:4;column-gap:0;width:400px;height:100px;column-fill:{fill}'>{content}</div>"
     )
 }
 
-fn expect(body: &str, expected: &[(&str, &[Rect])]) {
+pub(crate) fn expect(body: &str, expected: &[(&str, &[Rect])]) {
     let got = visible(body);
     for (id, rects) in expected {
         assert_eq!(

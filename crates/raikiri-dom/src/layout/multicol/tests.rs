@@ -2463,7 +2463,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
-        "display:grid",
         "display:inline-block",
         "display:block;columns:2",
         "display:block;transform:translateX(80px)",
@@ -2476,6 +2475,45 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
          box-decoration-break:clone",
     ] {
         assert!(!supported(sized, &[held], true), "{held}");
+    }
+    // A grid container is sliced as a flex container is, held or holding,
+    // but a forced break inside it stays with the other strategies.
+    assert!(supported(sized, &["display:grid;width:10px"], true));
+    assert!(supported("display:grid;height:150px", &[item], true));
+    assert!(supported(
+        "display:grid;grid-template-rows:150px",
+        &["display:block"],
+        true
+    ));
+    assert!(!supported(
+        "display:grid",
+        &["display:block;width:10px;height:150px;break-before:column"],
+        true
+    ));
+    // Rows of a length give a grid a block size of its own; rows sized by
+    // their content, a fraction or a percentage do not.
+    for (grid, sized) in [
+        ("display:grid;grid-template-rows:repeat(2, 30px)", true),
+        ("display:grid;grid-auto-rows:30px", true),
+        ("display:grid;grid-template-rows:auto 1fr", false),
+        ("display:grid;grid-template-rows:50%", false),
+    ] {
+        assert_eq!(supported(grid, &["display:block"], true), sized, "{grid}");
+    }
+    // Implicit rows of a length size nothing without items to place in them.
+    assert!(!supported("display:grid;grid-auto-rows:30px", &[], true));
+    // Row gaps are truncated at a break, which slicing would not do, and a
+    // zero row gap or a column gap alone leaves nothing to truncate.
+    for (gap, sliced) in [
+        ("row-gap:20px", false),
+        ("row-gap:10%", false),
+        ("row-gap:0", true),
+        ("column-gap:20px", true),
+    ] {
+        let grid = format!("display:grid;height:150px;{gap}");
+        assert_eq!(supported(&grid, &[item], true), sliced, "{gap}");
+        let nested = format!("display:grid;width:10px;{gap}");
+        assert_eq!(supported(sized, &[nested.as_str()], true), sliced, "{gap}");
     }
     // A background inside the box stays inside the clip, and so do block
     // edges that are cut with the box, or that have nothing to repeat.
@@ -2496,7 +2534,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:flex;height:150px;outline:4px solid blue",
         "display:flex;height:150px;border-top:5px solid red;border-bottom:5px solid red;\
          box-decoration-break:clone",
-        "display:grid;height:150px",
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
     }
