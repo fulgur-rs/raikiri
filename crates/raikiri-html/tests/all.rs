@@ -111,6 +111,7 @@ mod multicol_balanced_trailing_margin;
 mod multicol_block_content_alignment;
 mod multicol_button_surface;
 mod multicol_column_flex_pages_surface;
+mod multicol_flex_avoid_surface;
 mod multicol_flex_forced_break_surface;
 mod multicol_flex_monolithic_surface;
 mod multicol_float_wrapper_surface;

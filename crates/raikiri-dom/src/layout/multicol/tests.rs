@@ -2579,6 +2579,19 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
             true
         ));
     }
+    // A percentage gap resolves against a block size the style fixes; one
+    // that the items grow leaves its used size unknown.
+    let tall = "display:block;width:10px;height:150px";
+    assert!(!supported(
+        "display:flex;flex-direction:column;row-gap:10%",
+        &[tall, item],
+        true
+    ));
+    assert!(supported(
+        "display:flex;flex-direction:column;row-gap:10%;height:150px",
+        &[item, item],
+        true
+    ));
     // A box placed from the top stays where it is.
     assert!(supported(
         "display:flex;position:relative",
@@ -2588,11 +2601,17 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         ],
         true
     ));
+    // A box that avoids breaks inside it moves whole to the next column.
+    assert!(supported(
+        sized,
+        &["display:block;break-inside:avoid"],
+        true
+    ));
     for held in [
+        // A break avoided before the first item is one before the container.
         "display:block;break-before:avoid",
-        "display:block;break-inside:avoid",
-        // A container that holds a flex container keeps its absolutely
-        // positioned boxes in its flow.
+        // An absolutely positioned box whose containing block is outside
+        // the container.
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",

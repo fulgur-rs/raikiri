@@ -607,16 +607,14 @@ fn sliceable_flex_container(
     // over the one before it, which a break between them would leave on the
     // wrong side of the break.
     let mut pulled = false;
-    // Whether it holds monolithic boxes, which only some boxes around them
-    // can move (see `monolithic::supports`).
-    let mut holds_monolithic = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
         // A monolithic box moves whole to the next column where it does not
         // fit (see `monolithic::Shape`).
         let monolithic = id != child && monolithic::is_monolithic_leaf(tree, id);
         if boxes > MAX_SLICED_FLEX_BOXES
-            || !(monolithic || is_sliceable_flex_box(tree, id, contained, (before, after)))
+            || !(monolithic
+                || is_sliceable_flex_box(tree, id, contained, (before, after), id != child))
         {
             return None;
         }
@@ -629,7 +627,6 @@ fn sliceable_flex_container(
         }
         if monolithic {
             sized |= has_block_size(&style_of(tree, id));
-            holds_monolithic = true;
             continue;
         }
         let node = layout_node(tree, id);
@@ -654,8 +651,10 @@ fn sliceable_flex_container(
         }
         let grid = node.display() == DisplayValue::Grid;
         // A row gap is truncated where a fragmentation break falls in it
-        // (CSS Box Alignment 3, 8.1), which a grid sliced whole would not do.
-        if grid
+        // (CSS Box Alignment 3, 8.1), which a grid or a multi-line flex
+        // container sliced whole would not do.
+        let lines = grid || node.display() == DisplayValue::Flex && style.flex_wraps();
+        if lines
             && !matches!(style.gap().height.expand(), ExpandedLengthPercentage::Length(px) if px == 0.0)
         {
             return None;
@@ -720,7 +719,9 @@ fn sliceable_flex_container(
     {
         return None;
     }
-    if holds_monolithic && !monolithic::supports(tree, child) {
+    // What moves at breaks, and the space that breaks truncate, must be
+    // what the moves model.
+    if !monolithic::supports(tree, child) {
         return None;
     }
     Some(sized)
@@ -773,12 +774,15 @@ fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
 ///
 /// `breaks` says whether a forced column break before and after `id` is one
 /// the stream honours: one between the container and its neighbours, or
-/// between flex items (see [`flex_breaks`]).
+/// between flex items (see [`flex_breaks`]). `avoids` says whether breaks
+/// that `id` avoids are ones the moves of the container honour (see
+/// [`monolithic::Shape`]): those of a box inside it.
 fn is_sliceable_flex_box(
     tree: &LayoutSession<'_>,
     id: usize,
     contained: bool,
     breaks: (bool, bool),
+    avoids: bool,
 ) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
@@ -804,10 +808,13 @@ fn is_sliceable_flex_box(
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
         && (!sets_break_in_columns(node.break_before)
-            || breaks.0 && node.break_before == BreakBetween::Column)
+            || breaks.0 && node.break_before == BreakBetween::Column
+            || avoids && monolithic::avoids_break(node.break_before))
         && (!sets_break_in_columns(node.break_after)
-            || breaks.1 && node.break_after == BreakBetween::Column)
-        && node.break_inside == BreakInside::Auto
+            || breaks.1 && node.break_after == BreakBetween::Column
+            || avoids && monolithic::avoids_break(node.break_after))
+        && (node.break_inside == BreakInside::Auto
+            || avoids && monolithic::avoids_break_inside(node.break_inside))
         && !node.has_before_or_after_content
         && !node.column_span_all
         && node.multicol.is_none()
@@ -3245,9 +3252,11 @@ pub(super) fn layout(
         .zip(&sliced_flex)
         .map(|((&child, size), &flex)| flex.then(|| flex_breaks(tree, child, size.height)))
         .collect::<Vec<_>>();
-    // The monolithic boxes of each sliced flex container, which move to the
-    // next column where they do not fit. A container whose forced breaks
-    // already cut it into parts keeps the other strategies.
+    // The boxes of each sliced flex container that move at breaks: those
+    // kept whole, which move to the next column where they do not fit, and
+    // those after space that a break truncates (see `monolithic::Shape`). A
+    // container whose forced breaks already cut it into parts keeps the
+    // other strategies where it holds boxes kept whole.
     let mut shapes = Vec::with_capacity(children.len());
     for ((&child, &flex), breaks) in children.iter().zip(&sliced_flex).zip(&flex_breaks) {
         let shape = if flex {
@@ -3255,13 +3264,18 @@ pub(super) fn layout(
         } else {
             None
         };
-        if shape.is_some()
-            && breaks
-                .as_ref()
-                .is_some_and(|breaks| !breaks.parts.is_empty())
+        // Space that a break truncates is left as it is laid out there.
+        let shape = if breaks
+            .as_ref()
+            .is_some_and(|breaks| !breaks.parts.is_empty())
         {
-            return None;
-        }
+            if shape.is_some() && monolithic::holds_kept_boxes(tree, child) {
+                return None;
+            }
+            None
+        } else {
+            shape
+        };
         shapes.push(shape);
     }
     // A wrapper that holds blocks puts them in the stream in its place, so
@@ -3510,15 +3524,25 @@ pub(super) fn layout(
         let mut fitted = !balances;
         loop {
             let (fit, moved) = fits(column_height, &mut items, &mut sizes)?;
-            pushes = moved;
             fitted |= fit;
             if fitted || reaches_limit(column_height) || attempts == MAX_MONOLITHIC_BALANCE_ATTEMPTS
             {
+                pushes = moved;
                 break;
             }
             attempts += 1;
-            let taller =
+            // The columns grow by the least amount that keeps a moved box
+            // where it is, as Chromium balances them, or else to what the
+            // grown boxes balance to.
+            let rebalanced =
                 balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0);
+            let taller = moved
+                .iter()
+                .flatten()
+                .filter_map(|pushes| pushes.shortage)
+                .filter(|&shortage| shortage > EPSILON)
+                .reduce(f32::min)
+                .map_or(rebalanced, |shortage| column_height + shortage);
             column_height = limit.map_or(taller, |limit| taller.min(limit));
         }
         if !fitted && !reaches_limit(column_height) {
