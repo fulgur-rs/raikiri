@@ -909,9 +909,9 @@ pub(super) fn paint_shift(
         .and_then(|html| cascade.computed.get(html))
         .is_some_and(|cv| cv.direction == Direction::Rtl);
     let (mut dx, mut dy) = (0.0, 0.0);
-    // Whether a clip was among the boxes passed so far: the painter moves
-    // that clip with the boxes above it, and the clips of the paint order
-    // inside columns stay at their layout location.
+    // Whether a clip was among the boxes passed so far. The runs do not
+    // model where the painter puts the clips inside columns, so an offset
+    // of a box at or above such a clip omits them.
     let mut clipped = false;
     let mut fixed = false;
     for (id, in_columns) in paint_chain(document, cascade, context, root) {
@@ -946,10 +946,10 @@ pub(super) fn paint_shift(
             if shift.general {
                 return Err(TextRunOmission::Transform);
             }
-            // The painter places the clip of a box's own column fragment
-            // from where it paints that box, its own offset included, so
-            // that offset moves the clip with the lines. Its other clips
-            // and the clips of the boxes inside it stay put.
+            // The one exception is the clip of a box's own column fragment:
+            // the painter places it from where it paints that box, its own
+            // offset included, so that offset moves the clip and the lines
+            // together and the clip keeps the same lines.
             let own_fragment_clip = context.fragment_clipped.contains(&id);
             let other_clip = columns_clip_owner(document, cascade, id)
                 || crate::paint_rules::element_has_overflow_clip(document, cascade, id);
