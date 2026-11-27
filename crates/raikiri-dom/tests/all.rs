@@ -209,6 +209,7 @@ mod vertical_block_intrinsic_inline_size;
 mod vertical_box_in_table_cell_height;
 mod vertical_cell_alignment;
 mod vertical_container_ratio;
+mod vertical_content_limits;
 mod vertical_content_sized_root_percentage_widths;
 mod vertical_flex;
 mod vertical_flex_grid_item_width_keyword;
