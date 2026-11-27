@@ -335,13 +335,14 @@ fn a_short_next_page_must_fit_the_entire_final_line() {
         page_end: 100.0,
         next_page_step: 15.0,
     };
-    assert!(!item_tail_move(&candidate, &fit));
+    assert!(!item_tail_move(&candidate, &fit, 0.0));
     assert!(item_tail_move(
         &candidate,
         &BoxFit {
             next_page_step: 20.0,
             ..fit
-        }
+        },
+        0.0
     ));
 }
 

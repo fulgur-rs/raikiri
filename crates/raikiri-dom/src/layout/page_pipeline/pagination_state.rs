@@ -691,6 +691,7 @@ impl PaginationState {
             {
                 self.flow_shift += place_table_footer(
                     document,
+                    env.cascade,
                     &mut self.table_headers,
                     group,
                     self.flow_shift,
@@ -3310,6 +3311,14 @@ impl PaginationState {
             });
         overflow.page |= overflow.leading_piece_with_holder;
         let grid_row = candidate.context.first_grid_row();
+        // The edges around a block that goes on from an earlier page, which
+        // do not follow the box.
+        let outer_edges_once = std::cell::OnceCell::new();
+        let outer_edges = || {
+            *outer_edges_once.get_or_init(|| {
+                super::edges_beyond_broken_ancestor(document, cascade, node_id, fit.page_start)
+            })
+        };
         // An empty box that its margins collapse through may stay with the
         // box before it.
         let stays_empty_once = std::cell::OnceCell::new();
@@ -3320,7 +3329,7 @@ impl PaginationState {
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
-        }) || (closing_edges_move(candidate, &fit)
+        }) || (closing_edges_move(candidate, &fit, outer_edges())
             && !stays_empty()
             && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit)
             && super::capped_edges_follow(
@@ -3336,7 +3345,7 @@ impl PaginationState {
             || ((grid_content_break.is_none()
                 || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
                 && leading_edges_move(candidate, &fit))
-            || ((run_tail_move(candidate, &fit) && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit))
+            || ((run_tail_move(candidate, &fit, outer_edges()) && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit))
                 || (super::min_height_edges_move(
                     document,
                     cascade,
@@ -4800,21 +4809,38 @@ impl PaginationState {
                             && !super::tied_to_box_before(document, cascade, block_id))
                 };
             let orphans = paragraph_style(document, cascade, block_id).orphans;
-            let closing_edges_break =
-                |line_metrics: &[(f32, f32)], widows: i32, page: u32, effective_y: f32| {
-                    if avoided_whole {
-                        return None;
-                    }
-                    closing_edges_line_move(
-                        line_metrics,
-                        closing_edges,
-                        effective_y,
-                        page,
-                        orphans.max(1) as usize,
-                        widows.max(1) as usize,
-                        page_origins,
-                    )
+            let closing_edges_break = |document: &LayoutSession<'_>,
+                                       line_metrics: &[(f32, f32)],
+                                       widows: i32,
+                                       page: u32,
+                                       effective_y: f32| {
+                if avoided_whole {
+                    return None;
+                }
+                // The edges around a block that goes on from an earlier
+                // page stay behind (see `edges_beyond_broken_ancestor`).
+                let closing_edges = if closing_edges > 0.0 {
+                    (closing_edges
+                        - super::edges_beyond_broken_ancestor(
+                            document,
+                            cascade,
+                            block_id,
+                            page_origins.origin(page),
+                        ))
+                    .max(0.0)
+                } else {
+                    0.0
                 };
+                closing_edges_line_move(
+                    line_metrics,
+                    closing_edges,
+                    effective_y,
+                    page,
+                    orphans.max(1) as usize,
+                    widows.max(1) as usize,
+                    page_origins,
+                )
+            };
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
@@ -4838,9 +4864,13 @@ impl PaginationState {
                 }
                 // The padding and border that close the blocks around the
                 // paragraph stay with its last lines.
-                if let Some(moved) =
-                    closing_edges_break(&line_metrics, widows, self.current_page, text.effective_y)
-                {
+                if let Some(moved) = closing_edges_break(
+                    document,
+                    &line_metrics,
+                    widows,
+                    self.current_page,
+                    text.effective_y,
+                ) {
                     return self.move_lines(
                         document,
                         env,
@@ -5277,8 +5307,13 @@ impl PaginationState {
                         // around it behind its lines, as on the page it left.
                         if moved_whole
                             && lines_can_move
-                            && let Some(moved) =
-                                closing_edges_break(&line_metrics, widows, page, text.effective_y)
+                            && let Some(moved) = closing_edges_break(
+                                document,
+                                &line_metrics,
+                                widows,
+                                page,
+                                text.effective_y,
+                            )
                         {
                             return self.move_lines(
                                 document,

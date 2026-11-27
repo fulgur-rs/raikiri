@@ -26,6 +26,7 @@ mod break_after_block_in_fixed_height_box_surface;
 mod break_inside_avoid_in_table_cell_surface;
 mod button_defaults_surface;
 mod clipped_lines_after_forced_break_surface;
+mod closing_edges_after_broken_boxes_surface;
 mod column_flex_items_line_page_break_surface;
 mod column_wrap_intrinsic_cross;
 mod combined_render;
