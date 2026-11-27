@@ -393,3 +393,37 @@ fn own_lines_in_the_columns_of_another_container_show_once() {
         assert_eq!(count, 1, "{line}");
     }
 }
+
+#[test]
+fn own_lines_whose_columns_leave_too_few_widows_on_the_page_start_on_the_next() {
+    let body = format!(
+        "<div style='height:120px'></div>\
+         <div class=mc style='width:160px;column-count:3;widows:3'>{}</div>{AFTER}",
+        lines(16)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "",
+            "A@0,0 B@0,20 C@0,40 D@0,60 E@0,80 F@0,100 z=0,120 \
+             G@60,0 H@60,20 I@60,40 J@60,60 K@60,80 L@60,100 \
+             M@120,0 N@120,20 O@120,40 P@120,60",
+        ]
+    );
+}
+
+#[test]
+fn the_last_page_balances_own_lines_with_widows_in_every_column() {
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc style='width:160px;column-count:3;widows:3'>{}</div>{AFTER}",
+        lines(19)
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "A@0,100 B@0,120 C@0,140 D@60,100 E@60,120 F@60,140 G@120,100 H@120,120 I@120,140",
+            "J@0,0 K@0,20 L@0,40 M@0,60 z=0,80 N@60,0 O@60,20 P@60,40 Q@120,0 R@120,20 S@120,40",
+        ]
+    );
+}

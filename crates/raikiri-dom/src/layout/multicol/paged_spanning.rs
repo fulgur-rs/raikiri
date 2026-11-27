@@ -692,16 +692,28 @@ fn paginate_own_lines(
             ranges.push((at, last));
             at = last;
         }
+        // The columns that balance the last lines leave `widows` after each
+        // break between them, as the columns of a paragraph on screen do.
+        if fits {
+            let mut pieces: Vec<_> = ranges.iter().map(|&(start, end)| (start, end, 0)).collect();
+            respect_orphans_and_widows(&mut pieces, context);
+            ranges = pieces
+                .into_iter()
+                .map(|(start, end, _)| (start, end))
+                .collect();
+        }
         // A paragraph that starts below the top of a page goes on to the next
-        // one when its first line does not fit, or when its first column
-        // would keep fewer than `orphans` lines before a break (CSS
+        // one when its first line does not fit, when its first column would
+        // keep fewer than `orphans` lines before a break, or when a column
+        // after a break on that page would hold fewer than `widows` (CSS
         // Fragmentation 3, 3.3). Below a definite height, the lines overflow.
         let (head_start, head_end) = ranges[0];
         if first == 0
             && top > origin + EPSILON
             && limit.is_none_or(|limit| limit >= page_bottom)
             && (extents[0].1 - extents[0].0 > capacity + EPSILON
-                || head_end - head_start < orphans && head_end < extents.len())
+                || head_end - head_start < orphans && head_end < extents.len()
+                || !fits && ranges[1..].iter().any(|&(start, end)| end - start < widows))
         {
             top = page_bottom;
             continue;
