@@ -2225,6 +2225,8 @@ pub(crate) fn paint_document_impl(
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
         clip_scopes: Vec::new(),
+        open_overflow_clips: Vec::new(),
+        open_opacities: 0,
         negative_levels,
         negative_contexts: Vec::new(),
         negative_boxes: Vec::new(),
