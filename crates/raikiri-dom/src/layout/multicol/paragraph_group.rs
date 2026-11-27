@@ -2512,6 +2512,7 @@ pub(super) fn paginate(
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
+    content_end: Option<f32>,
     break_before: Option<u32>,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
@@ -2579,7 +2580,13 @@ pub(super) fn paginate(
         // below the end of the last page when the container repeats its
         // border and padding there.
         absolute_y = absolute_y.max(page_origin);
-        let capacity = page_origin + page_height - absolute_y;
+        // The columns of a container of a definite height end with its
+        // content box; content past there overflows them, which the pages do
+        // not fill again.
+        let page_end = content_end.map_or(page_origin + page_height, |end| {
+            (page_origin + page_height).min(owner_y + end)
+        });
+        let capacity = page_end - absolute_y;
         if !capacity.is_finite() || capacity <= 0.0 {
             return Ok(None);
         }
@@ -2745,6 +2752,7 @@ pub(super) fn paginate(
             slice: None,
             occupied,
             run_start: None,
+            min_height: 0.0,
         });
         result.end = group_y + height;
         let Some(next) = chunk.next else {

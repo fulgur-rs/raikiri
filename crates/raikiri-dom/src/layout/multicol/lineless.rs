@@ -3220,12 +3220,13 @@ pub(super) fn layout(
     tree.nodes[parent].multicol_groups.clear();
     tree.nodes[parent].multicol_rows.clear();
     // Columns that fill in turn under an auto height are one column that
-    // nothing limits. Pages that cut the container fill them again, page by
-    // page, from the group kept here.
-    if definite_height.is_none()
-        && maximum.is_none()
-        && minimum <= origin.y + block_end_inset
-        && context.column_fill == ColumnFillValue::Auto
+    // nothing limits, and balanced ones are as tall as their share of the
+    // content, up to a definite height. Pages that cut the container fill
+    // them again, page by page, from the group kept here.
+    let unbounded = definite_height.is_none() && maximum.is_none();
+    let balanced_definite =
+        definite_height.is_some() && context.column_fill == ColumnFillValue::Balance;
+    if (unbounded && context.column_fill != ColumnFillValue::BalanceAll || balanced_definite)
         && outer_height.is_none()
         && tree.context.fragmentation_stack.len() <= 1
         && !tree.context.unpaged_plain_columns
@@ -3248,6 +3249,7 @@ pub(super) fn layout(
                 .collect(),
             slice: None,
             run_start: None,
+            min_height: minimum,
         });
     }
     let container = tree.fragment_tree.try_push(LayoutFragment {

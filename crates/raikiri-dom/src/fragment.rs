@@ -213,6 +213,10 @@ pub(crate) struct MulticolGroup {
     /// this group lays out, where the columns keep one: the groups after a
     /// spanner are the ones whose run starts after it.
     pub(crate) run_start: Option<usize>,
+    /// The least border-box block size of the container, from its minimum
+    /// height, which the pages keep when they fill the columns again; zero
+    /// for the groups that keep none.
+    pub(crate) min_height: f32,
 }
 
 /// A resumable point in a fragmented child flow.

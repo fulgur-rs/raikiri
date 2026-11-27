@@ -5115,10 +5115,14 @@ fn layout_column_group(
         trailing = 0.0;
     }
     // Balanced columns of a container with a definite height are as tall as
-    // their content, which the rules between them follow.
+    // their content, which the rules between them follow. Pages that cut
+    // the paragraphs of such a container fill its columns again.
     if retain_group
-        || definite_balance.is_some()
-            && fragment_height.is_none()
+        || (definite_balance.is_some() && fragment_height.is_none()
+            || definite_paragraphs
+                && context.column_fill == ColumnFillValue::Balance
+                && fragment_height.is_some()
+                && tree.context.fragmentation_stack.len() <= 1)
             && !tree.context.unpaged_plain_columns
     {
         tree.nodes[index]
@@ -5133,6 +5137,7 @@ fn layout_column_group(
                 occupied,
                 slice: None,
                 run_start: children.first().copied(),
+                min_height: 0.0,
             });
     }
     let minimum_height = if auto_measurements.is_some()
@@ -5680,6 +5685,7 @@ fn apply_nested_continuation(
                 occupied: std::collections::BTreeSet::new(),
                 slice: (!plan.cloned).then_some(slice),
                 run_start: None,
+                min_height: 0.0,
             }
         })
         .collect();

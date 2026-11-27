@@ -106,6 +106,7 @@ mod min_height_trailing_margin_page_break_surface;
 mod mixed_paragraph_block_lines_page_break_surface;
 mod mixed_paragraph_closing_edges_page_break_surface;
 mod mixed_paragraph_lines_after_block_page_break_surface;
+mod multicol_balance_across_pages_surface;
 mod multicol_balanced_trailing_margin;
 mod multicol_block_content_alignment;
 mod multicol_button_surface;
