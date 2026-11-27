@@ -136,17 +136,19 @@ pub(super) fn is_monolithic_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
         && !has_rendered_content(tree, id, false)
 }
 
-/// Whether the monolithic boxes inside `container`, a flex container the
-/// stream slices, sit in boxes whose moves [`Shape`] models (see
-/// [`Shape::build`]), and no column is shorter than one of them. A box taller
+/// Whether the boxes inside `container`, a flex container the stream slices,
+/// that move at breaks sit in boxes whose moves [`Shape`] models (see
+/// [`Shape::build`]), and no column is shorter than a monolithic one. A box taller
 /// than its column overflows it, and the fragment of the container around
 /// it grows to hold it, which the pieces of the stream do not model: that
 /// needs a content height of the column container at least as tall as the
 /// tallest box, or, with no height of its own, columns that balance with
 /// nothing to limit them, which grow to the tallest box.
 pub(super) fn supports(tree: &LayoutSession<'_>, container: usize) -> bool {
-    let Ok(Some(shape)) = Shape::build(tree, container) else {
-        return false;
+    let shape = match Shape::build(tree, container) {
+        Ok(Some(shape)) => shape,
+        Ok(None) => return true,
+        Err(()) => return false,
     };
     if !shape
         .nodes
@@ -332,29 +334,24 @@ impl Shape {
 
     /// The shape of `container`, a flex container the stream slices whole,
     /// when breaks change its layout (see [`holds_moves`]); `Ok(None)` when
-    /// they do not, and `Err` when it holds boxes kept whole (see
-    /// [`holds_kept_boxes`]) inside boxes whose growth is not modelled here:
-    /// a grid, a box with a minimum or maximum block size, a multi-line or
-    /// reversed column flex container, a row flex container with a gap
-    /// between its lines, a flex line aligned other than at its start or by
+    /// they do not, and `Err` when what moves sits inside boxes whose growth
+    /// is not modelled here: a grid, a box with a minimum or maximum block
+    /// size, a multi-line or reversed column flex container, a row flex
+    /// container with a gap between its lines or with items that avoid
+    /// breaks, a flex line aligned other than at its start or by
     /// stretching, a relative offset, or absolutely positioned boxes, or
     /// when a break avoided before its first box or after its last falls
-    /// outside it. A container that only truncates space at breaks is
-    /// sliced as it is laid out where its shape is not modelled.
+    /// outside it.
     pub(super) fn build(tree: &LayoutSession<'_>, container: usize) -> Result<Option<Self>, ()> {
         if !holds_moves(tree, container) {
             return Ok(None);
         }
-        let kept = holds_kept_boxes(tree, container);
-        if kept && avoids_breaks_at_ends(tree, container) {
+        if holds_kept_boxes(tree, container) && avoids_breaks_at_ends(tree, container) {
             return Err(());
         }
         let mut shape = Shape { nodes: Vec::new() };
-        match shape.add(tree, container, None) {
-            Ok(_) => Ok(Some(shape)),
-            Err(()) if kept => Err(()),
-            Err(()) => Ok(None),
-        }
+        shape.add(tree, container, None)?;
+        Ok(Some(shape))
     }
 
     fn add(
@@ -552,10 +549,15 @@ impl Shape {
                 let position = start + state.top(index);
                 let column = column_of(position);
                 let offset = position - column * column_height;
-                // A box that avoids breaks inside it moves even where no
-                // column holds it: it is cut either way, and the break
-                // before it is not avoided.
-                if offset <= EPSILON || offset + state.height(index) <= column_height + EPSILON {
+                // A box whose margin box starts its column stays, as does
+                // one that fits. A box that avoids breaks inside it moves
+                // even where no column holds it: it is cut either way, and
+                // the break before it is not avoided.
+                let margin = state.layout(index).margin.top.max(0.0);
+                if offset <= EPSILON
+                    || (offset - margin).abs() <= EPSILON
+                    || offset + state.height(index) <= column_height + EPSILON
+                {
                     continue;
                 }
                 let target = pick(&state, self.breaks_before(tree, index), column)
@@ -573,9 +575,10 @@ impl Shape {
             // starts the next column, with the block-end margin of the item
             // before and the gap truncated; its own block-start margin is
             // kept, as in Chromium.
-            for (flex, prev, next) in self.flow_pairs(tree) {
+            for (gap, prev, next) in self.flow_pairs(tree) {
                 let end = start + state.top(prev) + state.height(prev);
-                let top = start + state.top(next) - state.layout(next).margin.top.max(0.0);
+                let border = start + state.top(next);
+                let top = border - state.layout(next).margin.top.max(0.0);
                 let column = column_of(top);
                 let boundary = column * column_height;
                 if boundary <= start + EPSILON || boundary < end - EPSILON {
@@ -583,15 +586,25 @@ impl Shape {
                 }
                 let earlier = if self.avoids_break_between(tree, prev, next) {
                     pick(&state, self.breaks_before(tree, prev), column - 1.0)
-                        .filter(|target| !matches!(target, Target::Container))
                 } else {
                     None
                 };
+                if matches!(earlier, Some(Target::Container)) {
+                    return Outcome::MovesContainer;
+                }
+                // A box that a move already put at the top of a column
+                // starts it, its block-start margin truncated there.
+                let starts_column = border - column_of(border) * column_height <= EPSILON;
                 if let Some(target) = earlier {
                     let above = start + state.region_top(target);
                     consider(target, boundary - above, above, f32::INFINITY);
-                } else if flex && top - boundary > EPSILON {
-                    consider(Target::Flow(next), boundary - top, end, f32::INFINITY);
+                } else if let Some(gap) = gap.filter(|_| !starts_column) {
+                    // Only the gap and the margin are truncated, not the
+                    // free space the container distributes.
+                    let truncated = (top - boundary).min(gap + state.layout(prev).margin.bottom);
+                    if truncated > EPSILON {
+                        consider(Target::Flow(next), -truncated, end, f32::INFINITY);
+                    }
                 }
             }
             let Some((target, distance, _, short)) = first else {
@@ -604,7 +617,7 @@ impl Shape {
         // it, which the pieces of the container show only inside it.
         let end = height + state.growth;
         if self
-            .monolithic()
+            .kept_whole()
             .any(|index| state.top(index) + state.height(index) > end + EPSILON)
         {
             return Outcome::Unmodelled;
@@ -624,11 +637,6 @@ impl Shape {
         })
     }
 
-    /// The indices of the monolithic boxes, in order.
-    fn monolithic(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.nodes.len()).filter(|&index| matches!(self.nodes[index].kind, Kind::Monolithic))
-    }
-
     /// The indices of the boxes kept whole, monolithic or avoiding breaks
     /// inside them, in order.
     fn kept_whole(&self) -> impl Iterator<Item = usize> + '_ {
@@ -636,17 +644,23 @@ impl Shape {
             .filter(|&index| matches!(self.nodes[index].kind, Kind::Monolithic | Kind::Avoid))
     }
 
-    /// The pairs of adjacent boxes in each flow, in order, with whether the
-    /// flow is that of a flex container.
-    fn flow_pairs(&self, tree: &LayoutSession<'_>) -> Vec<(bool, usize, usize)> {
+    /// The pairs of adjacent boxes in each flow, in order, with the row gap
+    /// between them when the flow is that of a flex container, whose breaks
+    /// truncate it. A percentage gap counts as zero.
+    fn flow_pairs(&self, tree: &LayoutSession<'_>) -> Vec<(Option<f32>, usize, usize)> {
         self.nodes
             .iter()
             .filter(|node| matches!(node.kind, Kind::Flow))
             .flat_map(|node| {
-                let flex = layout_node(tree, node.id).display() == DisplayValue::Flex;
+                let gap = (layout_node(tree, node.id).display() == DisplayValue::Flex).then(|| {
+                    match style_of(tree, node.id).gap().height.expand() {
+                        ExpandedLengthPercentage::Length(px) => px.max(0.0),
+                        _ => 0.0,
+                    }
+                });
                 node.children
                     .windows(2)
-                    .map(move |pair| (flex, pair[0], pair[1]))
+                    .map(move |pair| (gap, pair[0], pair[1]))
             })
             .collect()
     }

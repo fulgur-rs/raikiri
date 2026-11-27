@@ -229,3 +229,63 @@ fn absolutely_positioned_children_of_the_columns_leave_them() {
         ],
     );
 }
+
+#[test]
+fn a_box_whose_margin_box_starts_its_column_stays_there() {
+    // The break truncates the gap before b, whose margin box then starts the
+    // column; b avoids breaks inside it but does not fit, and stays.
+    expect(
+        &column_flex(
+            "row-gap:20px",
+            "<div id=a style='height:90px'></div>\
+             <div id=b style='height:95px;margin-top:10px;break-inside:avoid'></div>\
+             <div id=c style='height:10px'></div>",
+        ),
+        &[
+            ("a", &[(0, 0, 100, 90)]),
+            ("b", &[(100, 10, 100, 90), (200, 0, 100, 5)]),
+            ("c", &[(200, 25, 100, 10)]),
+        ],
+    );
+}
+
+#[test]
+fn an_avoided_break_before_the_second_item_moves_the_container() {
+    // The break before c moves to the one before b, the first item, which
+    // is the break before the flex container.
+    expect(
+        &columns(
+            "auto",
+            "<div id=z style='height:30px'></div>\
+             <div id=f style='display:flex;flex-direction:column'><div id=b style='height:70px'></div>\
+             <div id=c style='height:300px;break-before:avoid'></div></div>",
+        ),
+        &[
+            ("z", &[(0, 0, 100, 30)]),
+            ("b", &[(100, 0, 100, 70)]),
+            (
+                "c",
+                &[
+                    (100, 70, 100, 30),
+                    (200, 0, 100, 100),
+                    (300, 0, 100, 100),
+                    (400, 0, 100, 70),
+                ],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_break_keeps_the_free_space_the_container_distributes() {
+    // Only the row gap is truncated: the space that justify-content puts
+    // between the items goes on in the next column.
+    expect(
+        &column_flex(
+            "height:300px;justify-content:space-between;row-gap:10px",
+            "<div id=a style='height:50px'></div><div id=b style='height:50px'></div>\
+             <div id=c style='height:50px'></div><div id=d style='height:50px'></div>",
+        ),
+        &[("a", &[(0, 0, 100, 50)]), ("d", &[(200, 50, 100, 50)])],
+    );
+}

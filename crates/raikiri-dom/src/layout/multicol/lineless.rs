@@ -607,9 +607,6 @@ fn sliceable_flex_container(
     // over the one before it, which a break between them would leave on the
     // wrong side of the break.
     let mut pulled = false;
-    // Whether it holds monolithic boxes or boxes that avoid breaks, which
-    // only some boxes around them can move (see `monolithic::supports`).
-    let mut holds_kept = false;
     while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
         // A monolithic box moves whole to the next column where it does not
@@ -630,14 +627,9 @@ fn sliceable_flex_container(
         }
         if monolithic {
             sized |= has_block_size(&style_of(tree, id));
-            holds_kept = true;
             continue;
         }
         let node = layout_node(tree, id);
-        holds_kept |= id != child
-            && (monolithic::avoids_break(node.break_before)
-                || monolithic::avoids_break(node.break_after)
-                || monolithic::avoids_break_inside(node.break_inside));
         inner_breaks |= id != child
             && (node.break_before == BreakBetween::Column
                 || node.break_after == BreakBetween::Column);
@@ -659,12 +651,9 @@ fn sliceable_flex_container(
         }
         let grid = node.display() == DisplayValue::Grid;
         // A row gap is truncated where a fragmentation break falls in it
-        // (CSS Box Alignment 3, 8.1), which a grid or a multi-line row flex
+        // (CSS Box Alignment 3, 8.1), which a grid or a multi-line flex
         // container sliced whole would not do.
-        let lines = grid
-            || node.display() == DisplayValue::Flex
-                && style.flex_direction_is_row()
-                && style.flex_wraps();
+        let lines = grid || node.display() == DisplayValue::Flex && style.flex_wraps();
         if lines
             && !matches!(style.gap().height.expand(), ExpandedLengthPercentage::Length(px) if px == 0.0)
         {
@@ -730,7 +719,9 @@ fn sliceable_flex_container(
     {
         return None;
     }
-    if holds_kept && !monolithic::supports(tree, child) {
+    // What moves at breaks, and the space that breaks truncate, must be
+    // what the moves model.
+    if !monolithic::supports(tree, child) {
         return None;
     }
     Some(sized)
