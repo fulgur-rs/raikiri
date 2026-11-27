@@ -103,6 +103,20 @@ fn split_rows_go_on_between_the_header_and_footer_copies() {
         extents(&document, "b"),
         [vec![(20.0, 80.0)], vec![(20.0, 80.0)], vec![(20.0, 80.0)]]
     );
+    // Line breaks and empty boxes on the lines do not run under the
+    // copies, so they leave the fragments as they are.
+    assert_eq!(
+        extents(
+            &lay_out(&table(
+                0,
+                true,
+                true,
+                "X<br>X<br>X<br>X<br>X<br>X<br><span></span>X"
+            )),
+            "c"
+        ),
+        split
+    );
     assert_eq!(
         extents(&lay_out(&table(0, true, true, FORCED)), "c"),
         [vec![(40.0, 80.0)], vec![(20.0, 40.0)]]

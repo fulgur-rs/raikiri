@@ -309,8 +309,12 @@ fn fragment_placements(
         let shift = source.painted_shift;
         let painted_y = source.abs_y + shift;
         let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
+            let continues = (
+                painted_y < page_start - 0.001,
+                painted_y + source.height > page_end + 0.001,
+            );
             match flow_page_overlap(painted_y, source.height, page_start, page_end)
-                .and_then(|(y, height)| below_copies(copy_bands, page_start, y, height))
+                .and_then(|(y, height)| below_copies(copy_bands, continues, page_start, y, height))
             {
                 Some((y, height)) => (true, y - shift, height),
                 None => (false, 0.0, 0.0),
@@ -341,14 +345,16 @@ fn fragment_placements(
 }
 
 /// The fragment at `y` with `height` on the page that starts at
-/// `page_start` in the flow, shortened so that it starts below the header
-/// copies of `bands` (see [`HeaderRepeats::copy_bands`]) that cover its top
-/// and ends at the footer copies inside it. `None` when the copies cover all
-/// of it.
+/// `page_start` in the flow, shortened where the box goes on from the page
+/// before or to the page after, as `continues` tells: it then starts below
+/// the header copies of `bands` (see [`HeaderRepeats::copy_bands`]) that
+/// cover its top, or ends at the footer copies inside it. `None` when the
+/// copies cover all of it.
 ///
 /// [`HeaderRepeats::copy_bands`]: crate::layout::table::headers::HeaderRepeats::copy_bands
 fn below_copies(
     bands: &[(f32, f32, bool)],
+    (from_before, to_after): (bool, bool),
     page_start: f32,
     y: f32,
     height: f32,
@@ -357,10 +363,10 @@ fn below_copies(
     let mut bottom = top + height;
     for &(start, end, footer) in bands {
         if footer {
-            if start < bottom && end > top {
+            if to_after && start < bottom && end > top {
                 bottom = bottom.min(start);
             }
-        } else if start <= top + 0.001 && end > top {
+        } else if from_before && start <= top + 0.001 && end > top {
             top = end;
         }
     }

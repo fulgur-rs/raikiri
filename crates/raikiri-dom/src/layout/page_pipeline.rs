@@ -6218,10 +6218,16 @@ fn paginate_flow(
 /// §17.5.3), so its box, background and borders go on over the pages the
 /// row runs over, as Chromium paints them. Returns the tables of those rows,
 /// whose rows and boxes then grow over the cells. Tables with a cell that
-/// spans rows keep their cells as laid out.
+/// spans rows keep their cells as laid out, and so do the anonymous rows
+/// around cells outside rows.
 fn grow_cells_of_grown_rows(document: &mut Document, shifts: &SubtreeShifts) -> BTreeSet<usize> {
+    // A float that moved in a cell grew the boxes around it already: only
+    // the growth past it is left to the cells.
+    let float_growth: HashMap<(usize, usize), f32> = shifts.float_rows.iter().copied().collect();
+    let mut spanning: HashMap<usize, bool> = HashMap::new();
     let mut tables = BTreeSet::new();
-    for &((row, end), growth) in shifts.grown_rows.iter().chain(&shifts.float_rows) {
+    for &((row, end), growth) in &shifts.grown_rows {
+        let growth = growth - float_growth.get(&(row, end)).copied().unwrap_or(0.0);
         let node = &document.nodes[row];
         if growth <= 0.001 || node.display() != DisplayValue::TableRow || end != node.children.len()
         {
@@ -6230,17 +6236,21 @@ fn grow_cells_of_grown_rows(document: &mut Document, shifts: &SubtreeShifts) -> 
         let Some(table) = document.table_of_row(row) else {
             continue;
         };
-        if super::table::row_moves::has_row_spanning_cell(document, table) {
+        if *spanning
+            .entry(table)
+            .or_insert_with(|| super::table::row_moves::has_row_spanning_cell(document, table))
+        {
             continue;
         }
-        let target = node.layout.size.height + shifts.row_growth((row, end));
-        for cell in document.nodes[row].children.clone() {
+        let target = node.layout.size.height + growth;
+        for cell in document.children_through_contents(row) {
             let cell_node = &document.nodes[cell];
-            if cell_node.display() == DisplayValue::TableCell && !cell_node.is_display_none() {
-                if cell_node.layout.size.height < target {
-                    document.nodes[cell].layout.size.height = target;
-                    document.mark_pagination_extent_dirty(cell);
-                }
+            if cell_node.display() == DisplayValue::TableCell
+                && !cell_node.is_display_none()
+                && cell_node.layout.size.height < target
+            {
+                document.nodes[cell].layout.size.height = target;
+                document.mark_pagination_extent_dirty(cell);
             }
         }
         tables.insert(table);
