@@ -16887,7 +16887,22 @@ pub(super) fn cell_flow_inline(
     let cell = document
         .inclusive_ancestors(block)
         .find(|&id| document.nodes[id].display() == DisplayValue::TableCell)?;
-    let (_, _, table) = cell_row_end(document, cell)?;
+    // An anonymous cell wraps content of its table outside any cell.
+    // A row or row group outside a table belongs to an anonymous table,
+    // which is left to `loose_cell_run`.
+    let table = if document.nodes.is_anonymous_cell(cell) {
+        let parent = document.parent_of(cell)?;
+        let table = match document.nodes[parent].display() {
+            DisplayValue::Table | DisplayValue::InlineTable => parent,
+            _ => document.table_of_row(parent)?,
+        };
+        if document.anonymous_table_parts(table).is_some() {
+            return None;
+        }
+        table
+    } else {
+        cell_row_end(document, cell)?.2
+    };
     let in_view = document
         .inclusive_ancestors(block)
         .take_while(|&id| id != cell)
