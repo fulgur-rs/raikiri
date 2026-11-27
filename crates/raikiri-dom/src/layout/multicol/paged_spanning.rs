@@ -83,8 +83,11 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // of a container that is a paragraph of its own are kept for the rules
     // between its columns; the pages cut its columns as they cut those of a
     // container without spanners.
-    if tree.context.pagination_on_transposed_axes || tree.nodes[owner].is_ifc_root() {
+    if tree.context.pagination_on_transposed_axes {
         return Ok(0.0);
+    }
+    if tree.nodes[owner].is_ifc_root() {
+        return paginate_own_lines(tree, edits, owner, owner_y, page_for, work);
     }
     let children = flow_children(tree, owner);
     work.charge(children.len())?;
@@ -563,6 +566,137 @@ pub(in crate::layout) fn paginate_spanning_columns(
         delta = (old_end + delta).max(old.min_height) - old_end.max(old.min_height);
     }
     tree.nodes[owner].multicol_groups = groups;
+    tree.nodes[owner].layout.size.height += delta;
+    edits.grow(owner, delta);
+    Ok(delta)
+}
+
+/// Fill the columns of `owner`, a balanced container that is a paragraph of
+/// its own with no spanner, page by page where its lines run past the end of a
+/// page: each page's columns are as tall as the page leaves, or the content
+/// box of a container of a definite height, and only the last page balances
+/// the lines left (CSS Multi-column 1, 8.1). The lines are placed again by the
+/// column fragments of the paragraph. Returns how much taller the container
+/// grows, as [`paginate_spanning_columns`] does.
+fn paginate_own_lines(
+    tree: &mut LayoutSession<'_>,
+    edits: &mut FragmentEdits,
+    owner: usize,
+    owner_y: f32,
+    page_for: &impl Fn(f32) -> (u32, f32, f32),
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<f32, LayoutError> {
+    let node = &tree.nodes[owner];
+    let layout = node.layout;
+    let width = layout.size.width
+        - layout.border.left
+        - layout.border.right
+        - layout.padding.left
+        - layout.padding.right;
+    let Some((style, context, lines, old)) = node.ifc.as_ref().and_then(|root| {
+        let style = node.multicol.filter(|style| style.horizontal)?;
+        let context = FragmentationContext::resolve(width, None, style)?;
+        Some((
+            style,
+            context,
+            root.lines.as_ref()?,
+            root.multicol_fragments.as_ref()?,
+        ))
+    }) else {
+        return Ok(0.0);
+    };
+    if style.column_fill != ColumnFillValue::Balance
+        || !lines.block_line_starts.is_empty()
+        || old.is_empty()
+        || !node.multicol_groups.is_empty()
+        || cloned_page_insets(tree, owner).is_some()
+        || inside_atomic_inline(tree, owner)
+    {
+        return Ok(0.0);
+    }
+    let extents: Vec<(f32, f32)> = lines
+        .lines
+        .iter()
+        .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
+        .collect();
+    work.charge(extents.len())?;
+    let top_inset = layout.border.top + layout.padding.top;
+    let bottom_inset = layout.border.bottom + layout.padding.bottom;
+    let count = context.column_count;
+    // How far the columns reach below the top of the content box now.
+    let old_end = old
+        .iter()
+        .map(|fragment| {
+            fragment.y + extents[fragment.line_end - 1].1 - extents[fragment.line_start].0
+        })
+        .fold(0.0_f32, f32::max);
+    let start = owner_y + top_inset;
+    let (_, origin, height) = page_for(start);
+    if start + old_end <= origin + height + EPSILON {
+        return Ok(0.0);
+    }
+    // The columns of a container of a definite height end with its content
+    // box; lines past there overflow them, which the pages do not fill again.
+    let definite = style.height_definite;
+    let limit = definite.then(|| owner_y + layout.size.height - bottom_inset);
+    let mut fragments = Vec::new();
+    let mut first = 0usize;
+    let mut top = start;
+    let mut end = 0.0_f32;
+    while first < extents.len() {
+        let (page, origin, height) = page_for(top);
+        top = top.max(origin);
+        let page_end = limit.map_or(origin + height, |limit| (origin + height).min(limit));
+        let capacity = page_end - top;
+        if !work.page_available(page)? || capacity <= EPSILON {
+            return Ok(0.0);
+        }
+        let rest = &extents[first..];
+        // The lines left fit this page's columns: they balance in them.
+        let fits = (0..count)
+            .try_fold(0usize, |at, _| {
+                (at < rest.len()).then(|| column_end(rest, at, capacity))
+            })
+            .is_none_or(|at| at >= rest.len());
+        let column_height = if fits {
+            balanced_column_height(
+                rest,
+                FragmentationContext {
+                    available_height: Some(capacity),
+                    column_index: 0,
+                    ..context
+                },
+            )
+            .map_or(capacity, |balanced| balanced.min(capacity))
+        } else {
+            capacity
+        };
+        let y = top - start;
+        for column in 0..count {
+            if first >= extents.len() {
+                break;
+            }
+            let last = column_end(&extents, first, column_height);
+            work.charge(1)?;
+            fragments.push(MulticolTextFragment {
+                line_start: first,
+                line_end: last,
+                fragmentainer: column,
+                x: context.column_offset_x(column),
+                y,
+            });
+            end = end.max(y + extents[last - 1].1 - extents[first].0);
+            first = last;
+        }
+        top = page_end;
+    }
+    if let Some(root) = tree.nodes[owner].ifc.as_mut() {
+        root.multicol_fragments = Some(fragments);
+    }
+    if definite {
+        return Ok(0.0);
+    }
+    let delta = end - old_end;
     tree.nodes[owner].layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
