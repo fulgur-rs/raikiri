@@ -186,3 +186,21 @@ fn the_border_and_padding_of_the_container_stay_on_its_first_page() {
         ],
     );
 }
+
+#[test]
+fn breaks_in_list_items_count() {
+    assert_columns(
+        "<div class=mc><ul style='margin:0;padding:0;list-style:none'><li><p>A B</p>\
+         <p style=break-before:column>C D</p><p style=break-before:column>E F</p></li></ul></div>",
+        &[(0, 0, 0, "AB"), (0, 100, 0, "CD"), (1, 0, 0, "EF")],
+    );
+}
+
+#[test]
+fn a_container_inside_an_inline_block_stays_on_its_page() {
+    let columns = columns(
+        "<span style='display:inline-block;width:200px'><div class=mc><p>A B</p>\
+         <p style=break-before:column>C D</p><p style=break-before:column>E F</p></div></span>",
+    );
+    assert!(columns.iter().all(|column| column.0 == 0), "{columns:?}");
+}

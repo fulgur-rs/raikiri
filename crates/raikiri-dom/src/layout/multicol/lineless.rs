@@ -819,36 +819,84 @@ fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) ->
 }
 
 /// The number of places in the flow of `owner` where a forced column break
-/// starts a new column: each place between two boxes in flow, in `owner` or
-/// in the blocks inside it, where a break falls after the first or before the
-/// second counts once. Breaks below a box that lays out apart, such as a
-/// nested multicol container, are left out.
+/// starts a new column: each place between two block-level boxes in flow, in
+/// `owner` or in the blocks inside it, where a break falls after the first or
+/// before the second counts once. A break propagates from the first or last
+/// box of a block to the block (CSS Fragmentation 3, 3.1). Breaks on inline
+/// boxes, and those below a box that lays out apart, such as a nested
+/// multicol container, a flex or grid container or a table, are left out.
 pub(super) fn forced_column_starts(tree: &LayoutSession<'_>, owner: usize) -> usize {
     let mut count = 0;
     let mut stack = vec![(owner, 0)];
     while let Some((id, depth)) = stack.pop() {
-        let children = in_flow_elements(tree, id);
+        let children = if id == owner {
+            rendered_elements(tree, id)
+                .filter(|&child| layout_node(tree, child).layout_position() != Position::Absolute)
+                .collect()
+        } else {
+            block_flow_children(tree, id)
+        };
         count += children
             .windows(2)
             .filter(|pair| {
-                forced_column_break(tree, pair[0], false)
-                    || forced_column_break(tree, pair[1], true)
+                starts_column(tree, pair[0], false, depth)
+                    || starts_column(tree, pair[1], true, depth)
             })
             .count();
         if depth + 1 < MAX_WRAPPED_BLOCK_DEPTH {
-            stack.extend(
-                children
-                    .into_iter()
-                    .filter(|&child| {
-                        let node = layout_node(tree, child);
-                        matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
-                            && node.multicol.is_none()
-                    })
-                    .map(|child| (child, depth + 1)),
-            );
+            stack.extend(children.into_iter().map(|child| (child, depth + 1)));
         }
     }
     count
+}
+
+/// The block-level boxes in flow in `id`, when it is a block container whose
+/// breaks are those of the flow it is in; none otherwise.
+fn block_flow_children(tree: &LayoutSession<'_>, id: usize) -> Vec<usize> {
+    let node = layout_node(tree, id);
+    let passes_breaks = matches!(
+        node.display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) && node.multicol.is_none()
+        && !node.is_ifc_root();
+    if !passes_breaks {
+        return Vec::new();
+    }
+    rendered_elements(tree, id)
+        .filter(|&child| layout_node(tree, child).layout_position() != Position::Absolute)
+        .collect()
+}
+
+/// Whether a forced column break falls before the block-level box `id`
+/// (after it, unless `before`), set on it or on the first (last) box in flow
+/// of the blocks it starts (ends) with, down to `MAX_WRAPPED_BLOCK_DEPTH`
+/// below the container.
+fn starts_column(tree: &LayoutSession<'_>, mut id: usize, before: bool, mut depth: usize) -> bool {
+    loop {
+        let node = layout_node(tree, id);
+        let value = if before {
+            node.break_before
+        } else {
+            node.break_after
+        };
+        if value == BreakBetween::Column {
+            return true;
+        }
+        depth += 1;
+        if depth >= MAX_WRAPPED_BLOCK_DEPTH {
+            return false;
+        }
+        let children = block_flow_children(tree, id);
+        let next = if before {
+            children.first()
+        } else {
+            children.last()
+        };
+        match next {
+            Some(&child) => id = child,
+            None => return false,
+        }
+    }
 }
 
 /// The forced column breaks of a flex container that the stream slices

@@ -109,18 +109,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
     // the columns of the next page, as Chromium prints them, even when the
     // content would fit this one.
     let whole = spanner_free
-        && {
-            let old = &old_groups[0];
-            lineless::forced_column_starts(tree, owner) < old.context.column_count
-        }
-        && {
+        && (inside_atomic_inline(tree, owner) || {
             let old = &old_groups[0];
             let top = owner_y + old.context.origin_y;
             let (_, origin, height) = page_for(top);
             let bottom = cloned.map_or(0.0, |(_, bottom)| bottom);
             top + old.height <= origin + height - bottom + EPSILON
-                || inside_atomic_inline(tree, owner)
-        };
+                && lineless::forced_column_starts(tree, owner) < old.context.column_count
+        });
     if whole || !style_of(tree, owner).size().height.is_auto() {
         if spanner_free {
             tree.nodes[owner].multicol_groups.clear();
