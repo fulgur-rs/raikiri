@@ -538,8 +538,9 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// it and the boxes inside it hold no lines, so there is nowhere to break
 /// between lines, and nothing that breaks on its own terms. The container is
 /// laid out whole, and each column shows the part of it that falls in the
-/// column (CSS Flexbox 1, 12). A grid container whose items hold no lines
-/// is sliced the same way, as Chromium does when it breaks its rows at a
+/// column (CSS Flexbox 1, 12). A grid container whose items hold no lines,
+/// and a table whose cells hold none (see [`is_sliceable_table_part`]), are
+/// sliced the same way, as Chromium does when it breaks their rows at a
 /// column end. `Some(sized)` says whether any of them has a block size of
 /// its own to slice.
 ///
@@ -558,9 +559,9 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, boxes that paint past their own box (a
 /// transform, shadow, outline or filter) or as a whole group, boxes whose
-/// block edges repeat at each break, containers that are not block, flex or
-/// grid, forced breaks inside a grid container, and containers whose content
-/// overflows their block start or end.
+/// block edges repeat at each break, containers that are not block, flex,
+/// grid or table boxes, forced breaks inside a grid container or a table,
+/// and containers whose content overflows their block start or end.
 fn sliceable_flex_container(
     tree: &LayoutSession<'_>,
     child: usize,
@@ -702,9 +703,10 @@ fn sliceable_flex_container(
 /// after the last, is one before or after `id`: `id` lays them out in a
 /// block flow, or is a single-line flex container that lays them out in
 /// the order of the tree. `id` is a box that the stream can slice (see
-/// [`is_sliceable_flex_box`]): a block, flex or grid container. A grid
-/// container places its items apart from the order of the tree, so a break
-/// inside it stays there.
+/// [`is_sliceable_flex_box`]): a block, flex or grid container, or a table
+/// or a box inside one. A grid container places its items apart from the
+/// order of the tree, and a table its header and footer groups, so a break
+/// inside either stays there.
 fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
     let display = layout_node(tree, id).display();
     debug_assert!(
@@ -739,7 +741,7 @@ fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
         && (height.is_auto() || style_dimension_length(height).is_some())
 }
 
-/// Whether `id`, a flex or grid container or a box inside one, can be sliced with
+/// Whether `id`, a flex, grid or table container or a box inside one, can be sliced with
 /// the rest of the container (see [`sliceable_flex_container`]).
 ///
 /// `breaks` says whether a forced column break before and after `id` is one
@@ -833,30 +835,35 @@ fn is_table_part(display: DisplayValue) -> bool {
 }
 
 /// Whether a table, or a box inside one, can be cut wherever a column ends
-/// as the rest of the container is, as Chromium cuts the rows and cells of a
-/// table whose cells hold no lines. A break between two rows drops the
-/// vertical border spacing there (CSS Tables 3, 3.8), and a cell whose border
-/// edges or aligned content (CSS Tables 3, 6.3) the break moves would not
-/// match the pieces of a box laid out whole, so those keep the other
-/// strategies.
+/// as the rest of the container is, as Chromium cuts the rows, cells and
+/// captions of a table whose cells hold no lines, with no header or footer
+/// repeated. A break between two rows drops the vertical border spacing
+/// there (CSS Tables 3, 3.8). Block borders inside the table, which collapse
+/// with those of the table when its borders collapse, and boxes that the
+/// alignment of a cell moves (CSS Tables 3, 6.3) would not match the pieces
+/// of a table laid out whole either, so those keep the other strategies.
 fn is_sliceable_table_part(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = &tree.nodes[id];
+    let collapse =
+        |table: usize| tree.nodes[table].border_collapse == BorderCollapseValue::Collapse;
     match node.display() {
-        DisplayValue::Table => {
-            node.border_collapse == BorderCollapseValue::Collapse
-                || node.border_spacing.vertical.0 <= 0.0
-        }
+        DisplayValue::Table if collapse(id) => !has_block_borders(tree, id),
+        DisplayValue::Table => node.border_spacing.vertical.0 <= 0.0,
+        DisplayValue::TableCaption => true,
         DisplayValue::TableCell => {
-            let style = style_of(tree, id);
-            let zero = LengthPercentage::length(0.0);
-            let border = style.border();
-            border.top == zero
-                && border.bottom == zero
-                && (in_flow_elements(tree, id).is_empty()
+            !has_block_borders(tree, id)
+                && (rendered_elements(tree, id).next().is_none()
                     || layout_node(tree, id).table_vertical_align == VerticalAlign::Top)
         }
-        _ => true,
+        _ => !has_block_borders(tree, id),
     }
+}
+
+/// Whether `id` has a border at its block start or end.
+fn has_block_borders(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let zero = LengthPercentage::length(0.0);
+    let border = style_of(tree, id).border();
+    border.top != zero || border.bottom != zero
 }
 
 /// The rendered element children of `id` in flow.

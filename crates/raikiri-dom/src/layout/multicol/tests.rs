@@ -2364,7 +2364,7 @@ fn a_no_break_space_gives_a_flex_item_a_line() {
 #[test]
 fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
     // A table of one row of 150px whose cell holds `content`.
-    let supported = |table: &str, cell: &str, content: Option<&str>| {
+    let supported_in_row = |table: &str, row: &str, cell: &str, content: Option<&str>| {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some("margin:0"));
@@ -2374,7 +2374,7 @@ fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
             Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
         );
         let table = doc.append_element(Some(parent), "div", Some(table));
-        let row = doc.append_element(Some(table), "div", Some("display:table-row;height:150px"));
+        let row = doc.append_element(Some(table), "div", Some(row));
         let cell = doc.append_element(Some(row), "div", Some(cell));
         if let Some(css) = content {
             doc.append_element(Some(cell), "div", Some(css));
@@ -2384,6 +2384,10 @@ fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
             lineless::supported_with_wrappers(session, parent)
         })
         .is_some()
+    };
+    let row = "display:table-row;height:150px";
+    let supported = |table: &str, cell: &str, content: Option<&str>| {
+        supported_in_row(table, row, cell, content)
     };
     let table = "display:table;width:100%;border-spacing:0";
     let cell = "display:table-cell";
@@ -2438,6 +2442,33 @@ fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
         table,
         "display:table-cell;vertical-align:top",
         held
+    ));
+    // The block borders of a table that collapses its borders, and those of
+    // its rows, collapse with those of the cells. A table that keeps its
+    // borders apart is cut with its own.
+    assert!(!supported(
+        "display:table;width:100%;border-collapse:collapse;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-spacing:0;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(!supported_in_row(
+        table,
+        "display:table-row;height:150px;border-bottom:2px solid",
+        cell,
+        None
+    ));
+    // The static position of an absolutely positioned box in a cell follows
+    // its alignment too.
+    let absolute = Some("position:absolute;width:10px;height:10px");
+    assert!(!supported(
+        table,
+        "display:table-cell;position:relative",
+        absolute
     ));
     // Lines in a cell keep the table with the other strategies.
     assert!(!supported(
