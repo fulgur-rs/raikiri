@@ -274,4 +274,20 @@ fn a_forced_column_break_ends_a_column_and_the_last_page_balances() {
             (1, 100, 0, "KLMNOP"),
         ],
     );
+    // A break on the last page leaves its columns as tall as what they
+    // hold, and the content after the container right below them.
+    assert_columns(
+        &format!(
+            "<div class=mc><p>{}</p><p style=break-before:column>{}</p></div><p>{}</p>",
+            w(1, 23),
+            w(24, 25),
+            w(26, 26)
+        ),
+        &[
+            (0, 0, 0, "ABCDEFGHIJ"),
+            (0, 100, 0, "KLMNOPQRST"),
+            (1, 0, 0, "UVWZ"),
+            (1, 100, 0, "XY"),
+        ],
+    );
 }

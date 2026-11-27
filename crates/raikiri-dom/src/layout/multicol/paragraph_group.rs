@@ -779,10 +779,13 @@ fn divided_height(
         column_count: 1,
         ..context
     };
-    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?
-        .group
-        .height;
-    Some(stacked / context.column_count as f32)
+    // A forced break between what remains ends the one column, so there is
+    // no such height: the least height that holds what remains stands.
+    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?;
+    stacked
+        .next
+        .is_none()
+        .then(|| stacked.group.height / context.column_count as f32)
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
