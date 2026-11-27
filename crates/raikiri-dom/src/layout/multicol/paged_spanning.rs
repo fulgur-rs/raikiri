@@ -652,6 +652,7 @@ fn paginate_own_lines(
     let definite = style.height_definite;
     let limit = definite.then_some(owner_y + layout.size.height - bottom_inset);
     let mut fragments = Vec::new();
+    let mut groups = Vec::new();
     let mut first = 0usize;
     let mut top = start;
     let mut end = 0.0_f32;
@@ -731,8 +732,23 @@ fn paginate_own_lines(
             }
         }
         let y = top - start;
-        // Each page repeats the columns of the container: its rules stand
-        // between the same columns, cut by the pages.
+        // Each page's columns are a row of their own: the rules stand between
+        // the columns that row fills, as tall as its columns, or as what is
+        // left of a definite height.
+        let row_height = if definite { capacity } else { column_height };
+        groups.push(MulticolGroup {
+            context: FragmentationContext {
+                origin_x: layout.border.left + layout.padding.left,
+                origin_y: top - owner_y,
+                available_height: Some(row_height),
+                ..context
+            },
+            height: row_height,
+            occupied: (0..ranges.len()).collect(),
+            slice: None,
+            run_start: None,
+            min_height: 0.0,
+        });
         for (column, (line_start, line_end)) in ranges.into_iter().enumerate() {
             fragments.push(MulticolTextFragment {
                 line_start,
@@ -749,6 +765,7 @@ fn paginate_own_lines(
     if let Some(root) = tree.nodes[owner].ifc.as_mut() {
         root.multicol_fragments = Some(fragments);
     }
+    tree.nodes[owner].multicol_groups = groups;
     tree.context.page_filled_columns.push(owner);
     if definite {
         return Ok(0.0);
