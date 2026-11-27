@@ -635,3 +635,56 @@ fn options_page_limit_ignores_overflow_a_collapsed_row_span_clips() {
         assert_eq!(result.is_ok(), fits, "{middle_row}");
     }
 }
+
+#[test]
+fn options_page_limit_keeps_an_unreached_footer_below_its_table() {
+    // The page limit stops pagination before the rows reach the repeated
+    // footer, so the footer source keeps its offset below the table's top.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = document.append_element(
+        Some(body),
+        "table",
+        Some("display:table;border-spacing:0;border-collapse:collapse"),
+    );
+    let group = document.append_element(Some(table), "tbody", Some("display:table-row-group"));
+    for _ in 0..80 {
+        let row = document.append_element(Some(group), "tr", Some("display:table-row"));
+        document.append_element(
+            Some(row),
+            "td",
+            Some("display:table-cell;padding:0;height:20px;width:10px"),
+        );
+    }
+    let footer = document.append_element(
+        Some(table),
+        "tfoot",
+        Some("display:table-footer-group;break-inside:avoid"),
+    );
+    let row = document.append_element(Some(footer), "tr", Some("display:table-row"));
+    document.append_element(
+        Some(row),
+        "td",
+        Some("display:table-cell;padding:0;height:20px;width:10px"),
+    );
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    let control = PageLayoutControl::for_geometry_discovery(Some(1));
+    let pages = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page_box_800x600(),
+        PageLayoutOptions {
+            control: Some(&control),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(pages.len(), 1);
+    assert!(control.page_limit_reached());
+    assert_eq!(
+        current_abs_y(&document, footer) - current_abs_y(&document, table),
+        1600.0
+    );
+}
