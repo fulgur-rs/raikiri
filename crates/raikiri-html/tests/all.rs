@@ -186,6 +186,7 @@ mod sized_block_lone_box_surface;
 mod spanner_forced_break_surface;
 mod spanner_formatting_context_surface;
 mod spanner_page_end_surface;
+mod split_table_row_boxes_surface;
 mod split_table_row_cell_alignment_surface;
 mod sticky_position_surface;
 mod svg_data_budget_tests;

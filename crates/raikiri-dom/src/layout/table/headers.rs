@@ -87,6 +87,9 @@ pub(crate) struct HeaderRepeats {
     /// the caption alone to the next page with the edges that close the
     /// table's parent, the page opens with a copy of the header above it.
     pub(crate) tail_captions: HashMap<usize, (usize, f32)>,
+    /// The body parts around the boxes of `monolithic`, whose content runs
+    /// on under the copies (see [`Self::copy_bands`]).
+    unclipped: std::collections::HashSet<usize>,
     owners: Vec<Option<usize>>,
 }
 
@@ -378,6 +381,14 @@ impl HeaderRepeats {
             {
                 result.anonymous_body_tables.insert(table, header);
             }
+            for &id in &unbroken {
+                result.unclipped.extend(
+                    document
+                        .inclusive_ancestors(id)
+                        .skip(1)
+                        .take_while(|&part| part != table),
+                );
+            }
             result
                 .monolithic
                 .extend(unbroken.into_iter().map(|id| (id, groups)));
@@ -445,7 +456,7 @@ impl HeaderRepeats {
     /// Places copies of the repeated header and footer groups of the table
     /// of body row `row` around a break inside the row: the footer's at the
     /// end of the page `left`, which starts at `left_origin` and ends at
-    /// `left_end`, and the header's at the top of the page `next`, which
+    /// `left_end`, above the table's spacing there, and the header's at the top of the page `next`, which
     /// starts at `next_origin`. The source of the footer follows only the
     /// last fragment of the table's last body row.
     pub(crate) fn place_copies_around_row_break(
@@ -468,7 +479,7 @@ impl HeaderRepeats {
             footer
                 .placements
                 .entry(left)
-                .or_insert((left_origin, left_end - footer.height));
+                .or_insert((left_origin, left_end - footer.gap - footer.height));
         }
     }
 
@@ -554,6 +565,45 @@ impl HeaderRepeats {
                 .filter(|&&(origin, _)| (origin - page_origin).abs() <= 0.001)
                 .map(|&(_, y)| y - header.source_y),
         )
+    }
+
+    /// The block ranges in the flow that the copies of the repeated header
+    /// and footer groups of the table around `part`, a body row group, row
+    /// or cell of it, take on the pages the table crosses, sorted, a header
+    /// copy with the spacing below it, and whether each is a footer's.
+    /// Chromium starts the fragments of the body parts that a page break
+    /// splits below the header copies and ends them at the footer copies.
+    /// Empty for any other box, and for the parts around a box that does not
+    /// break, which Chromium draws on under the copies.
+    pub(crate) fn copy_bands(&self, document: &Document, part: usize) -> Vec<(f32, f32, bool)> {
+        if self.headers.is_empty()
+            || self.owner(part).is_some()
+            || self.unclipped.contains(&part)
+            || !matches!(
+                document.nodes[part].display(),
+                DisplayValue::TableRowGroup | DisplayValue::TableRow | DisplayValue::TableCell
+            )
+        {
+            return Vec::new();
+        }
+        let Some(table) = document.table_of_row(part) else {
+            return Vec::new();
+        };
+        let mut bands: Vec<(f32, f32, bool)> = self
+            .headers
+            .values()
+            .filter(|group| group.table == table)
+            .flat_map(|group| {
+                // A header copy keeps the spacing below it.
+                let gap = if group.footer { 0.0 } else { group.gap };
+                group
+                    .placements
+                    .values()
+                    .map(move |&(_, y)| (y, y + group.height + gap, group.footer))
+            })
+            .collect();
+        bands.sort_by(|left, right| left.0.total_cmp(&right.0));
+        bands
     }
 
     /// The pages of `source` as a repeated header box: page index, page

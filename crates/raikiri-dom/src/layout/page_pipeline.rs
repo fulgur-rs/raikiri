@@ -50,7 +50,7 @@ use crate::page_projection::records::OverflowClipSource;
 use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Position, ResolveOrZero};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type ProjectedSlices = (
     Vec<PageFragment>,
@@ -6177,8 +6177,12 @@ fn paginate_flow(
         return Ok(Vec::new());
     }
     place_repeated_table_footers(document, cascade, &mut state.table_headers, &page_origins);
+    let grown_tables = grow_cells_of_grown_rows(document, &state.subtree_shifts);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
+    for table in grown_tables {
+        super::table::row_moves::finish_grown_table(document, table);
+    }
     update_paginated_block_heights(
         document,
         cascade,
@@ -6207,6 +6211,41 @@ fn paginate_flow(
         &page_origins,
         &state.page_names,
     ))
+}
+
+/// Grows the cells of each table row that content moved down inside its
+/// cells to the row's new end: a cell stretches over its row (CSS 2.1
+/// §17.5.3), so its box, background and borders go on over the pages the
+/// row runs over, as Chromium paints them. Returns the tables of those rows,
+/// whose rows and boxes then grow over the cells. Tables with a cell that
+/// spans rows keep their cells as laid out.
+fn grow_cells_of_grown_rows(document: &mut Document, shifts: &SubtreeShifts) -> BTreeSet<usize> {
+    let mut tables = BTreeSet::new();
+    for &((row, end), growth) in shifts.grown_rows.iter().chain(&shifts.float_rows) {
+        let node = &document.nodes[row];
+        if growth <= 0.001 || node.display() != DisplayValue::TableRow || end != node.children.len()
+        {
+            continue;
+        }
+        let Some(table) = document.table_of_row(row) else {
+            continue;
+        };
+        if super::table::row_moves::has_row_spanning_cell(document, table) {
+            continue;
+        }
+        let target = node.layout.size.height + shifts.row_growth((row, end));
+        for cell in document.nodes[row].children.clone() {
+            let cell_node = &document.nodes[cell];
+            if cell_node.display() == DisplayValue::TableCell && !cell_node.is_display_none() {
+                if cell_node.layout.size.height < target {
+                    document.nodes[cell].layout.size.height = target;
+                    document.mark_pagination_extent_dirty(cell);
+                }
+            }
+        }
+        tables.insert(table);
+    }
+    tables
 }
 
 /// Notes where the page begins that holds the static position of each fixed
@@ -20501,8 +20540,9 @@ fn place_repeated_table_footers(
             };
             for page in pages {
                 let origin = page_origins.origin(page);
+                // A footer copy keeps the table's spacing below it.
                 let y = if group.footer {
-                    origin + page_origins.step_at(page) - group.height
+                    origin + page_origins.step_at(page) - group.gap - group.height
                 } else {
                     origin
                 };
