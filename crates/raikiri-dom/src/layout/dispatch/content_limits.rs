@@ -467,8 +467,8 @@ fn vertical_block_bounds(
     // a grid with `width:300px;max-width:min-content` stays 300px wide. Those
     // keywords are left unresolved here, so the box keeps its stated size.
     let fills_stated_block_size = is_flex_grid_container(tree, idx)
-        && !(tree.nodes[idx].layout_display() == Display::Flex
-            && !tree.physical_style(idx).flex_direction_is_row());
+        && (tree.nodes[idx].layout_display() != Display::Flex
+            || tree.physical_style(idx).flex_direction_is_row());
     let is_measured =
         |size: Dimension| !size.is_auto() && !is_stretch(size) && !fills_stated_block_size;
     let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
