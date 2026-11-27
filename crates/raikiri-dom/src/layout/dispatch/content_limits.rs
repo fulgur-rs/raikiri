@@ -3669,6 +3669,26 @@ fn automatic_height(
         &[Height, MinHeight, MaxHeight]
     };
     let mut entries = neutral_size_overrides(properties);
+    // The intrinsic heights an authored `min-height` or `max-height` keyword
+    // of a box with a ratio stands for are the height the ratio gives its
+    // width (CSS Sizing 4 §5.1), whatever its content holds, so the
+    // content-based minimum of an `auto` minimum height leaves them alone. A
+    // ratio that a stated height leaves nothing to do still gives them once
+    // that height is set aside. The automatic minimum of a flex item, measured
+    // here too, keeps the height of its content. Replaced content resolves
+    // its keywords with its natural ratio apart from this.
+    let own = tree.nodes[idx].content_limits;
+    let authored = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    let style = tree.physical_style(idx);
+    if (authored(own.min.height) || authored(own.max.height))
+        && !is_replaced_content(tree, idx)
+        && let Some(ratio) = style.stated_aspect_ratio()
+    {
+        if style.block_aspect_ratio().is_none() {
+            entries.push(OwnedPropertyOverride::aspect_ratio(Some(ratio)));
+        }
+        entries.push(zero_length(MinHeight));
+    }
     if flex_grid_container {
         entries.extend(width.overrides(true, width_adjustment));
     }
