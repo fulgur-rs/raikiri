@@ -555,6 +555,9 @@ fn a_forced_break_inside_a_block_beside_the_rows_ends_what_a_held_group_holds() 
     for content in [
         r#"<div><div style="height:1px"></div><div style="break-before:page;height:5px"></div></div>"#,
         r#"<div><div style="height:1px;break-after:page"></div><div style="height:5px"></div></div>"#,
+        // At the edges of the block.
+        r#"<div><div style="break-before:page;height:5px"></div></div>"#,
+        r#"<div><div style="height:1px"></div><div style="height:1px;break-after:page"></div></div><div style="height:5px"></div>"#,
     ] {
         let table = format!(
             r#"<div style="display:table"><div style="display:table-row-group;break-inside:avoid">A{}{content}</div>{}</div>"#,
