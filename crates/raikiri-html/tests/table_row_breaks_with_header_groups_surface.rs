@@ -354,3 +354,119 @@ fn a_large_header_on_a_row_running_over_many_pages_stays_within_the_fragment_lim
     ));
     assert!(pages.len() > 10, "{}", pages.len());
 }
+
+/// A table whose body is the text after its groups, in an anonymous row and
+/// cell.
+fn anonymous_table(groups: &str, body: &str) -> String {
+    format!("<div style='display:table;width:100%;line-height:20px'>{groups}{body}</div>")
+}
+
+const ANONYMOUS_HEADER: &str = "<div style='display:table-header-group;break-inside:avoid'>H</div>";
+const ANONYMOUS_FOOTER: &str = "<div style='display:table-footer-group;break-inside:avoid'>F</div>";
+
+#[test]
+fn lines_of_an_anonymous_cell_go_between_the_copies() {
+    expect(
+        &anonymous_table(
+            &format!("{ANONYMOUS_HEADER}{ANONYMOUS_FOOTER}"),
+            "A<br>B<br>C<br>D<br>E<br>G<br>I<br>J<br>K",
+        ),
+        &[
+            "100: A@0,15 B@0,35 C@0,55 F@0,75 H@0,-5",
+            "100: D@0,15 E@0,35 F@0,75 G@0,55 H@0,-5",
+            "100: F@0,75 H@0,-5 I@0,15 J@0,35 K@0,55",
+        ],
+    );
+    expect(
+        &anonymous_table(ANONYMOUS_FOOTER, "A<br>B<br>C<br>D<br>E<br>G<br>I"),
+        &[
+            "100: A@0,-5 B@0,15 C@0,35 D@0,55 F@0,75",
+            "100: E@0,-5 F@0,55 G@0,15 I@0,35",
+        ],
+    );
+}
+
+#[test]
+fn text_after_a_box_in_an_anonymous_cell_leaves_room_for_the_footer_copy() {
+    // The box that does not break ends 5px above the footer's copy on the
+    // third page: the text after it goes on to the fourth, above the footer.
+    expect(
+        &anonymous_table(
+            ANONYMOUS_FOOTER,
+            "<div style='contain:size;height:275px'></div>P",
+        ),
+        &[
+            "100: F@0,75",
+            "100: F@0,75",
+            "100: F@0,75",
+            "100: F@0,15 P@0,-5",
+        ],
+    );
+    expect(
+        &anonymous_table(
+            ANONYMOUS_FOOTER,
+            "<div style='height:50px'></div><div style='height:30px'>Q</div>P",
+        ),
+        &["100: F@0,75 Q@0,45", "100: F@0,15 P@0,-5"],
+    );
+    expect(
+        &anonymous_table(ANONYMOUS_FOOTER, "<div style='height:65px'></div>P<br>Q"),
+        &["100: F@0,75", "100: F@0,35 P@0,-5 Q@0,15"],
+    );
+}
+
+#[test]
+fn lines_after_a_block_in_a_cell_leave_room_for_the_footer_copy() {
+    expect(
+        "<table style='width:100%;line-height:20px;border-spacing:0'>\
+         <tfoot><tr><td style='padding:0'>F</td></tr></tfoot><tr><td style='padding:0'>\
+         <div style='height:65px'></div>P<br>Q</td></tr></table>",
+        &["100: F@0,75", "100: F@0,35 P@0,-5 Q@0,15"],
+    );
+}
+
+#[test]
+fn lines_of_an_anonymous_cell_break_at_the_page_end() {
+    expect(
+        &anonymous_table("", "<div style='height:285px'></div>P"),
+        &["100: ", "100: ", "100: ", "100: P@0,-5"],
+    );
+    expect(
+        &anonymous_table("", "<div style='height:85px'></div>P<br>Q"),
+        &["100: ", "100: P@0,-5 Q@0,15"],
+    );
+}
+
+#[test]
+fn text_of_an_explicit_row_goes_below_the_header_copy() {
+    expect(
+        "<div style='display:table;width:20px;line-height:20px'>\
+         <div style='display:table-header-group;break-inside:avoid'>H</div>\
+         <div style='display:table-row'>A<br>B<br>C<br>D<br>E<br>G</div></div>",
+        &[
+            "100: A@0,15 B@0,35 C@0,55 D@0,75 H@0,-5",
+            "100: E@0,15 G@0,35 H@0,-5",
+        ],
+    );
+}
+
+#[test]
+fn rows_after_the_lines_of_an_anonymous_cell_follow_them() {
+    let row = |glyph: char| {
+        format!(
+            "<div style='display:table-row'><div style='display:table-cell'>{glyph}</div></div>"
+        )
+    };
+    expect(
+        &format!(
+            "<div style='display:table;width:20px;line-height:20px'>{ANONYMOUS_FOOTER}{}\
+             A<br>B<br>C<br>D<br>E<br>G{}</div>",
+            row('R'),
+            row('S')
+        ),
+        &[
+            "100: A@0,15 B@0,35 C@0,55 F@0,75 R@0,-5",
+            "100: D@0,-5 E@0,15 F@0,75 G@0,35 S@0,55",
+        ],
+    );
+}

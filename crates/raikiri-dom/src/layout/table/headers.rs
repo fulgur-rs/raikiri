@@ -213,7 +213,26 @@ impl HeaderRepeats {
                     }
                 }
             }
-            if body_rows.is_empty() {
+            // The anonymous cells around the table's content outside any cell
+            // stand for their anonymous rows, whose lines are placed as those
+            // of a cell.
+            let mut anonymous_cells: Vec<usize> = Vec::new();
+            let mut seen_cells = std::collections::HashSet::new();
+            // Those of explicit rows too.
+            let row_parts = body_rows
+                .iter()
+                .copied()
+                .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow);
+            for part in parts.iter().copied().chain(row_parts) {
+                for &child in &document.nodes[part].children {
+                    if let Some(cell) = document.anonymous_cell_of(child)
+                        && seen_cells.insert(cell)
+                    {
+                        anonymous_cells.push(cell);
+                    }
+                }
+            }
+            if body_rows.is_empty() && anonymous_cells.is_empty() {
                 continue;
             }
             // Spanning-row breaks need their own table fragmentation pass.
@@ -317,18 +336,34 @@ impl HeaderRepeats {
                     node.border_spacing.vertical.0.max(0.0)
                 };
             // The last body row is followed by the footer itself, which moves
-            // on its own when it does not fit after the row.
+            // on its own when it does not fit after the row. A box in an
+            // anonymous cell stands for the anonymous row around the cell, and
+            // an anonymous cell in an explicit row belongs to that row.
+            let row_of = |id: usize| {
+                if document.nodes.is_anonymous_cell(id) {
+                    document
+                        .parent_of(id)
+                        .filter(|&parent| {
+                            document.nodes[parent].display() == DisplayValue::TableRow
+                        })
+                        .unwrap_or(id)
+                } else {
+                    document.anonymous_cell_of(id).unwrap_or(id)
+                }
+            };
             let last_row = body_rows
                 .iter()
+                .chain(&anonymous_cells)
                 .copied()
-                .max_by(|&a, &b| absolute_y(a).total_cmp(&absolute_y(b)));
-            for &row in &body_rows {
+                .max_by(|&a, &b| absolute_y(a).total_cmp(&absolute_y(b)))
+                .map(row_of);
+            for &row in body_rows.iter().chain(&anonymous_cells) {
                 if let Some(header) = header {
                     result.rows.insert(row, header);
                 }
                 if let Some(footer) = footer {
                     result.footer_rows.insert(row, footer);
-                    if Some(row) == last_row {
+                    if Some(row_of(row)) == last_row {
                         result.last_rows.insert(row);
                     }
                 }
@@ -449,6 +484,25 @@ impl HeaderRepeats {
             && let Some((_, bottom)) = footer.last_row
         {
             let bottom = bottom + growth;
+            footer.last_row = Some((page_of(bottom - 0.001), bottom));
+        }
+    }
+
+    /// Moves the end of the body rows placed so far down to `bottom`, where
+    /// body row `row` now ends, when that is lower. `page_of` gives the page
+    /// of a position.
+    pub(crate) fn extend_last_row(
+        &mut self,
+        row: usize,
+        bottom: f32,
+        page_of: impl Fn(f32) -> u32,
+    ) {
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
+            && footer.last_row.is_none_or(|(_, end)| end < bottom)
+        {
             footer.last_row = Some((page_of(bottom - 0.001), bottom));
         }
     }
