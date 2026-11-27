@@ -1337,9 +1337,10 @@ fn collect(
                     _ => break,
                 }
             }
-            if let Some(paragraph) = &mut paragraphs[start] {
-                paragraph.break_before |= after || node.break_before == BreakBetween::Column;
-            }
+            let forced_before = after || node.break_before == BreakBetween::Column;
+            paragraphs[start]
+                .iter_mut()
+                .for_each(|paragraph| paragraph.break_before |= forced_before);
             after = role == Role::Box && node.break_after == BreakBetween::Column;
         }
     }
