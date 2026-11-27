@@ -819,16 +819,14 @@ fn avoided_height(
 /// break and its `widows` after it, with the padding and border that sit
 /// with them in their columns. The last page's balanced columns are at least
 /// that tall, as Chromium balances them; the widows give way to the orphans
-/// when the lines left cannot hold both.
+/// when the lines left cannot hold both. The page stream takes no sized
+/// boxes, so every paragraph here breaks between its own lines.
 fn break_height(paragraphs: &[Option<Paragraph>], resume: FlowCursor) -> f32 {
     let mut tallest = 0.0f32;
     for (index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
         let Some(paragraph) = paragraph else {
             continue;
         };
-        if !paragraph.held_extents.is_empty() {
-            continue;
-        }
         let start = if index == resume.paragraph {
             resume.line
         } else {
