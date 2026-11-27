@@ -14,6 +14,7 @@ use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
+use raikiri_layout_style::values::ExpandedLengthPercentage;
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
@@ -180,6 +181,30 @@ fn has_block_size(style: &LayoutStyleView<'_>) -> bool {
     style_dimension_length(style.size().height).is_some()
         || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
         || style.aspect_ratio().is_some()
+}
+
+/// Whether a row of the grid laid out with `style` is at least a positive
+/// length tall whatever its items hold: an explicit row, or with `items` an
+/// implicit one, whose minimum track size is such a length. Percentages are
+/// left out, as the grid's own block size is what they would resolve
+/// against.
+fn rows_have_a_length(style: &LayoutStyleView<'_>, items: bool) -> bool {
+    use taffy::{GenericRepetition as _, GridContainerStyle as _};
+    let style = raikiri_layout_style::TaffyStyle::new(*style);
+    let length = |track: taffy::TrackSizingFunction| {
+        track
+            .min
+            .definite_value(None, |_, _| 0.0)
+            .is_some_and(|px| px > 0.0)
+    };
+    style.grid_template_rows().is_some_and(|mut components| {
+        components.any(|component| match component {
+            taffy::GenericGridTemplateComponent::Single(track) => length(track),
+            taffy::GenericGridTemplateComponent::Repeat(repetition) => {
+                repetition.tracks().any(length)
+            }
+        })
+    }) || items && style.grid_auto_rows().any(length)
 }
 
 /// The rendered element children of `parent`, with those of a `display:
@@ -544,13 +569,17 @@ fn sliceable_flex_container(
         holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
+        let grid = node.display() == DisplayValue::Grid;
+        // A row gap is truncated where a fragmentation break falls in it
+        // (CSS Box Alignment 3, 8.1), which a grid sliced whole would not do.
+        if grid
+            && !matches!(style.gap().height.expand(), ExpandedLengthPercentage::Length(px) if px == 0.0)
+        {
+            return None;
+        }
         // Rows of a length give a grid container a block size of its own.
         sized |= has_block_size(&style)
-            || node.display() == DisplayValue::Grid
-                && crate::layout::taffy_adapter::rows_have_a_length(
-                    &style,
-                    !in_flow_elements(tree, id).is_empty(),
-                );
+            || grid && rows_have_a_length(&style, !in_flow_elements(tree, id).is_empty());
         // A break before the first box in flow inside a block, or after the
         // last, is a break before or after the block itself (CSS
         // Fragmentation 3, 3.1), and one before or after a flex item falls

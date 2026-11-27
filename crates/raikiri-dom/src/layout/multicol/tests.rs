@@ -2502,6 +2502,19 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     }
     // Implicit rows of a length size nothing without items to place in them.
     assert!(!supported("display:grid;grid-auto-rows:30px", &[], true));
+    // Row gaps are truncated at a break, which slicing would not do, and a
+    // zero row gap or a column gap alone leaves nothing to truncate.
+    for (gap, sliced) in [
+        ("row-gap:20px", false),
+        ("row-gap:10%", false),
+        ("row-gap:0", true),
+        ("column-gap:20px", true),
+    ] {
+        let grid = format!("display:grid;height:150px;{gap}");
+        assert_eq!(supported(&grid, &[item], true), sliced, "{gap}");
+        let nested = format!("display:grid;width:10px;{gap}");
+        assert_eq!(supported(sized, &[nested.as_str()], true), sliced, "{gap}");
+    }
     // A background inside the box stays inside the clip, and so do block
     // edges that are cut with the box, or that have nothing to repeat.
     for held in [
