@@ -5193,7 +5193,8 @@ fn layout_pages_core(
     let mut page_filled_origins = HashMap::new();
     let mut spanner_growth = HashMap::new();
     // Each container whose columns are filled page by page may take one
-    // more attempt, to fill them from where the walk moved it. Each spanner
+    // more attempt, to fill them from where the walk moved it, and so may
+    // each container with a spanner that the walk moved. Each spanner
     // that the breaks inside it grew may take two: one to plan the columns
     // after it below the growth, and one more when that plan moves what
     // comes before it.
@@ -5229,6 +5230,7 @@ fn layout_pages_core(
     let mut break_top_settled = None;
     while attempts
         < 3 + page_filled_origins.len()
+            + spanning_origins.len()
             + 2 * spanner_growth.len()
             + usize::from(resumptions.has_pushed_floats())
             + break_top_growths.min(MAX_BREAK_TOP_ATTEMPTS)
@@ -5866,7 +5868,7 @@ fn paginate_flow(
     // So are the moves of the boxes after each owner, which are applied to a
     // parent's children before they are read.
     let mut sibling_shifts = sibling_shifts::SiblingShifts::default();
-    let mut leading_spanning_origins = Vec::new();
+    let mut spanner_owner_origins = Vec::new();
     for (_, owner) in spanning_owners {
         let source_y = root_flow_offset
             + current_abs_y(document, owner)
@@ -5879,14 +5881,20 @@ fn paginate_flow(
             .or_else(|| document.context.page_filled_origins.get(&owner))
             .copied()
             .unwrap_or(source_y);
+        // The columns of a container with a spanner are planned page by page
+        // from where it starts; one that the walk then moves, as a forced
+        // break before it does, is planned again from where it lands.
+        // One whose first piece holds no line is planned again each time it
+        // moves; any other once, so that a plan that moves it back to where
+        // it started settles rather than taking every attempt.
+        let leading = lineless_leading_piece_end(document, cascade, body_id, owner).is_some();
         let tracked = document.context.spanning_page_origins.contains_key(&owner)
-            || (lineless_leading_piece_end(document, cascade, body_id, owner).is_some()
-                && document
-                    .children_through_contents(owner)
-                    .iter()
-                    .any(|&child| document.nodes[child].column_span_all));
+            || document
+                .children_through_contents(owner)
+                .iter()
+                .any(|&child| super::is_spanner_in(document, cascade, child));
         if tracked {
-            leading_spanning_origins.push((owner, owner_y));
+            spanner_owner_origins.push((owner, owner_y, leading));
         }
         let delta = paginate_spanning_columns(
             document,
@@ -6134,11 +6142,13 @@ fn paginate_flow(
         halt.finish()?;
     }
 
-    // Replan all groups of a leading spanner owner from source geometry when
-    // the outer flow accepted a different origin than the planner used.
-    for (owner, planned_y) in leading_spanning_origins {
+    // Replan all groups of a container with a spanner from source geometry
+    // when the outer flow accepted a different origin than the planner used.
+    for (owner, planned_y, leading) in spanner_owner_origins {
         let accepted_y = root_flow_offset + current_abs_y(document, owner);
-        if (accepted_y - planned_y).abs() > 1e-3 {
+        let tolerance = 1e-3_f32.max(accepted_y.abs() * 1e-6);
+        let replanned = document.context.spanning_page_origins.contains_key(&owner);
+        if (accepted_y - planned_y).abs() > tolerance && (leading || !replanned) {
             document
                 .context
                 .spanning_page_origins
