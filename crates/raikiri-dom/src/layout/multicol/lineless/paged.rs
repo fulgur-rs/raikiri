@@ -281,6 +281,7 @@ pub(in crate::layout::multicol) fn paginate(
             .filter(|piece| piece.column / columns < kept)
             .collect();
         let sliced = own.len() > 1 && slices_decorations(tree, child);
+        let offset = super::inline_offset(tree, child, context, size.width);
         // The pieces of a wrapper that slices its decorations show what its
         // boxes take of each column, with the margins a break cuts.
         let consumed: Vec<f32> = match &leaf_pieces[order] {
@@ -316,7 +317,7 @@ pub(in crate::layout::multicol) fn paginate(
                 fragmentainer,
                 rect: sliced_rect(
                     FragmentRect {
-                        x,
+                        x: x + offset,
                         y: top + piece.top,
                         width: size.width,
                         height: piece.height,

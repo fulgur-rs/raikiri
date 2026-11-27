@@ -574,6 +574,7 @@ fn sliceable_flex_container(
         || style.float().is_floated()
         || style.clear() != Clear::None
         || block_margins(&style).is_none()
+        || has_inline_margins(&style)
         || is_right_aligned_in_parent(tree, child)
     {
         return None;
@@ -1382,14 +1383,43 @@ fn is_horizontal(node: &crate::Node) -> bool {
     !node.used_writing_mode.is_vertical()
 }
 
-/// The block-start and block-end margins of a child, when they are
-/// non-negative lengths and its inline margins are zero.
-fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
+/// Where `child`, `width` wide, starts in its column: past its left margin,
+/// moved along by `justify-self`, or, with auto margins, centred or pushed
+/// to the end the margins leave it; a right-to-left column aligns a
+/// narrower box to its right edge.
+pub(super) fn inline_offset(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    context: FragmentationContext,
+    width: f32,
+) -> f32 {
+    let style = style_of(tree, child);
+    let (left, right) = super::column_horizontal_margins(&style, context.column_width, width);
+    let justified = crate::layout::dispatch::block_flow::justified_offset(
+        tree,
+        child,
+        context.rtl,
+        context.column_width - left - right - width,
+    );
+    match justified {
+        Some(justified) => left + justified,
+        None if context.rtl => context.column_width - width - right,
+        None => left,
+    }
+}
+
+/// Whether `style` has a margin on the left or right, which a sliced flex
+/// container does not place its boxes past.
+fn has_inline_margins(style: &LayoutStyleView<'_>) -> bool {
     let zero = LengthPercentageAuto::length(0.0);
     let margin = style.margin();
-    if margin.left != zero || margin.right != zero {
-        return None;
-    }
+    margin.left != zero || margin.right != zero
+}
+
+/// The block margins of `style`, when they are lengths that are not
+/// negative.
+fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
+    let margin = style.margin();
     let length = |value: LengthPercentageAuto| {
         style_dimension_length(value.into()).filter(|px| px.is_finite() && *px >= 0.0)
     };
@@ -3729,14 +3759,7 @@ pub(super) fn layout(
                 });
         }
         previous_column = pieces.last()?.column;
-        // `justify-self` places a box in its column.
-        let justified = crate::layout::dispatch::block_flow::justified_offset(
-            tree,
-            child,
-            context.rtl,
-            context.column_width - size.width,
-        )
-        .unwrap_or(0.0);
+        let justified = inline_offset(tree, child, context, size.width);
         let mut layout = tree.nodes[child].layout;
         layout.order = order as u32;
         layout.size = size;

@@ -357,21 +357,18 @@ fn geometry_a_decorated_wrapper_preserves_its_content_inset_and_width() {
 
 #[test]
 fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
-    for css in [
-        "margin-left:10px",
-        "width:20px;margin-left:auto;margin-right:auto",
+    // The box keeps the geometry of the unfragmented layout, inside the
+    // container's full width: this strategy does not place it.
+    for (css, x, width) in [
+        ("margin-left:10px", 10.0, 90.0),
+        ("width:20px;margin-left:auto;margin-right:auto", 40.0, 20.0),
     ] {
-        let markup = |constraint| {
-            format!(
-                "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='target' style='height:20px;{constraint};{css}'></div></div>"
-            )
-        };
-        let reference = laid_out(&markup(""));
-        let mut doc = laid_out(&markup("break-before:avoid-column"));
+        let mut doc = laid_out(&format!(
+            "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='target' style='height:20px;break-before:avoid-column;{css}'></div></div>"
+        ));
         let target = &doc.nodes[id(&doc, "target")].layout;
-        let original = &reference.nodes[id(&reference, "target")].layout;
-        assert_eq!(target.size.width, original.size.width, "{css}");
-        assert_eq!(target.location.x, original.location.x, "{css}");
+        assert_eq!(target.size.width, width, "{css}");
+        assert_eq!(target.location.x, x, "{css}");
         let root = id(&doc, "columns");
         let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
