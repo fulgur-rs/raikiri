@@ -361,7 +361,17 @@ fn below_copies(
 ) -> Option<(f32, f32)> {
     let mut top = page_start + y;
     let mut bottom = top + height;
-    for &(start, end, footer) in bands {
+    if !from_before && !to_after {
+        return Some((y, height));
+    }
+    // The bands do not overlap, so their ends are sorted as their starts
+    // are: only the bands from the first one ending below the top to the
+    // last one starting above the bottom can cut the fragment.
+    let first = bands.partition_point(|&(_, end, _)| end <= top);
+    for &(start, end, footer) in &bands[first..] {
+        if start >= bottom {
+            break;
+        }
         if footer {
             if to_after && start < bottom && end > top {
                 bottom = bottom.min(start);
