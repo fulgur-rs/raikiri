@@ -3163,6 +3163,11 @@ fn boxes_broken_across_columns_leave_the_clips_of_blocks_inside_their_containing
         // css/css-multicol/multicol-contained-absolute.html.
         ("<div style='overflow:hidden'>", (20000, [0, 0, 199, 99])),
         ("<div>", (20000, [0, 0, 199, 99])),
+        // White space and boxes that are not rendered carry nothing.
+        (
+            "<div style='overflow:hidden'> <i style='display:none'>x</i> ",
+            (20000, [0, 0, 199, 99]),
+        ),
         (
             "<div style='overflow:hidden;opacity:0.999'>",
             (20000, [0, 0, 199, 99]),
