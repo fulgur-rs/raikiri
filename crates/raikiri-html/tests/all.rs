@@ -122,6 +122,7 @@ mod multicol_painted_wrapper_surface;
 mod multicol_relative_paragraph_columns_surface;
 mod multicol_relative_wrapper_surface;
 mod multicol_rules;
+mod multicol_scroll_container_surface;
 mod multicol_single_wrapped_paragraph_surface;
 mod multicol_sized_box_line_break;
 mod multicol_sized_box_surface;
