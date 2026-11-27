@@ -232,3 +232,21 @@ fn the_last_lines_stay_in_a_block_from_an_earlier_page() {
         ],
     );
 }
+
+#[test]
+fn a_relative_offset_does_not_change_where_a_block_begins() {
+    // The inner block begins at the top of the second page whatever its
+    // offset paints it at, so the outer block's padding still pulls its last
+    // child on to the third page.
+    for top in [-10, 0, 10] {
+        let body = format!(
+            "<div style='padding-bottom:30px'><div style='height:100px'>A</div>\
+             <div style='position:relative;top:{top}px;padding-bottom:20px'>\
+             <div style='height:60px'>B</div><div style='height:20px'>X</div></div></div>\
+             <div>Z</div>"
+        );
+        let b = format!("100: B@0,{top}");
+        let x = format!("100: X@0,{top} Z@0,70");
+        expect(&body, &["100: A@0,0", &b, &x]);
+    }
+}

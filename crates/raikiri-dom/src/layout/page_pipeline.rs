@@ -13441,6 +13441,7 @@ fn edges_beyond_broken_ancestor(
     node_id: usize,
     page_start: f32,
 ) -> f32 {
+    let body_id = super::page::find_body(document).unwrap_or(document.root);
     let mut outer = 0.0;
     let mut broken = false;
     let mut id = node_id;
@@ -13459,7 +13460,7 @@ fn edges_beyond_broken_ancestor(
             let layout = &document.nodes[parent].layout;
             outer += layout.padding.bottom + layout.border.bottom;
         } else {
-            broken = box_start_y(document, parent) < page_start - 0.001;
+            broken = box_start_y(document, cascade, body_id, parent) < page_start - 0.001;
         }
         id = parent;
     }
@@ -13467,12 +13468,21 @@ fn edges_beyond_broken_ancestor(
 }
 
 /// Where the box `node_id` begins in the flow as pagination has placed it so
-/// far. A table or row group that moves to the next page with its first row
-/// keeps its own position, so its start is that of its first body row; the
-/// groups a table repeats and the boxes that are not rows stay where they
-/// are written.
-fn box_start_y(document: &Document, node_id: usize) -> f32 {
-    let top = current_abs_y(document, node_id);
+/// far, in normal-flow positions: the relative offsets of the box and of its
+/// ancestors only paint it elsewhere. A table or row group that moves to the
+/// next page with its first row keeps its own position, so its start is that
+/// of its first body row; the groups a table repeats and the boxes that are
+/// not rows stay where they are written.
+fn box_start_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let top = flow_y(node_id);
     let rows = match document.nodes[node_id].display() {
         DisplayValue::Table | DisplayValue::InlineTable => document
             .children_through_contents(node_id)
@@ -13489,7 +13499,7 @@ fn box_start_y(document: &Document, node_id: usize) -> f32 {
     };
     rows.into_iter()
         .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
-        .map(|row| current_abs_y(document, row))
+        .map(flow_y)
         .min_by(f32::total_cmp)
         .unwrap_or(top)
 }
