@@ -12,15 +12,6 @@ use raikiri_html::{
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
-/// Words of five glyphs, one to a line of a column: the `first`th to the
-/// `last`th letter of the alphabet.
-fn w(first: u8, last: u8) -> String {
-    (first..=last)
-        .map(|index| char::from(b'A' + index - 1).to_string().repeat(5))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// The columns of `body`: for each page and column left edge, the top of its
 /// first line and the glyph of each line, top to bottom.
 fn columns(body: &str) -> Vec<(u32, i32, i32, String)> {
