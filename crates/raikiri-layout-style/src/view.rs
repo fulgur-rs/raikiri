@@ -33,6 +33,9 @@ pub struct LayoutStyleView<'a> {
     pub(crate) collapsing_table_width: bool,
     pub(crate) table_item_align_self: Option<values::AlignSelf>,
     pub(crate) table_item_justify_self: Option<values::AlignSelf>,
+    /// Whether the layout library is told of no preferred aspect ratio (see
+    /// [`Self::with_hidden_aspect_ratio`]).
+    pub(crate) hidden_aspect_ratio: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -94,6 +97,7 @@ impl<'a> LayoutStyleView<'a> {
             collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
+            hidden_aspect_ratio: false,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -118,6 +122,7 @@ impl<'a> LayoutStyleView<'a> {
             collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
+            hidden_aspect_ratio: false,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -162,6 +167,17 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub const fn with_hidden_table_height(mut self) -> Self {
         self.hidden_table_height = true;
+        self
+    }
+
+    /// Tell the layout library of no preferred aspect ratio, while the box's
+    /// own layout, which reads its style apart from this view, still keeps
+    /// it. A grid item that is a scroll container has an automatic minimum
+    /// size of zero, which a ratio read here would replace with the size the
+    /// ratio carries over from its other axis.
+    #[inline]
+    pub const fn with_hidden_aspect_ratio(mut self) -> Self {
+        self.hidden_aspect_ratio = true;
         self
     }
 

@@ -184,3 +184,33 @@ fn a_report_without_tracks_reads_as_an_empty_grid() {
     );
     assert_eq!(*info.detailed(), taffy::DetailedLayoutInfo::None);
 }
+
+/// A grid layout that panics takes its container off the stack of grid
+/// containers being laid out, so a later read of its items is not taken for
+/// the read that places them.
+#[test]
+fn a_panicking_grid_layout_takes_its_container_off_the_placement_stack() {
+    let mut context = crate::layout::context::LayoutContext::default();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::layout::taffy_adapter::placing_grid(
+            &mut context,
+            |context| context,
+            3,
+            |context| {
+                assert!(crate::layout::taffy_adapter::placement_read(
+                    context,
+                    Some(3),
+                    4
+                ));
+                panic!("layout failed");
+            },
+        )
+    }));
+    assert!(caught.is_err());
+    assert!(context.grid_placements.borrow().is_empty());
+    assert!(!crate::layout::taffy_adapter::placement_read(
+        &context,
+        Some(3),
+        4
+    ));
+}

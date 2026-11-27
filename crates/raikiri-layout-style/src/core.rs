@@ -265,6 +265,7 @@ impl LayoutStyleView<'_> {
         if self.table_owns_measured_height()
             || self.collapsing_table_height
             || self.collapsing_table_width
+            || self.hidden_aspect_ratio
         {
             return None;
         }
