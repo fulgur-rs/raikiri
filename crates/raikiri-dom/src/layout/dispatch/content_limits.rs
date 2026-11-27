@@ -461,7 +461,16 @@ fn vertical_block_bounds(
     inputs: &LayoutInput,
 ) -> Bounds {
     let idx = usize::from(node_id);
-    let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    // Browsers measure an intrinsic keyword along the block axis of a grid
+    // container, or of a flex container whose main axis is its inline axis,
+    // at the stated block size, which the tracks or the line stretch to fill:
+    // a grid with `width:300px;max-width:min-content` stays 300px wide. Those
+    // keywords are left unresolved here, so the box keeps its stated size.
+    let fills_stated_block_size = is_flex_grid_container(tree, idx)
+        && !(tree.nodes[idx].layout_display() == Display::Flex
+            && !tree.physical_style(idx).flex_direction_is_row());
+    let is_measured =
+        |size: Dimension| !size.is_auto() && !is_stretch(size) && !fills_stated_block_size;
     let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
         let mut along = *inputs;
         along.run_mode = RunMode::ComputeSize;

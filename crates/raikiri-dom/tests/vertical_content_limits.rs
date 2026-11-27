@@ -194,8 +194,12 @@ fn a_flex_or_grid_container_takes_the_limit() {
         // A wrapping column is as tall as its lines side by side are wide at
         // its stated width.
         ("", "display:flex;flex-direction:column;flex-wrap:wrap;width:20px;height:5px;min-height:max-content", WRAPPED, (8.0, 8.0, 20.0, 45.0)),
-        // A keyword width limit is the block size of the content.
-        ("", "display:grid;width:5px;height:100px;min-width:min-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
+        // A keyword width limit of a column container is the block size of
+        // its content; a grid or a row container keeps its stated width.
+        ("", "display:grid;width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 300.0, 30.0)),
+        ("", "display:flex;width:5px;height:100px;min-width:max-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 5.0, 100.0)),
+        ("", "display:flex;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 300.0, 30.0)),
+        ("", "display:flex;flex-direction:column;width:5px;height:100px;min-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 10.0, 100.0)),
         ("", "display:flex;flex-direction:column;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 30.0, 30.0)),
     ]);
 }
