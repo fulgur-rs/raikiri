@@ -6404,13 +6404,13 @@ fn a_paragraph_in_the_columns_of_another_container_is_not_split_in_groups() {
 }
 
 #[test]
-fn a_container_with_a_height_is_not_split_in_groups() {
+fn a_container_with_a_height_is_split_in_groups_too() {
     let (mut doc, container, _) = column_container(
         "height:200px",
         &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)],
     );
     lay_out_in_ahem(&mut doc, 180.0, 400.0);
-    assert!(doc.nodes[container].multicol_groups.is_empty());
+    assert_eq!(doc.nodes[container].multicol_groups.len(), 2);
 }
 
 /// A flex container that aligns its items by their baselines: a box of one
