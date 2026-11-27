@@ -6241,19 +6241,19 @@ fn grow_cells_of_grown_rows(document: &mut Document, shifts: &SubtreeShifts) -> 
     for &((row, end), growth) in &shifts.grown_rows {
         let growth = growth - float_growth.get(&(row, end)).copied().unwrap_or(0.0);
         let node = &document.nodes[row];
-        if growth <= 0.001 || node.display() != DisplayValue::TableRow || end != node.children.len()
-        {
-            continue;
-        }
-        let Some(table) = document.table_of_row(row) else {
-            continue;
-        };
-        if *spanning
-            .entry(table)
-            .or_insert_with(|| super::table::row_moves::has_row_spanning_cell(document, table))
-        {
-            continue;
-        }
+        let table = document
+            .table_of_row(row)
+            .filter(|_| {
+                growth > 0.001
+                    && node.display() == DisplayValue::TableRow
+                    && end == node.children.len()
+            })
+            .filter(|&table| {
+                !*spanning.entry(table).or_insert_with(|| {
+                    super::table::row_moves::has_row_spanning_cell(document, table)
+                })
+            });
+        let Some(table) = table else { continue };
         let target = node.layout.size.height + growth;
         for cell in document.children_through_contents(row) {
             let cell_node = &document.nodes[cell];

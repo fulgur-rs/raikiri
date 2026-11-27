@@ -615,36 +615,26 @@ impl HeaderRepeats {
         {
             return &[];
         }
-        let Some(bands) = document
-            .table_of_row(part)
-            .and_then(|table| self.bands.get(&table))
-        else {
-            return &[];
-        };
-        // A box on the lines of a cell moves with its line, below the
-        // copies.
         // An inline box that is not replaced, such as a line break, breaks
         // with the lines it sits on, which stay clear of the copies.
-        let under_copy = |id: usize| {
-            if document.nodes[id].display() == DisplayValue::Inline
-                && !crate::paint_rules::is_replaced_element(document, id)
-            {
-                return false;
-            }
+        let under_copy = |bands: &[(f32, f32, bool)], id: usize| {
             let top = absolute_position(document, id).1;
             let bottom = top + document.nodes[id].layout.size.height;
             // The bands do not overlap, so their ends are sorted too.
             let first = bands.partition_point(|&(_, end, _)| end <= top);
-            bands.get(first).is_some_and(|&(start, ..)| start < bottom)
+            (document.nodes[id].display() != DisplayValue::Inline
+                || crate::paint_rules::is_replaced_element(document, id))
+                && bands.get(first).is_some_and(|&(start, ..)| start < bottom)
         };
-        if self
-            .unbroken_in
-            .get(&part)
-            .is_some_and(|boxes| boxes.iter().any(|&id| under_copy(id)))
-        {
-            return &[];
-        }
-        bands
+        document
+            .table_of_row(part)
+            .and_then(|table| self.bands.get(&table))
+            .filter(|bands| {
+                self.unbroken_in
+                    .get(&part)
+                    .is_none_or(|boxes| !boxes.iter().any(|&id| under_copy(bands, id)))
+            })
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The pages of `source` as a repeated header box: page index, page

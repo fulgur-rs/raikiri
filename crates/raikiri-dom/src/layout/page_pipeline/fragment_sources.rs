@@ -217,7 +217,7 @@ pub(super) fn place_sources(
             .headers
             .copy_bands(document, source.node_id.0 as usize);
         let placements =
-            fragment_placements(source, header_placements, &copy_bands, pages, &slots, work)?;
+            fragment_placements(source, header_placements, copy_bands, pages, &slots, work)?;
         let fragment_count = placements.len() as u32;
         for (fragment_index, placement) in placements.into_iter().enumerate() {
             if let Some(page) = pages.get_mut(placement.page_slot) {
