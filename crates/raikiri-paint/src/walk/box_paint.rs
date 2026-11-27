@@ -728,17 +728,14 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         })
     }
 
-    /// Whether the box of the node `node_id` repeats its padding and border
-    /// at the page breaks inside it. Layout leaves room for the repeated
-    /// edges only around the content of an in-flow box whose content sets
-    /// its height; it lays an absolutely positioned box out whole.
+    /// Whether the box of the node `node_id`, in the flow, repeats its
+    /// padding and border at the page breaks inside it. Layout leaves room
+    /// for the repeated edges only around the content of a box whose content
+    /// sets its height. (It lays an absolutely positioned box, and the boxes
+    /// in it, out whole: [`Self::cloned_page_fragment`] leaves those out.)
     fn repeats_cloned_edges(&self, node_id: usize) -> bool {
         let cv = &self.cascade.computed[node_id];
         cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
-            && matches!(
-                cv.position,
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-            )
             && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
             && matches!(
                 cv.min_height,
