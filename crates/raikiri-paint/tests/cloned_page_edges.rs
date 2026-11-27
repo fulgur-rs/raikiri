@@ -96,3 +96,25 @@ fn a_cloned_multicol_container_closes_and_opens_each_page_with_its_border() {
         ]
     );
 }
+
+#[test]
+fn a_cloned_block_of_a_set_height_keeps_its_edges_where_layout_put_them() {
+    // Layout repeats no edges inside a box whose height is set, so the box
+    // stays one box cut at the pages, as a monolithic box overflowing it
+    // leaves it in Chromium.
+    assert_eq!(
+        runs_per_page("<div class=b style='height:300px'></div>"),
+        [
+            vec![(0, BLUE), (6, GRAY)],
+            vec![(0, GRAY), (106, RED), (112, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_cloned_block_that_fits_its_page_paints_as_one_box() {
+    assert_eq!(
+        runs_per_page(&format!("<div class=b>{}</div>", lines(3))),
+        [vec![(0, BLUE), (6, GRAY), (66, RED), (72, WHITE)]]
+    );
+}

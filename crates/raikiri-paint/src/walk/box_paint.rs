@@ -18,6 +18,7 @@ use raikiri_style::property::{
     BackgroundImage, BorderCollapseValue, BorderColor, BorderStyle, DisplayValue, PositionValue,
     VisualBox,
 };
+use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{ComputedBorder, ComputedValues, Sides};
 use raikiri_traits::{PaintInsets, PaintRect};
 
@@ -393,6 +394,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             || !matches!(
                 element.cv.position,
                 PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            )
+            // Layout leaves room for the repeated edges only around the
+            // lines of a box whose height its content sets.
+            || !matches!(element.cv.height, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(
+                element.cv.min_height,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
             )
         {
             return own;
