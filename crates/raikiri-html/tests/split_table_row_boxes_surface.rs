@@ -46,7 +46,7 @@ fn lay_out(body: &str) -> DocumentLayout {
 fn extents(document: &DocumentLayout, id: &str) -> Vec<Vec<(f32, f32)>> {
     (0..document.page_count())
         .map(|index| {
-            let page = document.page(index as u32).unwrap();
+            let page = document.page(index).unwrap();
             let dom = page.dom();
             page.fragments()
                 .filter(|fragment| dom.attr(fragment.node(), "id") == Some(id))
