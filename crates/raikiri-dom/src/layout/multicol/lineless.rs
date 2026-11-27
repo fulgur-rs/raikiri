@@ -1779,7 +1779,8 @@ struct Item {
 pub(super) const EPSILON: f32 = 0.001;
 
 /// How many taller column heights balancing tries when monolithic boxes move
-/// to later columns, before leaving the container to the other strategies.
+/// to later columns, before the boxes that do not fit continue in overflow
+/// columns.
 const MAX_MONOLITHIC_BALANCE_ATTEMPTS: usize = 8;
 
 /// Why a placement stopped before the end of the stream.
@@ -3359,21 +3360,19 @@ pub(super) fn layout(
             items.clone_from(&base_items);
             sizes.clone_from(&base_sizes);
             pushes = push_all(tree, &mut items, &mut sizes, column_height)?;
-            if !balances || limit.is_some_and(|limit| column_height >= limit - EPSILON) {
-                break;
-            }
-            let placements = place_items(tree, &items, column_height)?;
-            if placements.columns_used() <= context.column_count {
+            // Past the last attempt, what does not fit continues in overflow
+            // columns.
+            let settled = !balances
+                || limit.is_some_and(|limit| column_height >= limit - EPSILON)
+                || attempts == MAX_MONOLITHIC_BALANCE_ATTEMPTS
+                || place_items(tree, &items, column_height)?.columns_used() <= context.column_count;
+            if settled {
                 break;
             }
             attempts += 1;
             let taller =
                 balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0);
-            let taller = limit.map_or(taller, |limit| taller.min(limit));
-            if attempts > MAX_MONOLITHIC_BALANCE_ATTEMPTS || !taller.is_finite() {
-                return None;
-            }
-            column_height = taller;
+            column_height = limit.map_or(taller, |limit| taller.min(limit));
         }
     }
     let column_height = column_height;

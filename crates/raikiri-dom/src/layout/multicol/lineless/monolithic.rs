@@ -12,7 +12,7 @@
 //! the whole line, instead. The values follow Chromium.
 
 use super::*;
-use raikiri_layout_style::values::AlignItemsKeyword;
+use raikiri_layout_style::values::{AlignItemsKeyword, BoxSizing};
 
 /// Whether `id`, a box inside a flex container the stream slices, is a
 /// monolithic box that the stream moves whole: a block with size containment
@@ -44,9 +44,40 @@ pub(super) fn is_monolithic_leaf(tree: &LayoutSession<'_>, id: usize) -> bool {
 
 /// Whether the monolithic boxes inside `container`, a flex container the
 /// stream slices, sit in boxes whose moves [`Shape`] models (see
-/// [`Shape::build`]).
+/// [`Shape::build`]), and no column is shorter than one of them. A box taller
+/// than its column overflows it, and the fragment of the container around
+/// it grows to hold it, which the pieces of the stream do not model: that
+/// needs columns that balance with nothing to limit them, which grow to the
+/// tallest box, or a content height of their own at least as tall as it.
 pub(super) fn supports(tree: &LayoutSession<'_>, container: usize) -> bool {
-    Shape::build(tree, container).is_ok()
+    let Ok(Some(shape)) = Shape::build(tree, container) else {
+        return false;
+    };
+    let room = column_owner(tree, container).and_then(|owner| {
+        if balances_without_limit(tree, owner) {
+            return Some(f32::INFINITY);
+        }
+        let style = style_of(tree, owner);
+        let height = style_dimension_length(style.size().height)?;
+        // Percentages of the edges count as zero, which leaves more room.
+        let inset = |value| super::super::multicol_resolve_inset(tree, value, 0.0);
+        let (padding, border) = (style.padding(), style.border());
+        let edges =
+            inset(padding.top) + inset(padding.bottom) + inset(border.top) + inset(border.bottom);
+        Some(if style.box_sizing() == BoxSizing::BorderBox {
+            height - edges
+        } else {
+            height
+        })
+    });
+    let Some(room) = room else {
+        return false;
+    };
+    shape.nodes.iter().all(|node| {
+        !matches!(node.kind, Kind::Monolithic)
+            || style_dimension_length(style_of(tree, node.id).size().height)
+                .is_some_and(|height| height <= room + EPSILON)
+    })
 }
 
 /// How a box of the shape lays out the boxes it holds.
@@ -116,9 +147,8 @@ pub(super) enum Outcome {
     /// The first of them does not fit and starts the container, so the
     /// container itself moves to the next column.
     MovesContainer,
-    /// They do what is not modelled here: one is taller than a column and
-    /// overflows it, or one overflows the container. The container is
-    /// sliced as if they were plain boxes.
+    /// They do what is not modelled here: one overflows the container. The
+    /// container is sliced as if they were plain boxes.
     Unmodelled,
 }
 
@@ -310,14 +340,9 @@ impl Shape {
                 column
             }
         };
-        if self
-            .monolithic()
-            .any(|index| state.height(index) > column_height + EPSILON)
-        {
-            return Outcome::Unmodelled;
-        }
         // Each move puts a box at the top of a column, so there are no more
-        // moves than boxes; the bound keeps rounding from looping.
+        // moves than boxes; the bound keeps rounding from looping, and what
+        // is left unmoved then overflows like a box that is cut.
         for _ in 0..=self.nodes.len() {
             // The box to move for each monolithic box that does not fit, with
             // the top of what moves and the column it is in.
@@ -336,11 +361,6 @@ impl Shape {
                 for candidate in self.breaks_before(tree, index) {
                     let above = start + state.region_top(candidate);
                     if column_of(above) != column || above - column * column_height <= EPSILON {
-                        // A line that starts its column moves no further: the
-                        // item inside it moves alone.
-                        if let (None, Target::Line(item)) = (target, candidate) {
-                            target = Some(Target::Item(item));
-                        }
                         break;
                     }
                     target = Some(candidate);
@@ -355,32 +375,31 @@ impl Shape {
                 }
             }
             let Some((target, top, column)) = first else {
-                // What a box with a block size of its own no longer holds
-                // overflows it, which the pieces of the container show only
-                // inside it.
-                let end = height + state.growth;
-                if self
-                    .monolithic()
-                    .any(|index| state.top(index) + state.height(index) > end + EPSILON)
-                {
-                    return Outcome::Unmodelled;
-                }
-                let changes = self
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .skip(1)
-                    .filter(|&(index, _)| state.moved[index] != 0.0 || state.grown[index] != 0.0)
-                    .map(|(index, node)| (node.id, state.moved[index], state.grown[index]))
-                    .collect();
-                return Outcome::Moves(Pushes {
-                    changes,
-                    growth: state.growth,
-                });
+                break;
             };
             state.move_down(target, (column + 1.0) * column_height - top);
         }
-        Outcome::Unmodelled
+        // What a box with a block size of its own no longer holds overflows
+        // it, which the pieces of the container show only inside it.
+        let end = height + state.growth;
+        if self
+            .monolithic()
+            .any(|index| state.top(index) + state.height(index) > end + EPSILON)
+        {
+            return Outcome::Unmodelled;
+        }
+        let changes = self
+            .nodes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|&(index, _)| state.moved[index] != 0.0 || state.grown[index] != 0.0)
+            .map(|(index, node)| (node.id, state.moved[index], state.grown[index]))
+            .collect();
+        Outcome::Moves(Pushes {
+            changes,
+            growth: state.growth,
+        })
     }
 
     /// The indices of the monolithic boxes, in order.
