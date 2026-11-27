@@ -240,9 +240,23 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     &mut shifts,
                 );
                 delta = planned.end - (old.context.origin_y + old.height);
-            } else if let Some(planned) =
-                paragraph_group::paginate(tree, &entries, context, owner_y, columns_page_for, work)?
-                    .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
+            } else if let Some(planned) = paragraph_group::paginate(
+                tree,
+                &entries,
+                context,
+                owner_y,
+                break_before_page(
+                    tree,
+                    owner,
+                    owner_y,
+                    &context,
+                    previous_spanner.is_some(),
+                    page_for,
+                ),
+                columns_page_for,
+                work,
+            )?
+            .filter(|planned| !cuts_shifted_paragraph(tree, &planned.fragments))
             {
                 let new_end = planned.end;
                 if let Some((spanner, first, natural)) = first_content
@@ -898,6 +912,68 @@ impl FragmentEdits {
         tree.fragment_tree.replace_finalized_fragments(updated);
         Ok(())
     }
+}
+
+/// The page on which content before the columns leaves a break before them:
+/// a previous spanner, which ends where the columns start, or in-flow content
+/// before the container on the page where its margin box starts. Content that
+/// ends on an earlier page leaves its break at that page's end, where the
+/// container starts its page.
+fn break_before_page(
+    tree: &LayoutSession<'_>,
+    owner: usize,
+    owner_y: f32,
+    context: &FragmentationContext,
+    after_spanner: bool,
+    page_for: &impl Fn(f32) -> (u32, f32, f32),
+) -> Option<u32> {
+    if after_spanner {
+        return Some(page_for(owner_y + context.origin_y).0);
+    }
+    let top = owner_y - tree.nodes[owner].layout.margin.top.max(0.0);
+    let (page, origin, _) = page_for(top);
+    (top > origin + EPSILON && has_content_before(tree, owner)).then_some(page)
+}
+
+/// Whether in-flow content comes before `owner` in the flow that holds it,
+/// or before one of its ancestors: a break before the columns is left there
+/// (CSS Fragmentation 3, 4.4).
+fn has_content_before(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let mut node = owner;
+    // The boxes of a `display: contents` ancestor stand in its parent's
+    // flow, where the siblings before it are found.
+    let layout_parent = |node: usize| {
+        let mut parent = tree.parent_of(node);
+        while let Some(contents) =
+            parent.filter(|&parent| tree.nodes[parent].display() == DisplayValue::Contents)
+        {
+            parent = tree.parent_of(contents);
+        }
+        parent
+    };
+    while let Some(parent) = layout_parent(node) {
+        let before = tree.children_through_contents(parent);
+        let content = before
+            .iter()
+            .take_while(|&&child| child != node)
+            .any(|&child| {
+                let sibling = &tree.nodes[child];
+                let in_flow_box = sibling.kind() == NodeKind::Element
+                    && !crate::layout::page_pipeline::is_out_of_flow_positioned(tree, child)
+                    && !style_of(tree, child).float().is_floated();
+                // Text other than white space between blocks makes lines.
+                let text = sibling.kind() == NodeKind::Text
+                    && sibling
+                        .text_content()
+                        .is_some_and(|text| !text.trim_ascii().is_empty());
+                sibling.is_in_document() && !sibling.is_display_none() && (in_flow_box || text)
+            });
+        if content {
+            return true;
+        }
+        node = parent;
+    }
+    false
 }
 
 /// The block-axis border and padding, top and bottom, that the container

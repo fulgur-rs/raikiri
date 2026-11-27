@@ -128,6 +128,7 @@ mod measured_inline_block_relayout;
 mod min_content_keyword_width_contribution;
 mod multicol_absolute_lines;
 mod multicol_balanced_absolute;
+mod multicol_break_inside_avoid;
 mod multicol_decorated_wrapper_breaks;
 mod multicol_floats_in_columns;
 mod multicol_formatting_context_boxes;
