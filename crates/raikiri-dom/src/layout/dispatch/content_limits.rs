@@ -274,6 +274,11 @@ pub(super) fn with_content_limits(
     if !applies(tree, idx, &limits) {
         return dispatch(tree, node_id, inputs);
     }
+    if super::block_right_to_left(tree, idx).is_some() {
+        return scoped(tree, |tree| {
+            with_vertical_content_limits(tree, node_id, limits, inputs, dispatch)
+        });
+    }
     scoped(tree, |tree| {
         // Resolve height only after the width bounds have been published.
         let mut inputs = inputs;
@@ -307,6 +312,161 @@ pub(super) fn with_content_limits(
             })
         })
     })
+}
+
+/// [`with_content_limits`] for a box laid out on vertical axes, whose physical
+/// height is its inline size and whose physical width is its block size (CSS
+/// Writing Modes 4 §6.2). A keyword `min-height` or `max-height` stands for
+/// the min-content or max-content inline size of the box, or the room it is
+/// offered within those for `fit-content`, as a keyword `width` of a
+/// horizontal box does; a keyword `min-width` or `max-width` stands for its
+/// automatic block size at the inline size the height limits leave it (CSS
+/// Sizing 3 §5.1). The inline axis is resolved first.
+fn with_vertical_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: ContentLimits,
+    mut inputs: LayoutInput,
+    dispatch: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let height = vertical_inline_bounds(tree, node_id, &limits, &inputs);
+    let adjustment =
+        box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+    with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
+        if let Some(known) = inputs.known_dimensions.height {
+            let known = height.apply(known);
+            inputs.known_dimensions.height = Some(known);
+            inputs.available_space.height = AvailableSpace::Definite(known);
+        }
+        let width = vertical_block_bounds(tree, node_id, &limits, &inputs);
+        let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+        with_size_overrides(tree, idx, width.overrides(true, adjustment), |tree| {
+            inputs.known_dimensions.width = inputs
+                .known_dimensions
+                .width
+                .map(|known| width.apply(known));
+            dispatch(tree, node_id, inputs)
+        })
+    })
+}
+
+/// The border-box heights the keyword `min-height` and `max-height` of the
+/// vertical box `node_id` stand for: its min-content and max-content inline
+/// sizes, measured without its `height`, `min-height` and `max-height`, and
+/// for `fit-content` the room `inputs` offer it within those.
+fn vertical_inline_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    let measure = |tree: &mut LayoutSession<'_>, space| {
+        let mut along = *inputs;
+        along.run_mode = RunMode::ComputeSize;
+        along.sizing_mode = SizingMode::InherentSize;
+        along.axis = RequestedAxis::Both;
+        along.known_dimensions = Size::NONE;
+        along.known_dimensions_are_definite = Size {
+            width: false,
+            height: false,
+        };
+        along.available_space.height = space;
+        along.vertical_margins_are_collapsible = Line::FALSE;
+        let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
+        use LengthProperty::*;
+        let mut entries = neutral_size_overrides(&[Height, MinHeight, MaxHeight]);
+        // A box with a ratio has the inline size the ratio gives its block
+        // size, whatever its content holds (CSS Sizing 4 §5.1), as
+        // `automatic_height` finds for a horizontal box.
+        let style = tree.physical_style(idx);
+        if let Some(ratio) = style.stated_aspect_ratio() {
+            if style.block_aspect_ratio().is_none() {
+                entries.push(OwnedPropertyOverride::aspect_ratio(Some(ratio)));
+            }
+            entries.push(zero_length(MinHeight));
+        }
+        probe(tree, node_id, key, along, entries)
+    };
+    let mut resolved = [None, None];
+    for (slot, keyword) in resolved
+        .iter_mut()
+        .zip([limits.min.height, limits.max.height])
+    {
+        let expanded = keyword.expand();
+        *slot = match expanded {
+            ExpandedDimension::Stretch => stretch_limit_height(tree, idx, inputs),
+            ExpandedDimension::MinContent => Some(measure(tree, AvailableSpace::MinContent)),
+            ExpandedDimension::MaxContent => Some(measure(tree, AvailableSpace::MaxContent)),
+            ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_) => {
+                // The limit of `fit-content(<length-percentage>)` stands in
+                // for the room the parent offers; without a definite room the
+                // box takes its max-content inline size.
+                let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
+                    .or(inputs.available_space.height.into_option())
+                    .unwrap_or(f32::INFINITY);
+                let max_content = measure(tree, AvailableSpace::MaxContent);
+                Some(
+                    max_content
+                        .min(room)
+                        .max(measure(tree, AvailableSpace::MinContent)),
+                )
+            }
+            _ => None,
+        };
+    }
+    Bounds {
+        min: resolved[0],
+        max: resolved[1],
+    }
+}
+
+/// The border-box widths the keyword `min-width` and `max-width` of the
+/// vertical box `node_id` stand for: along its block axis every intrinsic
+/// keyword is its automatic width at the height `inputs` give it, and
+/// `stretch` is the room it would stretch to.
+fn vertical_block_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
+        let mut along = *inputs;
+        along.run_mode = RunMode::ComputeSize;
+        along.axis = RequestedAxis::Both;
+        along.known_dimensions.width = None;
+        along.known_dimensions_are_definite.width = false;
+        along.vertical_margins_are_collapsible = Line::FALSE;
+        let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+        use LengthProperty::*;
+        probe(
+            tree,
+            node_id,
+            key,
+            along,
+            neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
+        )
+    });
+    let bound = |tree: &LayoutSession<'_>, size: Dimension| {
+        if is_stretch(size) {
+            stretch_width(tree, idx, inputs)
+        } else if size.is_auto() {
+            None
+        } else {
+            measured
+        }
+    };
+    Bounds {
+        min: bound(tree, limits.min.width),
+        max: bound(tree, limits.max.width),
+    }
 }
 
 /// Lay out an out-of-flow box whose containing block is an inline element.
@@ -2904,6 +3064,23 @@ fn with_item_content_limits_for_parent_sizes(
                         },
                     );
 
+                    if super::block_right_to_left(tree, idx).is_some() {
+                        // The inline axis of a vertical item is its height.
+                        let height = vertical_inline_bounds(tree, child, &limits, &item_inputs);
+                        let adjustment = box_sizing_height_adjustment(
+                            tree,
+                            idx,
+                            parent_size.width.unwrap_or(0.0),
+                        );
+                        push_size_overrides(tree, idx, height.overrides(false, adjustment));
+                        let width = vertical_block_bounds(tree, child, &limits, &item_inputs);
+                        let adjustment =
+                            box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+                        push_size_overrides(tree, idx, width.overrides(true, adjustment));
+                        saved_caches.push((idx, tree.take_layout_cache(idx)));
+                        tree.context.content_limit_probes.push(idx);
+                        continue;
+                    }
                     let ratio_is_redundant = if let Some((width, size)) = item
                         .ratio_minimum
                         .and_then(|minimum| Some((minimum.width, minimum.stretched?)))

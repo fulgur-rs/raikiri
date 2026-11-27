@@ -2213,9 +2213,10 @@ fn unsupported_generic_box_content_limits_record_none() {
         // A multicol container and a box in its columns.
         ("display:block", "div", format!("{block};column-count:2")),
         ("display:block;column-count:2", "div", block.clone()),
-        // A vertical box writes on physical axes different from its parent.
+        // A vertical box in the flow of a vertical block container, which
+        // lays it out on its own axes.
         (
-            "display:block",
+            "display:block;writing-mode:vertical-rl",
             "div",
             format!("{block};writing-mode:vertical-rl"),
         ),
