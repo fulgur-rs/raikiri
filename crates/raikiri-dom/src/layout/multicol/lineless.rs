@@ -47,7 +47,7 @@ pub(super) fn supported(
     parent: usize,
     out_of_flow: bool,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
+    supported_with_wrapped_blocks(tree, parent, None, out_of_flow, false)
 }
 
 /// [`supported`] for an outermost multicol container. Its stream may also
@@ -56,12 +56,26 @@ pub(super) fn supported_with_wrappers(
     tree: &LayoutSession<'_>,
     parent: usize,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, true, true)
+    supported_with_wrapped_blocks(tree, parent, None, true, true)
+}
+
+/// The children of `parent` in `segment` (the boxes between two spanners,
+/// or after the last, which form a row of columns of their own) when the
+/// stream places them all as boxes of their own: sized plain blocks and
+/// boxes that no break goes through, with no wrapper whose boxes would join
+/// the stream in its place.
+pub(super) fn supported_plain_segment(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+    segment: &[usize],
+) -> Option<Vec<usize>> {
+    supported_with_wrapped_blocks(tree, parent, Some(segment), false, false)
 }
 
 fn supported_with_wrapped_blocks(
     tree: &LayoutSession<'_>,
     parent: usize,
+    segment: Option<&[usize]>,
     out_of_flow: bool,
     allow_wrapped_blocks: bool,
 ) -> Option<Vec<usize>> {
@@ -75,7 +89,16 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     let mut sized_flex = false;
-    for child in rendered_elements(tree, parent) {
+    let candidates: Box<dyn Iterator<Item = usize>> = match segment {
+        Some(segment) => Box::new(
+            segment
+                .iter()
+                .copied()
+                .filter(|&child| is_rendered_element(tree, child)),
+        ),
+        None => Box::new(rendered_elements(tree, parent)),
+    };
+    for child in candidates {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
             .then(|| sliceable_flex_container(tree, child, None))
@@ -141,7 +164,7 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
 pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     layout_node(tree, child).display() == DisplayValue::Block
-        && is_plain_box_but_clearance(tree, child, false)
+        && is_plain_box_but_clearance(tree, child, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
         && block_margins(&style) == Some((0.0, 0.0))
@@ -190,12 +213,15 @@ pub(super) fn rendered_elements<'a>(
     tree: &'a LayoutSession<'_>,
     parent: usize,
 ) -> impl Iterator<Item = usize> + 'a {
-    flow_children(tree, parent).into_iter().filter(|&child| {
-        let node = layout_node(tree, child);
-        node.is_in_document()
-            && !node.is_display_none()
-            && matches!(node.data, NodeData::Element(_))
-    })
+    flow_children(tree, parent)
+        .into_iter()
+        .filter(|&child| is_rendered_element(tree, child))
+}
+
+/// Whether `child` is an element in the document that renders a box.
+fn is_rendered_element(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    node.is_in_document() && !node.is_display_none() && matches!(node.data, NodeData::Element(_))
 }
 
 /// Whether `id` starts at the top of the first column of the multicol
@@ -415,12 +441,29 @@ pub(super) fn is_plain_box_apart_from_display(
     allow_lines: bool,
 ) -> bool {
     style_of(tree, child).clear() == Clear::None
-        && is_plain_box_but_clearance(tree, child, allow_lines)
+        && is_plain_box_but_clearance(tree, child, allow_lines, false)
+}
+
+/// [`is_plain_box_apart_from_display`] for a box that holds no lines and may
+/// force a column break before or after itself, for a caller that starts a
+/// column there.
+pub(super) fn is_plain_box_apart_from_display_and_breaks(
+    tree: &LayoutSession<'_>,
+    child: usize,
+) -> bool {
+    style_of(tree, child).clear() == Clear::None
+        && is_plain_box_but_clearance(tree, child, false, true)
 }
 
 /// [`is_plain_box_apart_from_display`] for a box that may clear floats, for
-/// a caller that places it below them.
-fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_lines: bool) -> bool {
+/// a caller that places it below them. With `breaks`, the box may force a
+/// column break before or after itself.
+fn is_plain_box_but_clearance(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_lines: bool,
+    breaks: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     // An orthogonal flow is monolithic in the column's block axis.
@@ -440,8 +483,9 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        || sets_break_in_columns(node.break_before)
-        || sets_break_in_columns(node.break_after)
+        || [node.break_before, node.break_after]
+            .into_iter()
+            .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
