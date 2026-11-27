@@ -785,7 +785,7 @@ fn cells_stay_aligned_with_rows_after_fractional_page_breaks() {
 fn letter_tops_by_page(document: &DocumentLayout) -> Vec<Vec<(String, f32)>> {
     (0..document.page_count())
         .map(|index| {
-            let page = document.page(index as u32).unwrap();
+            let page = document.page(index).unwrap();
             let dom = page.dom();
             page.fragments()
                 .filter_map(|fragment| {
