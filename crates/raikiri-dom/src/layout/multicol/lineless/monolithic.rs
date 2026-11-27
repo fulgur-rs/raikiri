@@ -90,6 +90,10 @@ fn has_truncated_space(tree: &LayoutSession<'_>, id: usize) -> bool {
             }))
 }
 
+fn is_length(gap: LengthPercentage) -> bool {
+    matches!(gap.expand(), ExpandedLengthPercentage::Length(_))
+}
+
 fn is_zero(gap: LengthPercentage) -> bool {
     matches!(gap.expand(), ExpandedLengthPercentage::Length(px) if px == 0.0)
 }
@@ -384,11 +388,7 @@ impl Shape {
                     // the style fixes, not against one its content grows.
                     if style.flex_wraps()
                         || style.flex_direction_is_reversed()
-                        || (grows
-                            && !matches!(
-                                style.gap().height.expand(),
-                                ExpandedLengthPercentage::Length(_)
-                            ))
+                        || (grows && !is_length(style.gap().height))
                     {
                         return Err(());
                     }
