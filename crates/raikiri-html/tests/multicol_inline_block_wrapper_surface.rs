@@ -89,6 +89,15 @@ fn the_blocks_of_an_inline_box_balance_across_the_columns() {
         balanced(&format!("<div><em><span>{BLOCKS}</span></em></div>")),
         expected
     );
+    // The blocks may sit in a `display: contents` box, and the block wrapper
+    // around the inline box may set text properties.
+    assert_eq!(
+        balanced(&format!(
+            "<div style='font-weight:bold'><span><div style='display:contents'>{BLOCKS}</div>\
+             </span></div>"
+        )),
+        expected
+    );
     // The blocks may hold lines, and the inline box may set inherited text
     // properties that its blocks take.
     assert_eq!(

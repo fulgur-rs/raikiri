@@ -535,7 +535,9 @@ fn an_inline_wrapper_of_blocks_makes_no_box_without_a_spanner() {
     let second = doc.append_element(Some(inner), "div", Some("display:block;height:20px"));
     lay_out(&mut doc);
 
-    assert!(doc.nodes[outer].generates_no_box());
+    // The block wrapper stays the block the blocks sit in, which the columns
+    // slice like any other.
+    assert!(!doc.nodes[outer].generates_no_box());
     assert!(doc.nodes[inner].generates_no_box());
     // The two blocks balance into the two columns.
     assert_eq!(doc.nodes[first].layout.location.x, 0.0);
@@ -545,7 +547,7 @@ fn an_inline_wrapper_of_blocks_makes_no_box_without_a_spanner() {
 #[test]
 fn an_inline_box_of_blocks_outside_columns_or_with_a_box_keeps_it() {
     for (container_css, inline_css) in [
-        ("display:block;width:100px", INLINE),
+        (BLOCK, INLINE),
         (COLUMNS, "display:inline;padding-left:5px"),
         (COLUMNS, "display:inline;background-color:red"),
     ] {

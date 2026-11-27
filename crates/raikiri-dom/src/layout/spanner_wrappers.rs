@@ -1,4 +1,5 @@
-//! Column spanners inside block wrappers.
+//! Column spanners inside block wrappers, and blocks inside inline boxes,
+//! in multicol containers.
 //!
 //! A `column-span: all` box spans the columns of the multicol container it
 //! sits in, whatever plain blocks, or inline boxes around blocks, lie between
@@ -14,6 +15,12 @@
 //! its children become the children of the container. A wrapper that draws a
 //! background, border or any other effect, or that changes how its children
 //! are placed, would need its box split in pieces; it stays as it is.
+//!
+//! An inline box that holds blocks is split around them (CSS 2, 9.2.1.1), so
+//! with no spanner too, a plain one is laid out like a `display: contents`
+//! element: its blocks then go in the columns of the container as if the
+//! block around the inline box held them, and balance across the columns as
+//! Chromium balances them.
 
 use super::*;
 use crate::layout::context::LayoutSession;
@@ -22,7 +29,8 @@ use raikiri_layout_style::values::Position;
 use raikiri_style::property::{UnicodeBidi, WhiteSpaceCollapse};
 
 /// Lets the spanners of multicol containers reach the columns through the
-/// wrappers around them, by laying those wrappers out as `display: contents`.
+/// wrappers around them, and the blocks of plain inline boxes reach them
+/// through those boxes, by laying the wrappers out as `display: contents`.
 pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &CascadeResult) {
     let mut wrappers = Vec::new();
     for idx in 0..doc.nodes.len() {
@@ -30,13 +38,9 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
             continue;
         }
         if doc.nodes[idx].column_span_all && is_spanner_in(doc, cascade, idx) {
-            collect_wrappers(doc, cascade, doc.nodes[idx].parent, &mut wrappers);
+            collect_wrappers(doc, cascade, doc.nodes[idx].parent, false, &mut wrappers);
         } else if holds_blocks_inline(doc, cascade, idx) {
-            // The blocks an inline box holds go in the columns as if the
-            // container held them, as Chromium balances them; the inline box
-            // is split around them (CSS 2, 9.2.1.1) and leaves nothing of its
-            // own when it is plain.
-            collect_wrappers(doc, cascade, Some(idx), &mut wrappers);
+            collect_wrappers(doc, cascade, Some(idx), true, &mut wrappers);
         }
     }
     // A wrapper that holds several spanners is found once for each.
@@ -56,31 +60,46 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
     }
 }
 
-/// Whether `id` is an inline box that holds a block-level box in the flow.
+/// Whether `id` is an inline box that holds a block-level box in the flow,
+/// among its children or those of a `display: contents` child.
 fn holds_blocks_inline(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    doc.nodes[id].display() == DisplayValue::Inline
-        && doc.nodes[id].children.iter().any(|&child| {
+    fn holds_blocks(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+        doc.nodes[id].children.iter().any(|&child| {
             doc.nodes[child].kind() == NodeKind::Element
                 && cascade.computed.get(child).is_some_and(|cv| {
+                    if cv.display == DisplayValue::Contents {
+                        return holds_blocks(doc, cascade, child);
+                    }
                     !cv.display.is_inline_level()
-                        && !matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+                        && cv.display != DisplayValue::None
                         && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
                         && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
                 })
         })
+    }
+    doc.nodes[id].display() == DisplayValue::Inline && holds_blocks(doc, cascade, id)
 }
 
 /// Adds to `wrappers` the plain wrappers from `first` up to the multicol
 /// container that holds them, unless something else lies in between or no
-/// such container is found: those around a spanner, which the spanner then
-/// spans, or an inline box around blocks and those around it.
+/// such container is found.
+///
+/// Without `inline_only`, these are the wrappers around a spanner, which the
+/// spanner then spans. With it, `first` is an inline box around blocks, and
+/// only it and the inline boxes around it are added: a block wrapper above
+/// them stays the block their blocks sit in, which the columns slice like
+/// any other, and the containing block their percentages resolve against.
 fn collect_wrappers(
     doc: &Document,
     cascade: &CascadeResult,
     first: Option<usize>,
+    inline_only: bool,
     wrappers: &mut Vec<usize>,
 ) {
     let mut chain = Vec::new();
+    // The block whose anonymous blocks take the lines of the wrappers in
+    // `chain`, when it is not the container.
+    let mut line_block = None;
     let mut ancestor = first;
     while let Some(id) = ancestor {
         let node = &doc.nodes[id];
@@ -93,16 +112,31 @@ fn collect_wrappers(
             && !node.used_writing_mode.is_vertical()
         {
             // The lines that the wrappers hold go in anonymous blocks of the
-            // container.
+            // container, or of the block wrapper above an inline box.
+            let block = line_block.unwrap_or(id);
+            // Lines next to the blocks of an inline box, in it or around it,
+            // count with them for orphans and widows in Chromium, which
+            // then keeps more of them together; only blocks with no line
+            // beside them are lifted.
+            let lineless = || {
+                [block].iter().chain(&chain).all(|&box_id| {
+                    !holds_lines(doc, cascade, box_id, &cascade.computed[block], &chain)
+                })
+            };
             if chain
                 .iter()
-                .all(|&wrapper| keeps_line_layout(doc, cascade, wrapper, id, &chain))
+                .all(|&wrapper| keeps_line_layout(doc, cascade, wrapper, block, &chain))
+                && (!inline_only || lineless())
             {
                 wrappers.extend(chain);
             }
             return;
         } else if is_plain_wrapper(doc, cascade, id) {
-            chain.push(id);
+            if !inline_only || line_block.is_none() && node.display() == DisplayValue::Inline {
+                chain.push(id);
+            } else {
+                line_block.get_or_insert(id);
+            }
         } else {
             return;
         }
@@ -246,7 +280,8 @@ fn keeps_line_layout(
         return true;
     }
     let mut anonymous = ComputedValues::inherit_from(container);
-    // Both are blocks, and the margins were checked to take no space.
+    // Both have the wrapper's display, block or inline, and the margins were
+    // checked to take no space.
     anonymous.display = wrapper.display;
     anonymous.margin = wrapper.margin.clone();
     // `embed` and `isolate` do nothing for the lines of a block (CSS Writing
@@ -266,8 +301,9 @@ fn keeps_line_layout(
 }
 
 /// Whether the box of `id` has text that renders, or an inline-level box,
-/// among its children, or among those of a `display: contents` child or of a
-/// child in `lifted`, the wrappers that make no box along with it. Document
+/// among its children, or among those of a `display: contents` child; a child
+/// in `lifted`, the wrappers that make no box along with it, has its own
+/// lines checked on their own. Document
 /// white space (space, tab and line breaks, CSS Text 3, 4.1.1) makes no line
 /// between blocks when it collapses both in the wrapper and in `container`,
 /// whose anonymous block would take it; any other white space, such as
@@ -297,8 +333,11 @@ fn holds_lines(
                 !text.is_empty() && !dropped
             }),
             NodeKind::Element => cascade.computed.get(child).is_some_and(|cv| {
-                // A wrapper lifted with this one makes no box either.
-                if cv.display == DisplayValue::Contents || lifted.contains(&child) {
+                // A wrapper lifted with this one makes no box either, and its
+                // own lines are checked on their own.
+                if lifted.contains(&child) {
+                    false
+                } else if cv.display == DisplayValue::Contents {
                     holds_lines(doc, cascade, child, container, lifted)
                 } else {
                     cv.display.is_inline_level()
