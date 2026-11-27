@@ -2995,6 +2995,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             run_head = (last_box == child_id).then_some(child_id);
                         }
                     }
+                    // The items of a column flex container in columns are
+                    // placed by the columns, which their positions in the
+                    // flex container do not say: the page breaks between
+                    // the columns, not between the items.
+                    let paged_column_flex = column_flex && !in_columns(document, node_id);
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
                     self.collect(
@@ -3018,7 +3023,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                         | DisplayValue::TableFooterGroup
                                         | DisplayValue::TableRow
                                 ),
-                            flex_column_parent: column_flex
+                            flex_column_parent: paged_column_flex
                                 || (document.nodes[node_id].display() == DisplayValue::Contents
                                     && flex_column_parent),
                             grid_single_column_parent: document.nodes[node_id].formatting_context
@@ -3030,7 +3035,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && !(document.nodes[child_id].display()
                                         == DisplayValue::Table
                                         && stacks_tables)),
-                            named_flex_context: if column_flex {
+                            named_flex_context: if paged_column_flex {
                                 Some(node_id)
                             } else if is_flex {
                                 None
@@ -3269,4 +3274,12 @@ fn lays_out_children_in_block_flow(document: &Document, parent: usize) -> bool {
             | DisplayValue::Table
             | DisplayValue::TableRow
     ) && node.multicol.is_none()
+}
+
+/// Whether `node_id` sits in the columns of a multicol container of more than
+/// one column.
+fn in_columns(document: &Document, node_id: usize) -> bool {
+    document.ancestors(node_id).any(|id| {
+        document.nodes[id].is_multicol_container() && !super::is_single_column(document, id)
+    })
 }
