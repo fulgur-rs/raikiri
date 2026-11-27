@@ -1515,6 +1515,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
+                // The items of a column flex container in columns are placed
+                // by the columns, which their positions in the flex container
+                // do not say: the page breaks between the columns, not
+                // between the items.
+                let paged_column_flex = column_flex && !in_columns(document, cascade, node_id);
                 // An inline-level flex container takes the page of its
                 // containing block, and one inside an item of a row flex
                 // container sits on the page that row's line is printed on,
@@ -2995,11 +3000,6 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             run_head = (last_box == child_id).then_some(child_id);
                         }
                     }
-                    // The items of a column flex container in columns are
-                    // placed by the columns, which their positions in the
-                    // flex container do not say: the page breaks between
-                    // the columns, not between the items.
-                    let paged_column_flex = column_flex && !in_columns(document, node_id);
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
                     self.collect(
@@ -3276,10 +3276,17 @@ fn lays_out_children_in_block_flow(document: &Document, parent: usize) -> bool {
     ) && node.multicol.is_none()
 }
 
-/// Whether `node_id` sits in the columns of a multicol container of more than
-/// one column.
-fn in_columns(document: &Document, node_id: usize) -> bool {
-    document.ancestors(node_id).any(|id| {
-        document.nodes[id].is_multicol_container() && !super::is_single_column(document, id)
-    })
+/// Whether `node_id` sits in the columns of a multicol container, other than
+/// one that `column-count: 1` keeps to one column: not in a spanner, which
+/// lies in the flow of the pages around the columns.
+fn in_columns(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    for id in std::iter::once(node_id).chain(document.ancestors(node_id)) {
+        if crate::layout::multicol::spanning::is_spanner_in(document, cascade, id) {
+            return false;
+        }
+        if id != node_id && document.nodes[id].is_multicol_container() {
+            return !super::is_single_column(document, id);
+        }
+    }
+    false
 }

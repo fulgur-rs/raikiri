@@ -73,3 +73,36 @@ fn items_past_the_page_end_stay_in_their_columns() {
     assert_eq!(pages, 1);
     assert_eq!(places.last(), Some(&(0, 900, 6)));
 }
+
+#[test]
+fn columns_past_the_page_end_show_each_item_once() {
+    // Forty items in two balanced columns fill two pages, and no item is
+    // printed again on a page of its own.
+    let items: String = (0..40)
+        .map(|i| format!("<div id=m{i} style='height:60px'></div>"))
+        .collect();
+    let body = format!(
+        "<div style='columns:2;column-gap:0;width:200px'>\
+         <div style='display:flex;flex-direction:column'>{items}</div></div>"
+    );
+    for i in 0..40 {
+        let (pages, places) = pages_and_places(&body, &format!("m{i}"));
+        assert_eq!(pages, 2);
+        assert_eq!(places.len(), 1, "m{i}: {places:?}");
+    }
+}
+
+#[test]
+fn a_spanner_breaks_between_its_items() {
+    // A spanner lies in the flow of the pages, so the page breaks between
+    // its items as in any column flex container.
+    let items: String = (0..20)
+        .map(|i| format!("<div id=m{i} style='height:60px'></div>"))
+        .collect();
+    let body = format!(
+        "<div style='columns:2'>\
+         <div style='column-span:all;display:flex;flex-direction:column'>{items}</div></div>"
+    );
+    assert_eq!(pages_and_places(&body, "m9"), (2, vec![(0, 0, 540)]));
+    assert_eq!(pages_and_places(&body, "m10"), (2, vec![(1, 0, 0)]));
+}
