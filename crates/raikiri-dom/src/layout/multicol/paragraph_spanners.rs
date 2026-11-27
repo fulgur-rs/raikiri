@@ -22,7 +22,7 @@ pub(crate) fn supports(tree: &LayoutSession<'_>, idx: usize, root: &IfcRoot) -> 
     tree.context.fragmentation_stack.is_empty()
         && tree.nodes[idx]
             .multicol
-            .is_some_and(|style| style.horizontal && !style.height_definite)
+            .is_some_and(|style| style.horizontal)
         && root.generated_blocks.is_empty()
         && root.boxes.iter().any(|box_| box_.kind == IfcBoxKind::Block)
         && root.boxes.iter().all(|box_| match box_.kind {
@@ -105,14 +105,21 @@ pub(crate) fn arrange(
             y = ((y + pending.resolve()) * 64.0).round() / 64.0;
             pending = CollapsibleMarginSet::ZERO;
             // A group above a spanner is balanced even under `column-fill:
-            // auto`, which fills the columns of the last one.
+            // auto`, which fills the columns of the last one. The last group
+            // of a container of a definite height has what the groups and
+            // spanners above it leave of that height (CSS Multi-column 1,
+            // 7.1 and 8.1), and at least a pixel, as in Chromium: each of
+            // its columns then holds a line.
             let group = FragmentationContext {
                 column_fill: if spanner.is_some() {
                     ColumnFillValue::Balance
                 } else {
                     context.column_fill
                 },
-                available_height: None,
+                available_height: context
+                    .available_height
+                    .filter(|_| spanner.is_none())
+                    .map(|height| (height - y).max(1.0)),
                 ..context
             };
             let (mut columns, height) = group_column_fragments(lines, start..stop, group, y);

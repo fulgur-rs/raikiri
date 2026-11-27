@@ -129,6 +129,7 @@ mod multicol_sized_box_line_break;
 mod multicol_sized_box_surface;
 mod multicol_sliced_box_edge_surface;
 mod multicol_span;
+mod multicol_spanner_lines_bounded_height_surface;
 mod multicol_stretched_flex_item;
 mod multicol_surface;
 mod multicol_widows_across_columns;
