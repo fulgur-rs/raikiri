@@ -153,6 +153,78 @@ fn only_the_last_page_balances_many_boxes() {
 }
 
 #[test]
+fn boxes_in_a_wrapper_fill_the_columns_of_every_page_from_the_first() {
+    // The boxes a wrapper holds stand in the piece of the wrapper in their
+    // own column, which on the next page starts the first column again.
+    let body = format!(
+        "<div style='height:100px'></div><div class=mc><div>{}</div></div>{AFTER}",
+        boxes(14, 30, "")
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "a=0,100 b=0,130 c=60,100 d=60,130",
+            "e=0,0 f=0,30 g=0,60 h=0,90 i=0,120 z=0,150 \
+             j=60,0 k=60,30 l=60,60 m=60,90 n=60,120",
+        ]
+    );
+    // In a wrapper inside another.
+    let body = format!(
+        "<div style='height:100px'></div><div class=mc><div><div>{}</div></div></div>{AFTER}",
+        boxes(14, 30, "")
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "a=0,100 b=0,130 c=60,100 d=60,130",
+            "e=0,0 f=0,30 g=0,60 h=0,90 i=0,120 z=0,150 \
+             j=60,0 k=60,30 l=60,60 m=60,90 n=60,120",
+        ]
+    );
+    // Where `justify-items` puts them in the wrapper.
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc><div style='justify-items:end'>{}</div></div>",
+        boxes(14, 30, "width:20px")
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "a=20,100 b=20,130 c=80,100 d=80,130",
+            "e=20,0 f=20,30 g=20,60 h=20,90 i=20,120 \
+             j=80,0 k=80,30 l=80,60 m=80,90 n=80,120",
+        ]
+    );
+    // A wrapper below another box, whose pieces start lower in the column.
+    let body = format!(
+        "<div style='height:40px'></div>\
+         <div class=mc><div id=p style='height:60px'></div><div>{}</div></div>",
+        boxes(14, 30, "")
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "p=0,40 a=0,100 b=0,130 c=60,40 d=60,70 e=60,100 f=60,130",
+            "g=0,0 h=0,30 i=0,60 j=0,90 k=60,0 l=60,30 m=60,60 n=60,90",
+        ]
+    );
+    // Inside the wrapper's padding.
+    let body = format!(
+        "<div style='height:100px'></div>\
+         <div class=mc><div style='padding-left:10px'>{}</div></div>{AFTER}",
+        boxes(14, 30, "")
+    );
+    assert_eq!(
+        pages(&body),
+        [
+            "a=10,100 b=10,130 c=70,100 d=70,130",
+            "z=0,150 e=10,0 f=10,30 g=10,60 h=10,90 i=10,120 \
+             j=70,0 k=70,30 l=70,60 m=70,90 n=70,120",
+        ]
+    );
+}
+
+#[test]
 fn margins_are_truncated_at_the_breaks_of_the_page_filled_columns() {
     let body = format!(
         "<div style='height:100px'></div><div class=mc>{}</div>{AFTER}",

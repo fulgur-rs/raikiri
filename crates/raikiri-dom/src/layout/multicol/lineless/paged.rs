@@ -341,7 +341,7 @@ pub(in crate::layout::multicol) fn paginate(
                 kept,
                 heights: &heights,
                 tops: &tops,
-                column_width: context.column_width,
+                context,
                 grid,
             };
             let parent = Parent {
@@ -416,7 +416,9 @@ struct Frame<'a> {
     heights: &'a [f32],
     /// Where the columns of each page kept start in the container.
     tops: &'a [f32],
-    column_width: f32,
+    /// The columns of the container, for where each column stands and how
+    /// wide.
+    context: FragmentationContext,
     grid: Columns<'a>,
 }
 
@@ -424,6 +426,11 @@ impl Frame<'_> {
     /// Where `piece` starts in the container's block axis.
     fn top_of(&self, piece: &Piece) -> f32 {
         self.tops[piece.column / self.columns] + piece.top
+    }
+
+    /// Where column `column` of a page stands in the container's inline axis.
+    fn column_offset_x(&self, column: usize) -> f32 {
+        self.context.column_offset_x(column)
     }
 }
 
@@ -500,14 +507,36 @@ fn push_inside(
         .filter(|piece| piece.column / frame.columns < frame.kept)
         .collect();
     let layout = tree.nodes[node].layout;
-    let x = layout.location.x;
     let size = layout.size;
+    // The layout of the container placed the node as far right of the
+    // wrapper's first piece as the columns of its first piece and of that
+    // one stand apart. Within the piece of the wrapper in its own column, it
+    // stands at its margin edge inside the wrapper's content box, where
+    // `justify-self` puts it.
+    let wrapper = tree.nodes[parent.node].layout;
+    let content_width = wrapper.size.width
+        - wrapper.border.left
+        - wrapper.border.right
+        - wrapper.padding.left
+        - wrapper.padding.right;
+    let rtl = style_of(tree, parent.node).direction().is_rtl();
+    let justified = crate::layout::dispatch::block_flow::justified_offset(
+        tree,
+        node,
+        rtl,
+        content_width - layout.margin.left - layout.margin.right - size.width,
+    )
+    .unwrap_or(0.0);
+    let x = wrapper.border.left + wrapper.padding.left + layout.margin.left + justified;
     let sliced = own.len() > 1 && slices_decorations(tree, node);
     let first_parent = parent.pieces.first()?;
     // The node stands as far down the wrapper as its first piece starts below
-    // the wrapper's, in the flow of the container.
+    // the wrapper's, in the flow of the container, and as far right as the
+    // column of its first piece stands from that of the wrapper's.
     out.nested.extend(own.first().map(|first| {
         let y = frame.top_of(first) - frame.top_of(first_parent);
+        let x = x + frame.column_offset_x(first.column % frame.columns)
+            - frame.column_offset_x(first_parent.column % frame.columns);
         (node, Point { x, y })
     }));
     let mut taken = 0.0f32;
@@ -532,7 +561,7 @@ fn push_inside(
             clip: (own.len() > 1).then_some(FragmentRect {
                 x: 0.0,
                 y: shift - parent_piece.top,
-                width: (x + size.width).max(frame.column_width),
+                width: (x + size.width).max(frame.context.column_width),
                 height: frame.heights[piece.column / frame.columns],
             }),
             index,
