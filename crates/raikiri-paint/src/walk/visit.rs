@@ -11,6 +11,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Visit the node of `visit`: paint it and push the frames of its
     /// children, or skip it and its subtree.
     pub(super) fn visit(&mut self, mut visit: VisitFrame) {
+        if !visit.is_fragment_visit && self.leave_escaped_clips(&visit) {
+            return;
+        }
         let document = self.document;
         if let Some(shift) =
             document.repeated_table_header_root_shift(visit.node_id, self.content_origin_y)

@@ -3127,3 +3127,155 @@ fn fitting_column_boxes_keep_public_order_and_balanced_native_clips() {
         }
     }
 }
+
+/// The bounding box of the `rgb` pixels of `pixels`, a 300px wide page,
+/// from the page area's corner, with their count.
+fn painted_area(pixels: &[u8], rgb: [u8; 3]) -> (usize, [usize; 4]) {
+    let mut area = [usize::MAX, usize::MAX, 0, 0];
+    let mut count = 0;
+    for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+        if pixel[..3] == rgb {
+            let (x, y) = (
+                (index % 300).saturating_sub(20),
+                (index / 300).saturating_sub(20),
+            );
+            area = [
+                area[0].min(x),
+                area[1].min(y),
+                area[2].max(x),
+                area[3].max(y),
+            ];
+            count += 1;
+        }
+    }
+    (count, area)
+}
+
+/// An absolutely positioned box broken across columns, whose containing
+/// block is outside an overflow clip, is not cut by the clip (CSS 2.1
+/// §11.1.1), also when empty blocks without a block size carry it. The
+/// areas are Chromium's, from the corner of the page area.
+#[test]
+fn boxes_broken_across_columns_leave_the_clips_of_blocks_inside_their_containing_block() {
+    let columns = "columns:2;column-gap:0;width:200px";
+    let green = "position:absolute;width:100%;height:200px;background:lime";
+    for (carriers, expected) in [
+        // css/css-multicol/multicol-contained-absolute.html.
+        ("<div style='overflow:hidden'>", (20000, [0, 0, 199, 99])),
+        ("<div>", (20000, [0, 0, 199, 99])),
+        // White space and boxes that are not rendered carry nothing.
+        (
+            "<div style='overflow:hidden'> <i style='display:none'>x</i> ",
+            (20000, [0, 0, 199, 99]),
+        ),
+        (
+            "<div style='overflow:hidden;opacity:0.999'>",
+            (20000, [0, 0, 199, 99]),
+        ),
+        (
+            "<div style='overflow:hidden'><div style='overflow:clip'>",
+            (20000, [0, 0, 199, 99]),
+        ),
+        // A clip of the containing block itself cuts the box.
+        (
+            "<div style='overflow:hidden;position:relative'>",
+            (0, [usize::MAX, usize::MAX, 0, 0]),
+        ),
+    ] {
+        let closing = "</div>".repeat(carriers.matches("<div").count());
+        let result = lay_out(
+            &format!(
+                "<div style='margin:-8px'><div style='{columns}'>\
+                 <div style='position:relative;height:200px'>{carriers}<div style='{green}'></div>{closing}</div></div></div>"
+            ),
+            "",
+        );
+        assert_eq!(
+            painted_area(&render_first_page(&result), [0, 255, 0]),
+            expected,
+            "{carriers}"
+        );
+    }
+    // Carrying blocks moved inline move the box with them, and a box inside
+    // a monolithic scroll container stays in it.
+    for (body, expected) in [
+        (
+            "<div style='position:relative;height:200px'><div style='overflow:hidden;margin-left:30px'>\
+             <div style='position:absolute;width:50px;height:200px;background:lime'></div></div></div>",
+            (10000, [30, 0, 179, 99]),
+        ),
+        (
+            "<div style='position:relative;height:200px;padding-left:5px'><div style='margin-left:30px'>\
+             <div style='overflow:hidden;margin-left:10px'>\
+             <div style='position:absolute;width:20px;height:200px;background:lime'></div></div></div></div>",
+            (4000, [45, 0, 164, 99]),
+        ),
+        (
+            "<div style='position:relative;height:50px;overflow:auto'><div style='overflow:hidden'>\
+             <div style='position:absolute;width:50px;height:150px;background:lime'></div></div></div>\
+             <div style='height:150px'></div>",
+            (2500, [0, 0, 49, 49]),
+        ),
+    ] {
+        let result = lay_out(
+            &format!("<div style='margin:-8px'><div style='{columns}'>{body}</div></div>"),
+            "",
+        );
+        assert_eq!(
+            painted_area(&render_first_page(&result), [0, 255, 0]),
+            expected,
+            "{body}"
+        );
+    }
+    // A box that starts lower and narrower keeps its place in both columns.
+    let result = lay_out(
+        &format!(
+            "<div style='margin:-8px'><div style='{columns}'><div style='position:relative;height:200px'>\
+             <div style='overflow:hidden'><div style='overflow:clip'>\
+             <div style='position:absolute;top:20px;left:10px;width:50px;height:160px;background:lime'></div>\
+             </div></div></div></div></div>"
+        ),
+        "",
+    );
+    assert_eq!(
+        painted_area(&render_first_page(&result), [0, 255, 0]),
+        (8000, [10, 0, 159, 99])
+    );
+}
+
+/// A fixed box inside a positioned block that clips, and an absolutely
+/// positioned box inside a block that clips and forms a stacking context,
+/// leave the clip when their containing block is outside it. The areas are
+/// Chromium's.
+#[test]
+fn boxes_painted_in_the_layer_of_a_clipping_block_leave_its_clip() {
+    let fixed = "position:fixed;top:30px;left:30px;width:60px;height:60px;background:lime";
+    for (body, expected) in [
+        (
+            format!(
+                "<div style='position:relative;overflow:hidden;height:20px;width:50px'><div style='{fixed}'></div></div>"
+            ),
+            (3600, [30, 30, 89, 89]),
+        ),
+        (
+            format!(
+                "<div style='position:relative;z-index:1;overflow:hidden;height:20px;width:50px'><div style='{fixed}'></div></div>"
+            ),
+            (3600, [30, 30, 89, 89]),
+        ),
+        (
+            "<div style='position:relative;height:100px'><div style='overflow:hidden;opacity:0.999'>\
+             <div style='position:absolute;width:100px;height:100px;background:lime'></div></div></div>"
+                .to_string(),
+            (10000, [0, 0, 99, 99]),
+        ),
+    ] {
+        let body = format!("<div style='margin:-8px'>{body}</div>");
+        let result = assert_same_order(&body, "");
+        assert_eq!(
+            painted_area(&render_first_page(&result), [0, 255, 0]),
+            expected,
+            "{body}"
+        );
+    }
+}

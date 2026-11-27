@@ -212,7 +212,12 @@ pub(super) fn place_sources(
                 .table_objects
                 .headers
                 .is_footer_source(source.node_id.0 as usize);
-        let placements = fragment_placements(source, header_placements, pages, &slots, work)?;
+        let copy_bands = document
+            .table_objects
+            .headers
+            .copy_bands(document, source.node_id.0 as usize);
+        let placements =
+            fragment_placements(source, header_placements, copy_bands, pages, &slots, work)?;
         let fragment_count = placements.len() as u32;
         for (fragment_index, placement) in placements.into_iter().enumerate() {
             if let Some(page) = pages.get_mut(placement.page_slot) {
@@ -238,6 +243,7 @@ pub(super) fn place_sources(
 fn fragment_placements(
     source: &PageFragmentSource,
     header_placements: Option<impl Iterator<Item = (u32, f32, f32)>>,
+    copy_bands: &[(f32, f32, bool)],
     pages: &[PageFragment],
     slots: &FlowSlots,
     work: &mut ProjectionWork<'_, '_>,
@@ -303,7 +309,13 @@ fn fragment_placements(
         let shift = source.painted_shift;
         let painted_y = source.abs_y + shift;
         let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-            match flow_page_overlap(painted_y, source.height, page_start, page_end) {
+            let continues = (
+                painted_y < page_start - 0.001,
+                painted_y + source.height > page_end + 0.001,
+            );
+            match flow_page_overlap(painted_y, source.height, page_start, page_end)
+                .and_then(|(y, height)| below_copies(copy_bands, continues, page_start, y, height))
+            {
                 Some((y, height)) => (true, y - shift, height),
                 None => (false, 0.0, 0.0),
             }
@@ -330,6 +342,45 @@ fn fragment_placements(
         }
     }
     Ok(placements)
+}
+
+/// The fragment at `y` with `height` on the page that starts at
+/// `page_start` in the flow, shortened where the box goes on from the page
+/// before or to the page after, as `continues` tells: it then starts below
+/// the header copies of `bands` (see [`HeaderRepeats::copy_bands`]) that
+/// cover its top, or ends at the footer copies inside it. `None` when the
+/// copies cover all of it.
+///
+/// [`HeaderRepeats::copy_bands`]: crate::layout::table::headers::HeaderRepeats::copy_bands
+fn below_copies(
+    bands: &[(f32, f32, bool)],
+    (from_before, to_after): (bool, bool),
+    page_start: f32,
+    y: f32,
+    height: f32,
+) -> Option<(f32, f32)> {
+    let mut top = page_start + y;
+    let mut bottom = top + height;
+    if !from_before && !to_after {
+        return Some((y, height));
+    }
+    // The bands do not overlap, so their ends are sorted as their starts
+    // are: only the bands from the first one ending below the top to the
+    // last one starting above the bottom can cut the fragment.
+    let first = bands.partition_point(|&(_, end, _)| end <= top);
+    for &(start, end, footer) in &bands[first..] {
+        if start >= bottom {
+            break;
+        }
+        if footer {
+            if to_after && start < bottom && end > top {
+                bottom = bottom.min(start);
+            }
+        } else if from_before && start <= top + 0.001 && end > top {
+            top = end;
+        }
+    }
+    (bottom > top + 0.001 || height <= 0.001).then_some((top - page_start, (bottom - top).max(0.0)))
 }
 
 /// The item of `page` for the fragment of `source` at `placement`, which is

@@ -44,6 +44,18 @@ pub(super) fn index_fragments(
     (by_parent_and_node, fragmented_nodes, split_nodes)
 }
 
+/// An overflow clip open around the paint that follows: the block it clips,
+/// the clip and the transform it was pushed in, and the depth of the clip
+/// scopes, opacity groups and captures right after it opened (see
+/// [`PaintWalk::layer_depth`]).
+#[derive(Clone, Copy)]
+pub(super) struct OpenOverflowClip {
+    pub(super) node_id: usize,
+    pub(super) clip: PaintClip,
+    pub(super) transform: Affine,
+    pub(super) depth: (usize, usize, usize),
+}
+
 /// Whether a clip was emitted immediately or recorded until its content
 /// proves that the scope has paint to retain.
 pub(super) enum ClipScope {
@@ -117,6 +129,11 @@ pub(super) struct PaintWalk<'w, S> {
     pub(super) deferral_scopes: Vec<DeferralLayer<'w>>,
     pub(super) stack: Vec<PaintFrame<'w>>,
     pub(super) clip_scopes: Vec<ClipScope>,
+    /// The overflow clips open around the paint that follows, innermost
+    /// last.
+    pub(super) open_overflow_clips: Vec<OpenOverflowClip>,
+    /// How many opacity groups are open.
+    pub(super) open_opacities: usize,
     pub(super) negative_levels: paint_rules::NegativeLevels,
     pub(super) negative_contexts: Vec<super::negative_levels::Context>,
     pub(super) negative_boxes: Vec<super::negative_levels::BoxCapture>,
@@ -302,6 +319,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.scene.transform = transform;
         let rect = push_overflow_clip(self.scene, clip, &self.page_box);
         self.scene.transform = saved_transform;
+        self.opened_overflow_clip(node_id, clip, transform);
         if let Some(t) = self.trace.as_deref_mut() {
             let event = crate::PaintTraceEvent::PushOverflowClip(
                 node_id,
@@ -498,17 +516,86 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.clip_scopes.push(scope);
     }
 
+    /// The depth of the clip scopes, opacity groups and captures open now.
+    /// A clip opened at the current depth is the innermost layer.
+    fn layer_depth(&self) -> (usize, usize, usize) {
+        (
+            self.clip_scopes.len(),
+            self.open_opacities,
+            self.scene.scene.capture_depth(),
+        )
+    }
+
+    /// Note that the overflow clip of block `node_id` opened, pushed in
+    /// `transform`.
+    pub(super) fn opened_overflow_clip(
+        &mut self,
+        node_id: usize,
+        clip: PaintClip,
+        transform: Affine,
+    ) {
+        let depth = self.layer_depth();
+        self.open_overflow_clips.push(OpenOverflowClip {
+            node_id,
+            clip,
+            transform,
+            depth,
+        });
+    }
+
+    /// Close the overflow clips that are open innermost around the box of
+    /// `visit` and do not cut it, and push the frames that visit it and then
+    /// reopen them. Return whether it closed any.
+    ///
+    /// An overflow clip does not cut a box whose containing block is outside
+    /// the block that clips (CSS 2.1 §11.1.1). Such a box painted in place,
+    /// as in the columns of a multi-column container, would otherwise paint
+    /// inside the clip.
+    pub(super) fn leave_escaped_clips(&mut self, visit: &VisitFrame) -> bool {
+        let mut left = Vec::new();
+        while let Some(&open) = self.open_overflow_clips.last()
+            && open.depth == self.layer_depth()
+            && paint_rules::escapes_overflow_clip(
+                self.document,
+                self.cascade,
+                open.node_id,
+                visit.node_id,
+            )
+        {
+            self.pop_clip();
+            left.push(open);
+        }
+        if left.is_empty() {
+            return false;
+        }
+        self.stack
+            .extend(left.into_iter().map(|open| PaintFrame::PushClip {
+                node_id: open.node_id,
+                clip: open.clip,
+                transform: open.transform,
+            }));
+        self.stack.push(PaintFrame::Visit(visit.clone()));
+        true
+    }
+
     fn pop_clip(&mut self) {
         if let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::PopClip);
             self.trace_clips.pop();
         }
         self.scene.pop_layer();
-        if let ClipScope::Captured { trace_start } = self
+        let scope = self
             .clip_scopes
             .pop()
-            .expect("every paint clip has a scope")
+            .expect("every paint clip has a scope");
+        while self
+            .open_overflow_clips
+            .last()
+            .is_some_and(|open| open.depth.0 > self.clip_scopes.len())
         {
+            self.open_overflow_clips.pop();
+        }
+        if let ClipScope::Captured { trace_start } = scope {
             let captured = self.scene.scene.end_capture();
             let traced_paint =
                 trace_start
@@ -535,6 +622,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Open the opacity group of a translucent inline element around a box
     /// laid out beside its paragraph's lines.
     fn push_opacity(&mut self, node_id: usize, alpha: f32) {
+        self.open_opacities += 1;
         if let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::PushOpacity(node_id, alpha));
         }
@@ -554,6 +642,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     }
 
     fn pop_opacity(&mut self) {
+        self.open_opacities = self.open_opacities.saturating_sub(1);
         if let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::PopOpacity);
         }
