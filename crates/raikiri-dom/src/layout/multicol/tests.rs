@@ -2490,6 +2490,18 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         &["display:block;width:10px;height:150px;break-before:column"],
         true
     ));
+    // Rows of a length give a grid a block size of its own; rows sized by
+    // their content, a fraction or a percentage do not.
+    for (grid, sized) in [
+        ("display:grid;grid-template-rows:repeat(2, 30px)", true),
+        ("display:grid;grid-auto-rows:30px", true),
+        ("display:grid;grid-template-rows:auto 1fr", false),
+        ("display:grid;grid-template-rows:50%", false),
+    ] {
+        assert_eq!(supported(grid, &["display:block"], true), sized, "{grid}");
+    }
+    // Implicit rows of a length size nothing without items to place in them.
+    assert!(!supported("display:grid;grid-auto-rows:30px", &[], true));
     // A background inside the box stays inside the clip, and so do block
     // edges that are cut with the box, or that have nothing to repeat.
     for held in [

@@ -447,7 +447,7 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
         || is_right_aligned_in_parent(tree, child))
 }
 
-/// The most boxes a flex container may hold and still be sliced whole, so
+/// The most boxes a flex or grid container may hold and still be sliced whole, so
 /// that checking a very large one stays cheap.
 const MAX_SLICED_FLEX_BOXES: usize = 256;
 
@@ -544,12 +544,13 @@ fn sliceable_flex_container(
         holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
         let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
-        // Explicit rows give a grid container a block size of its own.
+        // Rows of a length give a grid container a block size of its own.
         sized |= has_block_size(&style)
             || node.display() == DisplayValue::Grid
-                && style
-                    .grid_template_rows()
-                    .is_some_and(|rows| rows.len() > 0);
+                && crate::layout::taffy_adapter::rows_have_a_length(
+                    &style,
+                    !in_flow_elements(tree, id).is_empty(),
+                );
         // A break before the first box in flow inside a block, or after the
         // last, is a break before or after the block itself (CSS
         // Fragmentation 3, 3.1), and one before or after a flex item falls
@@ -644,7 +645,7 @@ fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
         && (height.is_auto() || style_dimension_length(height).is_some())
 }
 
-/// Whether `id`, a flex container or a box inside one, can be sliced with
+/// Whether `id`, a flex or grid container or a box inside one, can be sliced with
 /// the rest of the container (see [`sliceable_flex_container`]).
 ///
 /// `breaks` says whether a forced column break before and after `id` is one
@@ -695,8 +696,8 @@ fn is_sliceable_flex_box(
         && !(node.clones_box_decorations && has_block_edge_decorations(&style))
 }
 
-/// Whether forced breaks before and after the flex items of a container with
-/// `style` fall between them: between the items of a single-line column
+/// Whether forced breaks before and after the items of the flex or grid
+/// container `id` fall between them: between the items of a single-line column
 /// container, which stack along the block axis, and between the lines of a
 /// row container, which take the breaks of their items (CSS Flexbox 1, 12).
 /// A multi-line column container breaks each of its lines on its own, and
@@ -833,7 +834,7 @@ fn flex_lines(
     lines
 }
 
-/// The forced column breaks of `child`, a flex container the stream slices
+/// The forced column breaks of `child`, a flex or grid container the stream slices
 /// whole (see [`sliceable_flex_container`]), laid out with a border box
 /// `height` tall. A break before the first line of items is a break before
 /// the container, and one after the last a break after it.

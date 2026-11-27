@@ -56,3 +56,20 @@ fn items_side_by_side_are_cut_at_the_same_column_end() {
     );
 }
 
+#[test]
+fn implicit_rows_of_a_length_are_cut_where_the_columns_end() {
+    expect(
+        &columns(
+            "balance",
+            "<div id=f style='display:grid;grid-auto-rows:30px'><div id=a></div><div id=b></div>\
+             <div id=c></div><div id=d></div><div id=e></div></div>",
+        ),
+        &[
+            ("a", &[(0, 0, 100, 30)]),
+            ("b", &[(0, 30, 100, 8), (100, 0, 100, 23)]),
+            ("c", &[(100, 23, 100, 15), (200, 0, 100, 15)]),
+            ("d", &[(200, 15, 100, 23), (300, 0, 100, 8)]),
+            ("e", &[(300, 8, 100, 30)]),
+        ],
+    );
+}
