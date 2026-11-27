@@ -1916,9 +1916,9 @@ struct Item {
 
 pub(super) const EPSILON: f32 = 0.001;
 
-/// How many taller column heights balancing tries when monolithic boxes move
-/// to later columns, before the boxes that do not fit continue in overflow
-/// columns.
+/// How many taller balanced column heights balancing tries when monolithic
+/// boxes move to later columns, before it bisects for the shortest height
+/// where the content fits.
 const MAX_MONOLITHIC_BALANCE_ATTEMPTS: usize = 8;
 
 /// Why a placement stopped before the end of the stream.
@@ -3493,24 +3493,60 @@ pub(super) fn layout(
                 .fold(column_height, f32::max);
             column_height = limit.map_or(tallest, |limit| tallest.min(limit));
         }
-        let mut attempts = 0;
-        loop {
+        let reaches_limit = |height: f32| limit.is_some_and(|limit| height >= limit - EPSILON);
+        // Whether the content, with the moves at `height`, fits in the
+        // columns there are.
+        let mut fits = |height: f32,
+                        items: &mut Vec<Item>,
+                        sizes: &mut Vec<Size<f32>>|
+         -> Option<(bool, Vec<Option<monolithic::Pushes>>)> {
             items.clone_from(&base_items);
             sizes.clone_from(&base_sizes);
-            pushes = push_all(tree, &mut items, &mut sizes, column_height)?;
-            // Past the last attempt, what does not fit continues in overflow
-            // columns.
-            let settled = !balances
-                || limit.is_some_and(|limit| column_height >= limit - EPSILON)
-                || attempts == MAX_MONOLITHIC_BALANCE_ATTEMPTS
-                || place_items(tree, &items, column_height)?.columns_used() <= context.column_count;
-            if settled {
+            let pushes = push_all(tree, items, sizes, height)?;
+            let fits = place_items(tree, items, height)?.columns_used() <= context.column_count;
+            Some((fits, pushes))
+        };
+        let mut attempts = 0;
+        let mut fitted = !balances;
+        loop {
+            let (fit, moved) = fits(column_height, &mut items, &mut sizes)?;
+            pushes = moved;
+            fitted |= fit;
+            if fitted || reaches_limit(column_height) || attempts == MAX_MONOLITHIC_BALANCE_ATTEMPTS
+            {
                 break;
             }
             attempts += 1;
             let taller =
                 balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0);
             column_height = limit.map_or(taller, |limit| taller.min(limit));
+        }
+        if !fitted && !reaches_limit(column_height) {
+            // The balanced heights grow too slowly: bisect between the last
+            // one and a height that holds all the content in one column,
+            // where nothing moves, or the limit. Past the limit, what does
+            // not fit continues in overflow columns.
+            let whole: f32 = base_items
+                .iter()
+                .map(|item| item.margin_top + item.height + item.margin_bottom)
+                .sum();
+            let low = column_height;
+            let high = whole.max(low);
+            let high = limit.map_or(high, |limit| high.min(limit));
+            fitted = fits(high, &mut items, &mut sizes)?.0;
+            // Bisect in layout units, so the height found is a whole number
+            // of them, as a length the content fits exactly is.
+            let (mut low, mut high) = ((low * 64.0).floor(), (high * 64.0).ceil());
+            while fitted && high - low > 1.0 {
+                let middle = ((low + high) / 2.0).floor();
+                if fits(middle / 64.0, &mut items, &mut sizes)?.0 {
+                    high = middle;
+                } else {
+                    low = middle;
+                }
+            }
+            column_height = high / 64.0;
+            pushes = fits(column_height, &mut items, &mut sizes)?.1;
         }
     }
     let column_height = column_height;

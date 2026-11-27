@@ -146,6 +146,35 @@ fn balanced_columns_are_as_tall_as_the_tallest_monolithic_box() {
 }
 
 #[test]
+fn balanced_columns_grow_until_the_moved_boxes_fit() {
+    // Each taller balanced height moves only one box; the columns still
+    // reach the 40px where the eleven boxes fit in pairs in ten columns.
+    // In 39px columns, they stop there, one box a column, and the last
+    // one continues in an overflow column.
+    let boxes: String = (0..11)
+        .map(|i| format!("<div id=m{i} style='contain:size;height:20px'></div>"))
+        .collect();
+    for (height, column, per_column) in [("auto", 40, 2), ("39px", 39, 1)] {
+        let body = format!(
+            "<div style='columns:10;column-gap:0;width:1000px;column-fill:balance;height:{height}'>\
+             <div style='display:flex;flex-direction:column'>{boxes}</div></div>"
+        );
+        // The pieces of the container all hold the whole content, translated:
+        // keep what each column shows, inside its height.
+        let got = crate::multicol_flex_forced_break_surface::visible(&body);
+        for i in 0..11 {
+            let shown: Vec<_> = got[&format!("m{i}")]
+                .iter()
+                .filter(|rect| rect.1 >= 0 && rect.1 + rect.3 <= column)
+                .copied()
+                .collect();
+            let rect = (i / per_column * 100, i % per_column * 20, 100, 20);
+            assert_eq!(shown, [rect], "m{i} in {body}");
+        }
+    }
+}
+
+#[test]
 fn items_move_in_flex_order() {
     // The items of a column container are laid out in `order`.
     expect(
