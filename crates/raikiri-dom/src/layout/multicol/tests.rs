@@ -2362,6 +2362,139 @@ fn a_no_break_space_gives_a_flex_item_a_line() {
 }
 
 #[test]
+fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
+    // A table of one row of 150px whose cell holds `content`.
+    let supported_in_row = |table: &str, row: &str, cell: &str, content: Option<&str>| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+        );
+        let table = doc.append_element(Some(parent), "div", Some(table));
+        let row = doc.append_element(Some(table), "div", Some(row));
+        let cell = doc.append_element(Some(row), "div", Some(cell));
+        // Each `|` in `content` nests the next box in the one before it.
+        let mut holder = cell;
+        for css in content.into_iter().flat_map(|content| content.split('|')) {
+            holder = doc.append_element(Some(holder), "div", Some(css));
+        }
+        layout_nested_flex_float_fixture(&mut doc);
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported_with_wrappers(session, parent)
+        })
+        .is_some()
+    };
+    let row = "display:table-row;height:150px";
+    let supported = |table: &str, cell: &str, content: Option<&str>| {
+        supported_in_row(table, row, cell, content)
+    };
+    let table = "display:table;width:100%;border-spacing:0";
+    let cell = "display:table-cell";
+    assert!(supported(table, cell, None));
+    // A break between rows drops the vertical border spacing there, unless
+    // the borders collapse, which leaves no spacing.
+    assert!(!supported(
+        "display:table;width:100%;border-spacing:2px",
+        cell,
+        None
+    ));
+    assert!(!supported(
+        "display:table;width:100%;border-spacing:0 2px",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-spacing:2px 0",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-collapse:collapse",
+        cell,
+        None
+    ));
+    // Block borders of a cell, and content that its alignment moves.
+    assert!(!supported(
+        table,
+        "display:table-cell;border-top:2px solid",
+        None
+    ));
+    assert!(!supported(
+        table,
+        "display:table-cell;border-bottom:2px solid",
+        None
+    ));
+    assert!(supported(table, "display:table-cell;padding:5px", None));
+    assert!(supported(
+        table,
+        "display:table-cell;border-left:2px solid",
+        None
+    ));
+    let held = Some("display:block;height:30px");
+    assert!(!supported(table, cell, held));
+    assert!(!supported(
+        table,
+        "display:table-cell;vertical-align:middle",
+        held
+    ));
+    assert!(supported(
+        table,
+        "display:table-cell;vertical-align:top",
+        held
+    ));
+    // The block borders of a table that collapses its borders, and those of
+    // its rows, collapse with those of the cells. A table that keeps its
+    // borders apart is cut with its own.
+    assert!(!supported(
+        "display:table;width:100%;border-collapse:collapse;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-spacing:0;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(!supported_in_row(
+        table,
+        "display:table-row;height:150px;border-bottom:2px solid",
+        cell,
+        None
+    ));
+    // The static position of an absolutely positioned box in a cell follows
+    // its alignment too.
+    let absolute = Some("position:absolute;width:10px;height:10px");
+    assert!(!supported(
+        table,
+        "display:table-cell;position:relative",
+        absolute
+    ));
+    // A box of a size of its own in a cell may hold boxes that reach past
+    // the table, which is not laid out yet when the strategy is chosen.
+    let top = "display:table-cell;vertical-align:top";
+    for (held, sliced) in [
+        ("display:block;height:30px|display:block;height:60px", false),
+        (
+            "display:block;max-height:30px|display:block;height:60px",
+            false,
+        ),
+        ("display:block;height:30px", true),
+        ("display:block|display:block;height:60px", true),
+    ] {
+        assert_eq!(supported(table, top, Some(held)), sliced, "{held}");
+    }
+    // Lines in a cell keep the table with the other strategies.
+    assert!(!supported(
+        table,
+        "display:table-cell;vertical-align:top",
+        Some("display:inline-block;height:10px;width:10px")
+    ));
+}
+
+#[test]
 fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     let supported = |flex: &str, held: &[&str], outermost: bool| {
         let mut doc = Document::new();
@@ -6404,13 +6537,13 @@ fn a_paragraph_in_the_columns_of_another_container_is_not_split_in_groups() {
 }
 
 #[test]
-fn a_container_with_a_height_is_not_split_in_groups() {
+fn a_container_with_a_height_is_split_in_groups_too() {
     let (mut doc, container, _) = column_container(
         "height:200px",
         &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)],
     );
     lay_out_in_ahem(&mut doc, 180.0, 400.0);
-    assert!(doc.nodes[container].multicol_groups.is_empty());
+    assert_eq!(doc.nodes[container].multicol_groups.len(), 2);
 }
 
 /// A flex container that aligns its items by their baselines: a box of one
