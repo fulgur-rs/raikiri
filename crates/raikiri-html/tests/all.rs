@@ -107,6 +107,7 @@ mod mixed_paragraph_lines_after_block_page_break_surface;
 mod multicol_balanced_trailing_margin;
 mod multicol_block_content_alignment;
 mod multicol_button_surface;
+mod multicol_flex_forced_break_surface;
 mod multicol_float_wrapper_surface;
 mod multicol_flow_root_surface;
 mod multicol_last_line_edge_surface;
