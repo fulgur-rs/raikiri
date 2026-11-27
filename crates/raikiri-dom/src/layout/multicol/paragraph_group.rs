@@ -300,7 +300,9 @@ impl Flow {
         // `holds_one_row_of_lines`). Its lines are known only once it is laid
         // out at the column width, as the entries are. Inside a wrapper, its
         // one row goes to one column as a wrapper.
-        if !is_flow_wrapper(tree, id)
+        // The page stream, which passes no `pieces`, starts a column at a
+        // forced break before or after a wrapper.
+        if !flow_wrapper(tree, id, !pieces)
             || !pieces && paints_pieces(tree, id)
             || parent.is_none()
                 && layout_node(tree, id).display() == DisplayValue::FlowRoot
@@ -478,6 +480,12 @@ fn starts_formatting_context(node: &crate::node::Node) -> bool {
 /// boxes break, a piece in each column it reaches, as one effect painted over
 /// the whole box could not be.
 pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    flow_wrapper(tree, id, false)
+}
+
+/// [`is_flow_wrapper`] that, with `breaks`, lets the wrapper force a column
+/// break before or after itself.
+fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
     let node = layout_node(tree, id);
     if node.kind() != NodeKind::Element
         || node.ifc.is_some()
@@ -494,7 +502,11 @@ pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
             node.display(),
             DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
         )
-        || !lineless::is_plain_box_apart_from_display(tree, id, false)
+        || !if breaks {
+            lineless::is_plain_box_apart_from_display_and_breaks(tree, id)
+        } else {
+            lineless::is_plain_box_apart_from_display(tree, id, false)
+        }
     {
         return false;
     }
@@ -585,6 +597,9 @@ struct Paragraph {
     /// falls where its content ends, and they go on alone at the top of the
     /// next column (Chromium).
     slice_edges: (f32, f32),
+    /// A forced column break comes before the box, from its own
+    /// `break-before` or the `break-after` of the box before it.
+    break_before: bool,
     /// A paragraph that avoids breaks between columns inside it
     /// (`break-inside: avoid` or `avoid-column`): it goes on whole to the
     /// next column when the rest of its column is too short for it, and
@@ -608,6 +623,7 @@ impl Paragraph {
     /// then set. `lines` is the number of lines it holds, if any.
     fn whole_box(height: f32, margin_top: f32, margin_bottom: f32, lines: Option<usize>) -> Self {
         Self {
+            break_before: false,
             opens: None,
             closes: false,
             sized_leaf: false,
@@ -649,7 +665,7 @@ pub(super) fn balance(
         high,
         room,
         sized_leaf,
-    } = collect(tree, &flow, true, BlockEdges::Refused, true, None)?;
+    } = collect(tree, &flow, true, BlockEdges::Refused, true, None, false)?;
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place, a sized
     // box with no lines stands beside the paragraph, which the columns slice,
@@ -811,10 +827,13 @@ fn divided_height(
         column_count: 1,
         ..context
     };
-    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?
-        .group
-        .height;
-    Some(stacked / context.column_count as f32)
+    // A forced break between what remains ends the one column, so there is
+    // no such height: the least height that holds what remains stands.
+    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?;
+    stacked
+        .next
+        .is_none()
+        .then(|| stacked.group.height / context.column_count as f32)
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
@@ -833,7 +852,15 @@ pub(super) fn fill_definite(
         high: ceiling,
         room,
         ..
-    } = collect(tree, &flow, true, BlockEdges::Sliced, true, Some(height))?;
+    } = collect(
+        tree,
+        &flow,
+        true,
+        BlockEdges::Sliced,
+        true,
+        Some(height),
+        false,
+    )?;
     let flow = flow.has_wrappers().then_some(flow);
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place.
@@ -1001,6 +1028,9 @@ fn piece_lines(
 /// The entries of `flow` inside its wrappers may also be sized boxes with no
 /// lines, and the start and end of a wrapper may have padding: both are room
 /// besides the paragraphs, which [`Collected::room`] notes.
+/// With `forced`, the flow may have forced column breaks between its boxes,
+/// which [`Paragraph::break_before`] notes; only the page stream, whose fill
+/// starts a column at each, passes that.
 fn collect(
     tree: &LayoutSession<'_>,
     flow: &Flow,
@@ -1008,6 +1038,7 @@ fn collect(
     edges: BlockEdges,
     sized: bool,
     boxes: Option<f32>,
+    forced: bool,
 ) -> Option<Collected> {
     let entries = &flow.entries;
     let mut paragraphs = Vec::with_capacity(entries.len());
@@ -1041,6 +1072,7 @@ fn collect(
             high += edge + margin_top.abs() + margin_bottom.abs();
             let separates = edge > 0.0 || starts_formatting_context(layout_node(tree, child));
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 opens: match role {
                     Role::Open(close) if separates => Some(close),
                     _ => None,
@@ -1085,6 +1117,7 @@ fn collect(
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             room = true;
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 sized_leaf: true,
                 sliced,
                 slice_edges: own_slice_edges(tree, child, sliced, &layout),
@@ -1109,6 +1142,7 @@ fn collect(
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             let whole = Paragraph::whole_box(output.size.height, margin_top, margin_bottom, None);
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 opens: None,
                 closes: false,
                 sliced,
@@ -1166,6 +1200,7 @@ fn collect(
                 && node.layout_position() == Position::Static
                 && node.ifc.as_ref().is_some_and(|root| root.boxes.is_empty());
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 opens: None,
                 closes: false,
                 sliced,
@@ -1198,6 +1233,7 @@ fn collect(
                 .map(|lines| lines.lines.len());
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 opens: None,
                 closes: false,
                 overflows: true,
@@ -1256,8 +1292,8 @@ fn collect(
             || !(matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                 || node.display() == DisplayValue::FlowRoot && node.ifc.is_some())
             || is_right_aligned_in_parent(tree, child)
-            || sets_break_in_columns(node.break_before)
-            || sets_break_in_columns(node.break_after)
+            || refuses_break(node.break_before, forced)
+            || refuses_break(node.break_after, forced)
             || node.has_before_or_after_content
             || multicol_subtree_has_float(tree, child)
             || !margin_top.is_finite()
@@ -1269,6 +1305,7 @@ fn collect(
             has_empty = true;
             high += margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
+                break_before: false,
                 opens: None,
                 closes: false,
                 sized_leaf: false,
@@ -1305,6 +1342,7 @@ fn collect(
         high += height + margin_top.abs() + margin_bottom.abs();
         let (edge_start, edge_end) = block_edges(&layout);
         paragraphs.push(Some(Paragraph {
+            break_before: false,
             opens: None,
             closes: false,
             sized_leaf: false,
@@ -1329,6 +1367,40 @@ fn collect(
         }));
         paragraph_count += 1;
     }
+    if forced {
+        // A forced break between two boxes comes before the second, and one
+        // before the first box of a wrapper, or after its last, comes before
+        // or after the wrapper (CSS Fragmentation 3, 3.1). White space
+        // between them takes no part.
+        let mut after = false;
+        for index in 0..entries.len() {
+            if paragraphs[index].is_none() {
+                continue;
+            }
+            let node = layout_node(tree, entries[index].0);
+            let role = flow.roles[index];
+            if role == Role::Close {
+                after |= node.break_after == BreakBetween::Column;
+                continue;
+            }
+            // The outermost wrapper that starts with this box.
+            let mut start = index;
+            let mut probe = index;
+            while let Some(previous) = probe.checked_sub(1) {
+                probe = previous;
+                match flow.roles[probe] {
+                    Role::Open(_) => start = probe,
+                    _ if paragraphs[probe].is_none() => {}
+                    _ => break,
+                }
+            }
+            let forced_before = after || node.break_before == BreakBetween::Column;
+            paragraphs[start]
+                .iter_mut()
+                .for_each(|paragraph| paragraph.break_before |= forced_before);
+            after = role == Role::Box && node.break_after == BreakBetween::Column;
+        }
+    }
     Some(Collected {
         paragraphs,
         paragraph_count,
@@ -1337,6 +1409,13 @@ fn collect(
         room,
         sized_leaf,
     })
+}
+
+/// Whether a box with `value` before or after it is left to the other
+/// strategies: with `forced`, all but a forced column break, which Chromium
+/// takes, as it does not take `always` inside columns.
+fn refuses_break(value: BreakBetween, forced: bool) -> bool {
+    sets_break_in_columns(value) && !(forced && value == BreakBetween::Column)
 }
 
 /// What [`collect`] makes of the entries of a flow.
@@ -1551,29 +1630,59 @@ fn fill_chunk_with(
     // A monolithic box that runs past the end of its column.
     let mut overflowed = false;
     let mut column_has_content = false;
+    // The column that last took an empty box, which a forced break after it
+    // leaves behind as it does content.
+    let mut empty_box_column = None;
     // The margins that adjoin through empty boxes and the paragraph after them
     // were cut at a break, and stay cut until that paragraph.
     let mut cut_margins = resume != FlowCursor::default()
-        && paragraphs
-            .get(resume.paragraph)
-            .is_some_and(|resumed| resumed.as_ref().is_some_and(|box_| box_.extents.is_empty()));
+        && paragraphs.get(resume.paragraph).is_some_and(|resumed| {
+            resumed
+                .as_ref()
+                .is_some_and(|box_| box_.extents.is_empty() && !box_.break_before)
+        });
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
         placements.push(None);
         let slot = placements.len() - 1;
         let Some(paragraph) = paragraph else {
             continue;
         };
-        let (entry_column, entry_y) = (column, cursor);
         let initial_line = if paragraph_index == resume.paragraph {
             resume.line
         } else {
             0
         };
-        // A break discards the margin above the paragraph it ends up before,
-        // so a paragraph resumed from its start has none either.
-        let at_resumed_start =
-            paragraph_index == resume.paragraph && resume != FlowCursor::default();
-        let mut adjoining = if cut_margins {
+        // A forced break after content, an empty box included, starts the
+        // next column, and the margins before it are cut (CSS Fragmentation
+        // 3, 5.2).
+        if paragraph.break_before
+            && initial_line == 0
+            && (column_has_content || empty_box_column == Some(column))
+        {
+            maximum = maximum.max(cursor);
+            column = column.checked_add(1)?;
+            if column >= context.column_count {
+                return Some(Chunk {
+                    group: finish_group(placements, height),
+                    next: Some(FlowCursor {
+                        paragraph: paragraph_index,
+                        line: 0,
+                    }),
+                });
+            }
+            cursor = 0.0;
+            column_has_content = false;
+            pending_margin = Margins::default();
+            cut_margins = false;
+        }
+        let (entry_column, entry_y) = (column, cursor);
+        // An unforced break discards the margin above the paragraph it ends
+        // up before, so a paragraph resumed from its start has none either,
+        // unless a forced break came before it, which keeps the margin.
+        let at_resumed_start = paragraph_index == resume.paragraph
+            && resume != FlowCursor::default()
+            && !paragraph.break_before;
+        let mut adjoining = if cut_margins && !paragraph.break_before {
             Margins::default()
         } else {
             pending_margin.with(if initial_line == 0 && !at_resumed_start {
@@ -1606,6 +1715,7 @@ fn fill_chunk_with(
                 cut_margins = true;
                 adjoining = Margins::default();
             }
+            empty_box_column = Some(column);
             // Retain both extrema across empty boxes: collapsing their summed
             // margins again would lose the negative member of the chain.
             pending_margin = if cut_margins {
@@ -2227,6 +2337,7 @@ pub(super) fn fill_rows(
         BlockEdges::Refused,
         false,
         None,
+        false,
     )
     .ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
@@ -2444,7 +2555,7 @@ pub(super) fn paginate(
         high: ceiling,
         room: false,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Refused, false, None)
+    }) = collect(tree, &flow, false, BlockEdges::Refused, false, None, true)
     else {
         return Ok(None);
     };
