@@ -24,7 +24,7 @@ pub(crate) type Rect = (i32, i32, i32, i32);
 /// piece shows what the next one does not, and the boxes in `f` show only
 /// where the piece in their column does. Elements with ids starting with `o`
 /// are outside `f`.
-fn visible(body: &str) -> BTreeMap<String, Vec<Rect>> {
+pub(crate) fn visible(body: &str) -> BTreeMap<String, Vec<Rect>> {
     let html = format!(
         "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
          body {{ margin: 0; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
