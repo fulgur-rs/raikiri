@@ -134,6 +134,7 @@ mod multicol_span;
 mod multicol_spanner_lines_bounded_height_surface;
 mod multicol_stretched_flex_item;
 mod multicol_surface;
+mod multicol_table_slice_surface;
 mod multicol_widows_across_columns;
 mod multicol_wrapped_paragraphs_surface;
 mod multicol_wrapper_padding_surface;
