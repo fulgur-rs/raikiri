@@ -2165,7 +2165,8 @@ pub(crate) fn paint_document_impl(
     let root_font_size = cascade.computed[root_id].font_size.px();
     let canvas_owner = canvas_background_owner(document, cascade);
     let layout_fragments = document.layout_fragments();
-    let (fragments_by_parent_and_node, fragmented_nodes) = index_fragments(layout_fragments);
+    let (fragments_by_parent_and_node, fragmented_nodes, split_nodes) =
+        index_fragments(layout_fragments);
 
     let geometry = PageGeometry::new(
         document,
@@ -2205,6 +2206,7 @@ pub(crate) fn paint_document_impl(
         layout_fragments,
         fragments_by_parent_and_node,
         fragmented_nodes,
+        split_nodes,
         // The document, cascade, and counter snapshots are stable for this
         // pass, so each node's generated flow height is computed once and
         // reused.
