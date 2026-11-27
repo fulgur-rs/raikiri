@@ -2402,9 +2402,61 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     assert!(!supported(sized, &[item], false));
     // A box the container holds that breaks, clips or paints on its own
     // terms.
+    // A forced column break before or after a flex item falls between the
+    // items, or before or after the container.
     for held in [
-        "display:block;break-before:column",
-        "display:block;break-after:column",
+        "display:block;width:10px;height:150px;break-before:column",
+        "display:block;width:10px;height:150px;break-after:column",
+    ] {
+        assert!(supported("display:flex", &[held], true), "{held}");
+        // A container with a block size of its own would not grow with the
+        // items that a break moves down.
+        assert!(!supported(sized, &[held], true), "{held}");
+        // Nor would a box placed against its bottom, or the paint of an
+        // item moved by a relative offset, follow them.
+        assert!(!supported(
+            "display:flex;position:relative",
+            &[
+                held,
+                "display:block;position:absolute;bottom:0;width:10px;height:10px"
+            ],
+            true
+        ));
+        assert!(!supported(
+            "display:flex",
+            &[
+                held,
+                "display:block;position:relative;top:5px;width:10px;height:10px"
+            ],
+            true
+        ));
+    }
+    // A box that a negative margin pulls up over the one before it would
+    // stay on the wrong side of the break.
+    for pulled in [["", "margin-top:-20px"], ["margin-bottom:-35px", ""]] {
+        assert!(!supported(
+            "display:flex;flex-direction:column",
+            &[
+                &format!("display:block;width:10px;height:150px;{}", pulled[0]),
+                &format!(
+                    "display:block;width:10px;height:20px;break-before:column;{}",
+                    pulled[1]
+                ),
+            ],
+            true
+        ));
+    }
+    // A box placed from the top stays where it is.
+    assert!(supported(
+        "display:flex;position:relative",
+        &[
+            "display:block;width:10px;height:150px;break-after:column",
+            "display:block;position:absolute;top:5px;width:10px;height:10px"
+        ],
+        true
+    ));
+    for held in [
+        "display:block;break-before:avoid",
         "display:block;break-inside:avoid",
         // A container that holds a flex container keeps its absolutely
         // positioned boxes in its flow.
