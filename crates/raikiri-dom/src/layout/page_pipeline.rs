@@ -6166,7 +6166,7 @@ fn paginate_flow(
         }
         return Ok(Vec::new());
     }
-    place_repeated_table_footers(document, &mut state.table_headers, &page_origins);
+    place_repeated_table_footers(document, cascade, &mut state.table_headers, &page_origins);
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
@@ -8796,7 +8796,12 @@ impl AvoidedBreaks {
         let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
         // The last row of a table moves to the next page with the edges that
         // close the table when they do not fit after it.
-        let item_tail = item_tail_move(candidate, fit);
+        let item_tail = candidate.context.item_tail_edges() > 0.0
+            && item_tail_move(
+                candidate,
+                fit,
+                edges_beyond_broken_ancestor(document, cascade, node_id, page_start),
+            );
         let page = page
             || (item_tail
                 && !candidate.context.is_table_row()
@@ -13381,8 +13386,11 @@ fn unbreakable_box_moves(
 /// avoided break gives way and the page breaks before the block, as browsers
 /// do. While the first box sits further down the page, the run moves as a
 /// whole instead, and the block does not move on its own.
-fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    let edges = candidate.context.closing_edges();
+///
+/// The `outer` edges of the blocks around one that goes on from an earlier
+/// page do not follow the box (see [`edges_beyond_broken_ancestor`]).
+fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit, outer: f32) -> bool {
+    let edges = (candidate.context.closing_edges() - outer).max(0.0);
     let inside = candidate.context.closing_edges_inside();
     let span = candidate.context.closing_edges_span();
     let reach = candidate.context.closing_edges_float_reach();
@@ -13416,6 +13424,84 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
             page_start,
             page_end,
         )
+}
+
+/// The bottom padding and border of the blocks around the nearest ancestor
+/// of the box `node_id` that began on an earlier page than `page_start`,
+/// among the blocks the box ends; zero when the box ends no such ancestor.
+///
+/// When the edges that close the blocks around a box do not fit its page,
+/// Chromium breaks before that box only inside the blocks that begin on the
+/// page. A block that goes on from an earlier page keeps the box: the edges
+/// of the blocks around that block do not pull it along, while its own edges
+/// still do. A footer group ends its table wherever it is written.
+fn edges_beyond_broken_ancestor(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    page_start: f32,
+) -> f32 {
+    let body_id = super::page::find_body(document).unwrap_or(document.root);
+    let mut outer = 0.0;
+    let mut broken = false;
+    let mut id = node_id;
+    while let Some(parent) = document.layout_parent_of(id) {
+        let ends_parent = document.nodes[id].display() == DisplayValue::TableFooterGroup
+            || last_flow_child(document, cascade, parent) == Some(id);
+        if !ends_parent {
+            break;
+        }
+        // An element that generates no box lends its boxes to its parent.
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            id = parent;
+            continue;
+        }
+        if broken {
+            let layout = &document.nodes[parent].layout;
+            outer += layout.padding.bottom + layout.border.bottom;
+        } else {
+            broken = box_start_y(document, cascade, body_id, parent) < page_start - 0.001;
+        }
+        id = parent;
+    }
+    outer
+}
+
+/// Where the box `node_id` begins in the flow as pagination has placed it so
+/// far, in normal-flow positions: the relative offsets of the box and of its
+/// ancestors only paint it elsewhere. A table or row group that moves to the
+/// next page with its first row keeps its own position, so its start is that
+/// of its first body row; the groups a table repeats and the boxes that are
+/// not rows stay where they are written.
+fn box_start_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let flow_y = |id| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    let top = flow_y(node_id);
+    let rows = match document.nodes[node_id].display() {
+        DisplayValue::Table | DisplayValue::InlineTable => document
+            .children_through_contents(node_id)
+            .into_iter()
+            .flat_map(|child| match document.nodes[child].display() {
+                DisplayValue::TableRowGroup => document.children_through_contents(child),
+                _ => vec![child],
+            })
+            .collect::<Vec<_>>(),
+        DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup => document.children_through_contents(node_id),
+        _ => return top,
+    };
+    rows.into_iter()
+        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+        .map(flow_y)
+        .min_by(f32::total_cmp)
+        .unwrap_or(top)
 }
 
 /// Where the lines in the flow of the box `node_id` end, from the top of its
@@ -13506,9 +13592,9 @@ fn lines_cross_page_end(
 /// browsers do: a break between boxes beats one between the box and the edges
 /// even when it is avoided. The box must end within its own page, and the next
 /// page must hold it.
-fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit, outer: f32) -> bool {
     tail_edges_move(
-        candidate.context.run_tail_edges(),
+        (candidate.context.run_tail_edges() - outer).max(0.0),
         candidate.context.closing_edges_float_reach(),
         candidate,
         fit,
@@ -13519,8 +13605,16 @@ fn run_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
 /// last row of a table, moves to the next page with the `item_tail_edges` that
 /// close the container, so that those edges do not break away from it: the
 /// break between items or rows is the better one (see [`tail_edges_move`]).
-fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
-    tail_edges_move(candidate.context.item_tail_edges(), 0.0, candidate, fit)
+///
+/// The `outer` edges of the blocks around one that goes on from an earlier
+/// page do not follow the box (see [`edges_beyond_broken_ancestor`]).
+fn item_tail_move(candidate: &PageCandidate, fit: &BoxFit, outer: f32) -> bool {
+    tail_edges_move(
+        (candidate.context.item_tail_edges() - outer).max(0.0),
+        0.0,
+        candidate,
+        fit,
+    )
 }
 
 /// Whether `node_id` is a flex container that [`flex_margins_move`] may move
@@ -20239,6 +20333,7 @@ fn make_room_for_header_copy(
 /// down than `flow_shift` alone the footer went.
 fn place_table_footer(
     document: &mut Document,
+    cascade: &CascadeResult,
     table_headers: &mut HeaderRepeats,
     footer_id: usize,
     flow_shift: f32,
@@ -20254,12 +20349,19 @@ fn place_table_footer(
     let mut page = page_origins.page_index_for_y(y + 0.001);
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let next = page.saturating_add(1);
-    let edges_move = footer.closing_edges > 0.0
+    let closing_edges = if footer.closing_edges > 0.0 {
+        (footer.closing_edges
+            - edges_beyond_broken_ancestor(document, cascade, footer_id, page_origins.origin(page)))
+        .max(0.0)
+    } else {
+        0.0
+    };
+    let edges_move = closing_edges > 0.0
         && y + footer.height <= page_end + 0.001
         && avoided_box_moves(
             y,
             0.0,
-            y + footer.height + footer.closing_edges,
+            y + footer.height + closing_edges,
             page_origins.origin(page),
             page_end,
         );
@@ -20321,6 +20423,7 @@ fn place_table_footer(
 /// box at the page's end.
 fn place_repeated_table_footers(
     document: &mut Document,
+    cascade: &CascadeResult,
     table_headers: &mut HeaderRepeats,
     page_origins: &PageOrigins,
 ) {
@@ -20330,12 +20433,18 @@ fn place_repeated_table_footers(
         .filter(|(_, group)| group.footer && group.visit_shift.is_none())
         .map(|(&id, _)| id)
         .collect();
-    // cov:ignore: pagination reaches every footer unless the page limit stops it first.
     for footer_id in footers {
         // Without a visit, the footer keeps its offset below the table's top.
         let footer = &table_headers.headers[&footer_id];
         let shift = current_abs_y(document, footer.table) - footer.table_source_y;
-        place_table_footer(document, table_headers, footer_id, shift, page_origins);
+        place_table_footer(
+            document,
+            cascade,
+            table_headers,
+            footer_id,
+            shift,
+            page_origins,
+        );
     }
     for index in 0..table_headers.monolithic.len() {
         let (id, groups) = table_headers.monolithic[index];
