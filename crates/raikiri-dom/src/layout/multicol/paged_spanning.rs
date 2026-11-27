@@ -220,12 +220,15 @@ pub(in crate::layout) fn paginate_spanning_columns(
             // The boxes after the last spanner of a container that fills its
             // columns in turn fill those of the pages they reach as the boxes
             // of a container without spanners do; the rows before a spanner,
-            // and a last row that balances, keep their balanced columns.
+            // and a last row that balances, keep their balanced columns. A
+            // container inside a line stays whole, as one without spanners
+            // does.
             let leaves = if spanner.is_none()
                 && !spanner_free
                 && context.column_fill == ColumnFillValue::Auto
+                && !inside_atomic_inline(tree, owner)
             {
-                lineless::segment_supported_with_wrappers(tree, owner, segment)
+                lineless::supported_plain_segment(tree, owner, segment)
             } else {
                 leaves.clone()
             };
@@ -237,6 +240,16 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 .transpose()?
                 .flatten()
             {
+                if let Some((spanner, first, natural)) = first_content
+                    && let Some(top) = planned
+                        .pieces
+                        .iter()
+                        .filter(|piece| piece.child == first)
+                        .map(|piece| piece.rect.y)
+                        .reduce(f32::min)
+                {
+                    note_slack(tree, spanner, top - natural);
+                }
                 groups.extend(planned.groups.into_iter().map(|group| MulticolGroup {
                     run_start: old.run_start,
                     ..group

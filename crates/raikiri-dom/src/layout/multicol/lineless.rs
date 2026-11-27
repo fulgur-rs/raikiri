@@ -59,15 +59,17 @@ pub(super) fn supported_with_wrappers(
     supported_with_wrapped_blocks(tree, parent, None, true, true)
 }
 
-/// [`supported_with_wrappers`] for the children of `parent` in `segment`
-/// alone: the boxes between two spanners, or after the last, which form a
-/// row of columns of their own.
-pub(super) fn segment_supported_with_wrappers(
+/// The children of `parent` in `segment` (the boxes between two spanners,
+/// or after the last, which form a row of columns of their own) when the
+/// stream places them all as boxes of their own: sized plain blocks and
+/// boxes that no break goes through, with no wrapper whose boxes would join
+/// the stream in its place.
+pub(super) fn supported_plain_segment(
     tree: &LayoutSession<'_>,
     parent: usize,
     segment: &[usize],
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, Some(segment), true, true)
+    supported_with_wrapped_blocks(tree, parent, Some(segment), false, false)
 }
 
 fn supported_with_wrapped_blocks(
@@ -87,9 +89,16 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     let mut sized_flex = false;
-    for child in rendered_elements(tree, parent)
-        .filter(|child| segment.is_none_or(|segment| segment.contains(child)))
-    {
+    let candidates: Box<dyn Iterator<Item = usize>> = match segment {
+        Some(segment) => Box::new(
+            segment
+                .iter()
+                .copied()
+                .filter(|&child| is_rendered_element(tree, child)),
+        ),
+        None => Box::new(rendered_elements(tree, parent)),
+    };
+    for child in candidates {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
             .then(|| sliceable_flex_container(tree, child, None))
@@ -204,12 +213,15 @@ pub(super) fn rendered_elements<'a>(
     tree: &'a LayoutSession<'_>,
     parent: usize,
 ) -> impl Iterator<Item = usize> + 'a {
-    flow_children(tree, parent).into_iter().filter(|&child| {
-        let node = layout_node(tree, child);
-        node.is_in_document()
-            && !node.is_display_none()
-            && matches!(node.data, NodeData::Element(_))
-    })
+    flow_children(tree, parent)
+        .into_iter()
+        .filter(|&child| is_rendered_element(tree, child))
+}
+
+/// Whether `child` is an element in the document that renders a box.
+fn is_rendered_element(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    node.is_in_document() && !node.is_display_none() && matches!(node.data, NodeData::Element(_))
 }
 
 /// Whether `id` starts at the top of the first column of the multicol
