@@ -46,6 +46,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             // This frame is pushed first so it closes after the
             // optional overflow clip and generated `::after` paint.
             stack.push(PaintFrame::PopOpacity);
+            self.open_opacities += 1;
             if let Some(t) = trace.as_deref_mut() {
                 t.push(crate::PaintTraceEvent::PushOpacity(node_id, cv.opacity));
             }
@@ -109,6 +110,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             let transform = self.scene.transform;
             let clip = push_overflow_clip(self.scene, resolved, &page_box);
             self.stack.push(PaintFrame::PopClip);
+            self.opened_overflow_clip(node_id, resolved, transform);
             overflow_clip_pushed = Some((resolved, transform));
             if let Some(t) = self.trace.as_deref_mut() {
                 let event = crate::PaintTraceEvent::PushOverflowClip(
