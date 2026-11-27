@@ -7120,8 +7120,20 @@ pub(crate) fn intrinsics_of_boxes(
                         width: physical_width,
                         height: inline_basis,
                     };
-                    let across = orthogonal_fit_content_width(tree, b.node, room, parent_size)
-                        .map_or(AcrossLines::MaxContent, AcrossLines::Width);
+                    // A vertical multicol paragraph is laid out on horizontal
+                    // axes, but its lines run along the root's, so its extent
+                    // along them is its inline size, which the min-content
+                    // and max-content constraints decide like the root's own
+                    // lines.
+                    let along_root_lines = tree.nodes[b.node].multicol.is_some()
+                        && tree.nodes[b.node].ifc.is_some()
+                        && tree.nodes[b.node].used_writing_mode.is_vertical();
+                    let across = if along_root_lines {
+                        AcrossLines::MaxContent
+                    } else {
+                        orthogonal_fit_content_width(tree, b.node, room, parent_size)
+                            .map_or(AcrossLines::MaxContent, AcrossLines::Width)
+                    };
                     content_heights(
                         tree,
                         b.node,

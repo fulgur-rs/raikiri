@@ -2812,18 +2812,24 @@ fn measure_ifc_root(
         max_content.max(box_intrinsics.blocks.1),
     );
     // The lines of a multicol container are laid out in its columns, so the
-    // widths of the container repeat the widths of its lines.
-    let (min_content, max_content) = tree.nodes[idx]
+    // inline sizes of the container repeat the inline sizes of its lines.
+    let multicol_sizes = tree.nodes[idx]
         .multicol
-        .filter(|style| style.horizontal && !vertical)
-        .map_or((min_content, max_content), |style| {
-            style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0))
-        });
+        .map(|style| style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0)));
+    // A horizontal paragraph is measured along its width, so its widths
+    // become the container's. A vertical paragraph keeps the widths of its
+    // lines for its block extent below and takes the container's only for
+    // its inline size, the height.
+    let (min_content, max_content) = match multicol_sizes {
+        Some(sizes) if !vertical => sizes,
+        _ => (min_content, max_content),
+    };
+    let (inline_min, inline_max) = multicol_sizes.unwrap_or((min_content, max_content));
     let width = match inline_available {
         AvailableSpace::Definite(width) if inline_stretched => width,
-        AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
-        AvailableSpace::MinContent => min_content,
-        AvailableSpace::MaxContent => max_content,
+        AvailableSpace::Definite(width) => width.max(inline_min).min(inline_max),
+        AvailableSpace::MinContent => inline_min,
+        AvailableSpace::MaxContent => inline_max,
     };
     // A stretched or fixed box already carries its clamped width; a
     // shrink-to-fit box is clamped by its own min/max after measurement.

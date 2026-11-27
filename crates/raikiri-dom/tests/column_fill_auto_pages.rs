@@ -679,3 +679,226 @@ fn lines_that_go_on_in_the_second_column_of_the_last_page_reach_its_end() {
         ],
     );
 }
+
+/// A container that clones its decorations has its block-axis padding and
+/// border on each page it is cut on, so the columns of a page are that much
+/// shorter, those of a later page start below the top ones, and the container
+/// ends with its bottom ones after the content (CSS Fragmentation 3, 5.4).
+#[test]
+fn a_container_that_clones_its_decorations_keeps_them_on_each_page() {
+    let red = "<div id=a style='height: 480px'></div>";
+    for (label, edges) in [
+        ("10px padding", "padding: 10px"),
+        ("padding and border", "padding: 4px; border: 6px solid blue"),
+    ] {
+        check(
+            label,
+            &format!(
+                "<div id=c style='{COLUMNS}; {edges}; box-decoration-break: clone'>{red}</div>{AFTER}"
+            ),
+            2,
+            &[
+                ("c", &[(0, 0.0, 0.0, 192.0), (1, 0.0, 0.0, 156.0)]),
+                (
+                    "a",
+                    &[
+                        (0, 10.0, 10.0, 172.0),
+                        (0, 200.0, 10.0, 172.0),
+                        (1, 10.0, 10.0, 136.0),
+                    ],
+                ),
+                ("k", &[(1, 0.0, 156.0, 16.0)]),
+            ],
+        );
+    }
+    check(
+        "3px top, 12px bottom",
+        &format!(
+            "<div id=c style='{COLUMNS}; padding: 3px 0 12px; box-decoration-break: clone'>\
+             {red}</div>{AFTER}"
+        ),
+        2,
+        &[
+            ("c", &[(0, 0.0, 0.0, 192.0), (1, 0.0, 0.0, 141.0)]),
+            (
+                "a",
+                &[
+                    (0, 0.0, 3.0, 177.0),
+                    (0, 200.0, 3.0, 177.0),
+                    (1, 0.0, 3.0, 126.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 141.0, 16.0)]),
+        ],
+    );
+    // Without clone the padding is sliced: the columns of the first page reach
+    // its end, and the second page has no top padding.
+    check(
+        "sliced",
+        &format!("<div id=c style='{COLUMNS}; padding: 10px'>{red}</div>{AFTER}"),
+        2,
+        &[
+            (
+                "a",
+                &[
+                    (0, 10.0, 10.0, 182.0),
+                    (0, 200.0, 10.0, 182.0),
+                    (1, 10.0, 0.0, 116.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 126.0, 16.0)]),
+        ],
+    );
+}
+
+/// The cloned edges shorten the columns of every page, and content that goes
+/// on in the second column of a page ends the container there.
+#[test]
+fn cloned_decorations_shorten_the_columns_of_every_page() {
+    let clone = format!("{COLUMNS}; padding: 10px; box-decoration-break: clone");
+    check(
+        "900px box",
+        &format!("<div id=c style='{clone}'><div id=a style='height: 900px'></div></div>{AFTER}"),
+        4,
+        &[
+            (
+                "a",
+                &[
+                    (0, 10.0, 10.0, 172.0),
+                    (0, 200.0, 10.0, 172.0),
+                    (1, 10.0, 10.0, 172.0),
+                    (1, 200.0, 10.0, 172.0),
+                    (2, 10.0, 10.0, 172.0),
+                    (2, 200.0, 10.0, 40.0),
+                ],
+            ),
+            ("k", &[(3, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "250px box",
+        &format!("<div id=c style='{clone}'><div id=a style='height: 250px'></div></div>{AFTER}"),
+        2,
+        &[
+            ("c", &[(0, 0.0, 0.0, 192.0)]),
+            ("a", &[(0, 10.0, 10.0, 172.0), (0, 200.0, 10.0, 78.0)]),
+            ("k", &[(1, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    // A container that starts partway down a page has what is left of it.
+    check(
+        "after 100px",
+        &format!(
+            "<div style='height: 100px'></div><div id=c style='{clone}'>\
+             <div id=a style='height: 480px'></div></div>{AFTER}"
+        ),
+        3,
+        &[
+            (
+                "a",
+                &[
+                    (0, 10.0, 110.0, 72.0),
+                    (0, 200.0, 110.0, 72.0),
+                    (1, 10.0, 10.0, 172.0),
+                    (1, 200.0, 10.0, 164.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+}
+
+/// The boxes inside a wrapper and the lines of a paragraph fill the shorter
+/// columns too.
+#[test]
+fn wrapped_boxes_and_lines_fill_the_columns_a_clone_leaves() {
+    let clone = format!("{COLUMNS}; padding: 10px; box-decoration-break: clone");
+    check(
+        "padded wrapper",
+        &format!(
+            "<div id=c style='{clone}'><div style='padding: 5px'>\
+             <div id=a style='height: 500px'></div></div></div>{AFTER}"
+        ),
+        3,
+        &[
+            (
+                "a",
+                &[
+                    (0, 15.0, 15.0, 167.0),
+                    (0, 205.0, 10.0, 172.0),
+                    (1, 15.0, 10.0, 161.0),
+                ],
+            ),
+            ("c", &[(0, 0.0, 0.0, 192.0), (1, 0.0, 0.0, 186.0)]),
+            ("k", &[(1, 0.0, 186.0, 6.0), (2, 0.0, 0.0, 10.0)]),
+        ],
+    );
+    // Thirty one-word lines: eight in each of the three columns of the first
+    // page, and six on the second below its top padding.
+    let words = vec!["XXXX"; 30].join(" ");
+    check(
+        "paragraph",
+        &format!(
+            "<div id=c style='columns: 3; column-gap: 0; column-fill: auto; padding: 10px; \
+             box-decoration-break: clone; font: 20px/20px Ahem'><p id=p style='margin: 0'>\
+             {words}</p></div>{AFTER}"
+        ),
+        2,
+        &[
+            ("c", &[(0, 0.0, 0.0, 192.0), (1, 0.0, 0.0, 140.0)]),
+            ("k", &[(1, 0.0, 140.0, 16.0)]),
+        ],
+    );
+}
+
+/// Cloned edges as tall as the page leave no room for columns; the layout
+/// still completes, with the content going on over the pages.
+#[test]
+fn cloned_edges_as_tall_as_the_page_still_lay_out() {
+    let (pages, pieces) = pieces_of(&format!(
+        "<div id=c style='{COLUMNS}; padding: 96px 0; box-decoration-break: clone'>\
+         <div id=a style='height: 480px'></div></div>{AFTER}"
+    ));
+    assert!(pages > 1, "{pieces:?}");
+    assert!(pieces.iter().any(|(id, own)| id == "a" && !own.is_empty()));
+}
+
+/// A cloned container whose content starts near the end of a page goes on
+/// below the repeated top edges of the next page.
+#[test]
+fn cloned_columns_that_start_late_go_on_below_the_next_top_edges() {
+    let clone = format!("{COLUMNS}; padding: 10px; box-decoration-break: clone");
+    let body = |before: u32| {
+        format!(
+            "<div style='height: {before}px'></div><div id=c style='{clone}'>\
+             <div id=a style='height: 300px'></div></div>{AFTER}"
+        )
+    };
+    check(
+        "after 150px",
+        &body(150),
+        3,
+        &[
+            (
+                "a",
+                &[
+                    (0, 10.0, 160.0, 22.0),
+                    (0, 200.0, 160.0, 22.0),
+                    (1, 10.0, 10.0, 172.0),
+                    (1, 200.0, 10.0, 84.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    // The content starts inside the bottom padding of the first page, where
+    // it keeps the rest of that page; the next page has its top padding.
+    let (pages, pieces) = pieces_of(&body(175));
+    assert_eq!(pages, 3, "{pieces:?}");
+    let (_, a) = pieces.iter().find(|(id, _)| id == "a").expect("#a");
+    assert_eq!(
+        a.iter().filter(|piece| piece.0 == 1).collect::<Vec<_>>(),
+        [&(1, 10.0, 10.0, 172.0), &(1, 200.0, 10.0, 114.0)],
+        "{a:?}"
+    );
+}

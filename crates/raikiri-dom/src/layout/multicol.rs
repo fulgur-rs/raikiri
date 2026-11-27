@@ -409,16 +409,23 @@ pub(crate) fn compute_multicol_layout(
     // nested container as well as an outermost one. Only an outermost
     // container also slices the blocks that wrappers hold.
     let slice_wrappers = tree.context.fragmentation_stack.is_empty();
-    let lineless_children =
-        (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
-            .then(|| {
-                if slice_wrappers {
-                    lineless::supported_with_wrappers(tree, index)
-                } else {
-                    lineless::supported(tree, index, true)
-                }
-            })
-            .flatten();
+    let lineless_children = (inputs.run_mode == RunMode::PerformLayout
+        && !span_scope
+        && style.horizontal)
+        .then(|| {
+            if slice_wrappers {
+                lineless::supported_with_wrappers(tree, index)
+            } else {
+                lineless::supported(tree, index, true)
+            }
+        })
+        .flatten()
+        // A nested column container stays whole only in columns that grow
+        // to fit it. A definite height the container is given limits
+        // them, so the strategies that cut it take over.
+        .filter(|children| {
+            available_height.is_none() || !lineless::holds_unbroken_column_container(tree, children)
+        });
     // A nested container whose children are sliced only because they hold
     // absolutely positioned boxes.
     let nested_out_of_flow = lineless_children.is_some()
@@ -647,7 +654,10 @@ pub(crate) fn compute_multicol_layout(
                     slice_wrappers,
                 )
                 .unwrap_or_else(|| {
-                    if nested_fallback {
+                    // A nested column container that the stream could not keep
+                    // whole is cut at the outer column ends there instead.
+                    if nested_fallback || lineless::holds_unbroken_column_container(tree, children)
+                    {
                         return relayout_nested_multicol_children(
                             tree,
                             node_id,

@@ -14,6 +14,7 @@ use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
+use raikiri_layout_style::values::ExpandedLengthPercentage;
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
@@ -29,11 +30,13 @@ pub(super) use paged::{PagedPiece, paginate};
 /// their own handling at a break, so containers with them keep the other
 /// strategies. A scroll container with a height of its own is no such
 /// box: it is monolithic, so the stream places it whole in one column (see
-/// [`is_monolithic_scroll_box`]). A `position: relative` box with insets is
-/// sliced like any other: its column location carries no offset, which the
-/// painter adds. That holds only for a box with nothing rendered inside it, so
-/// one that holds blocks or absolutely positioned boxes keeps the other
-/// strategies when it has insets, and so does a box inside a wrapper.
+/// [`is_monolithic_scroll_box`]), and so is a column container that the
+/// columns around it grow to fit (see [`is_unbroken_column_container`]).
+/// A `position: relative` box with insets is sliced like any other: its
+/// column location carries no offset, which the painter adds. That holds only
+/// for a box with nothing rendered inside it, so one that holds blocks or
+/// absolutely positioned boxes keeps the other strategies when it has insets,
+/// and so does a box inside a wrapper.
 ///
 /// With `out_of_flow`, a child may also hold absolutely positioned boxes
 /// that it is the containing block of; [`layout`] breaks them across the
@@ -84,7 +87,8 @@ fn supported_with_wrapped_blocks(
         }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
-        let monolithic = is_monolithic_scroll_box(tree, child);
+        let monolithic =
+            is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -295,6 +299,83 @@ fn is_monolithic_scroll_box(tree: &LayoutSession<'_>, child: usize) -> bool {
         && holds_no_fragmenting_box(tree, child)
 }
 
+/// Whether `child` is a column container of plain blocks that the stream
+/// places whole in one column, at the height its own columns balance to.
+/// Chromium breaks such a container across the outer columns only when its
+/// balanced height does not fit them; whole, it lands where Chromium puts it
+/// whenever the outer columns balance to at least that height, and the
+/// stream keeps the boxes after it in the columns that follow.
+///
+/// Only the columns of an outermost container that balance with nothing to
+/// limit their height grow to fit it, so only such a container holds it
+/// whole. Columns that a height or the page fills in turn, and columns nested
+/// in other columns, cut it, which their own strategies do.
+pub(super) fn is_unbroken_column_container(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    let in_flow = matches!(
+        node.layout_position(),
+        Position::Relative | Position::Static
+    );
+    node.multicol.is_some()
+        && column_owner(tree, child).is_some_and(|owner| balances_without_limit(tree, owner))
+        && block_margins(&style).is_some()
+        && style.inset() == Edges::splat(LengthPercentageAuto::auto())
+        && matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot)
+        && is_horizontal(node)
+        && in_flow
+        && !style.float().is_floated()
+        && style.clear() == Clear::None
+        && !node.size_containment.height
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        && style.overflow().x == TaffyOverflow::Visible
+        && style.overflow().y == TaffyOverflow::Visible
+        && !sets_break_in_columns(node.break_before)
+        && !sets_break_in_columns(node.break_after)
+        && !is_right_aligned_in_parent(tree, child)
+        && supported(tree, child, false).is_some()
+}
+
+/// Whether one of `children` is a column container the stream keeps whole
+/// (see [`is_unbroken_column_container`]).
+pub(super) fn holds_unbroken_column_container(
+    tree: &LayoutSession<'_>,
+    children: &[usize],
+) -> bool {
+    children
+        .iter()
+        .any(|&child| is_unbroken_column_container(tree, child))
+}
+
+/// The multicol container whose stream holds `child`: its nearest ancestor
+/// that is not `display: contents`, when that ancestor is a column container.
+fn column_owner(tree: &LayoutSession<'_>, child: usize) -> Option<usize> {
+    let mut owner = tree.nodes[child].parent?;
+    while layout_node(tree, owner).display() == DisplayValue::Contents {
+        owner = tree.nodes[owner].parent?;
+    }
+    tree.nodes[owner].multicol.is_some().then_some(owner)
+}
+
+/// Whether the columns of `owner` balance with no maximum, aspect ratio or
+/// outer column to stop them, so they grow to fit a box that is never cut. A
+/// definite height stops them too, which the caller that resolves it checks.
+fn balances_without_limit(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let style = style_of(tree, owner);
+    tree.nodes[owner]
+        .multicol
+        .as_ref()
+        .is_some_and(|columns| columns.column_fill != ColumnFillValue::Auto)
+        && style.max_size().height.is_auto()
+        && style.aspect_ratio().is_none()
+        && std::iter::successors(tree.nodes[owner].parent, |&id| tree.nodes[id].parent)
+            .all(|id| tree.nodes[id].multicol.is_none())
+}
+
 /// Whether nothing inside `child` takes part in the fragmentation of the
 /// columns around it: no box is absolutely positioned, as its containing block
 /// can lie outside `child` and then it breaks across the columns with that
@@ -367,7 +448,7 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
         || is_right_aligned_in_parent(tree, child))
 }
 
-/// The most boxes a flex container may hold and still be sliced whole, so
+/// The most boxes a flex or grid container may hold and still be sliced whole, so
 /// that checking a very large one stays cheap.
 const MAX_SLICED_FLEX_BOXES: usize = 256;
 
@@ -375,8 +456,10 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// it and the boxes inside it hold no lines, so there is nowhere to break
 /// between lines, and nothing that breaks on its own terms. The container is
 /// laid out whole, and each column shows the part of it that falls in the
-/// column (CSS Flexbox 1, 12). `Some(sized)` says whether any of them has a
-/// block size of its own to slice.
+/// column (CSS Flexbox 1, 12). A grid container whose items hold no lines
+/// is sliced the same way, as Chromium does when it breaks its rows at a
+/// column end. `Some(sized)` says whether any of them has a block size of
+/// its own to slice.
 ///
 /// `block_size` is the block size of the container in this layout, once the
 /// boxes it holds are laid out. Their geometry then tells whether a box
@@ -385,20 +468,24 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// earlier layout or none, so it passes `None` and judges the structure only.
 ///
 /// Boxes that need handling at a break of their own keep the other
-/// strategies: forced or avoided breaks, absolutely positioned or floated
+/// strategies: avoided breaks, forced breaks other than column breaks at the
+/// container or between its items (see [`flex_breaks`]), forced breaks
+/// between items of a container that does not grow with them, that holds
+/// absolutely positioned boxes, or whose boxes a negative margin pulls
+/// across the break, absolutely positioned or floated
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, boxes that paint past their own box (a
 /// transform, shadow, outline or filter) or as a whole group, boxes whose
-/// block edges repeat at each break, containers that are not block or flex,
-/// and containers whose content overflows their block start or end.
+/// block edges repeat at each break, containers that are not block, flex or
+/// grid, forced breaks inside a grid container, and containers whose content
+/// overflows their block start or end.
 fn sliceable_flex_container(
     tree: &LayoutSession<'_>,
     child: usize,
     block_size: Option<f32>,
 ) -> Option<bool> {
-    let node = layout_node(tree, child);
     let style = style_of(tree, child);
-    if node.display() != DisplayValue::Flex
+    if !is_flex_or_grid(tree, child)
         || style.inset() != Edges::splat(LengthPercentageAuto::auto())
         || style.float().is_floated()
         || style.clear() != Clear::None
@@ -420,12 +507,26 @@ fn sliceable_flex_container(
     };
     let mut boxes = 0usize;
     let mut sized = false;
+    let breaking_items = breaks_between_items(tree, child);
     // Whether a box on the way down is the containing block of the absolutely
-    // positioned boxes below it, so that they are cut with the container.
-    let mut pending = vec![(child, false)];
-    while let Some((id, contained)) = pending.pop() {
+    // positioned boxes below it, so that they are cut with the container, and
+    // whether a forced column break before or after it would fall between
+    // the container and its neighbours or between its flex items.
+    let mut pending = vec![(child, false, true, true)];
+    // Whether a forced break falls inside the container, and whether it
+    // holds absolutely positioned boxes, which would not move with the
+    // items that a break moves down.
+    let mut inner_breaks = false;
+    let mut holds_absolute = false;
+    // Whether a negative block margin pulls a box inside the container up
+    // over the one before it, which a break between them would leave on the
+    // wrong side of the break.
+    let mut pulled = false;
+    while let Some((id, contained, before, after)) = pending.pop() {
         boxes += 1;
-        if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id, contained) {
+        if boxes > MAX_SLICED_FLEX_BOXES
+            || !is_sliceable_flex_box(tree, id, contained, (before, after))
+        {
             return None;
         }
         if let Some((top, bottom)) = bounds {
@@ -435,9 +536,45 @@ fn sliceable_flex_container(
                 return None;
             }
         }
-        let contained = contained || layout_node(tree, id).contains_absolute_boxes;
+        let node = layout_node(tree, id);
+        inner_breaks |= id != child
+            && (node.break_before == BreakBetween::Column
+                || node.break_after == BreakBetween::Column);
+        let margin = &tree.nodes[id].layout.margin;
+        pulled |= id != child && (margin.top < -EPSILON || margin.bottom < -EPSILON);
+        holds_absolute |= is_absolute_box(node) && !placed_from_the_top(&style_of(tree, id));
+        let contained = contained || node.contains_absolute_boxes;
         let style = style_of(tree, id);
-        sized |= has_block_size(&style);
+        let grid = node.display() == DisplayValue::Grid;
+        // A row gap is truncated where a fragmentation break falls in it
+        // (CSS Box Alignment 3, 8.1), which a grid sliced whole would not do.
+        if grid
+            && !matches!(style.gap().height.expand(), ExpandedLengthPercentage::Length(px) if px == 0.0)
+        {
+            return None;
+        }
+        // Rows of a length give a grid container a block size of its own.
+        sized |= has_block_size(&style)
+            || grid
+                && crate::layout::taffy_adapter::RowSizing::have_a_length(
+                    &style,
+                    !in_flow_elements(tree, id).is_empty(),
+                );
+        // A break before the first box in flow inside a block, or after the
+        // last, is a break before or after the block itself (CSS
+        // Fragmentation 3, 3.1), and one before or after a flex item falls
+        // between items. The first box of a flex container in the tree need
+        // not be the first one laid out, so a break inside a flex item that
+        // is itself a flex container does not reach the item.
+        let in_flow = in_flow_elements(tree, id);
+        let passes = id == child || passes_breaks_on(tree, id);
+        let first = in_flow.first().copied().filter(|_| passes);
+        let last = in_flow.last().copied().filter(|_| passes);
+        let (before, after) = if id == child {
+            (breaking_items, breaking_items)
+        } else {
+            (before, after)
+        };
         // Text that renders gives a box lines, and a flex container makes an
         // anonymous item of text that is more than white space that collapses,
         // a no-break space included.
@@ -447,24 +584,93 @@ fn sliceable_flex_container(
                 continue;
             }
             match &held_node.data {
-                NodeData::Element(_) => pending.push((held, contained)),
+                NodeData::Element(_) => pending.push((
+                    held,
+                    contained,
+                    before && (id == child || first == Some(held)),
+                    after && (id == child || last == Some(held)),
+                )),
                 NodeData::Text(text)
                     if text.text_content.chars().all(is_collapsible_whitespace) => {}
                 _ => return None,
             }
         }
     }
+    // The parts after a break between items move down to the next column,
+    // which a container sized apart from its content would not grow to
+    // hold, and neither the absolutely positioned boxes it holds, nor the
+    // paint of an item that a relative offset moves, nor a box that a
+    // negative margin pulls up over the start of its part would follow them.
+    let style = style_of(tree, child);
+    if inner_breaks
+        && (has_block_size(&style)
+            || style_dimension_length(style.max_size().height.into()).is_some()
+            || holds_absolute
+            || pulled
+            || in_flow_elements(tree, child).into_iter().any(|item| {
+                style_of(tree, item).inset() != Edges::splat(LengthPercentageAuto::auto())
+            }))
+    {
+        return None;
+    }
     Some(sized)
 }
 
-/// Whether `id`, a flex container or a box inside one, can be sliced with
+/// Whether a forced break before the first box in flow inside `id`, or
+/// after the last, is one before or after `id`: `id` lays them out in a
+/// block flow, or is a single-line flex container that lays them out in
+/// the order of the tree. `id` is a box that the stream can slice (see
+/// [`is_sliceable_flex_box`]): a block, flex or grid container. A grid
+/// container places its items apart from the order of the tree, so a break
+/// inside it stays there.
+fn passes_breaks_on(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let display = layout_node(tree, id).display();
+    debug_assert!(matches!(
+        display,
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
+    ));
+    let style = style_of(tree, id);
+    let cascade = tree.style_views.cascade();
+    display != DisplayValue::Grid
+        && (display != DisplayValue::Flex
+            || !style.flex_wraps()
+                && !style.flex_direction_is_reversed()
+                && in_flow_elements(tree, id)
+                    .iter()
+                    .all(|&item| cascade.computed[item].order == 0))
+}
+
+/// Whether an absolutely positioned box with `style` is placed a fixed
+/// length below the top of its containing block, with a block size of its
+/// own or from its content, so that it stays where it is when the block
+/// grows.
+fn placed_from_the_top(style: &LayoutStyleView<'_>) -> bool {
+    let inset = style.inset();
+    let top = inset.top.maybe_resolve(Some(0.0));
+    let height = style.size().height;
+    top.is_some()
+        && top == inset.top.maybe_resolve(Some(1.0))
+        && inset.bottom.is_auto()
+        && (height.is_auto() || style_dimension_length(height).is_some())
+}
+
+/// Whether `id`, a flex or grid container or a box inside one, can be sliced with
 /// the rest of the container (see [`sliceable_flex_container`]).
-fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -> bool {
+///
+/// `breaks` says whether a forced column break before and after `id` is one
+/// the stream honours: one between the container and its neighbours, or
+/// between flex items (see [`flex_breaks`]).
+fn is_sliceable_flex_box(
+    tree: &LayoutSession<'_>,
+    id: usize,
+    contained: bool,
+    breaks: (bool, bool),
+) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
     matches!(
         node.display(),
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
     ) && is_horizontal(node)
         && !node.size_containment.height
         && (matches!(
@@ -482,8 +688,10 @@ fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        && !sets_break_in_columns(node.break_before)
-        && !sets_break_in_columns(node.break_after)
+        && (!sets_break_in_columns(node.break_before)
+            || breaks.0 && node.break_before == BreakBetween::Column)
+        && (!sets_break_in_columns(node.break_after)
+            || breaks.1 && node.break_after == BreakBetween::Column)
         && node.break_inside == BreakInside::Auto
         && !node.has_before_or_after_content
         && !node.column_span_all
@@ -495,6 +703,221 @@ fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -
         // The pieces are cut from one whole box, so block edges that repeat at
         // each break have neither a place to be drawn nor space reserved.
         && !(node.clones_box_decorations && has_block_edge_decorations(&style))
+}
+
+/// Whether forced breaks before and after the items of the flex or grid
+/// container `id` fall between them: between the items of a single-line column
+/// container, which stack along the block axis, and between the lines of a
+/// row container, which take the breaks of their items (CSS Flexbox 1, 12).
+/// A multi-line column container breaks each of its lines on its own, and
+/// one whose lines stack the other way breaks them in the other order, so
+/// both keep the other strategies, and so does a grid container.
+fn breaks_between_items(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    if layout_node(tree, id).display() != DisplayValue::Flex {
+        false
+    } else if style.flex_direction_is_row() {
+        !style.flex_lines_are_reversed()
+    } else {
+        !style.flex_wraps()
+    }
+}
+
+/// Whether `id` is a flex or grid container, which the stream slices whole
+/// when it can (see [`sliceable_flex_container`]).
+fn is_flex_or_grid(tree: &LayoutSession<'_>, id: usize) -> bool {
+    matches!(
+        layout_node(tree, id).display(),
+        DisplayValue::Flex | DisplayValue::Grid
+    )
+}
+
+/// The rendered element children of `id` in flow.
+fn in_flow_elements(tree: &LayoutSession<'_>, id: usize) -> Vec<usize> {
+    rendered_elements(tree, id)
+        .filter(|&child| {
+            matches!(
+                layout_node(tree, child).layout_position(),
+                Position::Relative | Position::Static
+            )
+        })
+        .collect()
+}
+
+/// Whether a forced column break falls before `id` (after it, unless
+/// `before`): one set on it, or on the first (last) box in flow inside it,
+/// which propagates to it (CSS Fragmentation 3, 3.1). Breaks that are not
+/// column breaks do not break columns, as in Chromium. A column break below
+/// a box that does not pass breaks on (see [`passes_breaks_on`]) keeps the
+/// container from the stream, so the walk need not stop there.
+fn forced_column_break(tree: &LayoutSession<'_>, mut id: usize, before: bool) -> bool {
+    loop {
+        let node = layout_node(tree, id);
+        let value = if before {
+            node.break_before
+        } else {
+            node.break_after
+        };
+        if value == BreakBetween::Column {
+            return true;
+        }
+        let children = in_flow_elements(tree, id);
+        let next = if before {
+            children.first()
+        } else {
+            children.last()
+        };
+        match next {
+            Some(&child) => id = child,
+            None => return false,
+        }
+    }
+}
+
+/// The forced column breaks of a flex container that the stream slices
+/// whole.
+#[derive(Default)]
+struct FlexBreaks {
+    /// Whether one falls before the container, and whether one falls after.
+    before: bool,
+    after: bool,
+    /// The parts that the breaks between its items cut the container into,
+    /// or none when no break falls between them.
+    parts: Vec<FlexPart>,
+}
+
+/// The part of a flex container between two forced breaks inside it, at
+/// block offsets from the top of its border box. The space between the end
+/// of one part and the start of the next, a gap or the margins before the
+/// break, is truncated (CSS Fragmentation 3, 5.2); the margins after it are
+/// kept.
+struct FlexPart {
+    start: f32,
+    end: f32,
+    /// The flex items the part holds, which move down with it.
+    items: Vec<usize>,
+}
+
+/// The flex lines of a row container of `items`, in order: in `order`, each
+/// item starts further along the main axis than the one before ends, until
+/// one starts back before it, which starts the next line. Gaps and
+/// `justify-content` can leave the items of two lines side by side without
+/// overlapping, but never send an item of the same line backwards.
+fn flex_lines(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    mut items: Vec<usize>,
+) -> Vec<Vec<usize>> {
+    let style = style_of(tree, container);
+    if !style.flex_wraps() {
+        return vec![items];
+    }
+    let cascade = tree.style_views.cascade();
+    items.sort_by_key(|&id| cascade.computed[id].order);
+    let forward = style.flex_direction_is_reversed() == style.direction().is_rtl();
+    let span = |id: usize| {
+        let layout = &tree.nodes[id].layout;
+        (
+            layout.location.x - layout.margin.left,
+            layout.location.x + layout.size.width + layout.margin.right,
+        )
+    };
+    let mut lines = Vec::new();
+    let mut line: Vec<usize> = Vec::new();
+    for id in items {
+        let (start, end) = span(id);
+        let starts_over = line.last().is_some_and(|&previous| {
+            let (previous_start, previous_end) = span(previous);
+            if forward {
+                start < previous_end - EPSILON
+            } else {
+                end > previous_start + EPSILON
+            }
+        });
+        if starts_over {
+            lines.push(std::mem::take(&mut line));
+        }
+        line.push(id);
+    }
+    lines.push(line);
+    lines
+}
+
+/// The forced column breaks of `child`, a flex or grid container the stream slices
+/// whole (see [`sliceable_flex_container`]), laid out with a border box
+/// `height` tall. A break before the first line of items is a break before
+/// the container, and one after the last a break after it.
+/// [`sliceable_flex_container`] leaves the containers whose parts could not
+/// move down with their items to the other strategies.
+fn flex_breaks(tree: &LayoutSession<'_>, child: usize, height: f32) -> FlexBreaks {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    let mut breaks = FlexBreaks {
+        before: node.break_before == BreakBetween::Column,
+        after: node.break_after == BreakBetween::Column,
+        parts: Vec::new(),
+    };
+    if !breaks_between_items(tree, child) {
+        return breaks;
+    }
+    let items = in_flow_elements(tree, child);
+    let lines = if style.flex_direction_is_row() {
+        flex_lines(tree, child, items)
+    } else {
+        items.into_iter().map(|item| vec![item]).collect()
+    };
+    // Each line with its block extent, from the block-start margin edge
+    // that a break before it keeps to the border edge where the margins
+    // after it are truncated, and the breaks before and after it.
+    let mut lines: Vec<(f32, f32, bool, bool, Vec<usize>)> = lines
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let layout = |id: usize| &tree.nodes[id].layout;
+            let start = line
+                .iter()
+                .map(|&id| layout(id).location.y - layout(id).margin.top)
+                .fold(f32::INFINITY, f32::min);
+            let end = line
+                .iter()
+                .map(|&id| layout(id).location.y + layout(id).size.height)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let before = line.iter().any(|&id| forced_column_break(tree, id, true));
+            let after = line.iter().any(|&id| forced_column_break(tree, id, false));
+            (start, end, before, after, line)
+        })
+        .collect();
+    lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
+        return breaks;
+    };
+    breaks.before |= first.2;
+    breaks.after |= last.3;
+    if !lines.windows(2).any(|pair| pair[0].3 || pair[1].2) {
+        return breaks;
+    }
+    let mut part = FlexPart {
+        start: 0.0,
+        end: 0.0,
+        items: Vec::new(),
+    };
+    let mut previous_after = false;
+    for (start, end, before, after, items) in lines {
+        if (previous_after || before) && !part.items.is_empty() {
+            let next = FlexPart {
+                start,
+                end: 0.0,
+                items: Vec::new(),
+            };
+            breaks.parts.push(std::mem::replace(&mut part, next));
+        }
+        part.end = part.end.max(end);
+        part.items.extend(items);
+        previous_after = after;
+    }
+    part.end = height;
+    breaks.parts.push(part);
+    breaks
 }
 
 /// A block-only wrapper tree whose leaves can be placed in the column stream.
@@ -591,7 +1014,10 @@ fn wrapped_block_tree(
         node.display() == DisplayValue::FlowRoot || node.roots_block_context();
     let children_in_multicol_context = in_multicol_context && !independent_context;
     let has_edges = has_block_edge_decorations(&style);
-    if independent_context && !allow_sliced_wrappers
+    // A column container lays its blocks out in columns of its own, not
+    // stacked in the stream (see `is_unbroken_column_container`).
+    if node.multicol.is_some()
+        || independent_context && !allow_sliced_wrappers
         || has_edges
             && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
         || node.paints_whole_box_effects
@@ -892,8 +1318,21 @@ fn pieces_of_children(
     for (span, wrapped_tree) in spans.iter().zip(wrapped) {
         let pieces = &placements.pieces[span.clone()];
         match wrapped_tree {
+            // The parts of a flex container that breaks between its items
+            // are one box: the last piece of a part that a forced break ends
+            // fills the rest of its column (see [`flex_breaks`]).
             None => {
-                child_pieces.push(pieces.first()?.clone());
+                let mut whole: Vec<Piece> = Vec::new();
+                for part in pieces {
+                    if let (Some(last), Some(next)) = (whole.last_mut(), part.first())
+                        && next.column > last.column
+                        && column_height.is_finite()
+                    {
+                        last.height = last.height.max(column_height - last.top);
+                    }
+                    whole.extend(part.iter().cloned());
+                }
+                child_pieces.push(Some(whole).filter(|whole| !whole.is_empty())?);
                 wrapped_leaf_pieces.push(None);
             }
             Some(wrapped_tree) => {
@@ -1151,7 +1590,8 @@ struct Item {
     whole: bool,
     /// A box a column end never cuts and that stays in a column only where it
     /// starts it, with no margin before it either: a scroll container (see
-    /// [`is_monolithic_scroll_box`]).
+    /// [`is_monolithic_scroll_box`]) or a nested column container (see
+    /// [`is_unbroken_column_container`]).
     monolithic: bool,
     /// The block-start and block-end border and padding of a box whose
     /// pieces slice them: it is cut where it is taller than a column, but
@@ -1163,6 +1603,9 @@ struct Item {
     /// and padding are not counted: a break that would fall inside them
     /// falls where its content ends, and they go on alone (see `slice`).
     edges: f32,
+    /// Whether a forced break comes before the box, which then starts the
+    /// next column unless nothing precedes it in its own.
+    break_before: bool,
 }
 
 pub(super) const EPSILON: f32 = 0.001;
@@ -1231,7 +1674,24 @@ fn place_columns(
     let mut pending_margin = 0.0_f32;
     let mut piece_count = 0usize;
     let mut placements = Vec::with_capacity(items.len());
+    // Whether a box has been placed in the stream: a box with no block size
+    // still precedes a forced break, which then starts the next column.
+    let mut holds_boxes = false;
     for item in items {
+        // A forced break starts the next column, unless nothing precedes the
+        // box in this one. The margins before the break are truncated, and
+        // the box keeps its own (CSS Fragmentation 3, 5.2).
+        if item.break_before && (cursor > 0.0 || holds_boxes) {
+            column += 1;
+            if column >= max_columns {
+                return Err(Stop::Exhausted);
+            }
+            cursor = 0.0;
+            pending_margin = 0.0;
+        }
+        // Whatever the box leaves in the column, it is content before a
+        // break that follows.
+        holds_boxes = true;
         // A box with no block size, borders or padding is self-collapsing:
         // its own margins join the margins around it (CSS 2, 8.3.1). A scroll
         // container is not, as it establishes a formatting context, so it is
@@ -1424,11 +1884,12 @@ impl Placement {
 }
 
 /// The block size of the stream in one column of unlimited height, with
-/// adjoining margins collapsed.
+/// adjoining margins collapsed. Forced breaks start further columns, and
+/// the tallest of them is the block size.
 fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
     place(items, f32::INFINITY, max_pieces)
         .ok()
-        .map(|placement| placement.end)
+        .map(|placement| placement.extent_after(0))
 }
 
 /// The smallest column height that fits `items` in `column_count` columns.
@@ -1525,6 +1986,12 @@ fn balanced_height_after(
         .map(|(_, item)| item.height)
         .fold(0.0_f32, f32::max);
     let mut low = ((content - before) / column_count as f32).max(tallest);
+    // Forced breaks can start more columns than there are, which no height
+    // keeps within them; the overflow columns are then as tall as `high`,
+    // the tallest run between breaks.
+    if items.iter().any(|item| item.break_before) {
+        low = low.min(high);
+    }
     if low > 0.0 && low <= high && fits(low) {
         return low;
     }
@@ -2109,6 +2576,7 @@ pub(super) fn slices_sized_leaf(tree: &LayoutSession<'_>, idx: usize) -> bool {
     ) && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Whether a box cut at a column end slices its block-axis borders and
@@ -2122,6 +2590,7 @@ pub(super) fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
         && !node.clones_box_decorations
         && !node.paints_whole_box_effects
         && !is_monolithic_scroll_box(tree, idx)
+        && !is_unbroken_column_container(tree, idx)
 }
 
 /// Where the block-axis border and padding of a box whose pieces slice them
@@ -2162,7 +2631,8 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
                 )
             }
         });
-    let monolithic = is_monolithic_scroll_box(tree, child);
+    let monolithic =
+        is_monolithic_scroll_box(tree, child) || is_unbroken_column_container(tree, child);
     let splittable = !monolithic
         && !matches!(
             node.break_inside,
@@ -2187,6 +2657,7 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
         monolithic,
         slice,
         edges: 0.0,
+        break_before: false,
     }
 }
 
@@ -2444,17 +2915,25 @@ pub(super) fn layout(
         .iter()
         .zip(&sizes)
         .map(|(&child, size)| {
-            layout_node(tree, child).display() == DisplayValue::Flex
+            is_flex_or_grid(tree, child)
                 && sliceable_flex_container(tree, child, Some(size.height)).is_some()
         })
         .collect();
     if children
         .iter()
         .zip(&sliced_flex)
-        .any(|(&child, &flex)| layout_node(tree, child).display() == DisplayValue::Flex && !flex)
+        .any(|(&child, &flex)| is_flex_or_grid(tree, child) && !flex)
     {
         return None;
     }
+    // The forced breaks of each flex container, which the stream honours
+    // around it and between its items.
+    let flex_breaks = children
+        .iter()
+        .zip(&sizes)
+        .zip(&sliced_flex)
+        .map(|((&child, size), &flex)| flex.then(|| flex_breaks(tree, child, size.height)))
+        .collect::<Vec<_>>();
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
     let mut wrapped: Vec<Option<WrappedBlockTree>> = children
@@ -2463,16 +2942,49 @@ pub(super) fn layout(
         .collect();
     let mut items = Vec::new();
     let mut spans = Vec::with_capacity(children.len());
-    for ((&child, size), wrapped_tree) in children.iter().zip(&sizes).zip(&mut wrapped) {
+    // Whether a forced break follows the child before.
+    let mut break_after = false;
+    for (((&child, size), wrapped_tree), breaks) in children
+        .iter()
+        .zip(&sizes)
+        .zip(&mut wrapped)
+        .zip(&flex_breaks)
+    {
         let first = items.len();
         match wrapped_tree {
             None => {
-                items.push(item(
+                let whole = item(
                     tree,
                     child,
                     size.height,
                     Some(Insets::Against(context.column_width)),
-                ));
+                );
+                match breaks.as_ref().map(|breaks| breaks.parts.as_slice()) {
+                    // Each part of a flex container that breaks between its
+                    // items is a box of its own in the stream, with the
+                    // container's margins and insets at its ends.
+                    Some(parts) if !parts.is_empty() => {
+                        let last = parts.len() - 1;
+                        items.extend(parts.iter().enumerate().map(|(index, part)| Item {
+                            height: part.end - part.start,
+                            margin_top: if index == 0 { whole.margin_top } else { 0.0 },
+                            margin_bottom: if index == last {
+                                whole.margin_bottom
+                            } else {
+                                0.0
+                            },
+                            slice: whole.slice.map(|(leading, trailing)| {
+                                (
+                                    if index == 0 { leading } else { 0.0 },
+                                    if index == last { trailing } else { 0.0 },
+                                )
+                            }),
+                            break_before: index > 0,
+                            ..whole
+                        }));
+                    }
+                    _ => items.push(whole),
+                }
             }
             Some(wrapped_tree) => {
                 let leaves = wrapped_tree.leaf_ids();
@@ -2487,6 +2999,12 @@ pub(super) fn layout(
                 apply_wrapped_layout(tree, wrapped_tree, &mut items, first, context.column_width)?;
             }
         }
+        let break_before = break_after || breaks.as_ref().is_some_and(|breaks| breaks.before);
+        if let Some(first) = items.get_mut(first) {
+            first.break_before |= break_before;
+            break_after = false;
+        }
+        break_after |= breaks.as_ref().is_some_and(|breaks| breaks.after);
         spans.push(first..items.len());
     }
     // One fragment for the container, the rest for the child pieces.
@@ -2518,7 +3036,11 @@ pub(super) fn layout(
         )
         .unwrap_or(height),
         Some(height) => height,
-        None if context.column_fill == ColumnFillValue::Auto => {
+        // Forced breaks start further columns, which balance as Chromium
+        // balances them.
+        None if context.column_fill == ColumnFillValue::Auto
+            && !items.iter().any(|item| item.break_before) =>
+        {
             // A single unbounded column cuts nothing, so only the number of
             // boxes can run out of fragments.
             let Some(height) = stacked_height(&items, max_pieces) else {
@@ -2554,6 +3076,14 @@ pub(super) fn layout(
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }
+    // A nested column container is kept whole only where the columns grow to
+    // fit it; one that a maximum keeps them below is cut by the strategies
+    // that break it at the outer column end.
+    if children.iter().zip(&sizes).any(|(&child, size)| {
+        size.height > column_height + EPSILON && is_unbroken_column_container(tree, child)
+    }) {
+        return None;
+    }
     // A box that must stay whole falls back to the other strategies whole
     // when it would be cut, which is not a layout failure; running out of
     // fragments before that is.
@@ -2567,6 +3097,33 @@ pub(super) fn layout(
     };
     let (child_pieces, wrapped_leaf_pieces) =
         pieces_of_children(&spans, &wrapped, &placements, column_height)?;
+    // The pieces of a flex container that breaks between its items fill
+    // each column a break ends, so each part starts the next column as far
+    // down the container as the pieces before it took: its items move down
+    // by the space the break left, and the container grows by as much. The
+    // moves apply once the layout is kept.
+    let mut moves = Vec::new();
+    for (order, breaks) in flex_breaks.iter().enumerate() {
+        let Some(breaks) = breaks.as_ref().filter(|breaks| !breaks.parts.is_empty()) else {
+            continue;
+        };
+        let mut pieces = child_pieces[order].iter();
+        let mut taken = 0.0f32;
+        for (part, placed) in breaks
+            .parts
+            .iter()
+            .zip(&placements.pieces[spans[order].clone()])
+        {
+            let shift = taken - part.start;
+            moves.extend(part.items.iter().map(|&id| (id, shift)));
+            taken += pieces
+                .by_ref()
+                .take(placed.len())
+                .map(|piece| piece.height)
+                .sum::<f32>();
+        }
+        sizes[order].height = taken;
+    }
     let wrapped_fragments =
         wrapped.iter().zip(&wrapped_leaf_pieces).try_fold(
             0usize,
@@ -2609,6 +3166,11 @@ pub(super) fn layout(
     // strategies that are.
     if outer_height.is_some_and(|outer| used_height > outer + EPSILON) {
         return None;
+    }
+    for (id, shift) in moves {
+        let mut layout = tree.nodes[id].layout;
+        layout.location.y += shift;
+        tree.set_unrounded_layout(NodeId::from(id), &layout);
     }
     tree.fragment_tree.retire_previous_roots(parent);
     tree.nodes[parent].multicol_groups.clear();
@@ -2768,6 +3330,11 @@ pub(super) fn layout(
                 line_start: None,
                 line_end: None,
             })?;
+            // A nested column container is not cut, so the fragments its own
+            // layout placed hang under its single piece.
+            if pieces.len() == 1 && tree.nodes[child].multicol.is_some() {
+                tree.fragment_tree.reparent_roots(child, record);
+            }
             records.push(record);
             taken += consumed[index];
         }

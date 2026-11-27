@@ -17,7 +17,7 @@ use super::{
     collapses_through, collapses_with_previous_block, content_end_above, content_overflow,
     current_abs_y, first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
     fits_decorated_paper, flex_line_paragraph, floats_put_first_line_down, flow_raw_y,
-    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves,
+    follows_box_on_page, follows_flow_content, forced_line_breaks, forced_line_moves_below,
     forced_target_page, generated_content_runs_past, grow_ancestors_below,
     grow_ancestors_for_shift, grow_container_beside_item, has_explicit_positioned_block_ancestor,
     has_fixed_height, has_footnote_ancestor, height_follows_content,
@@ -305,15 +305,31 @@ impl LineBlocks {
             .ifc_root
             .map(|(root, _)| root)
             .filter(|&root| document.is_source_node(root) && root != candidate.node_id);
-        let block = line_block_parent(
-            document,
-            env.cascade,
-            &env.roots,
-            candidate,
-            paragraph_root,
-            checked_paragraphs,
-            uses_positioned_coordinates,
-        );
+        // The lines of an anonymous cell, which wraps the table's text that
+        // stands outside any cell, carry row breaks as a cell's do, not as
+        // lines of the table's own flow, where the cell's row can grow.
+        let anonymous_cell_root = candidate.ifc_root.map(|(root, _)| root).filter(|&root| {
+            document.nodes.is_anonymous_cell(root)
+                && root != candidate.node_id
+                && !uses_positioned_coordinates
+                && !candidate.context.is_float_descendant()
+                && !candidate.context.is_out_of_flow_descendant()
+                && super::cell_flow_inline(document, env.cascade, root, env.body_id).is_some()
+        });
+        let block = anonymous_cell_root
+            .is_none()
+            .then(|| {
+                line_block_parent(
+                    document,
+                    env.cascade,
+                    &env.roots,
+                    candidate,
+                    paragraph_root,
+                    checked_paragraphs,
+                    uses_positioned_coordinates,
+                )
+            })
+            .flatten();
         let flex_line = flex_line_paragraph(
             document,
             env.cascade,
@@ -342,18 +358,23 @@ impl LineBlocks {
                         )
                     })
         });
-        let cell_paragraph = paragraph_root.filter(|&root| {
-            block.is_none()
-                && flex_line.is_none()
-                && column_paragraph.is_none()
-                && !uses_positioned_coordinates
-                && !candidate.context.is_float_descendant()
-                && !candidate.context.is_out_of_flow_descendant()
-                && !checked_paragraphs.orphans_widows.contains(&root)
-                && super::cell_flow_inline(document, env.cascade, root, env.body_id).is_some()
-        });
+        let cell_paragraph = paragraph_root
+            .filter(|&root| {
+                block.is_none()
+                    && flex_line.is_none()
+                    && column_paragraph.is_none()
+                    && !uses_positioned_coordinates
+                    && !candidate.context.is_float_descendant()
+                    && !candidate.context.is_out_of_flow_descendant()
+                    && !checked_paragraphs.orphans_widows.contains(&root)
+                    && super::cell_flow_inline(document, env.cascade, root, env.body_id).is_some()
+            })
+            .or(anonymous_cell_root
+                .filter(|root| !checked_paragraphs.orphans_widows.contains(root)));
         Self {
-            paragraph_root,
+            // The lines of an anonymous cell are a paragraph of their own,
+            // which moves as a cell's does.
+            paragraph_root: paragraph_root.or(anonymous_cell_root),
             block,
             flex_line,
             column_paragraph,
@@ -642,11 +663,25 @@ impl PaginationState {
                 .headers
                 .get(&group)
                 .is_some_and(|footer| footer.footer && footer.visit_shift.is_none())
-                && let Some(page) =
+            {
+                // The corrections of the paragraphs the rows hold come first:
+                // lines moved inside a cell taller than them grow the flow
+                // after the cell by less than they moved.
+                let reached = self.deferred_shifts.apply_reached(
+                    document,
+                    env.text_lines,
+                    node_id,
+                    None,
+                    self.current_page,
+                    &mut self.flow_shift,
+                );
+                self.current_page = self.current_page.max(reached.unwrap_or(0));
+                if let Some(page) =
                     self.subtree_shifts
                         .leave(document, node_id, &mut self.flow_shift)
-            {
-                self.current_page = page;
+                {
+                    self.current_page = page;
+                }
             }
             if self
                 .table_headers
@@ -656,6 +691,7 @@ impl PaginationState {
             {
                 self.flow_shift += place_table_footer(
                     document,
+                    env.cascade,
                     &mut self.table_headers,
                     group,
                     self.flow_shift,
@@ -892,6 +928,13 @@ impl PaginationState {
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_after_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_with_next_block(document, env, candidate, entry, &blocks, &mut text)?;
+        // The rows after the lines of an anonymous cell start below them.
+        if let Some(cell) = blocks
+            .paragraph_root
+            .filter(|&root| document.nodes.is_anonymous_cell(root))
+        {
+            self.note_anonymous_cell_end(document, env.page_origins, cell);
+        }
         text.effective_y += relative_offset;
         // A root that this text moves is placed from where the text's first
         // line was; the lines moved above it are already in the line shifts.
@@ -1668,7 +1711,13 @@ impl PaginationState {
                 node_id,
                 LineAfterBlock {
                     flow_page: entry.page_before_candidate,
-                    page_name: candidate.page_name.clone(),
+                    // The line takes the page type of the paragraph's own
+                    // flow, not the start value it took from its first box.
+                    page_name: if self.page_names.records_names {
+                        super::inner_flow_page_name(document, env.cascade, node_id)
+                    } else {
+                        None
+                    },
                     page_name_in_flow: candidate.context.page_name_in_flow(),
                     in_flow: !candidate.context.is_out_of_flow_descendant(),
                     beside_flow: candidate.context.is_float_descendant()
@@ -2017,7 +2066,11 @@ impl PaginationState {
                             && self.pending_break.scope.is_none())
                         .then(|| LineAfterBlock {
                             flow_page: self.current_page,
-                            page_name: self.page_names.current.clone(),
+                            page_name: if self.page_names.records_names {
+                                super::inner_flow_page_name(document, env.cascade, root)
+                            } else {
+                                None
+                            },
                             page_name_in_flow: true,
                             in_flow: true,
                             beside_flow: false,
@@ -2134,7 +2187,15 @@ impl PaginationState {
             return Ok(());
         }
         self.pending_break.take(document, root);
+        // The page the line opens has the line's type: a box around the
+        // paragraph that put its items on the page of a named one breaks no
+        // page after itself for that name any more.
+        self.pending_break
+            .drop_named_breaks_around(document, env.cascade, env.body_id, root);
         self.current_page = self.current_page.max(target);
+        // The boxes after the paragraph compare their page type with the
+        // line's, which ends the flow before them.
+        self.page_names.outer.clone_from(&paragraph.page_name);
         self.page_names.current = paragraph.page_name;
         self.record_pages(env.control, Some(end_page), paragraph.in_flow)?;
         Ok(())
@@ -3250,6 +3311,14 @@ impl PaginationState {
             });
         overflow.page |= overflow.leading_piece_with_holder;
         let grid_row = candidate.context.first_grid_row();
+        // The edges around a block that goes on from an earlier page, which
+        // do not follow the box.
+        let outer_edges_once = std::cell::OnceCell::new();
+        let outer_edges = || {
+            *outer_edges_once.get_or_init(|| {
+                super::edges_beyond_broken_ancestor(document, cascade, node_id, fit.page_start)
+            })
+        };
         // An empty box that its margins collapse through may stay with the
         // box before it.
         let stays_empty_once = std::cell::OnceCell::new();
@@ -3260,7 +3329,7 @@ impl PaginationState {
             grid_row.and_then(|row| row.content_shift(fit.flow_y, fit.page_start, fit.page_end));
         overflow.page |= grid_row.is_some_and(|row| {
             row.whole_moves(fit.flow_y, fit.margin_top, fit.page_start, fit.page_end)
-        }) || (closing_edges_move(candidate, &fit)
+        }) || (closing_edges_move(candidate, &fit, outer_edges())
             && !stays_empty()
             && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit)
             && super::capped_edges_follow(
@@ -3276,7 +3345,7 @@ impl PaginationState {
             || ((grid_content_break.is_none()
                 || document.nodes[node_id].display() == raikiri_style::property::DisplayValue::Flex)
                 && leading_edges_move(candidate, &fit))
-            || ((run_tail_move(candidate, &fit) && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit))
+            || ((run_tail_move(candidate, &fit, outer_edges()) && !super::lines_cross_page_end(document, cascade, body_id, candidate, &fit))
                 || (super::min_height_edges_move(
                     document,
                     cascade,
@@ -3713,11 +3782,26 @@ impl PaginationState {
         // Overflow of a line before the box that runs onto the page the
         // break opens stays above the box there: the box keeps its place in
         // the flow below it (Chromium).
+        // A forced break inside a cell of a body row continues the row on
+        // the pages it opens: each opens with a copy of the table's repeated
+        // header, which the box goes below, and each page the row leaves
+        // closes with a copy of the repeated footer (Chromium).
+        let copy_row = (forced_transition
+            && forced_holder.is_none()
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant())
+        .then(|| cell_row(document, node_id))
+        .flatten()
+        .filter(|row| {
+            self.table_headers.rows.contains_key(row)
+                || self.table_headers.footer_rows.contains_key(row)
+        });
+        let head = copy_row.map_or(0.0, |row| self.table_headers.repeated_height_before(row));
         let page_top = |target_page: u32| {
             below_line_overflow
                 .filter(|&(_, bottom)| page_origins.page_index_in_flow(bottom) == Some(target_page))
-                .map_or(page_origins.origin(target_page), |(_, bottom)| {
-                    page_origins.origin(target_page).max(bottom)
+                .map_or(page_origins.origin(target_page) + head, |(_, bottom)| {
+                    (page_origins.origin(target_page) + head).max(bottom)
                 })
         };
         let landing_top = page_top(target_page)
@@ -3745,6 +3829,43 @@ impl PaginationState {
             reach_page(control, target_page)?;
         }
         let lands_after_forced_break = forced_transition && !margin_pushes_box_on;
+        // A cell with a definite height counts the space the copies take on
+        // the pages its row crosses as used: the row runs on past the page
+        // the break opens as far as that leaves of its height (Chromium).
+        // A top margin that pushes the box on past the page the break opens
+        // keeps it in the row, which crosses that page too.
+        let row_copy_pages = copy_row.and_then(|row| {
+            let (bottom, last_page) = row_end_below_copies(
+                current_abs_y(document, row),
+                document.nodes[row].layout.size.height,
+                (self.table_headers.footer_copy_height(row), head),
+                page_origins,
+            );
+            let cell = document.inclusive_ancestors(node_id).find(|&id| {
+                document.nodes[id].display() == raikiri_style::DisplayValue::TableCell
+            })?;
+            let holder = super::cell_growth_holder(document, cell);
+            let growth =
+                bottom - current_abs_y(document, row) - document.nodes[row].layout.size.height;
+            self.subtree_shifts
+                .copy_space_rows
+                .retain(|(id, _)| *id != holder);
+            self.subtree_shifts.copy_space_rows.push((holder, growth));
+            Some((last_page, holder, self.subtree_shifts.row_growth(holder)))
+        });
+        if let Some(row) = copy_row {
+            let last_page =
+                row_copy_pages.map_or(target_page, |(page, _, _)| page.max(target_page));
+            reach_page(control, last_page)?;
+            for left in self.current_page..last_page {
+                let next = left + 1;
+                self.table_headers.place_copies_around_row_break(
+                    row,
+                    (left, page_origins.origin(left), page_origins.origin(next)),
+                    (next, page_origins.origin(next)),
+                );
+            }
+        }
         // Clearance at a forced break keeps a box below the floats of the
         // page the break leaves. A float that runs on onto the page the break
         // opens takes its place there beside the content that starts that
@@ -3876,6 +3997,13 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            // The footer below the table's last body row follows the row's
+            // growth.
+            if let (Some(row), Some((_, row_holder, before))) = (copy_row, row_copy_pages) {
+                let growth = self.subtree_shifts.row_growth(row_holder) - before;
+                self.table_headers
+                    .grow_last_row(row, growth, |y| page_origins.page_index_for_y(y));
+            }
             // How far the holder moved, which a bounded ancestor may have
             // held to less than the landing asked for.
             let holder_delta = current_abs_y(document, holder) - holder_before;
@@ -4569,6 +4697,15 @@ impl PaginationState {
                 block_id,
                 run.as_ref().map(|run| run.lines.end),
             );
+            // A relayout that resumes a page at a line of the paragraph
+            // breaks before that line whatever lines it leaves around it.
+            let free_break = text_lines
+                .get(node_id)
+                .and_then(|owned| super::continuation_break_line(document, owned.root))
+                .and_then(|line| match &run {
+                    Some(run) => run.lines.contains(&line).then(|| line - run.lines.start),
+                    None => Some(line),
+                });
             if let Some(run) = run {
                 all_line_metrics = all_line_metrics.get(run.lines).unwrap_or_default().to_vec();
             }
@@ -4638,7 +4775,10 @@ impl PaginationState {
             // When an avoided break ties the paragraph to the box before it,
             // a break between its lines beats that one, which moving it whole
             // with the edges would take.
+            // An anonymous cell takes the initial `break-inside: auto`, which
+            // is not inherited (CSS 2.1 §17.2.1), so it never avoids a break.
             let avoided_whole = closing_edges > 0.0
+                && !document.nodes.is_anonymous_cell(block_id)
                 && box_avoids_page_break_inside(
                     document,
                     block_id,
@@ -4668,29 +4808,54 @@ impl PaginationState {
                             <= page_origins.step_at(self.current_page) + 0.001
                             && !super::tied_to_box_before(document, cascade, block_id))
                 };
-            let closing_edges_break =
-                |line_metrics: &[(f32, f32)], widows: i32, page: u32, effective_y: f32| {
-                    if avoided_whole {
-                        return None;
-                    }
-                    closing_edges_line_move(
-                        line_metrics,
-                        closing_edges,
-                        effective_y,
-                        page,
-                        cascade.computed[block_id].orphans.max(1) as usize,
-                        widows.max(1) as usize,
-                        page_origins,
-                    )
+            let orphans = paragraph_style(document, cascade, block_id).orphans;
+            let closing_edges_break = |document: &LayoutSession<'_>,
+                                       line_metrics: &[(f32, f32)],
+                                       widows: i32,
+                                       page: u32,
+                                       effective_y: f32| {
+                if avoided_whole {
+                    return None;
+                }
+                // The edges around a block that goes on from an earlier
+                // page stay behind (see `edges_beyond_broken_ancestor`).
+                let closing_edges = if closing_edges > 0.0 {
+                    (closing_edges
+                        - super::edges_beyond_broken_ancestor(
+                            document,
+                            cascade,
+                            block_id,
+                            page_origins.origin(page),
+                        ))
+                    .max(0.0)
+                } else {
+                    0.0
                 };
+                closing_edges_line_move(
+                    line_metrics,
+                    closing_edges,
+                    effective_y,
+                    page,
+                    orphans.max(1) as usize,
+                    widows.max(1) as usize,
+                    page_origins,
+                )
+            };
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
-                let moves = forced_line_moves(
+                // A cell's lines go below the copy of its table's header.
+                let head = if blocks.cell_paragraph == Some(block_id) {
+                    self.cell_page_insets(document, block_id).0
+                } else {
+                    0.0
+                };
+                let moves = forced_line_moves_below(
                     &forced_line_breaks(document, cascade, block_id),
                     &line_metrics,
                     text.effective_y,
                     page_origins,
+                    head,
                 );
                 if !moves.is_empty() {
                     return self.move_lines(
@@ -4699,9 +4864,13 @@ impl PaginationState {
                 }
                 // The padding and border that close the blocks around the
                 // paragraph stay with its last lines.
-                if let Some(moved) =
-                    closing_edges_break(&line_metrics, widows, self.current_page, text.effective_y)
-                {
+                if let Some(moved) = closing_edges_break(
+                    document,
+                    &line_metrics,
+                    widows,
+                    self.current_page,
+                    text.effective_y,
+                ) {
                     return self.move_lines(
                         document,
                         env,
@@ -4806,9 +4975,17 @@ impl PaginationState {
                 moved_whole = true;
             }
             // Lines a clip hides after a move are left where they are.
+            // The lines of a cell of a table that repeats a header or footer
+            // group go between the copies of the groups on each page.
+            let page_insets = if cell_paragraph {
+                self.cell_page_insets(document, block_id)
+            } else {
+                (0.0, 0.0)
+            };
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
-                let page_step = page_origins.step_at(page);
+                // The page ends above the copy of a repeated footer.
+                let page_step = page_origins.step_at(page) - page_insets.1;
                 let lines_fit = line_metrics.last().is_some_and(|(_, bottom)| {
                     text.effective_y + bottom <= page_start + page_step + 0.001
                 });
@@ -4817,15 +4994,17 @@ impl PaginationState {
                     text.effective_y,
                     page_start,
                     page_start + page_step,
-                    cascade.computed[block_id].orphans,
+                    paragraph_style(document, cascade, block_id).orphans,
                     widows,
                     if edges_follow_moved_lines || lines_fit {
                         own_closing_edges
                     } else {
                         0.0
                     },
-                );
+                )
+                .with_free_break(free_break);
                 line_fit.first_fragment = !moved_whole;
+                line_fit.page_insets = page_insets;
                 // The block is measured from where it is now: lines moved
                 // inside it leave it where it was.
                 let block_effective_y = block_effective_y(
@@ -4951,7 +5130,7 @@ impl PaginationState {
                         ))
                 {
                     page = page.saturating_add(1);
-                    let shift = page_origins.origin(page) - first_line_top;
+                    let shift = page_origins.origin(page) + page_insets.0 - first_line_top;
                     let moved = self.move_lines(
                         document,
                         env,
@@ -5082,7 +5261,7 @@ impl PaginationState {
                                         text_lines.get(node_id),
                                         first_line_top - (block_effective_y + block_edges),
                                     )))
-                        .then(|| page_origins.origin(page) - first_line_top)
+                        .then(|| page_origins.origin(page) + page_insets.0 - first_line_top)
                         .filter(|shift| *shift > 0.0);
                         if let Some(shift) = below_floats {
                             self.move_lines(
@@ -5128,8 +5307,13 @@ impl PaginationState {
                         // around it behind its lines, as on the page it left.
                         if moved_whole
                             && lines_can_move
-                            && let Some(moved) =
-                                closing_edges_break(&line_metrics, widows, page, text.effective_y)
+                            && let Some(moved) = closing_edges_break(
+                                document,
+                                &line_metrics,
+                                widows,
+                                page,
+                                text.effective_y,
+                            )
                         {
                             return self.move_lines(
                                 document,
@@ -5226,6 +5410,16 @@ impl PaginationState {
             return Ok(());
         };
         let widows = inline_widows(document, cascade, root, Some(run.end));
+        // The lines of a cell of a table that repeats a header or footer
+        // group go between the copies of the groups on each page.
+        let row = (blocks.cell_paragraph == Some(root))
+            .then(|| cell_row(document, root))
+            .flatten();
+        let page_insets = if row.is_some() {
+            self.cell_page_insets(document, root)
+        } else {
+            (0.0, 0.0)
+        };
         // A clip of the paragraph hides the lines past its edge: they do not
         // count, and do not move (see `clipped_line_metrics`).
         let clip = clip_edges.get(&root);
@@ -5323,7 +5517,7 @@ impl PaginationState {
         if run.start == 0
             && page > 0
             && text.effective_y + metrics[0].0 <= page_origins.origin(page) + 0.5
-            && cascade.computed[root].orphans > 1
+            && paragraph_style(document, cascade, root).orphans > 1
             && self.opening_inline_blocks_break_softly(document, env, root, page)
             && self
                 .inline_block_paragraph_to_move(document, env, candidate, blocks, text, page - 1)
@@ -5342,7 +5536,8 @@ impl PaginationState {
         }
         loop {
             let page_start = page_origins.origin(page);
-            let page_step = page_origins.step_at(page);
+            // The page ends above the copy of a repeated footer.
+            let page_step = page_origins.step_at(page) - page_insets.1;
             // A block inside an inline box before the run, and the lines
             // before that block on the page, are lines before the break
             // too: they stand ahead of the run for the fit, and only the
@@ -5389,15 +5584,21 @@ impl PaginationState {
                 text.effective_y,
                 page_start,
                 page_start + page_step,
-                cascade.computed[root].orphans,
+                paragraph_style(document, cascade, root).orphans,
                 widows,
                 closing_edges,
+            )
+            .with_free_break(
+                super::continuation_break_line(document, root)
+                    .filter(|line| run.contains(line))
+                    .map(|line| line - run.start + lines_before),
             );
             // With lines ahead of the run, the widows the paragraph cannot
             // have are relaxed only on the page it opens on.
             // A paragraph moved whole to the page it opens on relaxes none:
             // Chromium keeps the natural break there.
             fit.first_fragment = !moved && !paragraph_moved && (lines_before == 0 || opens_on_page);
+            fit.page_insets = page_insets;
             let run_top = text.effective_y + metrics[0].0;
             let run_height = metrics[metrics.len() - 1].1 - metrics[0].0;
             // A run taller than a page moves whole only to keep its orphans,
@@ -5492,27 +5693,46 @@ impl PaginationState {
                 ),
                 LineBreakFix::MoveBlock => {
                     page = page.saturating_add(1);
-                    (vec![(0, page_origins.origin(page) - run_top, page)], true)
+                    (
+                        vec![(0, page_origins.origin(page) + page_insets.0 - run_top, page)],
+                        true,
+                    )
                 }
                 LineBreakFix::Keep => {
                     // The natural break honors the orphans and widows, but a
                     // line is not split by it: the one that straddles the
                     // page end starts the next page.
+                    // A line that starts where the copy of a repeated footer
+                    // closes the page starts the next page too.
+                    let in_footer_copy = |&(top, _): &(f32, f32)| {
+                        let top = text.effective_y + top;
+                        top >= page_start + page_step - 0.001
+                            && top < page_start + page_step + page_insets.1 - 0.001
+                    };
                     let Some(line) = straddling_line(
                         &metrics,
                         text.effective_y,
                         page_start,
                         page_start + page_step,
-                    ) else {
+                    )
+                    .or_else(|| metrics.iter().position(in_footer_copy)) else {
                         break;
                     };
                     page = page.saturating_add(1);
                     let top = text.effective_y + metrics[line].0;
-                    (vec![(line, page_origins.origin(page) - top, page)], true)
+                    (
+                        vec![(line, page_origins.origin(page) + page_insets.0 - top, page)],
+                        true,
+                    )
                 }
             };
             for (line, shift, move_page) in moves {
                 reach_page(control, move_page)?;
+                if let Some(row) = row {
+                    self.place_line_move_copies(page_origins, row, shift, move_page);
+                }
+                let holder = row.and_then(|_| row_growth_holder(document, root));
+                let row_growth_before = holder.map(|holder| self.subtree_shifts.row_growth(holder));
                 self.move_run_lines(
                     document,
                     env,
@@ -5523,6 +5743,9 @@ impl PaginationState {
                     (run.start + line, shift, move_page),
                     false,
                 );
+                if let (Some(row), Some(holder), Some(before)) = (row, holder, row_growth_before) {
+                    self.grow_last_row_by(document, page_origins, (row, root), holder, before);
+                }
             }
             if !repeat {
                 break;
@@ -5790,8 +6013,8 @@ impl PaginationState {
         } else {
             (0, false)
         };
-        let orphans = cascade.computed[root].orphans.max(1) as usize;
-        let widows = cascade.computed[root].widows.max(1) as usize;
+        let orphans = paragraph_style(document, cascade, root).orphans.max(1) as usize;
+        let widows = paragraph_style(document, cascade, root).widows.max(1) as usize;
         // Too few orphans move only lines that all start on this page: those
         // that went on from the page before keep the break above them.
         let moved = if !in_inline_box {
@@ -5989,8 +6212,8 @@ impl PaginationState {
         // it are one line together.
         let before = ahead + on_page + 1 + broken;
         let after = next.len() - broken + later;
-        let orphans = cascade.computed[root].orphans.max(1) as usize;
-        let widows = cascade.computed[root].widows.max(1) as usize;
+        let orphans = paragraph_style(document, cascade, root).orphans.max(1) as usize;
+        let widows = paragraph_style(document, cascade, root).widows.max(1) as usize;
         if before < orphans {
             // Lines that open the paragraph go with the whole paragraph.
             if first_on_page == 0 && after_block.is_none() {
@@ -6371,7 +6594,7 @@ impl PaginationState {
                 .is_some_and(|node| node.layout.border.top + node.layout.padding.top <= 0.001);
             // The hidden lines still follow every break, and count as widows.
             let hidden = i32::try_from(all_lines - line_metrics.len()).unwrap_or(i32::MAX);
-            let style = &cascade.computed[root];
+            let style = &paragraph_style(document, cascade, root);
             let moves = positioned_line_moves(
                 &line_metrics,
                 start,
@@ -6416,6 +6639,77 @@ impl PaginationState {
         Ok(())
     }
 
+    /// The block sizes that the copies of the repeated header and footer
+    /// groups of the table around the cell paragraph `block_id` take at the
+    /// top and the bottom of the pages its row goes on to.
+    fn cell_page_insets(&self, document: &LayoutSession<'_>, block_id: usize) -> (f32, f32) {
+        cell_row(document, block_id).map_or((0.0, 0.0), |row| {
+            (
+                self.table_headers.repeated_height_before(row),
+                self.table_headers.footer_copy_height(row),
+            )
+        })
+    }
+
+    /// Places the copies of the repeated groups of the table of body row
+    /// `row` around the page ends that lines moved by `shift` down to `page`
+    /// leave: each page the lines leave closes with the footer's copy, and
+    /// each page they go on to opens with the header's.
+    fn place_line_move_copies(&mut self, origins: &PageOrigins, row: usize, shift: f32, page: u32) {
+        let head = self.table_headers.repeated_height_before(row);
+        let left = origins.page_index_for_y(origins.origin(page) + head - shift + 0.001);
+        for left in left.min(page.saturating_sub(1))..page {
+            let next = left + 1;
+            self.table_headers.place_copies_around_row_break(
+                row,
+                (left, origins.origin(left), origins.origin(next)),
+                (next, origins.origin(next)),
+            );
+        }
+    }
+
+    /// Moves the end of the body rows placed so far down to the end of the
+    /// anonymous cell `cell`, which stands for its row, with the growth its
+    /// moved lines gave it, when the table repeats a footer.
+    fn note_anonymous_cell_end(
+        &mut self,
+        document: &LayoutSession<'_>,
+        origins: &PageOrigins,
+        cell: usize,
+    ) {
+        let holder = super::cell_growth_holder(document, cell);
+        let bottom = current_abs_y(document, cell)
+            + document.nodes[cell].layout.size.height
+            + self.subtree_shifts.row_growth(holder);
+        self.table_headers
+            .extend_last_row(cell, bottom, |y| origins.page_index_for_y(y));
+    }
+
+    /// Moves the end of body row `row` down by how far its growth `holder`
+    /// grew since it had grown `before`, for lines that moved in the
+    /// paragraph `paragraph` of one of its cells: the footer's copy on the
+    /// page the row ends on goes below it. The table stands for the rows of
+    /// its anonymous cells, which end no higher than the end of the anonymous
+    /// cell that holds the moved lines.
+    fn grow_last_row_by(
+        &mut self,
+        document: &LayoutSession<'_>,
+        origins: &PageOrigins,
+        (row, paragraph): (usize, usize),
+        holder: (usize, usize),
+        before: f32,
+    ) {
+        if document.nodes.is_anonymous_cell(paragraph) {
+            self.note_anonymous_cell_end(document, origins, paragraph);
+            return;
+        }
+        self.table_headers.grow_last_row(
+            row,
+            self.subtree_shifts.row_growth(holder) - before,
+            |y| origins.page_index_for_y(y),
+        );
+    }
+
     /// Moves lines of the paragraph `block_id`, which holds the text
     /// `candidate`, down to the pages `moves` name: see [`LineBreakMove`].
     /// Each shift is also taken by the flow after the paragraph, and by the
@@ -6439,8 +6733,16 @@ impl PaginationState {
             text_lines,
             ..
         } = *env;
+        let row = (blocks.cell_paragraph == Some(block_id))
+            .then(|| cell_row(document, block_id))
+            .flatten();
         for (line, shift, page) in moves {
             reach_page(control, page)?;
+            if let Some(row) = row {
+                self.place_line_move_copies(env.page_origins, row, shift, page);
+            }
+            let holder = row.and_then(|_| row_growth_holder(document, block_id));
+            let row_growth_before = holder.map(|holder| self.subtree_shifts.row_growth(holder));
             let growth = move_paragraph_lines(
                 document,
                 cascade,
@@ -6457,6 +6759,9 @@ impl PaginationState {
                 &mut self.subtree_shifts,
                 entry.page_before_candidate,
             );
+            if let (Some(row), Some(holder), Some(before)) = (row, holder, row_growth_before) {
+                self.grow_last_row_by(document, env.page_origins, (row, block_id), holder, before);
+            }
             self.float_shifts
                 .record_grown_floats(document, cascade, body_id, candidate, block_id, growth);
             record_lines_beside_grown_floats(document, env, candidate, text, block_id, shift, page);
@@ -7165,7 +7470,7 @@ fn inline_widows(
     root: usize,
     end: Option<usize>,
 ) -> i32 {
-    let widows = cascade.computed[root].widows;
+    let widows = paragraph_style(document, cascade, root).widows;
     let end = end.or_else(|| {
         document
             .ifc_layout_node(root)
@@ -7885,4 +8190,71 @@ fn break_holders(
         }
     }
     holders
+}
+
+/// Where a table row that starts at `top` with `height` ends when each page
+/// it leaves closes with a copy of its table's repeated footer `footer` tall
+/// and each page it continues on opens with a copy of the repeated header
+/// `head` tall, with the page it ends on: the copies take the place of the
+/// row's height on those pages.
+pub(super) fn row_end_below_copies(
+    top: f32,
+    height: f32,
+    (footer, head): (f32, f32),
+    page_origins: &PageOrigins,
+) -> (f32, u32) {
+    let mut page = page_origins.page_index_for_y(top + 0.001);
+    let mut start = top;
+    let mut left = height;
+    loop {
+        let end = page_origins.origin(page + 1) - footer;
+        // A page too short to hold anything below the copies holds the rest.
+        if start + left <= end + 0.001 || end - start <= 0.001 {
+            return (start + left, page);
+        }
+        left -= end - start;
+        page += 1;
+        start = page_origins.origin(page) + head;
+    }
+}
+
+/// The computed style that the paragraph `root` takes its line-break
+/// properties from: an anonymous table cell has no style of its own and
+/// inherits from its parent box (CSS 2.1 §17.2.1).
+fn paragraph_style<'c>(
+    document: &LayoutSession<'_>,
+    cascade: &'c CascadeResult,
+    root: usize,
+) -> &'c raikiri_style::ComputedValues {
+    let id = if document.nodes.is_anonymous_cell(root) {
+        document.parent_of(root).unwrap_or(root)
+    } else {
+        root
+    };
+    &cascade.computed[id]
+}
+
+/// The holder of the growth of the row of the table cell around the
+/// paragraph `block_id`: the row grows as far as moved lines end past the
+/// cells' heights, by the most any of its cells needs.
+fn row_growth_holder(document: &LayoutSession<'_>, block_id: usize) -> Option<(usize, usize)> {
+    document
+        .inclusive_ancestors(block_id)
+        .find(|&id| document.nodes[id].display() == DisplayValue::TableCell)
+        .map(|cell| super::cell_growth_holder(document, cell))
+}
+
+/// The row of the table cell around the paragraph `block_id`.
+fn cell_row(document: &LayoutSession<'_>, block_id: usize) -> Option<usize> {
+    let cell = document
+        .inclusive_ancestors(block_id)
+        .find(|&id| document.nodes[id].display() == raikiri_style::DisplayValue::TableCell)?;
+    // An anonymous cell stands for the anonymous row around it, which has no
+    // box of its own.
+    if document.nodes.is_anonymous_cell(cell) {
+        return Some(cell);
+    }
+    document
+        .ancestors(cell)
+        .find(|&id| document.nodes[id].display() != raikiri_style::DisplayValue::Contents)
 }

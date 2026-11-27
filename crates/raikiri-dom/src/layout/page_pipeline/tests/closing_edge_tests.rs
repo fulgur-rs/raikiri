@@ -139,7 +139,7 @@ fn a_box_moves_only_when_the_next_page_can_hold_it_without_the_edges() {
             page_end: 100.0,
             next_page_step,
         };
-        closing_edges_move(&candidate, &fit)
+        closing_edges_move(&candidate, &fit, 0.0)
     };
     // A box of 60 that fills the rest of its page: the next page holds it
     // from 60 up, whatever the edges that run on after it.
