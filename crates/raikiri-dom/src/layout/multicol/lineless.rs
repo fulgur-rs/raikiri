@@ -1553,14 +1553,9 @@ fn absolute_pieces(
         let first = pieces.first()?;
         let last = pieces.last()?;
         // A flex container is sliced whole, with the absolutely positioned
-        // boxes it holds. Only a child that is the containing block of its
-        // boxes puts them in the columns, and boxes inside monolithic content
-        // stay in it, as the column height found for them assumes (see
-        // [`out_of_flow_height`]).
-        if flex
-            || !tree.nodes[child].claims_absolute_oof
-            || column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child)
-        {
+        // boxes it holds. Boxes inside monolithic content stay in it, as the
+        // column height found for them assumes (see [`out_of_flow_height`]).
+        if flex || column_line_boxes::is_monolithic(tree, tree.style_views.cascade(), child) {
             all.push(own);
             continue;
         }
