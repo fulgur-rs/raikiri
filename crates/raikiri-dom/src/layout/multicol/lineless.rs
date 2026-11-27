@@ -141,7 +141,7 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
 pub(super) fn is_sized_leaf_below_floats(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     layout_node(tree, child).display() == DisplayValue::Block
-        && is_plain_box_but_clearance(tree, child, false)
+        && is_plain_box_but_clearance(tree, child, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style)
         && block_margins(&style) == Some((0.0, 0.0))
@@ -415,12 +415,29 @@ pub(super) fn is_plain_box_apart_from_display(
     allow_lines: bool,
 ) -> bool {
     style_of(tree, child).clear() == Clear::None
-        && is_plain_box_but_clearance(tree, child, allow_lines)
+        && is_plain_box_but_clearance(tree, child, allow_lines, false)
+}
+
+/// [`is_plain_box_apart_from_display`] for a box that holds no lines and may
+/// force a column break before or after itself, for a caller that starts a
+/// column there.
+pub(super) fn is_plain_box_apart_from_display_and_breaks(
+    tree: &LayoutSession<'_>,
+    child: usize,
+) -> bool {
+    style_of(tree, child).clear() == Clear::None
+        && is_plain_box_but_clearance(tree, child, false, true)
 }
 
 /// [`is_plain_box_apart_from_display`] for a box that may clear floats, for
-/// a caller that places it below them.
-fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_lines: bool) -> bool {
+/// a caller that places it below them. With `breaks`, the box may force a
+/// column break before or after itself.
+fn is_plain_box_but_clearance(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_lines: bool,
+    breaks: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     // An orthogonal flow is monolithic in the column's block axis.
@@ -440,8 +457,9 @@ fn is_plain_box_but_clearance(tree: &LayoutSession<'_>, child: usize, allow_line
                 || REPLACED_BOX_TAGS.contains(&tag)
                 || matches!(tag, "fieldset" | "legend" | "details" | "summary")
         })
-        || sets_break_in_columns(node.break_before)
-        || sets_break_in_columns(node.break_after)
+        || [node.break_before, node.break_after]
+            .into_iter()
+            .any(|value| sets_break_in_columns(value) && !(breaks && value == BreakBetween::Column))
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
