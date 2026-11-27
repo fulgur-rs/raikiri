@@ -47,7 +47,7 @@ pub(super) fn supported(
     parent: usize,
     out_of_flow: bool,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
+    supported_with_wrapped_blocks(tree, parent, None, out_of_flow, false)
 }
 
 /// [`supported`] for an outermost multicol container. Its stream may also
@@ -56,12 +56,24 @@ pub(super) fn supported_with_wrappers(
     tree: &LayoutSession<'_>,
     parent: usize,
 ) -> Option<Vec<usize>> {
-    supported_with_wrapped_blocks(tree, parent, true, true)
+    supported_with_wrapped_blocks(tree, parent, None, true, true)
+}
+
+/// [`supported_with_wrappers`] for the children of `parent` in `segment`
+/// alone: the boxes between two spanners, or after the last, which form a
+/// row of columns of their own.
+pub(super) fn segment_supported_with_wrappers(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+    segment: &[usize],
+) -> Option<Vec<usize>> {
+    supported_with_wrapped_blocks(tree, parent, Some(segment), true, true)
 }
 
 fn supported_with_wrapped_blocks(
     tree: &LayoutSession<'_>,
     parent: usize,
+    segment: Option<&[usize]>,
     out_of_flow: bool,
     allow_wrapped_blocks: bool,
 ) -> Option<Vec<usize>> {
@@ -75,7 +87,9 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     let mut sized_flex = false;
-    for child in rendered_elements(tree, parent) {
+    for child in rendered_elements(tree, parent)
+        .filter(|child| segment.is_none_or(|segment| segment.contains(child)))
+    {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
             .then(|| sliceable_flex_container(tree, child, None))

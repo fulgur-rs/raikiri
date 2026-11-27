@@ -902,3 +902,80 @@ fn cloned_columns_that_start_late_go_on_below_the_next_top_edges() {
         "{a:?}"
     );
 }
+
+/// The boxes after the last spanner of a container that fills its columns in
+/// turn fill the columns of each page they reach, as those of a container
+/// without spanners do; the rows before a spanner stay balanced.
+#[test]
+fn columns_after_the_last_spanner_fill_in_turn_on_each_page() {
+    let columns = "columns: 2; column-gap: 0; column-fill: auto";
+    let before =
+        "<div style='height: 200px'></div><div style='column-span: all; height: 30px'></div>";
+    let body = |after: &str| format!("<div id=c style='{columns}'>{before}{after}</div>{AFTER}");
+    check(
+        "tall box",
+        &body("<div id=j style='height: 300px'></div>"),
+        2,
+        &[
+            (
+                "j",
+                &[
+                    (0, 0.0, 130.0, 62.0),
+                    (0, 192.0, 130.0, 62.0),
+                    (1, 0.0, 0.0, 176.0),
+                ],
+            ),
+            ("k", &[(1, 0.0, 176.0, 16.0)]),
+        ],
+    );
+    check(
+        "two boxes",
+        &body("<div id=j style='height: 150px'></div><div id=m style='height: 200px'></div>"),
+        3,
+        &[
+            (
+                "j",
+                &[
+                    (0, 0.0, 130.0, 62.0),
+                    (0, 192.0, 130.0, 62.0),
+                    (1, 0.0, 0.0, 26.0),
+                ],
+            ),
+            ("m", &[(1, 0.0, 26.0, 166.0), (1, 192.0, 0.0, 34.0)]),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    check(
+        "second spanner",
+        &body(
+            "<div id=m style='height: 40px'></div>\
+             <div id=s style='column-span: all; height: 10px'></div>\
+             <div id=j style='height: 300px'></div>",
+        ),
+        3,
+        &[
+            ("m", &[(0, 0.0, 130.0, 20.0), (0, 192.0, 130.0, 20.0)]),
+            ("s", &[(0, 0.0, 150.0, 10.0)]),
+            (
+                "j",
+                &[
+                    (0, 0.0, 160.0, 32.0),
+                    (0, 192.0, 160.0, 32.0),
+                    (1, 0.0, 0.0, 192.0),
+                    (1, 192.0, 0.0, 44.0),
+                ],
+            ),
+            ("k", &[(2, 0.0, 0.0, 16.0)]),
+        ],
+    );
+    // A box that fits below the spanner fills the first column alone.
+    check(
+        "short box",
+        &body("<div id=j style='height: 50px'></div>"),
+        2,
+        &[
+            ("c", &[(0, 0.0, 0.0, 180.0)]),
+            ("j", &[(0, 0.0, 130.0, 50.0)]),
+        ],
+    );
+}

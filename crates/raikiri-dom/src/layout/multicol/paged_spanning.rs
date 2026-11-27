@@ -217,6 +217,18 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     )
                 })
                 .collect();
+            // The boxes after the last spanner of a container that fills its
+            // columns in turn fill those of the pages they reach as the boxes
+            // of a container without spanners do; the rows before a spanner,
+            // and a last row that balances, keep their balanced columns.
+            let leaves = if spanner.is_none()
+                && !spanner_free
+                && context.column_fill == ColumnFillValue::Auto
+            {
+                lineless::segment_supported_with_wrappers(tree, owner, segment)
+            } else {
+                leaves.clone()
+            };
             if let Some(planned) = leaves
                 .as_deref()
                 .map(|leaves| {
