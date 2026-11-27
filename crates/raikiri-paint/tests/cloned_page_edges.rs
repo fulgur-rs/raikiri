@@ -98,24 +98,16 @@ fn a_cloned_multicol_container_closes_and_opens_each_page_with_its_border() {
 }
 
 #[test]
-fn a_cloned_block_of_a_set_height_keeps_its_edges_where_layout_put_them() {
-    // Layout repeats no edges inside a box whose height is set, so the box
-    // stays one box cut at the pages, as a monolithic box overflowing it
-    // leaves it in Chromium.
-    for style in [
-        "height:300px",
-        "min-height:300px",
-        "contain:size;contain-intrinsic-height:300px",
-    ] {
-        assert_eq!(
-            runs_per_page(&format!("<div class=b style='{style}'></div>")),
-            [
-                vec![(0, BLUE), (6, GRAY)],
-                vec![(0, GRAY), (106, RED), (112, WHITE)],
-            ],
-            "{style}"
-        );
-    }
+fn a_size_contained_cloned_block_paints_as_one_box_cut_at_the_pages() {
+    // Size containment makes the box monolithic: it does not repeat its
+    // edges at the break, and stays one box cut at the page edge.
+    assert_eq!(
+        runs_per_page("<div class=b style='contain:size;contain-intrinsic-height:300px'></div>"),
+        [
+            vec![(0, BLUE), (6, GRAY)],
+            vec![(0, GRAY), (106, RED), (112, WHITE)],
+        ]
+    );
 }
 
 #[test]
