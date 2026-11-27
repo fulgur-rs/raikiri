@@ -404,27 +404,39 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 element.cv.min_height,
                 ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
             )
+            || self.in_positioned_box(element.node_id)
         {
             return own;
         }
+        // Relative offsets move the fragments of the box together with it:
+        // the box breaks where its place in the flow does.
+        let shift: f32 = self
+            .document
+            .inclusive_ancestors(element.node_id)
+            .map(|id| {
+                let cv = &self.cascade.computed[id];
+                raikiri_dom::used_relative_offset(self.document, self.cascade, cv, id).1
+            })
+            .sum();
+        let flow_y = own.y - shift;
         // The span of the flow the page holds, where the box paints.
         let (window_top, window_bottom) = (page_top + page_offset_y, page_bottom + page_offset_y);
-        let from_before = page_top > 0.0 && own.y < window_top - 0.01;
-        let after = own.y + own.height > window_bottom + 0.01;
+        let from_before = page_top > 0.0 && flow_y < window_top - 0.01;
+        let after = flow_y + own.height > window_bottom + 0.01;
         // The coordinates of a box that a transform moves are not those of
         // the page.
         if !from_before && !after || self.in_transformed_box(element.node_id) {
             return own;
         }
-        let top = if from_before { window_top } else { own.y };
+        let top = if from_before { window_top } else { flow_y };
         let bottom = if after {
             window_bottom
         } else {
-            own.y + own.height
+            flow_y + own.height
         };
         let height = (bottom - top).max(0.0);
         OwnBox {
-            y: top,
+            y: top + shift,
             height,
             background_height: height,
             ..own
@@ -672,6 +684,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn in_transformed_box(&self, node_id: usize) -> bool {
         self.document.inclusive_ancestors(node_id).any(|id| {
             raikiri_dom::has_applied_transform(self.document, id, &self.cascade.computed[id])
+        })
+    }
+
+    /// Whether an ancestor of the node `node_id` is absolutely positioned,
+    /// which layout lays out whole rather than across pages.
+    fn in_positioned_box(&self, node_id: usize) -> bool {
+        self.document.ancestors(node_id).any(|id| {
+            matches!(
+                self.cascade.computed[id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
         })
     }
 

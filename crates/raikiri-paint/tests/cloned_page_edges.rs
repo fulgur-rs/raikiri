@@ -124,3 +124,80 @@ fn an_absolutely_positioned_cloned_box_on_one_page_paints_as_one_box() {
         [vec![(0, BLUE), (6, GRAY), (66, RED), (72, WHITE)]]
     );
 }
+
+#[test]
+fn a_cloned_block_that_fits_its_page_paints_as_one_box() {
+    assert_eq!(
+        runs_per_page(&format!("<div class=b>{}</div>", lines(3))),
+        [vec![(0, BLUE), (6, GRAY), (66, RED), (72, WHITE)]]
+    );
+}
+
+#[test]
+fn a_cloned_block_under_a_max_height_it_does_not_reach_repeats_its_edges() {
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b style='max-height:500px'>{}</div>",
+            lines(15)
+        )),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (126, RED), (132, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_cloned_paragraph_keeps_room_for_its_own_edges_once() {
+    let text: Vec<_> = (1..=15).map(|n| format!("L{n}")).collect();
+    assert_eq!(
+        runs_per_page(&format!("<p class=b>{}</p>", text.join("<br>"))),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (126, RED), (132, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_block_a_forced_break_moves_goes_below_the_repeated_edges() {
+    assert_eq!(
+        runs_per_page(
+            "<div class=b><p>L1<br>L2<br>L3</p>\
+             <p style='break-before:page'>M1<br>M2</p></div>"
+        ),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (46, RED), (52, WHITE)],
+        ]
+    );
+}
+
+#[test]
+fn a_relatively_offset_cloned_block_breaks_where_its_place_in_the_flow_does() {
+    let pages = runs_per_page(&format!(
+        "<div class=b style='position:relative;top:10px'>{}</div>",
+        lines(15)
+    ));
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0], [(0, WHITE), (10, BLUE), (16, GRAY)]);
+    // The first fragment, offset past its page, runs on into the top of the
+    // next page; only the rows below that are compared.
+    let second: Vec<_> = pages[1]
+        .iter()
+        .copied()
+        .filter(|&(row, _)| row >= 10)
+        .collect();
+    assert_eq!(second, [(10, BLUE), (16, GRAY), (136, RED), (142, WHITE)]);
+}
+
+#[test]
+fn a_cloned_block_inside_an_absolutely_positioned_box_on_one_page_paints_as_one_box() {
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div style='position:absolute;top:0;left:0;right:0'><div class=b>{}</div></div>",
+            lines(3)
+        )),
+        [vec![(0, BLUE), (6, GRAY), (66, RED), (72, WHITE)]]
+    );
+}

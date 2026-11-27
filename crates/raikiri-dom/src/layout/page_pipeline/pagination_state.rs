@@ -3896,12 +3896,23 @@ impl PaginationState {
                 || self.table_headers.footer_rows.contains_key(row)
         });
         let head = copy_row.map_or(0.0, |row| self.table_headers.repeated_height_before(row));
+        // The boxes around the moved one that clone their decorations repeat
+        // their padding and border at the top of the page it lands on, and it
+        // goes below them (CSS Fragmentation 3, 5.4).
+        let cloned_head = if candidate.context.is_float_descendant()
+            || candidate.context.is_out_of_flow_descendant()
+        {
+            0.0
+        } else {
+            document
+                .layout_parent_of(holder)
+                .map_or(0.0, |parent| super::cloned_block_insets(document, parent).0)
+        };
         let page_top = |target_page: u32| {
+            let top = page_origins.origin(target_page) + head + cloned_head;
             below_line_overflow
                 .filter(|&(_, bottom)| page_origins.page_index_in_flow(bottom) == Some(target_page))
-                .map_or(page_origins.origin(target_page) + head, |(_, bottom)| {
-                    (page_origins.origin(target_page) + head).max(bottom)
-                })
+                .map_or(top, |(_, bottom)| top.max(bottom))
         };
         let landing_top = page_top(target_page)
             + margin_top
@@ -4943,12 +4954,13 @@ impl PaginationState {
             // Forced breaks between the lines come first. The lines they
             // leave on either side are not repaired for orphans and widows.
             if lines_can_move {
-                // A cell's lines go below the copy of its table's header.
+                // A cell's lines go below the copy of its table's header,
+                // and lines inside cloned boxes below their repeated edges.
                 let head = if blocks.cell_paragraph == Some(block_id) {
                     self.cell_page_insets(document, block_id).0
                 } else {
                     0.0
-                };
+                } + super::cloned_block_insets(document, block_id).0;
                 let moves = forced_line_moves_below(
                     &forced_line_breaks(document, cascade, block_id),
                     &line_metrics,
@@ -5088,6 +5100,7 @@ impl PaginationState {
                 let cloned = super::cloned_block_insets(document, block_id);
                 (cell.0 + cloned.0, cell.1 + cloned.1)
             };
+            let cloned_bottom = super::cloned_block_insets(document, block_id).1;
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
                 // The page ends above the copy of a repeated footer.
@@ -5102,8 +5115,10 @@ impl PaginationState {
                     page_start + page_step,
                     paragraph_style(document, cascade, block_id).orphans,
                     widows,
+                    // The edges of boxes that clone theirs already have room
+                    // below the lines on every page through `page_insets`.
                     if edges_follow_moved_lines || lines_fit {
-                        own_closing_edges
+                        (own_closing_edges - cloned_bottom).max(0.0)
                     } else {
                         0.0
                     },
@@ -5521,10 +5536,16 @@ impl PaginationState {
         let row = (blocks.cell_paragraph == Some(root))
             .then(|| cell_row(document, root))
             .flatten();
-        let page_insets = if row.is_some() {
-            self.cell_page_insets(document, root)
-        } else {
-            (0.0, 0.0)
+        // The boxes around them that clone their decorations repeat their
+        // padding and border at each page end and start the lines cross.
+        let page_insets = {
+            let cell = if row.is_some() {
+                self.cell_page_insets(document, root)
+            } else {
+                (0.0, 0.0)
+            };
+            let cloned = super::cloned_block_insets(document, root);
+            (cell.0 + cloned.0, cell.1 + cloned.1)
         };
         // A clip of the paragraph hides the lines past its edge: they do not
         // count, and do not move (see `clipped_line_metrics`).
@@ -5578,6 +5599,9 @@ impl PaginationState {
         } else {
             0.0
         };
+        // The edges of boxes that clone theirs already have room below the
+        // lines on every page through `page_insets`.
+        let closing_edges = (closing_edges - super::cloned_block_insets(document, root).1).max(0.0);
         // The run is judged from where its own first line lies. A float that
         // the paragraph holds before the lines may sit lower than they do, on
         // the next page, and take the flow's page there before the lines are
