@@ -36,6 +36,10 @@ pub(crate) struct HeaderRepeat {
     pub(crate) tied_run: Option<(f32, bool)>,
     /// The table's block start before pagination.
     pub(crate) table_source_y: f32,
+    /// The block offset that `position: relative` on the table and the
+    /// boxes around it adds to where the flow puts it. The pages break the
+    /// flow without it, and every copy is painted with it, as the rows are.
+    pub(crate) relative_offset: f32,
     /// Page origin and header y per page index. Call
     /// [`HeaderRepeats::index`] after changing it.
     pub(crate) placements: BTreeMap<u32, (f32, f32)>,
@@ -58,6 +62,7 @@ impl HeaderRepeat {
             visit_shift: None,
             closing_edges: 0.0,
             tied_run: None,
+            relative_offset: 0.0,
             placements: BTreeMap::new(),
             by_origin: Vec::new(),
         }
@@ -458,17 +463,17 @@ impl HeaderRepeats {
             header
                 .placements
                 .entry(next)
-                .or_insert((next_origin, next_origin));
+                .or_insert((next_origin, next_origin + header.relative_offset));
         }
         if let Some(footer) = self
             .footer_rows
             .get(&row)
             .and_then(|id| self.headers.get_mut(id))
         {
-            footer
-                .placements
-                .entry(left)
-                .or_insert((left_origin, left_end - footer.height));
+            footer.placements.entry(left).or_insert((
+                left_origin,
+                left_end - footer.height + footer.relative_offset,
+            ));
         }
     }
 
@@ -820,7 +825,10 @@ fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: u
         && !node.size_containment.height
         && !node.used_writing_mode.is_vertical()
         && !values.cssom_writing_mode.is_vertical()
-        && values.position == PositionValue::Static
+        && matches!(
+            values.position,
+            PositionValue::Static | PositionValue::Relative
+        )
         && values.float == FloatValue::None
         && values.overflow.y == OverflowValue::Visible
         && values.height == Length::Auto

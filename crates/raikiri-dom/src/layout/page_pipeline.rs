@@ -5958,6 +5958,10 @@ fn paginate_flow(
     );
     // The boxes tied to a table's first row tell a repeated header group
     // from the rows of the table (see `first_table_row`).
+    for header in table_headers.headers.values_mut() {
+        header.relative_offset =
+            accumulated_relative_offset_y(document, cascade, body_id, header.table);
+    }
     document.context.repeated_table_groups = table_headers.headers.keys().copied().collect();
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
@@ -20280,9 +20284,10 @@ fn make_room_for_caption_header(
         return 0.0;
     }
     let origin = page_origins.origin(current_page);
-    let delta = (origin + copy - caption_y).max(0.0);
+    let top = origin + header.relative_offset;
+    let delta = (top + copy - caption_y).max(0.0);
     materialize_y(document, caption, caption_y + delta);
-    header.placements.insert(current_page, (origin, origin));
+    header.placements.insert(current_page, (origin, top));
     delta
 }
 
@@ -20312,11 +20317,11 @@ fn make_room_for_header_copy(
         {
             // The first header belongs with the first body row, even
             // when the remaining space cannot fit both intact.
-            let origin = page_origins.origin(current_page);
+            let top = page_origins.origin(current_page) + header.relative_offset;
             let table_y = current_abs_y(document, header.table);
-            materialize_y(document, header.table, table_y + origin - header.source_y);
-            materialize_y(document, header_id, origin);
-            header.source_y = origin;
+            materialize_y(document, header.table, table_y + top - header.source_y);
+            materialize_y(document, header_id, top);
+            header.source_y = top;
             header.placements.clear();
         }
         header.body_started = true;
@@ -20329,9 +20334,10 @@ fn make_room_for_header_copy(
             || header.height + header.gap < step)
     {
         let origin = page_origins.origin(current_page);
-        let delta = (origin + header.height + header.gap - row_y).max(0.0);
+        let top = origin + header.relative_offset;
+        let delta = (top + header.height + header.gap - row_y).max(0.0);
         materialize_table_row_y(document, row, row_y + delta);
-        header.placements.insert(current_page, (origin, origin));
+        header.placements.insert(current_page, (origin, top));
         return delta;
     }
     0.0
@@ -20355,7 +20361,10 @@ fn place_table_footer(
     let after_rows = footer
         .last_row
         .map_or(f32::NEG_INFINITY, |(_, bottom)| bottom + footer.gap);
-    let mut y = natural.max(after_rows);
+    // The pages break the flow without the relative offset of the table,
+    // which the footer is then painted with.
+    let offset = footer.relative_offset;
+    let mut y = natural.max(after_rows) - offset;
     let mut page = page_origins.page_index_for_y(y + 0.001);
     let page_end = page_origins.origin(page) + page_origins.step_at(page);
     let next = page.saturating_add(1);
@@ -20407,11 +20416,14 @@ fn place_table_footer(
                         && header.height + header.gap + fits <= page_origins.step_at(page) + 0.001
                 })
             {
-                header.placements.insert(page, (y, y));
+                header
+                    .placements
+                    .insert(page, (y, y + header.relative_offset));
                 y += header.height + header.gap;
             }
         }
     }
+    let y = y + offset;
     let footer = table_headers.headers.get_mut(&footer_id).expect("footer");
     materialize_y(document, footer_id, y);
     footer.source_y = y;
@@ -20476,7 +20488,10 @@ fn place_repeated_table_footers(
                 } else {
                     origin
                 };
-                group.placements.entry(page).or_insert((origin, y));
+                group
+                    .placements
+                    .entry(page)
+                    .or_insert((origin, y + group.relative_offset));
             }
         }
     }
