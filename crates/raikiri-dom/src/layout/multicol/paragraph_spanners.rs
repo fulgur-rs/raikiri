@@ -105,8 +105,8 @@ pub(crate) fn arrange(
             y = ((y + pending.resolve()) * 64.0).round() / 64.0;
             pending = CollapsibleMarginSet::ZERO;
             // A group above a spanner is balanced even under `column-fill:
-            // auto`, which fills the columns of the last one. The last group
-            // of a container of a definite height has what the groups and
+            // auto`, which fills the columns of the last one. In a container
+            // whose height is bounded, each group has what the groups and
             // spanners above it leave of that height (CSS Multi-column 1,
             // 7.1 and 8.1), and at least a pixel, as in Chromium: each of
             // its columns then holds a line.
@@ -116,18 +116,20 @@ pub(crate) fn arrange(
                 } else {
                     context.column_fill
                 },
-                available_height: context
-                    .available_height
-                    .filter(|_| spanner.is_none())
-                    .map(|height| (height - y).max(1.0)),
+                available_height: context.available_height.map(|height| (height - y).max(1.0)),
                 ..context
             };
             let (mut columns, height) = group_column_fragments(lines, start..stop, group, y);
             if perform {
                 tree.nodes[owner].multicol_groups.push(MulticolGroup {
+                    // Balanced columns are as tall as the group; those that
+                    // fill in turn reach the height the group has.
                     context: FragmentationContext {
                         origin_x: geometry.edges.0,
                         origin_y: geometry.top_edge + y,
+                        available_height: group
+                            .available_height
+                            .filter(|_| group.column_fill == ColumnFillValue::Auto),
                         ..group
                     },
                     height,

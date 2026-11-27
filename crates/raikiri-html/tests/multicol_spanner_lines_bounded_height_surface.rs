@@ -209,3 +209,112 @@ fn the_last_group_overflows_into_more_columns_past_a_maximum_height() {
         ],
     );
 }
+
+#[test]
+fn lines_above_the_spanner_go_on_in_more_columns_past_a_definite_height() {
+    assert_boxes(
+        "<div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;height:40px'><span id=u0>L</span><br><span id=u1>L</span><br><span id=u2>L</span><br><span id=u3>L</span><br><span id=u4>L</span><br><span id=u5>L</span><br><span id=u6>L</span><br><span id=u7>L</span><br><span id=u8>L</span><br><span id=u9>L</span><br><span id=u10>L</span><br><span id=u11>L</span><br><span id=u12>L</span><br><span id=u13>L</span><br><span id=u14>L</span><br><span id=u15>L</span><br><span id=u16>L</span><br><span id=u17>L</span><br><span id=u18>L</span><br><span id=u19>L</span><br><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 40.0]),
+            ("u0", [8.0, 8.0, 10.0, 10.0]),
+            ("u1", [8.0, 18.0, 10.0, 10.0]),
+            ("u2", [8.0, 28.0, 10.0, 10.0]),
+            ("u3", [8.0, 38.0, 10.0, 10.0]),
+            ("u4", [108.0, 8.0, 10.0, 10.0]),
+            ("u5", [108.0, 18.0, 10.0, 10.0]),
+            ("u6", [108.0, 28.0, 10.0, 10.0]),
+            ("u7", [108.0, 38.0, 10.0, 10.0]),
+            ("u8", [208.0, 8.0, 10.0, 10.0]),
+            ("u9", [208.0, 18.0, 10.0, 10.0]),
+            ("u10", [208.0, 28.0, 10.0, 10.0]),
+            ("u11", [208.0, 38.0, 10.0, 10.0]),
+            ("u12", [308.0, 8.0, 10.0, 10.0]),
+            ("u13", [308.0, 18.0, 10.0, 10.0]),
+            ("u14", [308.0, 28.0, 10.0, 10.0]),
+            ("u15", [308.0, 38.0, 10.0, 10.0]),
+            ("u16", [408.0, 8.0, 10.0, 10.0]),
+            ("u17", [408.0, 18.0, 10.0, 10.0]),
+            ("u18", [408.0, 28.0, 10.0, 10.0]),
+            ("u19", [408.0, 38.0, 10.0, 10.0]),
+            ("s", [8.0, 48.0, 200.0, 10.0]),
+            ("l0", [8.0, 58.0, 10.0, 10.0]),
+            ("l1", [108.0, 58.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_maximum_height_below_the_height_bounds_the_last_group() {
+    assert_boxes(
+        "<div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;height:100px;max-height:40px'><span id=a>A</span><br><span id=b>B</span><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br><span id=l2>L</span><br><span id=l3>L</span><br><span id=l4>L</span><br><span id=l5>L</span><br><span id=l6>L</span><br><span id=l7>L</span><br><span id=l8>L</span><br><span id=l9>L</span><br></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 40.0]),
+            ("a", [8.0, 8.0, 10.0, 10.0]),
+            ("b", [108.0, 8.0, 10.0, 10.0]),
+            ("s", [8.0, 18.0, 200.0, 10.0]),
+            ("l0", [8.0, 28.0, 10.0, 10.0]),
+            ("l1", [8.0, 38.0, 10.0, 10.0]),
+            ("l2", [108.0, 28.0, 10.0, 10.0]),
+            ("l3", [108.0, 38.0, 10.0, 10.0]),
+            ("l4", [208.0, 28.0, 10.0, 10.0]),
+            ("l5", [208.0, 38.0, 10.0, 10.0]),
+            ("l6", [308.0, 28.0, 10.0, 10.0]),
+            ("l7", [308.0, 38.0, 10.0, 10.0]),
+            ("l8", [408.0, 28.0, 10.0, 10.0]),
+            ("l9", [408.0, 38.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_minimum_height_above_the_height_gives_the_last_group_room() {
+    assert_boxes(
+        "<div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;height:20px;min-height:60px'><span id=a>A</span><br><span id=b>B</span><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br><span id=l2>L</span><br><span id=l3>L</span><br><span id=l4>L</span><br><span id=l5>L</span><br></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 60.0]),
+            ("a", [8.0, 8.0, 10.0, 10.0]),
+            ("b", [108.0, 8.0, 10.0, 10.0]),
+            ("s", [8.0, 18.0, 200.0, 10.0]),
+            ("l0", [8.0, 28.0, 10.0, 10.0]),
+            ("l1", [8.0, 38.0, 10.0, 10.0]),
+            ("l2", [8.0, 48.0, 10.0, 10.0]),
+            ("l3", [108.0, 28.0, 10.0, 10.0]),
+            ("l4", [108.0, 38.0, 10.0, 10.0]),
+            ("l5", [108.0, 48.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn a_percentage_height_of_a_flex_item_bounds_the_last_group() {
+    assert_boxes(
+        "<div style='display:flex;height:60px'><div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;height:50%;flex:none'><span id=a>A</span><br><span id=b>B</span><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br><span id=l2>L</span><br><span id=l3>L</span><br><span id=l4>L</span><br><span id=l5>L</span><br></div></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 30.0]),
+            ("a", [8.0, 8.0, 10.0, 10.0]),
+            ("b", [108.0, 8.0, 10.0, 10.0]),
+            ("s", [8.0, 18.0, 200.0, 10.0]),
+            ("l0", [8.0, 28.0, 10.0, 10.0]),
+            ("l1", [108.0, 28.0, 10.0, 10.0]),
+            ("l2", [208.0, 28.0, 10.0, 10.0]),
+            ("l3", [308.0, 28.0, 10.0, 10.0]),
+            ("l4", [408.0, 28.0, 10.0, 10.0]),
+            ("l5", [508.0, 28.0, 10.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn the_last_group_fills_in_turn_below_a_maximum_height() {
+    assert_boxes(
+        "<div id=m style='orphans:1;widows:1;columns:2;column-gap:0;width:200px;max-height:60px;column-fill:auto'><span id=a>A</span><br><span id=b>B</span><div id=s style='column-span:all;height:10px'></div><span id=l0>L</span><br><span id=l1>L</span><br></div>",
+        &[
+            ("m", [8.0, 8.0, 200.0, 40.0]),
+            ("a", [8.0, 8.0, 10.0, 10.0]),
+            ("b", [108.0, 8.0, 10.0, 10.0]),
+            ("s", [8.0, 18.0, 200.0, 10.0]),
+            ("l0", [8.0, 28.0, 10.0, 10.0]),
+            ("l1", [8.0, 38.0, 10.0, 10.0]),
+        ],
+    );
+}

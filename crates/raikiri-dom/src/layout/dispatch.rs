@@ -3093,11 +3093,12 @@ fn measure_ifc_root(
                 if !spanner_groups {
                     return crate::layout::root_column_fragments(&lines, context);
                 }
-                // The last group fills what a maximum height leaves of the
-                // columns, as it fills what a definite height leaves.
+                // The groups fill no more than what the used height leaves
+                // of the content box, or a maximum height when the height
+                // is auto, and go on in more columns past it.
                 let maximum = Some(measure.height_bounds.1).filter(|height| height.is_finite());
                 let context = crate::fragment::FragmentationContext {
-                    available_height: context.available_height.or(maximum),
+                    available_height: measure.definite_height.or(maximum),
                     ..context
                 };
                 let groups = crate::layout::multicol::paragraph_spanners::arrange(
