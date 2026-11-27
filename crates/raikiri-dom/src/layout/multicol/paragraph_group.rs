@@ -2382,6 +2382,10 @@ pub(super) fn paginate(
         if !work.page_available(page_index)? {
             break;
         }
+        // The columns of a page start no higher than its origin, which is
+        // below the end of the last page when the container repeats its
+        // border and padding there.
+        absolute_y = absolute_y.max(page_origin);
         let capacity = page_origin + page_height - absolute_y;
         if !capacity.is_finite() || capacity <= 0.0 {
             return Ok(None);
