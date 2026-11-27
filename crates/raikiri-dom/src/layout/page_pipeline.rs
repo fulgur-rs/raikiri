@@ -9339,6 +9339,19 @@ pub(super) fn cloned_block_insets(
         })
 }
 
+/// The part of [`cloned_block_insets`] that `block` repeats itself, apart
+/// from the boxes around it.
+pub(super) fn cloned_own_insets(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    let (top, bottom) = cloned_block_insets(document, block);
+    let (outer_top, outer_bottom) = document
+        .layout_parent_of(block)
+        .map_or((0.0, 0.0), |parent| cloned_block_insets(document, parent));
+    (top - outer_top, bottom - outer_bottom)
+}
+
 /// Whether the lead to a contained box consists only of cloned leading
 /// edges along a static, margin-free chain. Zero-edge holders are transparent.
 /// Keeping that owner is useful even for a tall box: a page that already

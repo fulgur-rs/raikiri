@@ -5100,7 +5100,7 @@ impl PaginationState {
                 let cloned = super::cloned_block_insets(document, block_id);
                 (cell.0 + cloned.0, cell.1 + cloned.1)
             };
-            let cloned_bottom = super::cloned_block_insets(document, block_id).1;
+            let cloned_bottom = super::cloned_own_insets(document, block_id).1;
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
                 // The page ends above the copy of a repeated footer.
@@ -5115,8 +5115,9 @@ impl PaginationState {
                     page_start + page_step,
                     paragraph_style(document, cascade, block_id).orphans,
                     widows,
-                    // The edges of boxes that clone theirs already have room
-                    // below the lines on every page through `page_insets`.
+                    // A paragraph that clones its own edges already has room
+                    // for them below the lines on every page through
+                    // `page_insets`.
                     if edges_follow_moved_lines || lines_fit {
                         (own_closing_edges - cloned_bottom).max(0.0)
                     } else {
@@ -5599,9 +5600,9 @@ impl PaginationState {
         } else {
             0.0
         };
-        // The edges of boxes that clone theirs already have room below the
-        // lines on every page through `page_insets`.
-        let closing_edges = (closing_edges - super::cloned_block_insets(document, root).1).max(0.0);
+        // A paragraph that clones its own edges already has room for them
+        // below the lines on every page through `page_insets`.
+        let closing_edges = (closing_edges - super::cloned_own_insets(document, root).1).max(0.0);
         // The run is judged from where its own first line lies. A float that
         // the paragraph holds before the lines may sit lower than they do, on
         // the next page, and take the flow's page there before the lines are

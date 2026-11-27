@@ -230,3 +230,20 @@ fn a_nested_cloned_block_breaks_inside_the_edges_its_ancestor_repeats() {
         ]
     );
 }
+
+#[test]
+fn a_sliced_paragraph_inside_a_cloned_block_keeps_room_for_its_own_closing_edges() {
+    const LIME: [u8; 3] = [0, 255, 0];
+    let text: Vec<_> = (1..=18).map(|n| format!("L{n}")).collect();
+    assert_eq!(
+        runs_per_page(&format!(
+            "<div class=b><p style='padding-bottom:10px;border-bottom:4px solid lime'>{}</p></div>",
+            text.join("<br>")
+        )),
+        [
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (194, RED)],
+            vec![(0, BLUE), (6, GRAY), (56, LIME), (60, RED), (66, WHITE)],
+        ]
+    );
+}
