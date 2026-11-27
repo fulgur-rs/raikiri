@@ -387,7 +387,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             flow_band,
             ..
         } = self.geometry;
-        if !repeats_cloned_edges(element.cv)
+        if !self.repeats_cloned_edges(element.node_id)
             || element.inside_fixed
             || element.fixed_in_viewport
             || flow_band.is_some()
@@ -400,7 +400,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let (outer_top, outer_bottom) = self
             .document
             .ancestors(element.node_id)
-            .filter(|&id| repeats_cloned_edges(&self.cascade.computed[id]))
+            .filter(|&id| self.repeats_cloned_edges(id))
             .filter_map(|id| self.document.get_node(id))
             .fold((0.0, 0.0), |(top, bottom), node| {
                 let layout = node.layout();
@@ -690,6 +690,28 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         self.document.inclusive_ancestors(node_id).any(|id| {
             raikiri_dom::has_applied_transform(self.document, id, &self.cascade.computed[id])
         })
+    }
+
+    /// Whether the box of the node `node_id` repeats its padding and border
+    /// at the page breaks inside it. Layout leaves room for the repeated
+    /// edges only around the content of an in-flow box whose content sets
+    /// its height; it lays an absolutely positioned box out whole.
+    fn repeats_cloned_edges(&self, node_id: usize) -> bool {
+        let cv = &self.cascade.computed[node_id];
+        cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
+            && matches!(
+                cv.position,
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            )
+            && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+            && matches!(
+                cv.min_height,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
+            )
+            && self
+                .document
+                .get_node(node_id)
+                .is_some_and(|node| !node.height_is_size_contained())
     }
 
     /// Whether an ancestor of the node `node_id` is absolutely positioned,
@@ -1400,21 +1422,4 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             0.0
         }
     }
-}
-
-/// Whether a box with the computed values `cv` repeats its padding and
-/// border at the page breaks inside it. Layout leaves room for the repeated
-/// edges only around the content of an in-flow box whose content sets its
-/// height; it lays an absolutely positioned box out whole.
-fn repeats_cloned_edges(cv: &ComputedValues) -> bool {
-    cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
-        && matches!(
-            cv.position,
-            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-        )
-        && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-        && matches!(
-            cv.min_height,
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
-        )
 }

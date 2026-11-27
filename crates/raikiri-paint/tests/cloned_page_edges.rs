@@ -102,7 +102,11 @@ fn a_cloned_block_of_a_set_height_keeps_its_edges_where_layout_put_them() {
     // Layout repeats no edges inside a box whose height is set, so the box
     // stays one box cut at the pages, as a monolithic box overflowing it
     // leaves it in Chromium.
-    for style in ["height:300px", "min-height:300px"] {
+    for style in [
+        "height:300px",
+        "min-height:300px",
+        "contain:size;contain-intrinsic-height:300px",
+    ] {
         assert_eq!(
             runs_per_page(&format!("<div class=b style='{style}'></div>")),
             [

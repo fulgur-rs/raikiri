@@ -1099,6 +1099,13 @@ impl Node {
         &self.layout
     }
 
+    /// Whether size containment (CSS Containment 2, 3.2) makes this box
+    /// ignore its content for its height.
+    #[inline]
+    pub fn height_is_size_contained(&self) -> bool {
+        self.size_containment.height
+    }
+
     /// Return this Node's [`NodeKind`].
     ///
     /// Accessor replacement for the former `pub kind: NodeKind` field.
