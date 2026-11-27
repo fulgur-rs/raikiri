@@ -2797,6 +2797,21 @@ pub(super) fn paginate(
             let Some(paragraph) = &paragraphs[index] else {
                 continue; // cov:ignore: fill_chunk only creates placements for present paragraphs.
             };
+            // The padding and border of a wrapper that a column end cuts
+            // is left to the other strategies: its pieces here would each
+            // hold all of it.
+            let extent = paragraph.extents.first().zip(paragraph.extents.last());
+            let whole = paragraph.edge_start
+                + extent.map_or(0.0, |(first, last)| last.1 - first.0)
+                + paragraph.edge_end;
+            if flow.roles[index] != Role::Box
+                && placement.fragments.iter().any(|range| {
+                    range.y < -f32::EPSILON
+                        || placement.first_y + range.y + whole > height + f32::EPSILON
+                })
+            {
+                return Ok(None);
+            }
             let mut ranges = placement.fragments.into_iter().peekable();
             while let Some(range) = ranges.next() {
                 work.charge(1)?;

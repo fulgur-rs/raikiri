@@ -1192,3 +1192,24 @@ fn a_wrapper_holding_a_sized_box_stays_in_the_columns_the_pages_cut() {
     expected.sort();
     assert_eq!(texts, expected);
 }
+
+#[test]
+fn a_wrapper_whose_padding_a_column_end_cuts_ends_with_what_it_holds() {
+    // Padding taller than a column is not sliced into pieces that each
+    // hold all of it: the wrapper's background ends with its line, so it
+    // paints over none of what follows, as in Chromium.
+    let body = mc(&format!(
+        "<div class=w id=w>{}</div>{}",
+        par("L", 1, 1),
+        par("M", 1, 30)
+    ));
+    let css = ".mc{column-fill:auto}.w{background:#fcc;padding-top:250px}";
+    let line = lines(&body, css)
+        .into_iter()
+        .find(|(.., text)| text == "L1")
+        .expect("the wrapper's line is laid out");
+    let last = *visible_boxes(&body, css, "w")
+        .last()
+        .expect("the wrapper paints");
+    assert_eq!((last.0, last.1, last.3), (line.0, line.1, line.2 + 20));
+}
