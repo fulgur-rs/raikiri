@@ -20,6 +20,7 @@ mod border_image;
 mod canvas_contain_background;
 mod canvas_root;
 mod canvas_streaming;
+mod cloned_page_edges;
 mod collapsed_corners;
 mod collapsed_dashed_border;
 mod column_shadow_tests;

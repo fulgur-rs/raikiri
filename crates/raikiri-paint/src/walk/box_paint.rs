@@ -262,6 +262,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height: grid.map_or(paint_height, |rect| rect.height),
             background_height: grid.map_or(paint_background_height, |rect| rect.height),
         };
+        let own = self.cloned_page_fragment(element, own);
         // The box's own geometry, which its outline follows.
         let (fragment_paint_y, fragment_paint_height) = (own.y, own.height);
         let (own, sliced) = self.open_block_slice(element, own);
@@ -369,6 +370,54 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         }
         if cut.is_some() {
             scene.pop_layer();
+        }
+    }
+
+    /// The part of the box `own` of `element` on this page, as a box of its
+    /// own, when the box clones its decorations and a page break cuts it:
+    /// each fragment then has the whole border and padding, and its
+    /// background, drawn around it (CSS Fragmentation 3, section 5.4).
+    /// Layout leaves room for the repeated edges inside the page area.
+    fn cloned_page_fragment(&self, element: &ElementBox<'w>, own: OwnBox) -> OwnBox {
+        let PageGeometry {
+            page_top,
+            page_bottom,
+            page_offset_y,
+            flow_band,
+            ..
+        } = self.geometry;
+        if element.cv.box_decoration_break != raikiri_style::property::BoxDecorationBreak::Clone
+            || element.inside_fixed
+            || element.fixed_in_viewport
+            || flow_band.is_some()
+            || !matches!(
+                element.cv.position,
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            )
+        {
+            return own;
+        }
+        // The span of the flow the page holds, where the box paints.
+        let (window_top, window_bottom) = (page_top + page_offset_y, page_bottom + page_offset_y);
+        let from_before = page_top > 0.0 && own.y < window_top - 0.01;
+        let after = own.y + own.height > window_bottom + 0.01;
+        // The coordinates of a box that a transform moves are not those of
+        // the page.
+        if !from_before && !after || self.in_transformed_box(element.node_id) {
+            return own;
+        }
+        let top = if from_before { window_top } else { own.y };
+        let bottom = if after {
+            window_bottom
+        } else {
+            own.y + own.height
+        };
+        let height = (bottom - top).max(0.0);
+        OwnBox {
+            y: top,
+            height,
+            background_height: height,
+            ..own
         }
     }
 

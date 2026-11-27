@@ -9300,6 +9300,25 @@ fn avoided_box_holder(
     )
 }
 
+/// The padding and border, above and below, that `block` and the boxes
+/// around it that clone their decorations repeat on each page a break inside
+/// them reaches (CSS Fragmentation 3, 5.4).
+pub(super) fn cloned_block_insets(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> (f32, f32) {
+    document
+        .inclusive_ancestors(block)
+        .filter(|&id| document.nodes[id].clones_box_decorations)
+        .fold((0.0, 0.0), |(top, bottom), id| {
+            let layout = document.nodes[id].layout;
+            (
+                top + layout.border.top + layout.padding.top,
+                bottom + layout.border.bottom + layout.padding.bottom,
+            )
+        })
+}
+
 /// Whether the lead to a contained box consists only of cloned leading
 /// edges along a static, margin-free chain. Zero-edge holders are transparent.
 /// Keeping that owner is useful even for a tall box: a page that already

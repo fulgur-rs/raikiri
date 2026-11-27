@@ -5076,10 +5076,17 @@ impl PaginationState {
             // Lines a clip hides after a move are left where they are.
             // The lines of a cell of a table that repeats a header or footer
             // group go between the copies of the groups on each page.
-            let page_insets = if cell_paragraph {
-                self.cell_page_insets(document, block_id)
-            } else {
-                (0.0, 0.0)
+            // The boxes around them that clone their decorations repeat
+            // their padding and border at each page end and start the lines
+            // cross (CSS Fragmentation 3, 5.4).
+            let page_insets = {
+                let cell = if cell_paragraph {
+                    self.cell_page_insets(document, block_id)
+                } else {
+                    (0.0, 0.0)
+                };
+                let cloned = super::cloned_block_insets(document, block_id);
+                (cell.0 + cloned.0, cell.1 + cloned.1)
             };
             while !line_metrics.is_empty() {
                 let page_start = page_origins.origin(page);
