@@ -315,12 +315,10 @@ pub(super) fn with_content_limits(
 }
 
 /// Whether the keyword limits of the box `idx` are resolved on vertical axes:
-/// it is laid out on the axes of a vertical writing mode. A vertical flex or
-/// grid container keeps the physical axes: the bridge leaves its keywords
-/// unresolved, and the only limit it carries is the automatic minimum a flex
-/// item takes across its ratio.
+/// it is laid out on the axes of a vertical writing mode, flex and grid
+/// containers included.
 fn resolves_on_vertical_axes(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    super::block_right_to_left(tree, idx).is_some() && !is_flex_grid_container(tree, idx)
+    super::block_right_to_left(tree, idx).is_some()
 }
 
 /// [`with_content_limits`] for a box laid out on vertical axes, whose physical
@@ -385,7 +383,16 @@ fn vertical_inline_bounds(
         along.vertical_margins_are_collapsible = Line::FALSE;
         let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
         use LengthProperty::*;
-        let mut entries = neutral_size_overrides(&[Height, MinHeight, MaxHeight]);
+        // A flex or grid container measures its inline size without its
+        // block-axis limits but at its stated block size, which a column
+        // container wraps its lines in: a wrapping column of items is as tall
+        // as its lines side by side are wide at that size.
+        let properties: &[LengthProperty] = if is_flex_grid_container(tree, idx) {
+            &[Height, MinHeight, MaxHeight, MinWidth, MaxWidth]
+        } else {
+            &[Height, MinHeight, MaxHeight]
+        };
+        let mut entries = neutral_size_overrides(properties);
         // A keyword the box states with a ratio stands for the inline size
         // the ratio gives its block size, whatever its content holds (CSS
         // Sizing 4 §5.1), as `automatic_height` finds for a horizontal box.
@@ -403,6 +410,10 @@ fn vertical_inline_bounds(
         }
         probe(tree, node_id, key, along, entries)
     };
+    let wrapping_column = tree.nodes[idx].layout_display() == Display::Flex && {
+        let style = tree.physical_style(idx);
+        style.flex_wraps() && !style.flex_direction_is_row()
+    };
     let mut resolved = [None, None];
     for (slot, keyword) in resolved
         .iter_mut()
@@ -411,6 +422,18 @@ fn vertical_inline_bounds(
         let expanded = keyword.expand();
         *slot = match expanded {
             ExpandedDimension::Stretch => stretch_limit_height(tree, idx, inputs),
+            // A wrapping column container measures as tall at min-content room
+            // as at its stated width, not as its tallest line, so the keywords
+            // that stand for that size are left unresolved.
+            ExpandedDimension::MinContent
+            | ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_)
+                if wrapping_column =>
+            {
+                None
+            }
             ExpandedDimension::MinContent => Some(measure(tree, AvailableSpace::MinContent)),
             ExpandedDimension::MaxContent => Some(measure(tree, AvailableSpace::MaxContent)),
             ExpandedDimension::FitContent
@@ -454,7 +477,16 @@ fn vertical_block_bounds(
     inputs: &LayoutInput,
 ) -> Bounds {
     let idx = usize::from(node_id);
-    let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    // Browsers measure an intrinsic keyword along the block axis of a grid
+    // container, or of a flex container whose main axis is its inline axis,
+    // at the stated block size, which the tracks or the line stretch to fill:
+    // a grid with `width:300px;max-width:min-content` stays 300px wide. Those
+    // keywords are left unresolved here, so the box keeps its stated size.
+    let fills_stated_block_size = is_flex_grid_container(tree, idx)
+        && (tree.nodes[idx].layout_display() != Display::Flex
+            || tree.physical_style(idx).flex_direction_is_row());
+    let is_measured =
+        |size: Dimension| !size.is_auto() && !is_stretch(size) && !fills_stated_block_size;
     let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
         let mut along = *inputs;
         along.run_mode = RunMode::ComputeSize;
@@ -3351,7 +3383,10 @@ impl MeasureKey {
         let style = tree.physical_style(node);
         let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
         let (padding, border) = (style.padding(), style.border());
-        let flex_grid = is_flex_grid_container(tree, node);
+        // A vertical flex or grid container keeps the sizes across its block
+        // size like any vertical box while that size is measured.
+        let flex_grid =
+            is_flex_grid_container(tree, node) && !(width && resolves_on_vertical_axes(tree, node));
         // Key only the cross-axis sizes that the probe deliberately preserves.
         let cross_sizes = if width && flex_grid {
             [None; 3]
@@ -3771,14 +3806,7 @@ fn width_bounds(
         };
         let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
         use LengthProperty::*;
-        let vertical_ratio = flex_grid_container
-            && super::block_right_to_left(tree, idx).is_some()
-            && tree.physical_style(idx).stated_aspect_ratio().is_some();
-        // The physical height is the inline size of a vertical box.
-        // Keep its effective value while measuring its block size.
-        let properties: &[LengthProperty] = if vertical_ratio {
-            &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
-        } else if flex_grid_container {
+        let properties: &[LengthProperty] = if flex_grid_container {
             &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
         } else {
             &[Width, MinWidth, MaxWidth]
