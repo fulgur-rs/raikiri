@@ -229,15 +229,15 @@ pub(super) struct Shape {
     nodes: Vec<ShapeNode>,
 }
 
-/// The changes the monolithic boxes of a container make to its layout: how
-/// far each box moves down and how much it grows, and how much the
-/// container itself grows.
+/// The changes the breaks inside a container make to its layout: how far
+/// each box moves and how much it grows, and how much the container itself
+/// grows.
 #[derive(Debug, Default)]
 pub(super) struct Pushes {
     pub(super) changes: Vec<(usize, f32, f32)>,
     pub(super) growth: f32,
-    /// The least amount by which taller columns would keep a box kept
-    /// whole from moving, if one moves.
+    /// The least amount by which taller columns would keep a box from
+    /// moving down, if one moves.
     pub(super) shortage: Option<f32>,
 }
 
@@ -267,13 +267,6 @@ pub(super) enum Outcome {
     /// They do what is not modelled here: one overflows the container. The
     /// container is sliced as if they were plain boxes.
     Unmodelled,
-}
-
-/// Whether `id` holds a monolithic box anywhere in flow below it.
-fn holds_monolithic(tree: &LayoutSession<'_>, id: usize) -> bool {
-    in_flow_elements(tree, id)
-        .into_iter()
-        .any(|child| is_monolithic_leaf(tree, child) || holds_monolithic(tree, child))
 }
 
 /// Whether a break before or after the first or last box of `container`
@@ -372,11 +365,7 @@ impl Shape {
         let kind = if parent.is_some() && is_monolithic_leaf(tree, id) {
             Kind::Monolithic
         } else if parent.is_some() && avoids_break_inside(layout_node(tree, id).break_inside) {
-            // The boxes inside it move with it, and a monolithic box inside
-            // one that a column end cuts would be cut too.
-            if holds_monolithic(tree, id) {
-                return Err(());
-            }
+            // The boxes inside it, monolithic or not, move with it.
             Kind::Avoid
         } else if parent.is_some() && !holds_moves(tree, id) {
             Kind::Leaf
@@ -530,13 +519,13 @@ impl Shape {
         // break it makes moves after it, so there are at most a few moves for
         // each box; the bound keeps rounding from looping, and what is left
         // unmoved then overflows like a box that is cut.
-        // How much taller the columns would have to be for the first box
-        // that moves to stay where it is.
+        // The least amount by which taller columns would keep a box from
+        // moving down.
         let mut shortage = f32::INFINITY;
         for _ in 0..4 * self.nodes.len() + 4 {
             // The earliest break to make: what moves, how far, where, and
-            // how much taller the column would have to be to hold the box
-            // kept whole that makes it.
+            // how much taller the column would have to be for it not to
+            // move.
             let mut first: Option<(Target, f32, f32, f32)> = None;
             let mut consider = |target: Target, distance: f32, at: f32, short: f32| {
                 if first.is_none_or(|(_, _, earliest, _)| at < earliest - EPSILON) {
@@ -596,8 +585,9 @@ impl Shape {
                 // starts it, its block-start margin truncated there.
                 let starts_column = border - column_of(border) * column_height <= EPSILON;
                 if let Some(target) = earlier {
+                    // Columns as much taller would keep the break where it is.
                     let above = start + state.region_top(target);
-                    consider(target, boundary - above, above, f32::INFINITY);
+                    consider(target, boundary - above, above, boundary - above);
                 } else if let Some(gap) = gap.filter(|_| !starts_column) {
                     // Only the gap and the margin are truncated, not the
                     // free space the container distributes.
@@ -653,10 +643,8 @@ impl Shape {
             .filter(|node| matches!(node.kind, Kind::Flow))
             .flat_map(|node| {
                 let gap = (layout_node(tree, node.id).display() == DisplayValue::Flex).then(|| {
-                    match style_of(tree, node.id).gap().height.expand() {
-                        ExpandedLengthPercentage::Length(px) => px.max(0.0),
-                        _ => 0.0,
-                    }
+                    let gap = style_of(tree, node.id).gap().height;
+                    super::super::multicol_resolve_inset(tree, gap, 0.0).max(0.0)
                 });
                 node.children
                     .windows(2)

@@ -289,3 +289,38 @@ fn a_break_keeps_the_free_space_the_container_distributes() {
         &[("a", &[(0, 0, 100, 50)]), ("d", &[(200, 50, 100, 50)])],
     );
 }
+
+#[test]
+fn balanced_columns_grow_by_the_space_an_avoided_break_moves() {
+    // At 45px the column ends between b and c, which b avoids, so b moves
+    // down by 25px; the columns grow by as much and the break falls in c.
+    expect(
+        "<div style='columns:2;column-gap:0;width:200px'>\
+         <div id=f style='display:flex;flex-direction:column'><div id=a style='height:20px'></div>\
+         <div id=b style='height:25px;break-after:avoid'></div>\
+         <div id=c style='height:45px'></div></div></div>",
+        &[
+            ("f", &[(0, 0, 100, 70), (100, 0, 100, 20)]),
+            ("b", &[(0, 20, 100, 25)]),
+            ("c", &[(0, 45, 100, 25), (100, 0, 100, 20)]),
+        ],
+    );
+}
+
+#[test]
+fn a_box_that_avoids_breaks_moves_with_the_monolithic_box_it_holds() {
+    expect(
+        &column_flex(
+            "",
+            "<div id=a style='height:50px'></div><div id=w style='break-inside:avoid'>\
+             <div id=b style='height:30px;contain:size'></div><div id=c style='height:30px'></div>\
+             </div><div id=d style='height:30px'></div>",
+        ),
+        &[
+            ("w", &[(100, 0, 100, 60)]),
+            ("b", &[(100, 0, 100, 30)]),
+            ("c", &[(100, 30, 100, 30)]),
+            ("d", &[(100, 60, 100, 30)]),
+        ],
+    );
+}

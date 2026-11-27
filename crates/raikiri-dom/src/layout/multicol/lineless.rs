@@ -3534,16 +3534,15 @@ pub(super) fn layout(
             // The columns grow by the least amount that keeps a moved box
             // where it is, as Chromium balances them, or else to what the
             // grown boxes balance to.
-            let shortage = moved
+            let rebalanced =
+                balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0);
+            let taller = moved
                 .iter()
                 .flatten()
                 .filter_map(|pushes| pushes.shortage)
-                .fold(f32::INFINITY, f32::min);
-            let taller = if shortage.is_finite() && shortage > EPSILON {
-                column_height + shortage
-            } else {
-                balanced_height(&items, context.column_count, max_pieces).max(column_height + 1.0)
-            };
+                .filter(|&shortage| shortage > EPSILON)
+                .reduce(f32::min)
+                .map_or(rebalanced, |shortage| column_height + shortage);
             column_height = limit.map_or(taller, |limit| taller.min(limit));
         }
         if !fitted && !reaches_limit(column_height) {
