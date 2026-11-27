@@ -110,6 +110,9 @@ fn every_kind_of_box_takes_the_limit() {
         ("", "display:inline-block;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("", "float:left;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("position:relative", "position:absolute;width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("position:relative", "position:absolute;width:100px;height:5px;min-height:max-content", TEXT, (8.0, 8.0, 100.0, 70.0)),
+        ("position:relative", "position:absolute;width:100px;height:300px;max-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
+        ("position:relative", "position:absolute;height:30px;width:300px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:grid", "width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("display:grid", "width:100px;height:300px;max-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
         ("display:flex;align-items:start", "width:100px;height:5px;min-height:min-content", TEXT, (8.0, 8.0, 100.0, 40.0)),
@@ -129,6 +132,10 @@ fn a_keyword_width_limit_is_the_block_size_of_the_content() {
         ("", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:300px;height:30px;max-width:min-content", "xxxx yy zz", (8.0, 8.0, 30.0, 30.0)),
         ("display:flex;align-items:start", "width:5px;height:100px;min-width:max-content", "xxxx yy zz", (8.0, 8.0, 10.0, 100.0)),
+        // Both axes: the block size is measured at the inline size the
+        // height limits give the box.
+        ("", "width:5px;height:5px;min-height:max-content;min-width:min-content", TEXT, (8.0, 8.0, 10.0, 70.0)),
+        ("position:relative", "position:absolute;width:5px;height:5px;min-height:max-content;min-width:min-content", TEXT, (8.0, 8.0, 10.0, 70.0)),
         // `stretch` fills the room the containing block offers, less the
         // margins.
         ("width:300px", "width:5px;height:100px;min-width:stretch;margin-left:20px", "xx", (28.0, 8.0, 280.0, 100.0)),
