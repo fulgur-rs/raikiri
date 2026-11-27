@@ -410,6 +410,10 @@ fn vertical_inline_bounds(
         }
         probe(tree, node_id, key, along, entries)
     };
+    let wrapping_column = tree.nodes[idx].layout_display() == Display::Flex && {
+        let style = tree.physical_style(idx);
+        style.flex_wraps() && !style.flex_direction_is_row()
+    };
     let mut resolved = [None, None];
     for (slot, keyword) in resolved
         .iter_mut()
@@ -418,6 +422,18 @@ fn vertical_inline_bounds(
         let expanded = keyword.expand();
         *slot = match expanded {
             ExpandedDimension::Stretch => stretch_limit_height(tree, idx, inputs),
+            // A wrapping column container measures as tall at min-content room
+            // as at its stated width, not as its tallest line, so the keywords
+            // that stand for that size are left unresolved.
+            ExpandedDimension::MinContent
+            | ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_)
+                if wrapping_column =>
+            {
+                None
+            }
             ExpandedDimension::MinContent => Some(measure(tree, AvailableSpace::MinContent)),
             ExpandedDimension::MaxContent => Some(measure(tree, AvailableSpace::MaxContent)),
             ExpandedDimension::FitContent
