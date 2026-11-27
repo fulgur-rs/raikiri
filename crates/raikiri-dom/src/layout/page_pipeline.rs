@@ -40,7 +40,8 @@ use source_walk::{WalkedSources, walk_sources};
 use super::ifc::boxes::{IfcBox, IfcBoxKind, find_oof_anchor, first_anchors};
 use super::ifc::inline_boxes::atomic_nodes;
 use super::ifc::text_lines::{
-    IfcTextLine, TextLineIndex, glyph_owners, single_unplaced_line, unplaced_lines_from,
+    IfcTextLine, TextLineIndex, UnplacedLine, glyph_owners, single_unplaced_line,
+    unplaced_blank_line_count, unplaced_lines_from,
 };
 use super::table::headers::HeaderRepeats;
 use super::taffy_adapter::CollapsibleMarginSet;
@@ -12706,7 +12707,9 @@ fn unplaced_line_extent(
 
 /// The line of the in-flow block `node_id` when its paragraph is a single line
 /// that no text node places: generated text, a glyphless line, or atomic
-/// inlines alone (see [`single_unplaced_line`]).
+/// inlines alone (see [`single_unplaced_line`]). For a paragraph of blank
+/// lines alone, the first lines that it keeps whole stand for that line (see
+/// [`blank_lines_kept_whole`]).
 ///
 /// No text candidate moves such a line, so its block moves whole when the
 /// line would cross a page edge, as a line of text does. Only a horizontal
@@ -12759,9 +12762,12 @@ fn paragraph_unplaced_line(
     {
         return None;
     }
-    // A paragraph of more lines may end with lines after a block, past the
-    // lines that their own text or the block place: they move as one.
-    let (unplaced, run) = match single_unplaced_line(document, cascade, node_id) {
+    // A paragraph of blank lines alone keeps its first lines whole. A
+    // paragraph of more lines may also end with lines after a block, past
+    // the lines that their own text or the block place: they move as one.
+    let (unplaced, run) = match single_unplaced_line(document, cascade, node_id)
+        .or_else(|| blank_lines_kept_whole(document, cascade, node_id))
+    {
         Some(unplaced) => (unplaced, false),
         None => {
             let first = first_line_after_last_block(document, node_id)?;
@@ -12789,6 +12795,51 @@ fn paragraph_unplaced_line(
         after_block,
         line_index: u16::try_from(unplaced.line.line).ok()?,
     })
+}
+
+/// The first lines of the paragraph `root` of blank lines alone (see
+/// [`unplaced_blank_line_count`]) that no page break may fall between, as
+/// one unplaced line: the `orphans` lines that a page must hold before a
+/// break, or all of them when there are no more. The paragraph moves whole
+/// when they cross the page end, and the page breaks between the lines
+/// after them (see `PaginationState::break_between_blank_lines`).
+fn blank_lines_kept_whole(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Option<UnplacedLine> {
+    let count = unplaced_blank_line_count(document, cascade, root)?;
+    let kept = orphans_and_widows(cascade, root).0.min(count);
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    let top =
+        lines.line_top(0) - crate::layout::ifc::outside_marker::fit_leading(document, root, 0);
+    let last = kept - 1;
+    let bottom = lines.line_top(last)
+        - crate::layout::ifc::outside_marker::fit_leading(document, root, last)
+        + crate::layout::ifc::outside_marker::fit_height(&lines.lines[last]);
+    Some(UnplacedLine {
+        line: IfcTextLine {
+            line: 0,
+            top,
+            bottom,
+        },
+        atomic: false,
+    })
+}
+
+/// The `orphans` and `widows` of the paragraph `root`, at least 1 each.
+fn orphans_and_widows(cascade: &CascadeResult, root: usize) -> (usize, usize) {
+    let computed = &cascade.computed[root];
+    let at_least_one = |value: i32| usize::try_from(value.max(1)).unwrap_or(1);
+    (
+        at_least_one(computed.orphans),
+        at_least_one(computed.widows),
+    )
 }
 
 /// The first line of the paragraph `root` below the last of its block
