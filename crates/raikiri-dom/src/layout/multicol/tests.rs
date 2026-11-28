@@ -10112,3 +10112,219 @@ fn a_wrapper_with_only_a_maximum_height_that_does_not_bind_breaks_between_column
         [(0, 10, 0), (10, 12, 1)]
     );
 }
+
+/// The pieces that layout broke `node` into, as the column, the offset and
+/// the size of each, relative to the box.
+fn pieces_of(doc: &Document, node: usize) -> Vec<(usize, f32, f32, f32, f32)> {
+    doc.layout_fragments()
+        .iter()
+        .filter(|fragment| fragment.node_id == node)
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.x,
+                fragment.rect.y,
+                fragment.rect.width,
+                fragment.rect.height,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_column_end_cuts_an_empty_block_among_the_lines_of_a_paragraph() {
+    // Two lines leave 20px of the first 60px column to a 40px block: the
+    // column end cuts it, and the rest of it, and the line after it, go on at
+    // the top of the second column. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:40px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 40.0, 40.0, 40.0));
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 20.0)]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 3, 1, 60.0, 20.0)]
+    );
+    // Nothing but the piece of the block reaches the second column without
+    // the line, and the rules run beside it.
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[Part::Lines(2), Part::Box("display:block;height:40px")],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(pieces_of(&doc, boxes[0]).len(), 2);
+    let occupied: Vec<_> = doc.nodes[container].multicol_groups[0]
+        .occupied
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(occupied, [0, 1]);
+    assert_eq!(doc.nodes[container].layout.size.height, 60.0);
+}
+
+#[test]
+fn balanced_columns_share_an_empty_block_that_a_column_end_cuts() {
+    // 120px of content balance at 60px in two columns. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:40px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 20.0)]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, 20.0)]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 60.0);
+}
+
+#[test]
+fn balanced_columns_round_an_uneven_share_up_to_a_sixty_fourth() {
+    // 100px of content in three columns: Chromium balances them at 33.34375px,
+    // 100/3 rounded up to its 1/64 px grid, and cuts each block there.
+    let (mut doc, container, boxes) = column_container(
+        "width:160px;column-count:3",
+        &[
+            Part::Lines(1),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(1),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 240.0, 160.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 33.34375);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [
+            (0, 0.0, 0.0, 40.0, 13.34375),
+            (1, 60.0, -20.0, 40.0, 6.65625)
+        ]
+    );
+    assert_eq!(
+        pieces_of(&doc, boxes[1]),
+        [
+            (1, 0.0, 0.0, 40.0, 6.6875),
+            (2, 60.0, -26.65625, 40.0, 13.3125)
+        ]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 1, 0, 0.0, 0.0),
+            (1, 2, 1, 60.0, 6.65625),
+            (2, 3, 2, 120.0, 13.3125)
+        ]
+    );
+}
+
+#[test]
+fn an_empty_block_taller_than_a_column_goes_on_over_several() {
+    // A 100px block after a line takes the rest of the first 40px column, all
+    // of the second, and a third past the last; the line after it starts a
+    // fourth. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:40px;column-fill:auto",
+        &[
+            Part::Lines(1),
+            Part::Box("display:block;height:100px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 300.0, 160.0);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [
+            (0, 0.0, 0.0, 40.0, 20.0),
+            (1, 60.0, -20.0, 40.0, 40.0),
+            (2, 120.0, -20.0, 40.0, 40.0)
+        ]
+    );
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 1, 0, 0.0, 0.0), (1, 2, 3, 180.0, 0.0)]
+    );
+}
+
+#[test]
+fn a_cut_block_keeps_its_bottom_margin_and_slices_its_border() {
+    // The margin below the second piece pushes the line down 10px. Values
+    // match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:40px;margin-bottom:10px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 3, 1, 60.0, 30.0)]
+    );
+    assert_eq!(pieces_of(&doc, boxes[0]).len(), 2);
+    // A bordered block paints whole in each piece, moved up by what the
+    // pieces before it took, and its column cuts it: 20px of its 40px border
+    // box in each column, as in Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px;border:10px solid red"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 40.0), (1, 60.0, -60.0, 40.0, 40.0)]
+    );
+    let clips: Vec<_> = doc
+        .layout_fragments()
+        .iter()
+        .filter(|fragment| fragment.node_id == boxes[0])
+        .map(|fragment| {
+            fragment
+                .fragmentainer_clip
+                .map(|clip| (clip.rect.y, clip.rect.height))
+        })
+        .collect();
+    assert_eq!(clips, [Some((0.0, 20.0)), Some((-40.0, 20.0))]);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 3, 1, 60.0, 20.0)]
+    );
+}
+
+#[test]
+fn a_block_that_avoids_breaks_inside_moves_whole() {
+    // Values match Chromium.
+    let (mut doc, _, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:40px;break-inside:avoid"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert!(pieces_of(&doc, boxes[0]).is_empty());
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 0.0, 40.0, 40.0));
+}

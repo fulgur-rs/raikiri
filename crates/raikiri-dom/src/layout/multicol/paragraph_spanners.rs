@@ -10,7 +10,9 @@
 //!
 //! The other blocks of the paragraph stand among its lines, in anonymous
 //! blocks of their own (CSS 2, 9.2.1.1): they are laid out at the width of a
-//! column with the lines, and go with them to the columns of their group.
+//! column with the lines, and go with them to the columns of their group. A
+//! column end cuts a block with nothing in it but its own block size, and the
+//! rest of it goes on in the next column; any other block moves whole.
 
 use super::*;
 use crate::fragment::MulticolGroup;
@@ -22,9 +24,10 @@ use crate::layout::protocol::CollapsibleMarginSet;
 /// Whether the paragraph `root` of the multicol container `idx` is laid out in
 /// groups of columns around its blocks: it holds at least one block, and no
 /// float or out-of-flow box, which would need a place in the columns of its
-/// own. A block that is not a spanner moves whole to a column, so it may
-/// neither force a break in the columns, nor hold a float that the lines
-/// after it would flow around where it was first laid out.
+/// own. A block that is not a spanner is cut only if it is empty, and
+/// otherwise moves whole to a column, so it may neither force a break in the
+/// columns, nor hold a float that the lines after it would flow around where
+/// it was first laid out.
 pub(crate) fn supports(tree: &LayoutSession<'_>, idx: usize, root: &IfcRoot) -> bool {
     tree.context.fragmentation_stack.is_empty()
         && tree.nodes[idx]
@@ -169,13 +172,13 @@ pub(crate) fn arrange(
                     .flatten();
                 (columns, height, occupied, baseline)
             } else {
-                let (units, end) = units_of(lines, start..stop, &blocks);
+                let (units, end) = units_of(tree, lines, start..stop, &blocks);
                 let placed = place_units(&units, end, group, y);
                 if perform {
                     move_blocks(tree, &units, &placed, group);
                 }
                 let baseline = units_first_baseline(lines, &units, &placed, &blocks);
-                let occupied = placed.columns.iter().map(|&(column, _)| column).collect();
+                let occupied = placed.occupied().into_iter().collect();
                 (placed.fragments, placed.height, occupied, baseline)
             };
             blocks.clear();
@@ -229,6 +232,19 @@ pub(crate) fn arrange(
 enum Unit {
     Line(usize),
     Block(usize),
+    /// A block with nothing in it but its own block size, which the column
+    /// ends cut, as CSS Fragmentation 3, 4.4 allows: the rest of it goes on
+    /// at the top of the next column.
+    Leaf(usize),
+}
+
+impl Unit {
+    fn block(self) -> Option<usize> {
+        match self {
+            Unit::Line(_) => None,
+            Unit::Block(node) | Unit::Leaf(node) => Some(node),
+        }
+    }
 }
 
 /// Where the line layout of `lines` put the block `node`, the `index`th
@@ -258,6 +274,7 @@ fn block_box(lines: &IfcLines, index: usize, node: usize) -> BlockBox {
 /// unit starts where the content before it ends. Also the offset where the content of the group ends,
 /// below the margins of a block that ends it.
 fn units_of(
+    tree: &LayoutSession<'_>,
     lines: &IfcLines,
     range: std::ops::Range<usize>,
     blocks: &[(usize, usize, usize)],
@@ -273,7 +290,12 @@ fn units_of(
             } else {
                 block.top
             };
-            units.push((Unit::Block(node), top, block.bottom));
+            let unit = if lineless::slices_among_lines(tree, node) {
+                Unit::Leaf(node)
+            } else {
+                Unit::Block(node)
+            };
+            units.push((unit, top, block.bottom));
             *end = block.end;
         }
     };
@@ -313,7 +335,7 @@ fn units_first_baseline(
             Unit::Line(line) => lines.lines.get(line).map(|line| {
                 line.block_offset() + dy + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             }),
-            Unit::Block(node) => indices
+            Unit::Block(node) | Unit::Leaf(node) => indices
                 .get(&node)
                 .and_then(|&index| block_box(lines, index, node).first_baseline)
                 .map(|baseline| baseline + dy),
@@ -332,17 +354,53 @@ struct PlacedUnits {
     /// block interrupts.
     fragments: Vec<MulticolTextFragment>,
     /// Each unit's column, and the offset that takes it there along the
-    /// block axis.
+    /// block axis: for a block that the column ends cut, those of its first
+    /// piece.
     columns: Vec<(usize, f32)>,
+    /// For each block that the column ends cut, the index of its unit and
+    /// its pieces: the column of each, and its block offset and size in the
+    /// content box.
+    pieces: Vec<(usize, Vec<Piece>)>,
     height: f32,
 }
+
+/// A piece of a block that the column ends cut: its column, and its block
+/// offset and size in the content box.
+type Piece = (usize, f32, f32);
+
+impl PlacedUnits {
+    /// The columns that hold a unit or a piece of one.
+    fn occupied(&self) -> Vec<usize> {
+        let mut columns: Vec<usize> = self.columns.iter().map(|&(column, _)| column).collect();
+        for (_, pieces) in &self.pieces {
+            columns.extend(pieces.iter().map(|&(column, ..)| column));
+        }
+        columns
+    }
+}
+
+/// Where a column starts among the units of a group: the unit it starts
+/// with, and the offset of its top in the flow of the group. A column that
+/// starts inside a block the column end above it cut `continues` that block.
+#[derive(Clone, Copy, Debug)]
+struct ColumnStart {
+    unit: usize,
+    origin: f32,
+    continues: bool,
+}
+
+/// How far past the end of a column the content in it may reach and still
+/// fit: well under the 1/64 px grid of Chromium's layout units, to absorb the
+/// rounding of a height that the content divides evenly.
+const FIT_TOLERANCE: f32 = 1.0e-3;
 
 /// Place `units` in the columns of `context` from the block offset `y`: in
 /// turn, each column as tall as the definite height of a group that fills
 /// them, or as short as lets the group fit its columns when it balances. A
-/// unit is not broken: a line or block that does not fit what is left of a
-/// column starts the next one, and `orphans` and `widows` hold for each run
-/// of lines between the blocks, as for the lines of an anonymous block.
+/// line or block that does not fit what is left of a column starts the next
+/// one, and `orphans` and `widows` hold for each run of lines between the
+/// blocks, as for the lines of an anonymous block. A block with nothing in it
+/// is cut at the end of the column instead, and goes on in the next.
 fn place_units(
     units: &[(Unit, f32, f32)],
     end: f32,
@@ -357,14 +415,29 @@ fn place_units(
     let starts = column_starts(units, height, context);
     let mut fragments: Vec<MulticolTextFragment> = Vec::new();
     let mut columns = Vec::with_capacity(units.len());
+    let mut pieces: Vec<(usize, Vec<Piece>)> = Vec::new();
     let mut tallest = 0.0f32;
-    for (column, &start) in starts.iter().enumerate() {
-        let end = starts.get(column + 1).copied().unwrap_or(units.len());
+    for (column, start) in starts.iter().enumerate() {
+        let next = starts.get(column + 1);
+        let stop = next.map_or(units.len(), |next| next.unit + usize::from(next.continues));
         let column = context.column_index + column;
-        let origin = units[start].1;
-        for (index, &(unit, top, bottom)) in units.iter().enumerate().take(end).skip(start) {
-            tallest = tallest.max(bottom - origin);
-            columns.push((column, y - origin));
+        let origin = start.origin;
+        for (index, &(unit, top, bottom)) in units.iter().enumerate().take(stop).skip(start.unit) {
+            let continued = index == start.unit && start.continues;
+            let cut = next.filter(|next| next.continues && next.unit == index);
+            let piece_top = if continued { origin } else { top };
+            let piece_bottom = cut.map_or(bottom, |next| next.origin);
+            tallest = tallest.max(piece_bottom - origin);
+            if !continued {
+                columns.push((column, y - origin));
+            }
+            if continued || cut.is_some() {
+                let piece = (column, y + piece_top - origin, piece_bottom - piece_top);
+                match pieces.last_mut() {
+                    Some((last, list)) if *last == index => list.push(piece),
+                    _ => pieces.push((index, vec![piece])),
+                }
+            }
             let Unit::Line(line) = unit else {
                 continue;
             };
@@ -372,7 +445,7 @@ fn place_units(
                 Some(last)
                     if last.fragmentainer == column
                         && last.line_end == line
-                        && index > start
+                        && index > start.unit
                         && matches!(units[index - 1].0, Unit::Line(_)) =>
                 {
                     last.line_end = line + 1;
@@ -389,8 +462,8 @@ fn place_units(
     }
     // The margins below a block that ends the group reach the end of its
     // last column at most.
-    if let Some(&last) = starts.last() {
-        tallest = tallest.max((end - units[last].1).min(height));
+    if let Some(last) = starts.last() {
+        tallest = tallest.max((end - last.origin).min(height));
     }
     // Balanced columns are as tall as the height they balance at.
     if context.column_fill == ColumnFillValue::Balance && height.is_finite() {
@@ -399,6 +472,7 @@ fn place_units(
     PlacedUnits {
         fragments,
         columns,
+        pieces,
         height: tallest,
     }
 }
@@ -422,12 +496,15 @@ fn column_height(
     let total = end - units.first().map_or(0.0, |unit| unit.1);
     let fits = |height: f32| column_starts(units, height, context).len() <= available;
     let mut high = cap.map_or(total, |cap| cap.min(total));
-    // Units that overflow the columns at the cap leave nothing to search.
+    // Units that overflow the columns at the cap leave nothing to search. A
+    // block that the column ends cut needs no column as tall as itself.
     let tallest = units
         .iter()
+        .filter(|unit| !matches!(unit.0, Unit::Leaf(_)))
         .map(|&(_, top, bottom)| bottom - top)
         .fold(0.0f32, f32::max);
-    let share = total / available as f32;
+    // Chromium lays out on a grid of 1/64 px, and rounds the share up to it.
+    let share = (total / available as f32 * 64.0 - FIT_TOLERANCE).ceil() / 64.0;
     let mut low = if fits(high) {
         tallest.max(share).min(high)
     } else {
@@ -453,37 +530,64 @@ fn column_height(
     let needed = starts
         .iter()
         .enumerate()
-        .map(|(column, &start)| {
-            let stop = starts.get(column + 1).copied().unwrap_or(units.len());
-            units[stop - 1].2 - units[start].1
+        .map(|(column, start)| match starts.get(column + 1) {
+            Some(next) if next.continues => next.origin - start.origin,
+            next => units[next.map_or(units.len(), |next| next.unit) - 1].2 - start.origin,
         })
         .fold(0.0f32, f32::max);
     needed.clamp(share.min(high), high)
 }
 
-/// The index of the first unit of each column `height` tall that `units`
-/// fill in turn. A unit taller than a column takes one of its own.
+/// Where each column `height` tall that `units` fill in turn starts. A unit
+/// taller than a column takes one of its own, unless it is a block that the
+/// column ends cut: each column then ends inside it, and the next goes on
+/// with the rest of it, up to [`paragraph_group::MAX_SLICED_PIECES`] columns.
 fn column_starts(
     units: &[(Unit, f32, f32)],
     height: f32,
     context: FragmentationContext,
-) -> Vec<usize> {
+) -> Vec<ColumnStart> {
     let runs = line_runs(units);
-    let mut starts = vec![0];
-    let mut origin = units.first().map_or(0.0, |unit| unit.1);
-    let mut index = 1;
+    let mut starts = vec![ColumnStart {
+        unit: 0,
+        origin: units.first().map_or(0.0, |unit| unit.1),
+        continues: false,
+    }];
+    let mut index = 0;
     while index < units.len() {
-        if units[index].2 - origin <= height + f32::EPSILON {
+        let current = starts[starts.len() - 1];
+        let (unit, top, bottom) = units[index];
+        if bottom - current.origin <= height + FIT_TOLERANCE {
             index += 1;
             continue;
         }
-        let column_start = starts[starts.len() - 1];
-        let start = keep_lines_together(&runs, index, column_start, context)
-            .filter(|&start| start > column_start);
-        let start = start.unwrap_or(index);
-        starts.push(start);
-        origin = units[start].1;
-        index = start + 1;
+        let cut = current.origin + height;
+        // A cut needs a little of the block on either side of it.
+        if matches!(unit, Unit::Leaf(_))
+            && cut - top >= paragraph_group::SLICE_MIN_ROOM
+            && bottom - cut > paragraph_group::SLICE_MIN_ROOM
+            && starts.len() < paragraph_group::MAX_SLICED_PIECES
+        {
+            starts.push(ColumnStart {
+                unit: index,
+                origin: cut,
+                continues: true,
+            });
+            continue;
+        }
+        if index == current.unit {
+            index += 1;
+            continue;
+        }
+        let start = keep_lines_together(&runs, index, current.unit, context)
+            .filter(|&start| start > current.unit)
+            .unwrap_or(index);
+        starts.push(ColumnStart {
+            unit: start,
+            origin: units[start].1,
+            continues: false,
+        });
+        index = start;
     }
     starts
 }
@@ -529,7 +633,8 @@ fn keep_lines_together(
     Some(start)
 }
 
-/// Move the blocks among `units` to the columns `placed` gives them.
+/// Move the blocks among `units` to the columns `placed` gives them, and
+/// record a fragment for each piece of a block that the column ends cut.
 fn move_blocks(
     tree: &mut LayoutSession<'_>,
     units: &[(Unit, f32, f32)],
@@ -537,11 +642,64 @@ fn move_blocks(
     context: FragmentationContext,
 ) {
     for (&(unit, _, _), &(column, dy)) in units.iter().zip(&placed.columns) {
-        if let Unit::Block(node) = unit {
+        if let Some(node) = unit.block() {
             let mut layout = tree.nodes[node].layout;
             layout.location.x += context.column_offset_x(column);
             layout.location.y += dy;
             tree.set_unrounded_layout(NodeId::from(node), &layout);
+            // The pieces of an earlier layout no longer apply.
+            tree.fragment_tree.retire_previous_roots(node);
         }
+    }
+    for (index, pieces) in &placed.pieces {
+        if let Some(node) = units[*index].0.block() {
+            record_pieces(tree, node, pieces, context);
+        }
+    }
+}
+
+/// Record a fragment for each of the `pieces` of the block `node`, which
+/// stands where the first one is: each piece is as tall as the part of the
+/// block its column holds. A block that slices its borders and padding
+/// paints whole in each piece instead, moved up by what the pieces before it
+/// took, and the column clips it.
+fn record_pieces(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    pieces: &[Piece],
+    context: FragmentationContext,
+) {
+    let Some(&(first_column, first_y, _)) = pieces.first() else {
+        return;
+    };
+    let layout = tree.nodes[node].layout;
+    let sliced = lineless::slices_decorations(tree, node);
+    let mut taken = 0.0f32;
+    for (index, &(column, top, height)) in pieces.iter().enumerate() {
+        let rect = crate::fragment::FragmentRect {
+            x: context.column_offset_x(column) - context.column_offset_x(first_column),
+            y: top - first_y,
+            width: layout.size.width,
+            height,
+        };
+        let fragment = crate::fragment::LayoutFragment {
+            node_id: node,
+            parent: None,
+            fragmentainer: column,
+            rect: lineless::sliced_rect(rect, sliced.then_some((taken, layout.size.height))),
+            // Only a piece that paints the whole box needs the column to cut
+            // it; the others are as tall as their part of it.
+            fragmentainer_clip: sliced.then(|| paragraph_group::inline_open_clip(rect)),
+            fragment_index: index,
+            fragment_count: pieces.len(),
+            line_start: None,
+            line_end: None,
+        };
+        if tree.fragment_tree.try_push(fragment).is_none() {
+            // Without all its pieces, the block paints whole where it stands.
+            tree.fragment_tree.retire_previous_roots(node);
+            return;
+        }
+        taken += height;
     }
 }
