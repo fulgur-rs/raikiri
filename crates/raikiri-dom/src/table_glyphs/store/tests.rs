@@ -213,3 +213,66 @@ fn inserting_into_sparse_holes_preserves_older_records_between_them() {
     assert!(store.read(600, &mut bytes));
     assert_eq!(&bytes, b"far");
 }
+
+#[test]
+fn interrupted_prefetch_resumes_and_permanent_errors_leave_the_destination_intact() {
+    struct Reader {
+        data: io::Cursor<[u8; 3]>,
+        error: Option<io::ErrorKind>,
+    }
+
+    impl Seek for Reader {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.data.seek(pos)
+        }
+    }
+
+    impl Read for Reader {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            if self.data.position() == 1
+                && let Some(error) = self.error.take()
+            {
+                return Err(error.into());
+            }
+            self.data.read(&mut bytes[..1])
+        }
+    }
+
+    for error in [io::ErrorKind::Interrupted, io::ErrorKind::Other] {
+        let mut reader = Reader {
+            data: io::Cursor::new(*b"abc"),
+            error: Some(error),
+        };
+        let mut dest = *b"old";
+        let result = ReadBuffer::new().read(&mut reader, 0, &mut dest, 3);
+        if error == io::ErrorKind::Interrupted {
+            assert!(result.is_some());
+            assert_eq!(&dest, b"abc");
+        } else {
+            assert!(result.is_none());
+            assert_eq!(&dest, b"old");
+        }
+    }
+}
+
+#[test]
+fn unreadable_duplicate_slot_stops_writes_and_preserves_other_commits() {
+    let store = Store::new(
+        tempfile::tempfile().unwrap(),
+        tempfile::tempfile().unwrap(),
+        1024,
+    );
+    store.write(0, b"old");
+    store.write(1, b"one");
+    {
+        let mut files = store.0.lock().unwrap();
+        files.flush(File::write_all);
+        files.index.set_len(WORD).unwrap();
+    }
+    store.write(1, b"new");
+    assert!(!store.can_write(2, 3));
+    let mut bytes = [0; 3];
+    assert!(!store.read(1, &mut bytes));
+    assert!(store.read(0, &mut bytes));
+    assert_eq!(&bytes, b"old");
+}

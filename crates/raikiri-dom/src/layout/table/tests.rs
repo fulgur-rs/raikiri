@@ -4139,3 +4139,29 @@ fn column_constraints_merge_across_row_windows_before_width_allocation() {
         assert_eq!(document.preferred_width(), 70.0);
     }
 }
+
+#[test]
+fn failed_glyph_file_creation_preserves_column_measurements() {
+    use super::{ColumnContribution, TableColumnMeasurements, WindowColumns};
+
+    for failed_open in [1, 2] {
+        let mut opens = 0;
+        let measurements = TableColumnMeasurements::with_temp_files(1024, || {
+            opens += 1;
+            if opens == failed_open {
+                Err(std::io::Error::other("injected file creation failure"))
+            } else {
+                tempfile::tempfile()
+            }
+        });
+        assert_eq!(opens, failed_open);
+        assert!(measurements.glyph_store.is_none());
+        let mut columns = [ColumnContribution {
+            occupied: true,
+            preferred: 45.0,
+            ..Default::default()
+        }];
+        WindowColumns::Measure(measurements.clone()).combine(&mut columns);
+        assert_eq!(measurements.finish().preferred_width(), 45.0);
+    }
+}

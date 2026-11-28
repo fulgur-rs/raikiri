@@ -4212,13 +4212,20 @@ impl TableColumnMeasurements {
     /// Retain eligible glyph records within a per-document temporary file budget.
     /// A zero budget or an unavailable temporary file disables recording.
     pub fn with_glyph_record_budget(budget: u64) -> Self {
+        Self::with_temp_files(budget, tempfile::tempfile)
+    }
+
+    fn with_temp_files(
+        budget: u64,
+        mut open: impl FnMut() -> std::io::Result<std::fs::File>,
+    ) -> Self {
         if budget == 0 {
             return Self::default();
         }
-        let Ok(data) = tempfile::tempfile() else {
+        let Ok(data) = open() else {
             return Self::default();
         };
-        let Ok(index) = tempfile::tempfile() else {
+        let Ok(index) = open() else {
             return Self::default();
         };
         Self {

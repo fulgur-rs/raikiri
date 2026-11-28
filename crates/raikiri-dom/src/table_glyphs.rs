@@ -39,13 +39,18 @@ pub(crate) fn capture(
         return;
     }
     // Intrinsic sizing returns widths. Shodo exposes glyphs on a materialized line.
-    let shodo::LineResult::Line(line) = p.next_line(
+    let result = p.next_line(
         cx,
         p.start_token(),
         options,
         &shodo::LineConstraint::new(100_000.0),
         &shodo::AtomicSizes::EMPTY,
-    ) else {
+    );
+    capture_line(store, id, text, result);
+}
+
+fn capture_line(store: &store::Store, id: usize, text: &str, result: shodo::LineResult) {
+    let shodo::LineResult::Line(line) = result else {
         return;
     };
     if line.break_reason() != shodo::BreakReason::End

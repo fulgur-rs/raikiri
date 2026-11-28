@@ -23,7 +23,13 @@ impl ReadBuffer {
         }
     }
 
-    fn read(&mut self, file: &mut File, at: u64, dest: &mut [u8], end: u64) -> Option<()> {
+    fn read(
+        &mut self,
+        file: &mut (impl Read + Seek),
+        at: u64,
+        dest: &mut [u8],
+        end: u64,
+    ) -> Option<()> {
         if at.checked_add(dest.len() as u64)? > end || dest.len() > BUFFER_SIZE {
             return None;
         }
