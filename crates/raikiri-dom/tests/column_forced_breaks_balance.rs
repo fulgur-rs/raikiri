@@ -1,8 +1,9 @@
 //! A forced column break (`break-before: column` or `break-after: column`)
-//! between the blocks of a balanced multicol container, inside a wrapper or
-//! not, starts a column, and the columns balance to the least height that
-//! holds the content with those breaks (CSS Multi-column 1, section 7.1; CSS
-//! Fragmentation 3, 3.1).
+//! between the blocks of a multicol container, inside a wrapper or not,
+//! starts a column. Balanced columns are as tall as the least height that
+//! holds the content with those breaks, and columns of a definite height
+//! start a column at each break too (CSS Multi-column 1, sections 7.1 and
+//! 8; CSS Fragmentation 3, 3.1).
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with no margin on the body and 10px
@@ -71,6 +72,17 @@ fn a_forced_break_starts_a_balanced_column() {
     let mut failures = Vec::new();
     for case in CASES {
         let actual = border_boxes(case.body);
+        // Each box has as many pieces as Chromium gives it, no more.
+        for &(id, _) in case.expected {
+            let expected = case.expected.iter().filter(|(name, _)| *name == id).count();
+            let found = actual.iter().filter(|(name, _)| name == id).count();
+            if found != expected {
+                failures.push(format!(
+                    "{}: #{id} has {found} pieces, expected {expected}",
+                    case.name
+                ));
+            }
+        }
         for (index, &(id, (x, y, width, height))) in case.expected.iter().enumerate() {
             // The nth box of `id` in the expectations is its nth piece.
             let nth = case.expected[..index]
@@ -203,6 +215,73 @@ const CASES: &[Case] = &[
             ("b", (100.0, 0.0, 100.0, 10.0)),
             ("d", (100.0, 10.0, 100.0, 20.0)),
             ("d", (200.0, 0.0, 100.0, 20.0)),
+        ],
+    },
+    Case {
+        name: "definite_height",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:95px\"><div id=a>x<br>x<br>x</div><div id=b style='break-before:column'>x<br>x<br>x</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 95.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 0.0, 100.0, 30.0)),
+        ],
+    },
+    Case {
+        name: "definite_height_fill_auto",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:95px;column-fill:auto\"><div id=a>x<br>x<br>x</div><div id=b style='break-before:column'>x<br>x<br>x</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 95.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 0.0, 100.0, 30.0)),
+        ],
+    },
+    Case {
+        name: "definite_height_wrapper_with_height",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:95px\"><div id=c style='height:150px'><div id=a>x<br>x<br>x</div><div id=b style='break-before:column'>x<br>x<br>x</div></div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 95.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 0.0, 100.0, 30.0)),
+        ],
+    },
+    Case {
+        name: "definite_height_wrapper",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:95px\"><div id=c><div id=a>x<br>x<br>x</div><div id=b style='break-before:column'>x<br>x<br>x</div></div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 95.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("b", (100.0, 0.0, 100.0, 30.0)),
+        ],
+    },
+    Case {
+        name: "block_breaks_before_forced_break",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa<br>aa<br>aa<br>aa</div><div id=b style='break-before:column'>bb</div><div id=d>dd<br>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 30.0)),
+            ("a", (0.0, 0.0, 100.0, 30.0)),
+            ("a", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (200.0, 0.0, 100.0, 10.0)),
+            ("d", (200.0, 10.0, 100.0, 20.0)),
+        ],
+    },
+    Case {
+        name: "avoiding_block_after_forced_break_keeps_margin",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div><div id=b style='break-before:column;break-inside:avoid;margin-top:20px'>b<br>b<br>b</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 50.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 20.0, 100.0, 30.0)),
+        ],
+    },
+    Case {
+        name: "max_height_overflow_column",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;max-height:20px\"><div id=a>aa</div><div id=b style='break-before:column'>bb<br>bb<br>bb<br>bb<br>bb</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 20.0)),
+            ("b", (200.0, 0.0, 100.0, 20.0)),
+            ("b", (300.0, 0.0, 100.0, 10.0)),
         ],
     },
 ];
