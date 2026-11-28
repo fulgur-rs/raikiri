@@ -10328,3 +10328,59 @@ fn a_block_that_avoids_breaks_inside_moves_whole() {
     assert!(pieces_of(&doc, boxes[0]).is_empty());
     assert_eq!(box_rect(&doc, boxes[0]), (60.0, 0.0, 40.0, 40.0));
 }
+
+#[test]
+fn a_cut_block_that_starts_the_columns_keeps_its_top_margin_in_the_first() {
+    // The 10px margin stays above the block in the first column, which then
+    // holds 50px of it. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Box("display:block;height:100px;margin-top:10px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 300.0, 160.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 10.0, 40.0, 100.0));
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 50.0), (1, 60.0, -10.0, 40.0, 50.0)]
+    );
+    assert_eq!(column_ranges(&doc, container), [(0, 1, 2, 120.0, 0.0)]);
+
+    let (mut doc, container, boxes) = column_container(
+        "height:60px;column-fill:auto",
+        &[
+            Part::Box("display:block;height:80px;margin-top:10px;border:5px solid red"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 300.0, 160.0);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 90.0), (1, 60.0, -60.0, 40.0, 90.0)]
+    );
+    assert_eq!(column_ranges(&doc, container), [(0, 1, 1, 60.0, 40.0)]);
+}
+
+#[test]
+fn balanced_columns_that_end_in_a_cut_settle_on_the_least_height() {
+    // A 100px empty block, a 60px block that avoids breaks and a line need
+    // 80px columns: the first ends in a cut. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "width:160px;column-count:3",
+        &[
+            Part::Box("display:block;height:100px"),
+            Part::Box("display:block;height:60px;break-inside:avoid"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 240.0, 260.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+    assert_eq!(
+        pieces_of(&doc, boxes[0]),
+        [(0, 0.0, 0.0, 40.0, 80.0), (1, 60.0, 0.0, 40.0, 20.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[1]), (60.0, 20.0, 40.0, 60.0));
+    assert_eq!(column_ranges(&doc, container), [(0, 1, 2, 120.0, 0.0)]);
+}
