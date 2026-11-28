@@ -2010,9 +2010,12 @@ fn fill_chunk(
 ///
 /// A column end that falls where a break is avoided
 /// ([`Paragraph::avoids_before`]) moves up to the last break before it in
-/// its column that nothing avoids, so the box after that break starts the
-/// next column, and the margins above it are cut, as at any unforced break
-/// (CSS Fragmentation 3, 4.4). With no such break, the column ends where it
+/// its column that nothing avoids, as [`movable_break`] finds it: the box
+/// after a break between boxes starts the next column, and the margins above
+/// it are cut, as at any unforced break, and the line after a break between
+/// lines starts it (CSS Fragmentation 3, 4.4). A break between lines that
+/// leaves fewer lines than orphans or widows ask for is taken only when no
+/// other break is left. With no such break at all, the column ends where it
 /// would, unless the fill is a `trial` of balanced columns, which fails
 /// instead, so that taller columns keep the break clear, as Chromium balances
 /// them.
@@ -2208,9 +2211,10 @@ fn movable_break(
 }
 
 /// Whether a column end may move up between two lines of `paragraph`, the
-/// entry `index` placed as `placement`: a paragraph of lines with no padding,
-/// border or other piece of its own, which nothing avoids breaking inside,
-/// which lies in one column and which the chunk holds from its first line.
+/// entry `index` placed as `placement`: a paragraph of lines with no piece of
+/// its own, which nothing avoids breaking inside, which lies in one column
+/// and which the chunk holds from its first line. Chromium moves no column
+/// end between the lines of a paragraph that goes on from an earlier column.
 fn breaks_between_lines(
     paragraph: &Paragraph,
     placement: &Placement,
@@ -2222,12 +2226,9 @@ fn breaks_between_lines(
         && !paragraph.avoids_break
         && !paragraph.overflows
         && !paragraph.sliced
-        && !paragraph.cloned
         && paragraph.held_lines.is_none()
         && paragraph.opens.is_none()
         && !paragraph.closes
-        && paragraph.edge_start <= 0.0
-        && paragraph.edge_end <= 0.0
         && !placement.sliced
         && placement.first_column == placement.last_column
 }
