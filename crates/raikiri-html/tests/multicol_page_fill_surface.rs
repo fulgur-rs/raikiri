@@ -2,10 +2,10 @@
 //! The positions are the ones Chromium prints for the same documents.
 
 use raikiri_html::{
-    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent,
+    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent, RenderError,
     RenderResources, layout, parse_html_with_resources,
 };
-use raikiri_traits::{LayoutConfig, PageDefaults};
+use raikiri_traits::{LayoutConfig, LimitKind, PageDefaults, RenderLimits};
 use std::collections::BTreeMap;
 
 /// Ahem's ascent is 0.8em, which puts the top of a 20px glyph 16px above the
@@ -1390,4 +1390,219 @@ fn a_block_button_between_paragraphs_fills_the_pages_in_order() {
             "p1 x100: M9-M12@0",
         ]
     );
+}
+
+/// `count` boxes `height` tall with ids from `a`, in a column flex container
+/// with `style`.
+fn flex_column(count: u8, height: u32, style: &str) -> String {
+    let boxes: String = (0..count)
+        .map(|index| {
+            let id = char::from(b'a' + index);
+            format!("<div id={id} style='height:{height}px;background:#00f'></div>")
+        })
+        .collect();
+    format!("<div style='display:flex;flex-direction:column;{style}'>{boxes}</div>")
+}
+
+/// What the clips leave visible of each box with an id from `ids`, in order.
+fn visible_of(body: &str, ids: &str) -> Vec<(char, u32, i32, i32, i32)> {
+    ids.chars()
+        .flat_map(|id| {
+            visible_boxes(body, "", &id.to_string())
+                .into_iter()
+                .map(move |(page, x, top, bottom)| (id, page, x, top, bottom))
+        })
+        .collect()
+}
+
+#[test]
+fn a_flex_container_fills_each_page_before_the_next_one() {
+    // A column flex container that the pages cut is cut as its boxes would
+    // be on their own: the columns of each page fill in turn, and the last
+    // page balances (Chromium).
+    let body = mc(&flex_column(12, 40, ""));
+    let column = |first: u8, x: i32| {
+        (0..5).map(move |row| {
+            (
+                char::from(b'a' + first + row),
+                0,
+                x,
+                i32::from(row) * 40,
+                i32::from(row) * 40 + 40,
+            )
+        })
+    };
+    let mut expected: Vec<_> = column(0, 0).chain(column(5, 100)).collect();
+    expected.extend([('k', 1, 0, 0, 40), ('l', 1, 100, 0, 40)]);
+    assert_eq!(visible_of(&body, "abcdefghijkl"), expected);
+    // Boxes that column ends cut go on in the next column, or at the next
+    // page.
+    let body = mc(&flex_column(10, 70, ""));
+    assert_eq!(
+        visible_of(&body, "cfh"),
+        [
+            ('c', 0, 0, 140, 200),
+            ('c', 0, 100, 0, 10),
+            ('f', 0, 100, 150, 200),
+            ('f', 1, 0, 0, 20),
+            ('h', 1, 0, 90, 150),
+            ('h', 1, 100, 0, 10),
+        ]
+    );
+}
+
+#[test]
+fn a_flex_container_between_other_boxes_fills_each_page_in_column_order() {
+    // Room above the container, and a box after it, which the balanced last
+    // page holds with the end of the container (Chromium).
+    let body = mc(&format!(
+        "<div style='height:30px'></div>{}<div id=z style='height:20px;background:#ccc'></div>",
+        flex_column(12, 40, "")
+    ));
+    assert_eq!(
+        visible_of(&body, "aejklz"),
+        [
+            ('a', 0, 0, 30, 70),
+            ('e', 0, 0, 190, 200),
+            ('e', 0, 100, 0, 30),
+            ('j', 0, 100, 190, 200),
+            ('j', 1, 0, 0, 30),
+            ('k', 1, 0, 30, 65),
+            ('k', 1, 100, 0, 5),
+            ('l', 1, 100, 5, 45),
+            ('z', 1, 100, 45, 65),
+        ]
+    );
+}
+
+#[test]
+fn a_flex_container_with_a_border_slices_it_where_the_pages_cut_it() {
+    // The border shows above the first box and below the last, and its
+    // sides go on in each piece (Chromium).
+    let body = mc(&flex_column(10, 40, "border:5px solid #444"));
+    assert_eq!(
+        visible_of(&body, "aefj"),
+        [
+            ('a', 0, 5, 5, 45),
+            ('e', 0, 5, 165, 200),
+            ('e', 0, 105, 0, 5),
+            ('f', 0, 105, 5, 45),
+            ('j', 0, 105, 165, 200),
+            ('j', 1, 5, 0, 5),
+        ]
+    );
+}
+
+#[test]
+fn flex_rows_and_grids_fill_each_page_before_the_next_one() {
+    // Items side by side are cut where each column ends, and the last page
+    // balances what is left of them (Chromium).
+    let item = |id: char, height: u32| {
+        format!("<div id={id} style='height:{height}px;width:30px;background:#00f'></div>")
+    };
+    let row = mc(&format!(
+        "<div style='display:flex'>{}{}</div>",
+        item('a', 500),
+        item('b', 300)
+    ));
+    assert_eq!(
+        visible_of(&row, "ab"),
+        [
+            ('a', 0, 0, 0, 200),
+            ('a', 0, 100, 0, 200),
+            ('a', 1, 0, 0, 50),
+            ('a', 1, 100, 0, 50),
+            ('b', 0, 30, 0, 200),
+            ('b', 0, 130, 0, 100),
+        ]
+    );
+    let grid = mc("<div style='display:grid;grid-template-columns:30px 30px'>\
+         <div id=a style='height:500px;background:#00f'></div>\
+         <div id=b style='height:300px;background:#0f0'></div>\
+         <div id=c style='height:100px;background:#f00'></div></div>");
+    assert_eq!(
+        visible_of(&grid, "abc"),
+        [
+            ('a', 0, 0, 0, 200),
+            ('a', 0, 100, 0, 200),
+            ('a', 1, 0, 0, 100),
+            ('b', 0, 30, 0, 200),
+            ('b', 0, 130, 0, 100),
+            ('c', 1, 100, 0, 100),
+        ]
+    );
+}
+
+#[test]
+fn each_box_of_a_flex_container_the_pages_cut_is_reported_where_it_shows() {
+    // A box is reported on each page and in each column where it shows, and
+    // only there, as the pieces of the container each hold the whole box.
+    // A box with no block size at the end of the container is reported once.
+    let body = mc(&flex_column(10, 70, "").replace("</div></div>", "</div><div id=z></div></div>"));
+    let result = pages(&body, "");
+    let mut reported = BTreeMap::<String, Vec<(u32, i32)>>::new();
+    for page in result.pages() {
+        let dom = page.dom();
+        for fragment in page.fragments() {
+            if let Some(id) = dom.attr(fragment.node(), "id") {
+                reported
+                    .entry(id.to_string())
+                    .or_default()
+                    .push((page.index(), fragment.rect().x.round() as i32));
+            }
+        }
+    }
+    for id in "abcdefghij".chars() {
+        let shown: Vec<_> = visible_boxes(&body, "", &id.to_string())
+            .into_iter()
+            .map(|(page, x, _, _)| (page, x))
+            .collect();
+        let mut reported = reported.remove(&id.to_string()).unwrap_or_default();
+        reported.sort_unstable();
+        assert_eq!(reported, shown, "{id}");
+    }
+    assert_eq!(reported.remove("z").map(|pieces| pieces.len()), Some(1));
+}
+
+#[test]
+fn a_flex_container_the_page_limit_cuts_fails_the_layout() {
+    // The container needs two pages; with one allowed, the layout stops
+    // instead of losing what the second page would show.
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let html = format!(
+        "<!doctype html><style>@page{{size:200px 200px;margin:0}}\
+         body{{margin:0}}.mc{{columns:2;column-gap:0}}</style><body>{}</body>",
+        mc(&flex_column(10, 70, ""))
+    );
+    let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let layout_with = |pages: u32| {
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::builder()
+                .limits(
+                    RenderLimits::builder()
+                        .max_document_pages(Some(pages))
+                        .build(),
+                )
+                .build(),
+            LayoutOptions::new().resources(&resources),
+        )
+    };
+    assert!(matches!(
+        layout_with(1),
+        Err(RenderError::LimitExceeded {
+            kind: LimitKind::Pages,
+            limit: 1,
+            ..
+        })
+    ));
+    assert!(matches!(layout_with(2), Ok(LayoutStatus::Completed(_))));
 }

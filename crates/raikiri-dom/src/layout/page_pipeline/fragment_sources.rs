@@ -308,6 +308,16 @@ fn fragment_placements(
         // by `shift` again.
         let shift = source.painted_shift;
         let painted_y = source.abs_y + shift;
+        // A piece clipped to its column shows only where the clip lets it,
+        // even when the box it shows is moved past the column's ends.
+        if source.fragment_clip.is_some_and(|clip| {
+            clip.clip_y
+                && clip.rect.height > 0.0
+                && (clip.rect.y >= page_end - 0.001
+                    || clip.rect.y + clip.rect.height <= page_start + 0.001)
+        }) {
+            continue;
+        }
         let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
             let continues = (
                 painted_y < page_start - 0.001,
