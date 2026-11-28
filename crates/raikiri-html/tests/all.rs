@@ -82,6 +82,7 @@ mod grid_stacked_items_line_page_break_surface;
 mod hidden_element_author_display_surface;
 mod hidden_metadata_page_breaks;
 mod html_fragments;
+mod img_srcset_surface;
 mod inline_block_last_baseline_surface;
 mod inline_box_closing_line_break_surface;
 mod inline_content_alignment_surface;
