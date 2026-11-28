@@ -204,6 +204,15 @@ pub(crate) struct LayoutContext {
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `dispatch::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
+    /// The vertical boxes being measured for the inline size a keyword
+    /// `min-height` or `max-height` stands for (see `dispatch::content_limits`).
+    pub(crate) inline_limit_measures: Vec<usize>,
+    /// The vertical boxes laid out at an inline size that their vertical
+    /// paragraph root has already held within their keyword `min-height` and
+    /// `max-height`, with the border-box sizes the root resolved those to (see
+    /// `dispatch::content_limits`).
+    pub(crate) inline_limits_from_parent:
+        Vec<(usize, crate::layout::dispatch::content_limits::InlineBounds)>,
     /// The flex container whose intrinsic widths are being measured for its
     /// shrink-to-fit width, whose items are bounded by their flex base sizes
     /// meanwhile (see `with_flex_intrinsic_probe` in [`crate::layout::dispatch`]).

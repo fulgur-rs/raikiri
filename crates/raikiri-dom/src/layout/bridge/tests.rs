@@ -2207,8 +2207,25 @@ fn unsupported_generic_box_content_limits_record_none() {
             "div",
             format!("{block};column-count:2;writing-mode:vertical-rl"),
         ),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
+        .collect();
+    for (case, (limits, ..)) in borrowed.iter().zip(bridged_content_limits(&borrowed)) {
+        assert_eq!(limits, ContentLimits::NONE, "{case:?}");
+    }
+}
+
+#[test]
+fn vertical_boxes_in_a_vertical_flow_and_vertical_inline_containers_record_their_limits() {
+    use crate::layout::dispatch::content_limits::ContentLimits;
+
+    let keyword = "min-width:min-content;max-height:max-content";
+    let block = format!("display:block;{keyword}");
+    let cases: Vec<(&str, &str, String)> = vec![
         // A vertical box in the flow of a vertical block container, which
-        // lays it out on its own axes.
+        // resolves the limits along the inline axis of the box itself.
         (
             "display:block;writing-mode:vertical-rl",
             "div",
@@ -2225,13 +2242,18 @@ fn unsupported_generic_box_content_limits_record_none() {
             "div",
             format!("display:inline-grid;{keyword};writing-mode:vertical-rl"),
         ),
+        (
+            "display:block",
+            "div",
+            format!("display:inline-flex;{keyword};writing-mode:vertical-lr"),
+        ),
     ];
     let borrowed: Vec<(&str, &str, &str)> = cases
         .iter()
         .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
         .collect();
     for (case, (limits, ..)) in borrowed.iter().zip(bridged_content_limits(&borrowed)) {
-        assert_eq!(limits, ContentLimits::NONE, "{case:?}");
+        assert_ne!(limits, ContentLimits::NONE, "{case:?}");
     }
 }
 

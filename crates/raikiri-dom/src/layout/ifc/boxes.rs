@@ -3597,6 +3597,17 @@ fn layout_vertical_block_child_with_edges(
             tree.physical_style(node).size().height.expand(),
             ExpandedDimension::Stretch
         );
+    // The keyword `min-height` and `max-height` of a vertical child stand for
+    // sizes of its content, which the root resolves in the room it leaves the
+    // child before the child is laid out at the size they give.
+    let keyword_limits = |tree: &mut LayoutSession<'_>, room: f32| {
+        crate::layout::dispatch::content_limits::vertical_child_inline_bounds(
+            tree,
+            node,
+            parent_size,
+            room,
+        )
+    };
     let own_inline_size = stated_height
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
@@ -3652,11 +3663,13 @@ fn layout_vertical_block_child_with_edges(
             |probe| match probe {
                 BoxProbe::Width { stretch } => {
                     let stretch = stretch.max(-(margin.top + margin.bottom));
-                    clamp_block_height(
+                    let keywords = keyword_limits(tree, stretch.max(0.0));
+                    clamp_block_height_within(
                         tree,
                         node,
                         inline_basis,
                         own_inline_size.map_or(stretch, |own| own.at(stretch)),
+                        keywords,
                     )
                 }
                 BoxProbe::Height {
@@ -3683,7 +3696,10 @@ fn layout_vertical_block_child_with_edges(
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
                     let compute = |tree: &mut LayoutSession<'_>| {
-                        tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+                        let keywords = keyword_limits(tree, inline_size);
+                        with_parent_inline_limits(tree, node, keywords, |tree| {
+                            tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+                        })
                     };
                     let output = if measured_table_height {
                         tree.with_measured_table_height(node, compute)
@@ -3706,11 +3722,9 @@ fn layout_vertical_block_child_with_edges(
     } else {
         own_inline_size.map_or(inline_stretch, |own| own.at(inline_stretch))
     };
-    let height = clamp_block_height(tree, node, inline_basis, height).max(vertical_padding_border(
-        tree,
-        node,
-        inline_basis,
-    ));
+    let keywords = keyword_limits(tree, inline_stretch);
+    let height = clamp_block_height_within(tree, node, inline_basis, height, keywords)
+        .max(vertical_padding_border(tree, node, inline_basis));
     let inline_free = inline_stretch - height;
     let auto_margins =
         u8::from(style_margin.top.is_auto()) + u8::from(style_margin.bottom.is_auto());
@@ -3815,13 +3829,19 @@ fn layout_vertical_block_child_with_edges(
             };
             let node_id = NodeId::from(node);
             let mut compute = |tree: &mut LayoutSession<'_>| {
-                if shares_context {
-                    tree.context.keep_text_group =
-                        !matches!(tree.context.text_group, TextGroupScope::None);
-                    tree.compute_child_layout_with_block_ctx(node_id, inputs, child_ctx.as_mut())
-                } else {
-                    tree.compute_child_layout(node_id, inputs)
-                }
+                with_parent_inline_limits(tree, node, keywords, |tree| {
+                    if shares_context {
+                        tree.context.keep_text_group =
+                            !matches!(tree.context.text_group, TextGroupScope::None);
+                        tree.compute_child_layout_with_block_ctx(
+                            node_id,
+                            inputs,
+                            child_ctx.as_mut(),
+                        )
+                    } else {
+                        tree.compute_child_layout(node_id, inputs)
+                    }
+                })
             };
             let output = if measured_table_height {
                 tree.with_measured_table_height(node, compute)
@@ -4616,19 +4636,47 @@ fn used_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Optio
         .map(|height| height + box_sizing_height_adjustment(tree, node, basis))
 }
 
-fn clamp_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32, height: f32) -> f32 {
+/// Run `f`, a layout of the vertical child `node`, telling it the sizes
+/// `keywords` its keyword `min-height` and `max-height` stand for when the
+/// root resolved any.
+fn with_parent_inline_limits<R>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    keywords: (Option<f32>, Option<f32>),
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    if keywords == (None, None) {
+        return f(tree);
+    }
+    crate::layout::dispatch::content_limits::with_inline_limits_from_parent(tree, node, keywords, f)
+}
+
+/// `height` within the `min-height` and `max-height` of `node`, as border-box
+/// sizes against the `basis` their percentages refer to, the minimum winning
+/// over the maximum. `keywords` are the border-box sizes a keyword
+/// `min-height` and `max-height` stand for, which take the place of those
+/// sizes.
+fn clamp_block_height_within(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    basis: f32,
+    height: f32,
+    keywords: (Option<f32>, Option<f32>),
+) -> f32 {
     let style = tree.physical_style(node);
     let adjustment = box_sizing_height_adjustment(tree, node, basis);
     let min = style
         .min_size()
         .height
         .maybe_resolve(Some(basis))
-        .map(|min| min + adjustment);
+        .map(|min| min + adjustment)
+        .or(keywords.0);
     let max = style
         .max_size()
         .height
         .maybe_resolve(Some(basis))
-        .map(|max| max + adjustment);
+        .map(|max| max + adjustment)
+        .or(keywords.1);
     let height = max.map_or(height, |max| height.min(max));
     min.map_or(height, |min| height.max(min))
 }
