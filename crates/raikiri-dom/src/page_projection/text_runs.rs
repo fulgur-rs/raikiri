@@ -463,6 +463,12 @@ pub struct FontId {
     index: u32,
 }
 
+impl FontId {
+    pub(crate) fn from_blob_index(blob: u64, index: u32) -> Self {
+        Self { blob, index }
+    }
+}
+
 /// The bytes of a font file, shared without copying.
 #[derive(Clone)]
 pub struct FontBlob(Arc<dyn AsRef<[u8]> + Send + Sync>);

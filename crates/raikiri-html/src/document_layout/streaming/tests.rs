@@ -33,6 +33,8 @@ struct Record {
     abort_before_sample: Option<AbortController>,
     complete_sample_count: Option<u32>,
     sample_rows: usize,
+    glyph_budget: u64,
+    measured_cells: usize,
     paint_lines: Vec<Vec<NodeId>>,
     fragment_rects: Vec<Vec<raikiri_traits::PaintRect>>,
     stage_before: Option<u32>,
@@ -93,6 +95,10 @@ impl PageSink for &mut Record {
         self.inspect_sample
     }
 
+    fn table_glyph_record_budget(&self) -> u64 {
+        self.glyph_budget
+    }
+
     fn stage_table_sample(
         &mut self,
         sample: &DocumentLayout,
@@ -118,6 +124,7 @@ impl PageSink for &mut Record {
                 assert_eq!(row.len(), 1);
                 assert_eq!(row[0].text, format!("row & {}", self.sample_rows));
                 assert!(row[0].node.unwrap() > row[0].cell);
+                self.measured_cells += usize::from(row[0].measured.is_some());
                 self.sample_rows += 1;
             }
             if self.sample_rows >= 256 && self.complete_sample_count.is_none() {
@@ -305,7 +312,8 @@ fn write_errors_are_returned_unchanged_by_finish() {
         LayoutConfig::default(),
         &mut record,
     );
-    assert!(stream.write_all(b"<p>\xFF</p>").is_err());
+    stream.feed(b"<p>").unwrap();
+    assert!(stream.write_all(b"\xFF</p>").is_err());
     assert!(stream.write_all(b"more").is_err(), "input stays failed");
     let error = stream.finish().expect_err("finish fails");
     assert!(matches!(
@@ -2256,6 +2264,41 @@ fn sample_table_html() -> String {
         "<!doctype html><style>@page{{size:240px 150px;margin:0}}td{{height:22px}}tr{{break-inside:avoid}}</style><!--{}--><table>{rows}</table>",
         " ".repeat(55000)
     )
+}
+
+#[test]
+fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
+    let html = sample_table_html();
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").as_slice(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .stylesheet("body{font-family:Ahem;font-size:12px}");
+    for glyph_budget in [0, 1, 32 * 1024 * 1024] {
+        let mut sink = Record {
+            inspect_sample: true,
+            glyph_budget,
+            ..Default::default()
+        };
+        let mut stream = StreamingLayout::new(
+            &resources,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            &mut sink,
+        );
+        let (prefix, rest) = html.as_bytes().split_at(CHECKPOINT_BYTES - 1);
+        stream.feed(prefix).unwrap();
+        stream.write_all(&rest[..1]).unwrap();
+        stream.feed(&rest[1..]).unwrap();
+        completed(stream.finish().unwrap());
+        assert_eq!(sink.sample_rows, 256);
+        assert_eq!(sink.measured_cells, if glyph_budget > 1 { 256 } else { 0 });
+    }
 }
 
 #[test]

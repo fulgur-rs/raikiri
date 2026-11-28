@@ -76,8 +76,10 @@ pub mod fonts;
 pub mod layout;
 #[doc(hidden)]
 pub mod paint_rules;
+mod table_glyphs;
 #[doc(hidden)]
 pub mod text_decoration;
+pub use table_glyphs::MeasuredTableCell;
 pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
 
 pub use document::{BaseUrlVersion, Document, DomMutationError};

@@ -4197,7 +4197,10 @@ impl ColumnContribution {
 
 /// Intrinsic column measurements shared by windows of a single horizontal table.
 #[derive(Clone, Debug, Default)]
-pub struct TableColumnMeasurements(std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>);
+pub struct TableColumnMeasurements {
+    columns: std::sync::Arc<std::sync::Mutex<Vec<ColumnContribution>>>,
+    pub(super) glyph_store: Option<std::sync::Arc<crate::table_glyphs::store::Store>>,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum WindowColumns {
@@ -4206,6 +4209,17 @@ pub(crate) enum WindowColumns {
 }
 
 impl TableColumnMeasurements {
+    /// Collect glyph records within a shared byte budget using two fresh, independent files.
+    #[doc(hidden)]
+    pub fn with_glyph_records(data: std::fs::File, index: std::fs::File, budget: u64) -> Self {
+        Self {
+            glyph_store: Some(std::sync::Arc::new(crate::table_glyphs::store::Store::new(
+                data, index, budget,
+            ))),
+            ..Self::default()
+        }
+    }
+
     /// Collect column constraints during layout of a fresh single-table window.
     pub fn measure_window(&self, document: &mut crate::document::Document) {
         document.window_columns = Some(WindowColumns::Measure(self.clone()));
@@ -4213,24 +4227,35 @@ impl TableColumnMeasurements {
 
     /// Finish the measurement pass and share its immutable columns across output windows.
     pub fn finish(self) -> MeasuredTableColumns {
-        let columns = self.0.lock().unwrap();
-        MeasuredTableColumns(columns.as_slice().into())
+        let columns = self.columns.lock().unwrap();
+        MeasuredTableColumns {
+            columns: columns.as_slice().into(),
+            glyph_store: self.glyph_store,
+        }
     }
 }
 
 /// Column constraints for the output windows of a measured single table.
 #[derive(Clone, Debug)]
-pub struct MeasuredTableColumns(std::sync::Arc<[ColumnContribution]>);
+pub struct MeasuredTableColumns {
+    columns: std::sync::Arc<[ColumnContribution]>,
+    glyph_store: Option<std::sync::Arc<crate::table_glyphs::store::Store>>,
+}
 
 impl MeasuredTableColumns {
+    /// Read the measured glyphs for a source cell if its text matches the record.
+    pub fn measured_cell(&self, source_id: usize, text: &str) -> Option<crate::MeasuredTableCell> {
+        crate::table_glyphs::read(self.glyph_store.as_deref()?, source_id, text)
+    }
+
     /// Sum of preferred column widths before distribution into the table box.
     pub fn preferred_width(&self) -> f32 {
-        self.0.iter().map(|column| column.preferred).sum()
+        self.columns.iter().map(|column| column.preferred).sum()
     }
 
     /// Use the measured constraints during layout of a fresh single-table window.
     pub fn apply_to_window(&self, document: &mut crate::document::Document) {
-        document.window_columns = Some(WindowColumns::Apply(self.0.clone()));
+        document.window_columns = Some(WindowColumns::Apply(self.columns.clone()));
     }
 }
 
@@ -4238,7 +4263,7 @@ impl WindowColumns {
     fn combine(&self, columns: &mut [ColumnContribution]) {
         match self {
             Self::Measure(measurements) => {
-                let mut measured = measurements.0.lock().unwrap();
+                let mut measured = measurements.columns.lock().unwrap();
                 if measured.len() < columns.len() {
                     measured.resize(columns.len(), ColumnContribution::default());
                 }

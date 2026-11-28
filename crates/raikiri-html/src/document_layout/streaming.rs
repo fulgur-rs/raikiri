@@ -65,6 +65,8 @@ pub struct TableTextCell {
     pub node: Option<NodeId>,
     /// The decoded DOM text.
     pub text: String,
+    /// Glyphs retained during column measurement, when available for this cell.
+    pub measured: Option<raikiri_dom::MeasuredTableCell>,
 }
 
 /// Sequential access to plain body rows. Each read holds at most 128 rows.
@@ -125,6 +127,14 @@ pub trait PageSink {
     /// Whether the sink can stage a whole plain table from a layout sample.
     fn wants_table_sample(&self) -> bool {
         false
+    }
+
+    /// Maximum temporary bytes per document for measured glyphs and their index.
+    /// The default of zero disables recording. For large, mostly ASCII tables,
+    /// 32 MiB is a suggested starting budget. Cells without a record remain
+    /// available through their text in the sample.
+    fn table_glyph_record_budget(&self) -> u64 {
+        0
     }
 
     /// Try to stage the complete input using a sample with the measured
@@ -1510,7 +1520,7 @@ impl<S: PageSink> Write for StreamingLayout<'_, '_, S> {
         if !matches!(self.failure, Failure::None) {
             return Err(std::io::Error::other(failed_earlier().to_string()));
         }
-        match self.feed_unchecked(buf) {
+        match self.feed_selecting_table(buf) {
             Ok(()) => Ok(buf.len()),
             Err(error) => {
                 let io = std::io::Error::other(error.to_string());
@@ -1587,7 +1597,20 @@ fn stream_table_windows<S: PageSink>(
         .map(|net| net as &dyn NetworkProvider);
     let options = resources.parse_options(&extra, network);
     let limits = resources.parse_limits();
-    let measured = windows.measure_columns(window_size, |shell| {
+    let large_table = windows.len() > window_size.get();
+    let mut glyph_budget = 0;
+    let mut sample_requested = None;
+    if template_styles && large_table {
+        let budget = sink.table_glyph_record_budget();
+        if budget > 0 {
+            let requested = sink.wants_table_sample();
+            sample_requested = Some(requested);
+            if requested {
+                glyph_budget = budget;
+            }
+        }
+    }
+    let measured = windows.measure_columns(window_size, glyph_budget, |shell| {
         let document =
             assemble_resolved(resources, &config.media_context, shell, &options, &limits)?;
         crate::render::measure_table_columns(
@@ -1615,8 +1638,8 @@ fn stream_table_windows<S: PageSink>(
         .unwrap_or(u32::MAX);
     if template_styles
         && measured.is_ok()
-        && sink.wants_table_sample()
-        && windows.len() > window_size.get()
+        && sample_requested.unwrap_or_else(|| sink.wants_table_sample())
+        && large_table
     {
         let shell = windows
             .document(0..window_size.get())

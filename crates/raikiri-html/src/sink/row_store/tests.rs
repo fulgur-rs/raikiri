@@ -384,17 +384,21 @@ fn measured_windows_keep_the_column_boundary_set_by_an_absent_row() {
     for window_size in 1..=3 {
         windows.columns = None;
         windows
-            .measure_columns(std::num::NonZeroUsize::new(window_size).unwrap(), |shell| {
-                let document = assemble(shell);
-                crate::render::measure_table_columns(
-                    &document,
-                    Default::default(),
-                    &Default::default(),
-                    &resources,
-                    &[],
-                    table,
-                )
-            })
+            .measure_columns(
+                std::num::NonZeroUsize::new(window_size).unwrap(),
+                0,
+                |shell| {
+                    let document = assemble(shell);
+                    crate::render::measure_table_columns(
+                        &document,
+                        Default::default(),
+                        &Default::default(),
+                        &resources,
+                        &[],
+                        table,
+                    )
+                },
+            )
             .unwrap();
         for (row, cells) in [0..2, 2..5, 5..6].into_iter().enumerate() {
             let shell = windows.document(row..row + 1).unwrap();

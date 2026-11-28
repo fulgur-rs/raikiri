@@ -452,6 +452,10 @@ impl TableWindows {
                     cell: raikiri_traits::NodeId(cell.source_id as u64),
                     node: cell.text_id.map(|id| raikiri_traits::NodeId(id as u64)),
                     text: cell.text.to_owned(),
+                    measured: self
+                        .columns
+                        .as_ref()
+                        .and_then(|columns| columns.measured_cell(cell.source_id, cell.text)),
                 });
             }
             rows.push(cells);
@@ -463,10 +467,20 @@ impl TableWindows {
     pub(crate) fn measure_columns(
         &mut self,
         window_size: std::num::NonZeroUsize,
+        glyph_budget: u64,
         measure: impl Fn(crate::types::UncascadedDocument) -> Result<(), raikiri_traits::RenderError>
         + Sync,
     ) -> Result<(), raikiri_traits::RenderError> {
-        let measurements = raikiri_dom::layout::TableColumnMeasurements::default();
+        use raikiri_dom::layout::TableColumnMeasurements;
+
+        let measurements = if glyph_budget > 0
+            && let Ok(data) = tempfile::tempfile()
+            && let Ok(index) = tempfile::tempfile()
+        {
+            TableColumnMeasurements::with_glyph_records(data, index, glyph_budget)
+        } else {
+            TableColumnMeasurements::default()
+        };
         let len = self.len();
         let mut prepare = |rows| {
             let mut shell = self

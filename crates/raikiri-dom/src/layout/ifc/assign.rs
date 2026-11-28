@@ -827,6 +827,22 @@ fn build_all(
 
 /// Store each shaped paragraph on its root and mark the root's subtree.
 fn write_roots(doc: &mut Document, cascade: &CascadeResult, built: Vec<(usize, IfcRoot)>) {
+    if let Some(crate::layout::table::WindowColumns::Measure(measurements)) = &doc.window_columns
+        && let Some(store) = measurements.glyph_store.as_deref()
+    {
+        let mut cx = shodo::LayoutContext::new();
+        for (idx, root) in &built {
+            let node = &doc.nodes[*idx];
+            if node.tag_name() == Some("td")
+                && let Some(row) = node.parent
+                && let Some(group) = doc.nodes[row].parent
+                && doc.nodes[group].tag_name() == Some("tbody")
+                && let Some(source) = doc.source_node_index(*idx)
+            {
+                crate::table_glyphs::capture(store, source, &root.paragraph, &mut cx);
+            }
+        }
+    }
     for (idx, mut paragraph) in built {
         paragraph.legend = super::projection::paragraph_legend(cascade, doc, idx);
         // Boxes are laid out and painted as nodes of their own, so neither
