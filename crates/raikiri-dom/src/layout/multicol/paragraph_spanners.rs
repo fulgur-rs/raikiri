@@ -543,22 +543,25 @@ fn column_height(
     // tallest column needs, which is the height it settles on.
     let starts = column_starts(units, origin, high, context);
     // A column that ends in a cut is as tall as the search left it, so the
-    // height settles on the lowest 1/64 px step at which the units fit.
+    // height settles on the lowest 1/64 px step at which the units fit: the
+    // first step above `low`, which does not fit, or the one after it, as
+    // `high` is less than a step above `low`.
     if starts.iter().any(|start| start.continues) {
-        let step = (high * 64.0).floor() / 64.0;
-        let settled = if step > low && fits(step) {
-            step
-        } else {
-            (high * 64.0).ceil() / 64.0
-        };
-        return settled.max(share.min(high));
+        let step = (low * 64.0).floor() / 64.0 + 1.0 / 64.0;
+        let settled = [step, step + 1.0 / 64.0]
+            .into_iter()
+            .find(|&height| fits(height))
+            .unwrap_or(high);
+        return settled
+            .min(cap.unwrap_or(f32::INFINITY))
+            .max(share.min(high));
     }
     let needed = starts
         .iter()
         .enumerate()
-        .map(|(column, start)| match starts.get(column + 1) {
-            Some(next) if next.continues => next.origin - start.origin,
-            next => units[next.map_or(units.len(), |next| next.unit) - 1].2 - start.origin,
+        .map(|(column, start)| {
+            let stop = starts.get(column + 1).map_or(units.len(), |next| next.unit);
+            units[stop - 1].2 - start.origin
         })
         .fold(0.0f32, f32::max);
     needed.clamp(share.min(high), high)
@@ -687,7 +690,7 @@ fn move_blocks(
     }
     for (index, pieces) in &placed.pieces {
         if let Some(node) = units[*index].0.block() {
-            record_pieces(tree, node, pieces, context);
+            let _ = record_pieces(tree, node, pieces, context);
         }
     }
 }
@@ -702,16 +705,13 @@ fn record_pieces(
     node: usize,
     pieces: &[Piece],
     context: FragmentationContext,
-) {
-    let Some(&(first_column, first_y, _)) = pieces.first() else {
-        return;
-    };
+) -> Option<()> {
+    let (first_column, first_y, _) = *pieces.first()?;
     // Without room for all its pieces, the block paints whole where it
     // stands.
-    if tree.fragment_tree.fragments.len() + pieces.len() > tree.fragment_tree.limit {
-        tree.fragment_tree.limit_exceeded = true;
-        return;
-    }
+    let over = tree.fragment_tree.fragments.len() + pieces.len() > tree.fragment_tree.limit;
+    tree.fragment_tree.limit_exceeded |= over;
+    (!over).then_some(())?;
     let layout = tree.nodes[node].layout;
     let sliced = lineless::slices_decorations(tree, node);
     let mut taken = 0.0f32;
@@ -735,9 +735,8 @@ fn record_pieces(
             line_start: None,
             line_end: None,
         };
-        if tree.fragment_tree.try_push(fragment).is_none() {
-            return;
-        }
+        tree.fragment_tree.try_push(fragment)?;
         taken += height;
     }
+    Some(())
 }
