@@ -115,7 +115,7 @@ fn wrapped_parent_fragments_match_columns_with_insets_overflow_and_nonzero_start
             false,
             true,
         ),
-        ("direction:rtl", "", false, false),
+        ("direction:rtl", "", false, true),
         (
             "",
             "padding-top:2px;padding-bottom:3px;box-decoration-break:clone",

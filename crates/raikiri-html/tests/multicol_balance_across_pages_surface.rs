@@ -550,3 +550,97 @@ fn boxes_with_inline_margins_fill_each_page_before_the_next_one() {
         ["d=17,40 c=20,0 b=77,40 a=80,0"]
     );
 }
+
+#[test]
+fn right_to_left_columns_fill_each_page_with_boxes_narrower_than_them() {
+    // A narrower box keeps to the right of a right-to-left column, or of the
+    // content box of a wrapper, and the columns fill page by page, from the
+    // right, as Chromium prints them.
+    let pages_of = |body: &str, left: i32| {
+        let at = |id: u8, x: i32, y: i32| format!("{}={},{y}", char::from(b'a' + id), x + left);
+        let page = |first: u8, rows: u8| {
+            (0..2u8)
+                .flat_map(|column| (0..rows).map(move |row| (column, row)))
+                .map(|(column, row)| {
+                    // The first boxes of a page fill its right column.
+                    let id = first + (1 - column) * rows + row;
+                    at(id, i32::from(column) * 60, i32::from(row) * 40)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(
+            pages(&format!("<div class=mc style=direction:rtl>{body}</div>")),
+            [page(0, 4), page(8, 4), page(16, 2)],
+            "{body}"
+        );
+    };
+    pages_of(&boxes(20, 40, "width:20px"), 20);
+    pages_of(&boxes(20, 40, "width:20px;margin-right:3px"), 17);
+    pages_of(&boxes(20, 40, "width:20px;margin:0 auto"), 10);
+    pages_of(
+        &format!(
+            "<div style=width:30px>{}</div>",
+            boxes(20, 40, "width:20px")
+        ),
+        20,
+    );
+    pages_of(
+        &format!(
+            "<div style='width:30px;padding:0 2px'>{}</div>",
+            boxes(20, 40, "")
+        ),
+        8,
+    );
+    pages_of(
+        &format!(
+            "<div style='width:30px;border-right:4px solid'>{}</div>",
+            boxes(20, 40, "width:20px;margin-left:1px")
+        ),
+        16,
+    );
+}
+
+#[test]
+fn boxes_with_inline_margins_in_a_wrapper_fill_each_page_in_column_order() {
+    // Inside a wrapper, margins on the left or right move a box along the
+    // wrapper's content box, and the columns still fill page by page
+    // (Chromium).
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc><div style='width:30px;border-left:4px solid'>{}</div></div>",
+            boxes(20, 40, "width:20px;margin-right:1px")
+        )),
+        [
+            "a=4,0 b=4,40 c=4,80 d=4,120 e=64,0 f=64,40 g=64,80 h=64,120",
+            "i=4,0 j=4,40 k=4,80 l=4,120 m=64,0 n=64,40 o=64,80 p=64,120",
+            "q=4,0 r=4,40 s=64,0 t=64,40",
+        ]
+    );
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc><div>{}</div></div>",
+            boxes(20, 40, "width:20px;margin:0 auto")
+        )),
+        [
+            "a=10,0 b=10,40 c=10,80 d=10,120 e=70,0 f=70,40 g=70,80 h=70,120",
+            "i=10,0 j=10,40 k=10,80 l=10,120 m=70,0 n=70,40 o=70,80 p=70,120",
+            "q=10,0 r=10,40 s=70,0 t=70,40",
+        ]
+    );
+    // On one page, past the wrapper's padding.
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc><div style='padding-left:2px'>{}</div></div>",
+            boxes(4, 40, "margin-left:3px")
+        )),
+        ["a=5,0 b=5,40 c=65,0 d=65,40"]
+    );
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc style=direction:rtl><div style='padding-right:2px'>{}</div></div>",
+            boxes(4, 40, "width:20px;margin-right:3px")
+        )),
+        ["c=15,0 d=15,40 a=75,0 b=75,40"]
+    );
+}

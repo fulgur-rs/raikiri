@@ -2234,10 +2234,11 @@ fn cuts_block_edges(node: &crate::node::Node) -> bool {
 }
 
 /// Whether a right-to-left parent aligns `child` to its right edge, which
-/// happens to a block narrower than the parent's content box. The streams of
-/// pieces that cut a block at the column edges place it from the left, so
-/// they leave such a block to the single chain or to the placement of each
-/// child.
+/// happens to a block narrower than the parent's content box. The stream of
+/// boxes without lines places such a block at the right of its column, but
+/// the strategies that place lines, scroll containers, column containers and
+/// flex containers place it from the left, so they leave it to the single
+/// chain or to the placement of each child.
 fn is_right_aligned_in_parent(tree: &LayoutSession<'_>, child: usize) -> bool {
     let rtl_parent = tree
         .taffy_parent_of(child)

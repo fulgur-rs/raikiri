@@ -264,7 +264,18 @@ fn is_plain_block(tree: &LayoutSession<'_>, child: usize) -> bool {
 
 /// [`is_plain_block`] for a box whose insets the caller accepts.
 fn is_plain_block_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
-    is_plain_block_with_display(tree, child, false, false)
+    block_margins(&style_of(tree, child)).is_some() && is_stream_block(tree, child, false)
+}
+
+/// Whether `child` is a block, or with `allow_flow_root` a `flow-root` box,
+/// that the stream of boxes without lines can place, leaving aside its
+/// margins and what it contains. Unlike [`is_plain_block_apart_from_margins`]
+/// it takes a box that a right-to-left parent aligns to its right edge.
+fn is_stream_block(tree: &LayoutSession<'_>, child: usize, allow_flow_root: bool) -> bool {
+    let display = layout_node(tree, child).display();
+    (display == DisplayValue::Block || allow_flow_root && display == DisplayValue::FlowRoot)
+        && style_of(tree, child).clear() == Clear::None
+        && is_plain_box_aligned_or_not(tree, child, false, false, true)
 }
 
 /// Whether `child` is a plain block with nothing rendered inside it and
@@ -274,12 +285,12 @@ fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) ->
     let style = style_of(tree, child);
     has_inline_margins(&style)
         && block_margins_beside_inline(&style).is_some()
-        && is_plain_block_apart_from_margins(tree, child, false, false)
+        && is_stream_block(tree, child, false)
         && !has_rendered_content(tree, child, false)
 }
 
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
-    is_plain_block_with_display(tree, child, true, false)
+    block_margins(&style_of(tree, child)).is_some() && is_stream_block(tree, child, true)
 }
 
 /// [`is_plain_block`] for a box that may hold lines of text, and whose insets
@@ -515,6 +526,21 @@ fn is_plain_box_but_clearance(
     allow_lines: bool,
     breaks: bool,
 ) -> bool {
+    is_plain_box_aligned_or_not(tree, child, allow_lines, breaks, false)
+}
+
+/// [`is_plain_box_but_clearance`] that, with `aligned`, also takes a box
+/// that a right-to-left parent aligns to its right edge, when nothing in it
+/// holds lines: the stream of boxes without lines places such a box at the
+/// right of its column (see [`offset_in`]), but the strategies that place
+/// lines start them at the left of a column.
+fn is_plain_box_aligned_or_not(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_lines: bool,
+    breaks: bool,
+    aligned: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     // An orthogonal flow is monolithic in the column's block axis.
@@ -541,7 +567,23 @@ fn is_plain_box_but_clearance(
         || node.has_before_or_after_content
         || node.multicol.is_some()
         || node.ifc.is_some() && !allow_lines
-        || is_right_aligned_in_parent(tree, child))
+        || is_right_aligned_in_parent(tree, child) && (!aligned || holds_lines(tree, child)))
+}
+
+/// Whether `id` or a box in its flow holds lines. A box with more than
+/// [`super::MAX_WHOLE_BOX_DESCENDANTS`] boxes below it counts as holding
+/// some, so that the walk stays cheap.
+fn holds_lines(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let mut pending = vec![id];
+    let mut seen = 0usize;
+    while let Some(id) = pending.pop() {
+        seen += 1;
+        if seen > super::MAX_WHOLE_BOX_DESCENDANTS || tree.nodes[id].ifc.is_some() {
+            return true;
+        }
+        pending.extend(flow_children(tree, id));
+    }
+    false
 }
 
 /// Whether `id` is an HTML `fieldset` with a rendered legend: a `legend`
@@ -1388,7 +1430,12 @@ fn wrapped_block_tree(
             }
             continue;
         }
-        if is_plain_block(tree, child) && !has_rendered_content(tree, child, false) {
+        let inline_margins = style_of(tree, child).inset()
+            == Edges::splat(LengthPercentageAuto::auto())
+            && is_empty_block_with_inline_margins(tree, child);
+        if (is_plain_block(tree, child) || inline_margins)
+            && !has_rendered_content(tree, child, false)
+        {
             // A spanner leaves the columns, so it is not a block of the stream.
             if children_in_multicol_context && tree.nodes[child].column_span_all {
                 return None;
@@ -1481,27 +1528,38 @@ fn is_horizontal(node: &crate::Node) -> bool {
     !node.used_writing_mode.is_vertical()
 }
 
-/// Where `child`, `width` wide, starts in its column: past its left margin,
-/// moved along by `justify-self`, or, with auto margins, centred or pushed
-/// to the end the margins leave it; a right-to-left column aligns a
-/// narrower box to its right edge.
+/// Where `child`, `width` wide, starts in its column: see [`offset_in`].
 pub(super) fn inline_offset(
     tree: &LayoutSession<'_>,
     child: usize,
     context: FragmentationContext,
     width: f32,
 ) -> f32 {
+    offset_in(tree, child, context.rtl, context.column_width, width)
+}
+
+/// Where `child`, `width` wide, starts in a box `available` wide, with the
+/// direction `rtl`: past its left margin, moved along by `justify-self`, or,
+/// with auto margins, centred or pushed to the end the margins leave it; a
+/// right-to-left box aligns a narrower child to its right edge.
+pub(super) fn offset_in(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    rtl: bool,
+    available: f32,
+    width: f32,
+) -> f32 {
     let style = style_of(tree, child);
-    let (left, right) = super::column_horizontal_margins(&style, context.column_width, width);
+    let (left, right) = super::column_horizontal_margins(&style, available, width);
     let justified = crate::layout::dispatch::block_flow::justified_offset(
         tree,
         child,
-        context.rtl,
-        context.column_width - left - right - width,
+        rtl,
+        available - left - right - width,
     );
     match justified {
         Some(justified) => left + justified,
-        None if context.rtl => context.column_width - width - right,
+        None if rtl => available - width - right,
         None => left,
     }
 }

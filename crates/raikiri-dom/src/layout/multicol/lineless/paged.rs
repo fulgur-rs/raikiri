@@ -529,7 +529,7 @@ fn push_inside(
     // wrapper's first piece as the columns of its first piece and of that
     // one stand apart. Within the piece of the wrapper in its own column, it
     // stands at its margin edge inside the wrapper's content box, where
-    // `justify-self` puts it.
+    // `justify-self` or the wrapper's direction puts it.
     let wrapper = tree.nodes[parent.node].layout;
     let content_width = wrapper.size.width
         - wrapper.border.left
@@ -537,14 +537,9 @@ fn push_inside(
         - wrapper.padding.left
         - wrapper.padding.right;
     let rtl = style_of(tree, parent.node).direction().is_rtl();
-    let justified = crate::layout::dispatch::block_flow::justified_offset(
-        tree,
-        node,
-        rtl,
-        content_width - layout.margin.left - layout.margin.right - size.width,
-    )
-    .unwrap_or(0.0);
-    let x = wrapper.border.left + wrapper.padding.left + layout.margin.left + justified;
+    let x = wrapper.border.left
+        + wrapper.padding.left
+        + super::offset_in(tree, node, rtl, content_width, size.width);
     let sliced = own.len() > 1 && slices_decorations(tree, node);
     let first_parent = parent.pieces.first()?;
     // The node stands as far down the wrapper as its first piece starts below
