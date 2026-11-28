@@ -10389,7 +10389,7 @@ fn balanced_columns_that_end_in_a_cut_settle_on_the_least_height() {
     assert_eq!(column_ranges(&doc, container), [(0, 1, 2, 120.0, 0.0)]);
 }
 
-/// Append `count` lines of one `x` each to `node`.
+/// Append `count` lines to `node`, each one `letter`.
 fn append_lines(doc: &mut Document, node: usize, count: usize, letter: &str) {
     for line in 0..count {
         doc.append_text(node, letter);
@@ -10539,4 +10539,59 @@ fn a_block_among_lines_with_margins_goes_on_whole() {
         column_ranges(&doc, container),
         [(0, 2, 0, 0.0, 0.0), (2, 3, 2, 120.0, 0.0)]
     );
+}
+
+#[test]
+fn a_measure_of_the_columns_breaks_between_the_lines_of_a_block_among_lines() {
+    // A flex line and a grid row measure the container before they lay it
+    // out, and the measure breaks between the block's lines as the layout
+    // does: the columns are 60px tall either way. Values match Chromium.
+    for wrapper in [
+        "display:flex",
+        "display:flex;align-items:flex-start",
+        "display:grid",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+        let outer = doc.append_element(Some(body), "div", Some(wrapper));
+        let container = doc.append_element(
+            Some(outer),
+            "div",
+            Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+        );
+        append_lines(&mut doc, container, 2, "x");
+        let block = doc.append_element(Some(container), "div", Some("display:block"));
+        append_lines(&mut doc, block, 2, "y");
+        let tail = doc.append_element(Some(container), "span", None::<&str>);
+        doc.append_text(tail, "x");
+        doc.append_element(Some(container), "br", None::<&str>);
+        doc.append_text(container, "x");
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(doc.nodes[container].layout.size.height, 60.0, "{wrapper}");
+        assert_eq!(doc.nodes[outer].layout.size.height, 60.0, "{wrapper}");
+        assert_eq!(
+            pieces_of(&doc, block),
+            [(0, 0.0, 0.0, 40.0, 20.0), (1, 60.0, -40.0, 40.0, 20.0)],
+            "{wrapper}"
+        );
+    }
+}
+
+#[test]
+fn a_block_among_lines_that_fits_its_column_again_forgets_its_columns() {
+    // Laid out first in 60px columns, the block breaks between its lines; in
+    // taller columns it fits the first and paints its lines where it stands.
+    let (mut doc, _, block) =
+        lines_around_a_block("height:60px;column-fill:auto", 2, "display:block", 3, false);
+    assert_eq!(pieces_of(&doc, block).len(), 2);
+    let container = doc.nodes[block].parent.expect("container");
+    let _ = doc.set_element_attribute(
+        container,
+        "style",
+        "display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1;height:120px;column-fill:auto",
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert!(pieces_of(&doc, block).is_empty());
+    assert!(doc.nodes[block].ifc_multicol_fragments().is_none());
 }

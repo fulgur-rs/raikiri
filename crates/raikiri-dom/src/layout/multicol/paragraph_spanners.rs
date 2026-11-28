@@ -70,11 +70,14 @@ fn moves_whole(tree: &LayoutSession<'_>, node: usize) -> bool {
 /// groups of columns.
 pub(crate) fn retire_pieces(tree: &mut LayoutSession<'_>, root: &IfcRoot) {
     for box_ in &root.boxes {
-        if box_.kind == IfcBoxKind::Block
-            && (lineless::slices_among_lines(tree, box_.node)
-                || lineless::splits_between_lines(tree, box_.node))
-        {
+        if box_.kind != IfcBoxKind::Block {
+            continue;
+        }
+        if lineless::slices_among_lines(tree, box_.node) {
             tree.fragment_tree.retire_previous_roots(box_.node);
+        } else if lineless::splits_between_lines(tree, box_.node) {
+            tree.fragment_tree.retire_previous_roots(box_.node);
+            forget_columns(tree, box_.node);
         }
     }
 }
@@ -94,6 +97,12 @@ fn lines_between_breaks<'a>(tree: &'a LayoutSession<'_>, node: usize) -> Option<
         && lines.block_line_starts.is_empty()
         && !lines.lines.is_empty())
     .then_some(lines)
+}
+
+/// Whether a column end may break between the lines of the block `node`
+/// of a paragraph placed in columns.
+pub(crate) fn breaks_between_lines(tree: &LayoutSession<'_>, node: usize) -> bool {
+    lineless::splits_between_lines(tree, node)
 }
 
 /// Whether the block `node` of a paragraph is a column spanner, which the
@@ -822,8 +831,10 @@ fn move_line_blocks(
         layout.location.x += context.column_offset_x(column);
         layout.location.y += dy;
         tree.set_unrounded_layout(NodeId::from(node), &layout);
-        // The pieces of an earlier layout no longer apply.
+        // The pieces of an earlier layout, and the columns its lines took,
+        // no longer apply.
         tree.fragment_tree.retire_previous_roots(node);
+        forget_columns(tree, node);
         // The top of the block's content box, in that of the container.
         let content_top = units[index].1 - offset + dy;
         let origin_x = context.column_offset_x(column);
@@ -839,11 +850,10 @@ fn move_line_blocks(
             let (top, bottom) = (top + dy, bottom + dy);
             match pieces.last_mut() {
                 Some(piece) if piece.0 == column => piece.2 = bottom - piece.1,
-                _ => pieces.push((
-                    column,
-                    if at == 0 { content_top } else { top },
-                    bottom - top,
-                )),
+                _ => {
+                    let start = if at == 0 { content_top } else { top };
+                    pieces.push((column, start, bottom - start));
+                }
             }
         }
         index = stop;
@@ -858,11 +868,24 @@ fn move_line_blocks(
                 ..*fragment
             })
             .collect();
-        if let Some(root) = tree.nodes[node].ifc.as_mut() {
-            root.multicol_fragments = Some(fragments.clone());
+        // A block whose pieces the fragment tree has no room for paints
+        // whole where it stands, with its lines.
+        if record_pieces(tree, node, &pieces, &fragments, context).is_some()
+            && let Some(root) = tree.nodes[node].ifc.as_mut()
+        {
+            root.multicol_fragments = Some(fragments);
             root.multicol_fragment_origins_recorded = true;
         }
-        let _ = record_pieces(tree, node, &pieces, &fragments, context);
+    }
+}
+
+/// Forget the columns that an earlier layout put the lines of the block
+/// `node` in.
+fn forget_columns(tree: &mut LayoutSession<'_>, node: usize) {
+    if let Some(root) = tree.nodes[node].ifc.as_mut() {
+        root.multicol_fragments = None;
+        root.multicol_fragment_origins_recorded = false;
+        root.multicol_piece_extents.clear();
     }
 }
 
