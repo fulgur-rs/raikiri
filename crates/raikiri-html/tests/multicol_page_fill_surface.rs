@@ -1171,21 +1171,177 @@ fn wrappers_inside_a_painted_wrapper_have_a_piece_in_each_column_too() {
 }
 
 #[test]
-fn a_wrapper_holding_a_sized_box_stays_in_the_columns_the_pages_cut() {
-    // The page fill places lines and the edges of wrappers; a sized box with
-    // no lines inside a wrapper leaves the wrapper to the columns that the
-    // pages cut, where every line is reported once.
-    let body = mc(&format!(
-        "<div class=w>{}<div style='height:30px'></div></div>{}",
+fn sized_boxes_fill_each_page_in_column_order() {
+    // A sized box with no lines, between the paragraphs or inside a
+    // wrapper, joins the flow of the page fill: the columns of each page fill
+    // in turn, and the last page balances (Chromium).
+    let spacer = "<div style='height:30px'></div>";
+    let filled = [
+        "p0 x0: L1-L10@0",
+        "p0 x100: L11-L15@0 M1-M3@130",
+        "p1 x0: M4-M8@0",
+        "p1 x100: M9-M12@0",
+    ];
+    let between = mc(&format!("{}{spacer}{}", par("L", 1, 15), par("M", 1, 12)));
+    assert_eq!(columns(&between, ""), filled, "between paragraphs");
+    let wrapped = mc(&format!(
+        "<div>{}{spacer}</div>{}",
         par("L", 1, 15),
         par("M", 1, 12)
     ));
-    let mut texts: Vec<_> = lines(&body, ".w{padding-bottom:6px}")
-        .into_iter()
-        .map(|line| line.3)
-        .collect();
+    assert_eq!(columns(&wrapped, ""), filled, "inside a wrapper");
+    let padded = mc(&format!(
+        "<div style='padding-bottom:6px'>{}{spacer}</div>{}",
+        par("L", 1, 15),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&padded, ""),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L15@0 M1-M3@136",
+            "p1 x0: M4-M8@0",
+            "p1 x100: M9-M12@0",
+        ],
+        "inside a padded wrapper"
+    );
+}
+
+#[test]
+fn a_column_end_slices_a_sized_box_on_a_filled_page() {
+    // A column end cuts the box, whose block-axis borders are sliced: the
+    // top border shows in the first piece and the bottom one in the last
+    // (Chromium).
+    let tall = |inner: &str| {
+        mc(&format!(
+            "{}{}",
+            inner.replace(
+                "BOX",
+                "<div id=b style='height:150px;background:#00f'></div>"
+            ),
+            par("M", 1, 12)
+        ))
+    };
+    let lines = [
+        "p0 x0: L1-L8@0",
+        "p0 x100: M1-M4@110",
+        "p1 x0: M5-M8@0",
+        "p1 x100: M9-M12@0",
+    ];
+    let between = tall(&format!("{}BOX", par("L", 1, 8)));
+    assert_eq!(columns(&between, ""), lines, "between paragraphs");
+    assert_eq!(
+        visible_boxes(&between, "", "b"),
+        [(0, 0, 160, 200), (0, 100, 0, 110)]
+    );
+    let wrapped = tall(&format!(
+        "<div id=w style='background:#ff0'>{}BOX</div>",
+        par("L", 1, 8)
+    ));
+    assert_eq!(columns(&wrapped, ""), lines, "inside a painted wrapper");
+    assert_eq!(
+        visible_boxes(&wrapped, "", "b"),
+        [(0, 0, 160, 200), (0, 100, 0, 110)]
+    );
+    assert_eq!(
+        visible_boxes(&wrapped, "", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 110)]
+    );
+    let bordered = mc(&format!(
+        "{}<div id=b style='height:150px;border-top:5px solid red;border-bottom:5px solid lime'>\
+         </div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&bordered, ""),
+        [
+            "p0 x0: L1-L8@0",
+            "p0 x100: M1-M4@120",
+            "p1 x0: M5-M8@0",
+            "p1 x100: M9-M12@0",
+        ],
+        "bordered"
+    );
+    assert_eq!(
+        visible_boxes(&bordered, "", "b"),
+        [(0, 0, 160, 200), (0, 100, 0, 120)]
+    );
+    // A wrapper around the box ends where the box's last piece does, not
+    // where the whole box its first piece paints would.
+    let wrapped = mc(&format!(
+        "<div id=w style='background:#ff0'>{}<div style='height:150px;border-top:5px solid red;\
+         border-bottom:5px solid lime'></div></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        visible_boxes(&wrapped, "", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 120)]
+    );
+}
+
+#[test]
+fn a_sized_box_fills_the_columns_between_its_first_and_last_pieces() {
+    // Of three columns, the box fills the middle one whole (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:400px;background:#00f'></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 6)
+    ));
+    let css = ".mc{columns:3;width:180px}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: L1-L8@0",
+            "p0 x120: M1-M2@160",
+            "p1 x0: M3-M4@0",
+            "p1 x60: M5-M6@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "b"),
+        [(0, 0, 160, 200), (0, 60, 0, 200), (0, 120, 0, 160)]
+    );
+}
+
+#[test]
+fn a_sized_box_whose_bottom_border_goes_on_alone_shows_it_in_the_next_column_only() {
+    // The column end would cut the border below the box, so the first piece
+    // ends with its content and the border goes on alone (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:20px;border-bottom:30px solid red'></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L8@0",
+            "p0 x100: M1-M8@30",
+            "p1 x0: M9-M10@0",
+            "p1 x100: M11-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 0, 160, 180), (0, 100, 0, 30)]
+    );
+}
+
+#[test]
+fn a_sized_box_a_page_end_cuts_stays_in_the_columns_the_pages_cut() {
+    // The page fill resumes no box in the middle, so one that a page end
+    // cuts leaves the container to the columns that the pages cut, where
+    // every line is reported once.
+    let body = mc(&format!(
+        "<div>{}<div style='height:60px'></div></div>{}",
+        par("L", 1, 18),
+        par("M", 1, 12)
+    ));
+    let mut texts: Vec<_> = lines(&body, "").into_iter().map(|line| line.3).collect();
     texts.sort();
-    let mut expected: Vec<_> = (1..=15)
+    let mut expected: Vec<_> = (1..=18)
         .map(|n| format!("L{n}"))
         .chain((1..=12).map(|n| format!("M{n}")))
         .collect();
@@ -1212,4 +1368,26 @@ fn a_wrapper_whose_padding_a_column_end_cuts_ends_with_what_it_holds() {
         .last()
         .expect("the wrapper paints");
     assert_eq!((last.0, last.1, last.3), (line.0, line.1, line.2 + 20));
+}
+
+#[test]
+fn a_block_button_between_paragraphs_fills_the_pages_in_order() {
+    // A block button of one line goes whole to a column, as in Chromium.
+    let body = mc(&format!(
+        "{}<button>B1</button>{}",
+        par("L", 1, 15),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(
+            &body,
+            "button{display:block;font:inherit;padding:0;border:0;margin:0}"
+        ),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-M4@0",
+            "p1 x0: M5-M8@0",
+            "p1 x100: M9-M12@0",
+        ]
+    );
 }
