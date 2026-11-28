@@ -6645,6 +6645,87 @@ fn a_block_that_starts_the_group_below_a_spanner_keeps_its_top_margin() {
 }
 
 #[test]
+fn the_bottom_margin_of_a_block_that_ends_the_columns_counts_toward_their_height() {
+    // In one column the 30px margin below the block is part of the content.
+    // Values match Chromium.
+    let (mut doc, container, _) = column_container(
+        "column-count:1",
+        &[
+            Part::Lines(1),
+            Part::Box("display:block;height:20px;margin-bottom:30px"),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 70.0);
+
+    // Balanced columns share the content, margin included, evenly: 130px
+    // over two columns of 65px, with the margin cut at the end of the second.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(4),
+            Part::Box("display:block;height:20px;margin-bottom:30px"),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 3, 0, 0.0, 0.0), (3, 4, 1, 60.0, 0.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 20.0, 40.0, 20.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 65.0);
+}
+
+#[test]
+fn a_block_between_lines_with_a_bottom_margin_balances_columns_by_an_even_share() {
+    // 40px of lines, the block and its 30px margin, and 40px of lines: 130px
+    // over two columns of 65px. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(2),
+            Part::Box("display:block;height:20px;margin-bottom:30px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, 0.0)]
+    );
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 40.0, 40.0, 20.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 65.0);
+}
+
+#[test]
+fn a_spanner_below_a_block_with_a_bottom_margin_starts_below_the_balanced_group() {
+    // The group of 65px keeps the block's margin, and the spanner's own 5px
+    // margin comes after it. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(4),
+            Part::Box("display:block;height:20px;margin-bottom:30px"),
+            Part::Spanner("height:10px;margin-top:5px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (60.0, 20.0, 40.0, 20.0));
+    assert_eq!(box_rect(&doc, boxes[1]), (0.0, 70.0, 100.0, 10.0));
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 3, 0, 0.0, 0.0),
+            (3, 4, 1, 60.0, 0.0),
+            (4, 5, 0, 0.0, 80.0),
+            (5, 6, 1, 60.0, 80.0),
+        ]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 100.0);
+}
+
+#[test]
 fn a_block_among_the_lines_of_a_paragraph_moves_to_its_column_from_the_right() {
     // Values match Chromium.
     let (mut doc, container, boxes) = column_container(

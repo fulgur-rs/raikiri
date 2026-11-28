@@ -1721,15 +1721,17 @@ fn run_boxes_segment(
                 if !block.collapses_through {
                     ctx.commit_strut();
                 }
-                block_boxes.push((
-                    node.0 as usize,
-                    block.top,
-                    block.next_y.max(block.top),
-                    block.first_baseline,
-                    block
+                let bottom = block.next_y.max(block.top);
+                block_boxes.push(super::root::BlockBox {
+                    node: node.0 as usize,
+                    top: block.top,
+                    bottom,
+                    end: (block.next_y + block.pending.resolve()).max(bottom),
+                    first_baseline: block.first_baseline,
+                    top_margin: block
                         .top_margin
                         .map_or(0.0, |margin| margin.resolve().max(0.0)),
-                ));
+                });
                 (y, pending) = (block.next_y, block.pending);
                 block_ends.push((node.0 as usize, lines.len(), y + pending.resolve()));
                 // A forced page break after the block starts the lines after

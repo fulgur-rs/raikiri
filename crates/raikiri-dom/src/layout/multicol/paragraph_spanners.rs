@@ -16,7 +16,7 @@ use super::*;
 use crate::fragment::MulticolGroup;
 use crate::layout::ifc::boxes::{IfcBoxKind, place_block_across};
 use crate::layout::ifc::flow::FlowGeometry;
-use crate::layout::ifc::root::{IfcLines, IfcRoot};
+use crate::layout::ifc::root::{BlockBox, IfcLines, IfcRoot};
 use crate::layout::protocol::CollapsibleMarginSet;
 
 /// Whether the paragraph `root` of the multicol container `idx` is laid out in
@@ -169,8 +169,8 @@ pub(crate) fn arrange(
                     .flatten();
                 (columns, height, occupied, baseline)
             } else {
-                let units = units_of(lines, start..stop, &blocks);
-                let placed = place_units(&units, group, y);
+                let (units, end) = units_of(lines, start..stop, &blocks);
+                let placed = place_units(&units, end, group, y);
                 if perform {
                     move_blocks(tree, &units, &placed, group);
                 }
@@ -231,18 +231,23 @@ enum Unit {
     Block(usize),
 }
 
-/// The flow extent, first baseline and top margin the line layout of `lines`
-/// gave the block `node`, the `index`th block of the paragraph.
-fn block_box(lines: &IfcLines, index: usize, node: usize) -> (f32, f32, Option<f32>, f32) {
+/// Where the line layout of `lines` put the block `node`, the `index`th
+/// block of the paragraph.
+fn block_box(lines: &IfcLines, index: usize, node: usize) -> BlockBox {
     lines
         .block_boxes
         .get(index)
-        .filter(|entry| entry.0 == node)
-        .or_else(|| lines.block_boxes.iter().find(|entry| entry.0 == node))
-        .map_or(
-            (0.0, 0.0, None, 0.0),
-            |&(_, top, bottom, baseline, margin)| (top, bottom, baseline, margin),
-        )
+        .filter(|entry| entry.node == node)
+        .or_else(|| lines.block_boxes.iter().find(|entry| entry.node == node))
+        .copied()
+        .unwrap_or(BlockBox {
+            node,
+            top: 0.0,
+            bottom: 0.0,
+            end: 0.0,
+            first_baseline: None,
+            top_margin: 0.0,
+        })
 }
 
 /// The units of the group of `lines` in `range` with the `blocks` among them,
@@ -250,32 +255,36 @@ fn block_box(lines: &IfcLines, index: usize, node: usize) -> (f32, f32, Option<f
 /// block comes with the index of the first line after it and its index among
 /// the blocks of the paragraph. A block that starts the group keeps its top
 /// margin in the first column, which no break precedes, so its unit starts
-/// above the margin.
+/// above the margin. Also the offset where the content of the group ends,
+/// below the margins of a block that ends it.
 fn units_of(
     lines: &IfcLines,
     range: std::ops::Range<usize>,
     blocks: &[(usize, usize, usize)],
-) -> Vec<(Unit, f32, f32)> {
+) -> (Vec<(Unit, f32, f32)>, f32) {
     let mut units = Vec::with_capacity(range.len() + blocks.len());
+    let mut end = 0.0;
     let mut pending = blocks.iter().peekable();
-    let mut push_blocks_before = |line: usize, units: &mut Vec<(Unit, f32, f32)>| {
+    let mut push_blocks_before = |line: usize, units: &mut Vec<(Unit, f32, f32)>, end: &mut f32| {
         while let Some(&(node, _, index)) = pending.next_if(|&&(_, after, _)| after <= line) {
-            let (top, bottom, _, margin) = block_box(lines, index, node);
-            let top = if units.is_empty() { top - margin } else { top };
-            units.push((Unit::Block(node), top, bottom));
+            let block = block_box(lines, index, node);
+            let top = if units.is_empty() {
+                block.top - block.top_margin
+            } else {
+                block.top
+            };
+            units.push((Unit::Block(node), top, block.bottom));
+            *end = block.end;
         }
     };
     for index in range.clone() {
-        push_blocks_before(index, &mut units);
+        push_blocks_before(index, &mut units, &mut end);
         let line = &lines.lines[index];
-        units.push((
-            Unit::Line(index),
-            line.block_offset(),
-            line.block_offset() + line.block_size(),
-        ));
+        end = line.block_offset() + line.block_size();
+        units.push((Unit::Line(index), line.block_offset(), end));
     }
-    push_blocks_before(usize::MAX, &mut units);
-    units
+    push_blocks_before(usize::MAX, &mut units, &mut end);
+    (units, end)
 }
 
 /// The first baseline of `units` once `placed` in columns, from the top of
@@ -299,7 +308,7 @@ fn units_first_baseline(
             Unit::Block(node) => blocks
                 .iter()
                 .find(|entry| entry.0 == node)
-                .and_then(|&(_, _, index)| block_box(lines, index, node).2)
+                .and_then(|&(_, _, index)| block_box(lines, index, node).first_baseline)
                 .map(|baseline| baseline + dy),
         };
         if let Some(baseline) = baseline {
@@ -327,12 +336,17 @@ struct PlacedUnits {
 /// unit is not broken: a line or block that does not fit what is left of a
 /// column starts the next one, and `orphans` and `widows` hold for each run
 /// of lines between the blocks, as for the lines of an anonymous block.
-fn place_units(units: &[(Unit, f32, f32)], context: FragmentationContext, y: f32) -> PlacedUnits {
+fn place_units(
+    units: &[(Unit, f32, f32)],
+    end: f32,
+    context: FragmentationContext,
+    y: f32,
+) -> PlacedUnits {
     let available = context
         .column_count
         .saturating_sub(context.column_index)
         .max(1);
-    let height = column_height(units, context, available);
+    let height = column_height(units, end, context, available);
     let starts = column_starts(units, height, context);
     let mut fragments: Vec<MulticolTextFragment> = Vec::new();
     let mut columns = Vec::with_capacity(units.len());
@@ -366,6 +380,15 @@ fn place_units(units: &[(Unit, f32, f32)], context: FragmentationContext, y: f32
             }
         }
     }
+    // The margins below a block that ends the group reach the end of its
+    // last column at most.
+    if let Some(&last) = starts.last() {
+        tallest = tallest.max((end - units[last].1).min(height));
+    }
+    // Balanced columns are as tall as the height they balance at.
+    if context.column_fill == ColumnFillValue::Balance && height.is_finite() {
+        tallest = tallest.max(height);
+    }
     PlacedUnits {
         fragments,
         columns,
@@ -373,12 +396,15 @@ fn place_units(units: &[(Unit, f32, f32)], context: FragmentationContext, y: f32
     }
 }
 
-/// The height of the columns of `units`: the definite height of columns that
-/// fill in turn, or, for columns that balance, the least height at which the
-/// units fit the `available` columns, no taller than a definite height. Fill
-/// with no height puts every unit in the first column.
+/// The height of the columns of `units`, whose content ends at `end`: the
+/// definite height of columns that fill in turn, or, for columns that
+/// balance, the least height at which the units fit the `available` columns,
+/// no taller than a definite height. As in Chromium, balanced columns are at
+/// least as tall as an even share of the content, margins below its last
+/// block included. Fill with no height puts every unit in the first column.
 fn column_height(
     units: &[(Unit, f32, f32)],
+    end: f32,
     context: FragmentationContext,
     available: usize,
 ) -> f32 {
@@ -386,7 +412,7 @@ fn column_height(
     if context.column_fill == ColumnFillValue::Auto {
         return cap.unwrap_or(f32::INFINITY);
     }
-    let total = units.last().map_or(0.0, |unit| unit.2) - units.first().map_or(0.0, |unit| unit.1);
+    let total = end - units.first().map_or(0.0, |unit| unit.1);
     let fits = |height: f32| column_starts(units, height, context).len() <= available;
     let mut high = cap.map_or(total, |cap| cap.min(total));
     // Units that overflow the columns at the cap leave nothing to search.
@@ -394,7 +420,15 @@ fn column_height(
         .iter()
         .map(|&(_, top, bottom)| bottom - top)
         .fold(0.0f32, f32::max);
-    let mut low = if fits(high) { tallest.min(high) } else { high };
+    let share = total / available as f32;
+    let mut low = if fits(high) {
+        tallest.max(share).min(high)
+    } else {
+        high
+    };
+    if fits(low) {
+        return low;
+    }
     for _ in 0..32 {
         if high - low <= 1.0 / 64.0 {
             break;
@@ -406,7 +440,18 @@ fn column_height(
             low = middle;
         }
     }
-    high
+    // The search stops within 1/64 px above the height the content of the
+    // tallest column needs, which is the height it settles on.
+    let starts = column_starts(units, high, context);
+    let needed = starts
+        .iter()
+        .enumerate()
+        .map(|(column, &start)| {
+            let stop = starts.get(column + 1).copied().unwrap_or(units.len());
+            units[stop - 1].2 - units[start].1
+        })
+        .fold(0.0f32, f32::max);
+    needed.clamp(share.min(high), high)
 }
 
 /// The index of the first unit of each column `height` tall that `units`
