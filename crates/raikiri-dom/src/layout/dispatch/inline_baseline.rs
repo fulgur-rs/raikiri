@@ -40,7 +40,9 @@ use crate::layout::protocol::{NodeId, OofCandidates};
 use crate::layout::taffy_adapter::GridInfo;
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
-use raikiri_layout_style::values::{BaselineSet, Direction, Display, Position, ResolveOrZero};
+use raikiri_layout_style::values::{
+    BaselineSet, Direction, Display, ExpandedLengthPercentageAuto, Position, ResolveOrZero,
+};
 use raikiri_style::property::WritingMode;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -672,4 +674,82 @@ fn union_of(first: Option<Edges<f32>>, second: Option<Edges<f32>>) -> Option<Edg
         (Some(first), Some(second)) => Some(first.union(second)),
         (first, second) => first.or(second),
     }
+}
+
+/// The items of the horizontal grid container `idx` that align by a baseline
+/// along its columns, each with the set of baselines it aligns by and its
+/// left margin, when that is an absolute length. Empty when the
+/// left margins of the items leave nothing to make room for: there is only one
+/// such item, or they all have the same margin, which puts their synthesized
+/// baselines the same distance from the start of the column.
+///
+/// An item in the writing mode of the container has its baseline synthesized
+/// from its left edge, in a right-to-left container too, so the group of a
+/// column puts the left border edges of its items in line: the column needs
+/// the widest left margin among them before that line. Items in the orthogonal writing mode share the baseline
+/// of their first line, which is known only once they are laid out, so they
+/// are left out.
+pub(crate) fn grid_shim_candidates(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+) -> Vec<(usize, BaselineSet, Option<f32>)> {
+    let parent = tree.physical_style(idx);
+    if tree.nodes[idx].used_writing_mode.is_vertical() {
+        return Vec::new();
+    }
+    let container = Container::new(tree, idx, &parent, Axis::Horizontal, true);
+    let candidates: Vec<_> = in_flow_items(tree, idx)
+        .filter(|&child| !tree.is_orthogonal_to_parent(child))
+        .filter_map(|child| {
+            let style = tree.physical_style(child);
+            let set = container.baseline_set(tree, &parent, child, &style)?;
+            let margin = match style.margin().left.expand() {
+                ExpandedLengthPercentageAuto::Length(left) => Some(left),
+                _ => None,
+            };
+            Some((child, set, margin))
+        })
+        .collect();
+    let mut margins = candidates.iter().map(|&(_, _, margin)| margin);
+    let first = margins.next();
+    if margins.all(|margin| Some(margin) == first) {
+        return Vec::new();
+    }
+    candidates
+}
+
+/// The length to add to the left margin of each of the `candidates` (see
+/// [`grid_shim_candidates`]) for its column to hold the room baseline
+/// alignment shifts it by, given the grid `lines` each item of the container
+/// is placed on: the widest left margin of the group it shares a baseline
+/// with, less its own. A group with an item whose margin is not an absolute
+/// length is left as it is.
+/// spec: <https://www.w3.org/TR/css-grid-1/#algo-baseline-shims>
+pub(crate) fn grid_baseline_shims(
+    candidates: &[(usize, BaselineSet, Option<f32>)],
+    lines: &[(usize, crate::layout::taffy_adapter::GridItemLines)],
+) -> Vec<(usize, f32)> {
+    let group_of = |child: usize, set: BaselineSet| {
+        let (_, lines) = lines.iter().find(|(item, _)| *item == child)?;
+        Some(match set {
+            BaselineSet::First => (lines.column_start, false),
+            BaselineSet::Last => (lines.column_end, true),
+        })
+    };
+    let mut widest: FxHashMap<(u16, bool), Option<f32>> = FxHashMap::default();
+    for &(child, set, margin) in candidates {
+        let Some(group) = group_of(child, set) else {
+            continue;
+        };
+        let entry = widest.entry(group).or_insert(Some(f32::NEG_INFINITY));
+        *entry = entry.zip(margin).map(|(seen, margin)| seen.max(margin));
+    }
+    candidates
+        .iter()
+        .filter_map(|&(child, set, margin)| {
+            let widest = widest.get(&group_of(child, set)?).copied().flatten()?;
+            let shim = widest - margin?;
+            (shim > 0.0).then_some((child, shim))
+        })
+        .collect()
 }

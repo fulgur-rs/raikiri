@@ -50,6 +50,34 @@ pub(crate) fn grid_item_row_rooms(
         .collect()
 }
 
+/// The grid lines of each in-flow item of the grid container `node`, from a
+/// layout of the container whose writes stay in the probe.
+pub(crate) fn grid_item_lines(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    mut inputs: LayoutInput,
+) -> Vec<(usize, super::super::GridItemLines)> {
+    inputs = super::with_stretch_width(tree, node, inputs);
+    inputs.run_mode = RunMode::PerformLayout;
+    let mut probe = RowMeasure::new(tree, node, false);
+    let items = TraversePartialTree::child_ids(&probe, node.into_taffy())
+        .filter(|&child| {
+            let style = probe.get_grid_child_style(child);
+            style.box_generation_mode() != taffy::BoxGenerationMode::None
+                && !style.position().is_out_of_flow()
+        })
+        .map(|child| usize::from(NodeId::from_taffy(child)))
+        .collect::<Vec<_>>();
+    crate::layout::taffy_adapter::placing_grid(
+        &mut probe,
+        |probe| &probe.tree.context,
+        usize::from(node),
+        |probe| taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy()),
+    );
+    let report = probe.report.expect("grid item lines report the tracks");
+    items.into_iter().zip(report.items()).collect()
+}
+
 /// Run a size query with native placement writes isolated. A baseline query
 /// additionally replays placement under the same active sizing overrides,
 /// retaining only its baseline and preserving the ordinary measured size.

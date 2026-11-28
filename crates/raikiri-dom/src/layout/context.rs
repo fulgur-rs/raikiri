@@ -170,6 +170,12 @@ pub(crate) struct LayoutContext {
     /// Provisional row-area heights by grid owner and in-flow item. An empty
     /// entry marks a grid whose row measurement is already running.
     pub(crate) grid_row_rooms: Vec<(usize, Vec<(usize, f32)>)>,
+    /// The length added to the left margin of each grid item that shares a
+    /// baseline with others along its column while its container is laid
+    /// out, so that the column holds the room the alignment shifts it by
+    /// (see `grid_baseline_shims` in
+    /// [`crate::layout::taffy_adapter::algorithms`]).
+    pub(crate) grid_baseline_shims: HashMap<usize, f32>,
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,

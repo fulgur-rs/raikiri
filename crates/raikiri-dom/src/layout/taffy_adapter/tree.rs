@@ -204,12 +204,19 @@ impl LayoutGridContainer for LayoutSession<'_> {
         // zero of CSS Grid 1 §6.6. The item it sizes the tracks with is built
         // from the first read, so only that read hides the ratio; the item's
         // own layout and its alignment still use it.
-        if scrolls_at_a_carried_size(&view)
+        let view = if scrolls_at_a_carried_size(&view)
             && super::placement_read(&self.context, self.taffy_parent_of(item), item)
         {
-            return TaffyStyle::new(view.with_hidden_aspect_ratio());
+            view.with_hidden_aspect_ratio()
+        } else {
+            view
+        };
+        // An item that shares a baseline along its column is sized and
+        // placed with the room its alignment shifts it by.
+        match self.context.grid_baseline_shims.get(&item) {
+            Some(&shim) => TaffyStyle::new(view).with_extra_margin_left(shim),
+            None => TaffyStyle::new(view),
         }
-        TaffyStyle::new(view)
     }
 
     fn set_detailed_grid_info(

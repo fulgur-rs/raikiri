@@ -145,6 +145,44 @@ pub(crate) fn compute_grid_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_stretch_width(tree, node, inputs);
+    let shims = grid_baseline_shims(tree, node, inputs);
+    for &(item, shim) in &shims {
+        tree.context.grid_baseline_shims.insert(item, shim);
+    }
+    let output = compute_grid_layout_with_shims(tree, node, inputs);
+    // The items keep the margins the algorithm placed them with, from which
+    // the container aligns them by their baselines (see `inline_baseline`):
+    // the shim is part of the room before the baseline that the group shares.
+    for (item, _) in &shims {
+        tree.context.grid_baseline_shims.remove(item);
+    }
+    output
+}
+
+/// The length to add to the left margin of each item of the grid container
+/// `node` that shares a baseline along its column, for the algorithm to size
+/// the columns with the room the alignment shifts the items by (CSS Grid 1
+/// §11.5, baseline shims). The columns the items are placed in are taken from
+/// a layout of the container whose writes are discarded, which only the
+/// containers with items whose shims differ need.
+fn grid_baseline_shims(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    inputs: LayoutInput,
+) -> Vec<(usize, f32)> {
+    let candidates = crate::layout::dispatch::grid_shim_candidates(tree, usize::from(node));
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let lines = grid_row_measure::grid_item_lines(tree, node, inputs);
+    crate::layout::dispatch::grid_baseline_shims(&candidates, &lines)
+}
+
+fn compute_grid_layout_with_shims(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
     if inputs.run_mode == crate::layout::protocol::RunMode::ComputeSize
         && (!tree.context.grid_row_rooms.is_empty()
             || tree.context.baseline_measure_owners.last() == Some(&usize::from(node)))
