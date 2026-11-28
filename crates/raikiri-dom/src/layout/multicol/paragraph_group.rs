@@ -2617,27 +2617,34 @@ pub(super) fn paginate(
         .sum::<usize>();
     work.charge(flow.entries.len().saturating_add(wrapped_lines))?;
     let entries = &flow.entries;
-    // The page stream places lines, and the padding and border above or
-    // below the boxes of a wrapper, which it records as pieces of the
-    // wrapper. Sized boxes with no lines inside a wrapper are left to the
-    // other strategies.
-    if flow.entries.iter().zip(&flow.parents).zip(&flow.roles).any(
-        |(((child, ..), parent), role)| {
-            parent.is_some() && *role == Role::Box && is_wrapped_leaf(tree, *child)
-        },
-    ) {
-        return Ok(None);
-    }
+    // The page stream places lines, the padding and border above or below
+    // the boxes of a wrapper, which it records as pieces of the wrapper, and
+    // sized boxes with no lines, which a column end slices.
     let Some(Collected {
         paragraphs,
         paragraph_count: count,
         high: ceiling,
         room,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Sliced, false, None, true)
+    }) = collect(tree, &flow, false, BlockEdges::Sliced, true, None, true)
     else {
         return Ok(None);
     };
+    // A sized box of lines is left to the other strategies.
+    if paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.held_lines.is_some())
+    {
+        return Ok(None);
+    }
+    // A page end that cuts a sized box fails the fill, as the stream resumes
+    // no box in the middle: such a box is left to the other strategies rather
+    // than moved whole to the next page.
+    let holds_sized_leaf = paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.sized_leaf);
     if count == 0 || context.column_count == 0 {
         return Ok(None);
     }
@@ -2692,7 +2699,7 @@ pub(super) fn paginate(
             // A short remainder can contain fewer lines than the paragraph's
             // break minima. Retry at the next complete page, without a soft
             // break inside the paragraph or a zero-progress page loop.
-            if absolute_y > page_origin + 0.001 {
+            if absolute_y > page_origin + 0.001 && !holds_sized_leaf {
                 absolute_y = page_origin + page_height;
                 continue;
             }
@@ -2812,6 +2819,23 @@ pub(super) fn paginate(
             {
                 return Ok(None);
             }
+            if paragraph.sized_leaf {
+                push_leaf_pieces(
+                    tree,
+                    &mut result.fragments,
+                    &mut occupied,
+                    LeafPlacement {
+                        flow: &flow,
+                        index,
+                        placement: &placement,
+                        total: paragraph.extents[0].1 - paragraph.extents[0].0,
+                    },
+                    context,
+                    (page_index as usize, group_y, height),
+                    work,
+                )?;
+                continue;
+            }
             let mut ranges = placement.fragments.into_iter().peekable();
             while let Some(range) = ranges.next() {
                 work.charge(1)?;
@@ -2925,6 +2949,100 @@ pub(super) fn paginate(
     result.wrappers = wrappers;
     work.charge(result.wrappers.len().saturating_add(visited))?;
     Ok(Some(result))
+}
+
+/// Where the page stream placed a sized box with no lines: the `index`th
+/// entry of `flow`, of block size `total`.
+struct LeafPlacement<'a> {
+    flow: &'a Flow,
+    index: usize,
+    placement: &'a Placement,
+    total: f32,
+}
+
+/// Push the pieces of a sized box with no lines that the page stream placed
+/// on page `page` of the columns, whose group starts at `group_y` and is
+/// `height` tall. Each piece but the last fills the rest of its column, and
+/// the last holds what is left of the box. A box that slices its block-axis
+/// border and padding paints whole in each piece, moved up by what the
+/// earlier pieces took, and the column clips it (CSS Fragmentation 3, 5.4).
+fn push_leaf_pieces(
+    tree: &LayoutSession<'_>,
+    fragments: &mut Vec<PagedFragment>,
+    occupied: &mut std::collections::BTreeSet<usize>,
+    leaf: LeafPlacement<'_>,
+    context: FragmentationContext,
+    (page, group_y, height): (usize, f32, f32),
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<(), LayoutError> {
+    let LeafPlacement {
+        flow,
+        index,
+        placement,
+        total,
+    } = leaf;
+    let (child, _, layout, ..) = flow.entries[index];
+    let count = placement.fragments.len();
+    let whole = lineless::slices_decorations(tree, child);
+    let mut taken = 0.0f32;
+    for (piece, range) in placement.fragments.iter().enumerate() {
+        work.charge(1)?;
+        let y = placement.first_y + range.y;
+        let last = piece + 1 == count;
+        let used = if last {
+            (total - taken).max(0.0)
+        } else if piece == 0 {
+            placement.first_height
+        } else {
+            (height - y).max(0.0)
+        };
+        let column = range.fragmentainer;
+        let fragmentainer = page
+            .checked_mul(context.column_count)
+            .and_then(|first| first.checked_add(column))
+            .ok_or(LayoutError::FragmentLimitExceeded {
+                limit: tree.fragment_tree.limit,
+            })?;
+        let x = context.origin_x + context.column_offset_x(column);
+        occupied.insert(column);
+        let rect = crate::fragment::FragmentRect {
+            x: x + flow.insets[index] + layout.margin.left,
+            y: group_y + y,
+            width: layout.size.width,
+            height: used,
+        };
+        fragments.push(PagedFragment {
+            child,
+            entry: index,
+            wrapper: flow.parents[index].map(|open| flow.entries[open].0),
+            line_start: range.line_start,
+            line_end: range.line_end,
+            fragmentainer,
+            rect: lineless::sliced_rect(rect, whole.then_some((taken, total))),
+            // The clip cuts a piece where the box breaks, and leaves the edges
+            // where it begins and ends open, as a paragraph's are.
+            clip: (count > 1).then(|| {
+                let top = if piece == 0 {
+                    group_y - BLOCK_INK_REACH
+                } else {
+                    group_y
+                };
+                let bottom = if last {
+                    group_y + height + BLOCK_INK_REACH
+                } else {
+                    group_y + height
+                };
+                inline_open_clip(crate::fragment::FragmentRect {
+                    x,
+                    y: top,
+                    width: context.column_width,
+                    height: bottom - top,
+                })
+            }),
+        });
+        taken += used;
+    }
+    Ok(())
 }
 
 /// The border boxes of the wrappers of `flow`, from the pieces of the boxes
