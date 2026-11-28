@@ -260,9 +260,10 @@ pub(crate) struct IfcLines {
     pub(crate) block_ends: Vec<(usize, usize, f32)>,
     /// Each block child of the root laid out with the lines, with the block
     /// offsets of the start and end of its border box from the content-box
-    /// block-start edge, before any relative offset, and its first baseline
-    /// measured the same way.
-    pub(crate) block_boxes: Vec<(usize, f32, f32, Option<f32>)>,
+    /// block-start edge, before any relative offset, its first baseline
+    /// measured the same way, and the room its own top margin, with the
+    /// margins of its first child that collapse with it, leaves above it.
+    pub(crate) block_boxes: Vec<(usize, f32, f32, Option<f32>, f32)>,
     /// Block offsets added to the lines by pagination: `(first line, delta)`
     /// moves that line and every later one down by `delta`, when a box of the
     /// paragraph was moved to a later page.

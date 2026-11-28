@@ -6587,6 +6587,64 @@ fn a_block_before_or_after_the_lines_of_a_paragraph_takes_its_place_in_the_colum
 }
 
 #[test]
+fn a_block_that_starts_the_columns_keeps_its_top_margin() {
+    // No break comes before the block, so its 30px margin stays above it in
+    // the first column, whether the columns fill or balance. Values match
+    // Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "height:200px;column-fill:auto",
+        &[
+            Part::Box("display:block;height:20px;margin-top:30px"),
+            Part::Lines(2),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 30.0, 40.0, 20.0));
+    assert_eq!(column_ranges(&doc, container), [(0, 2, 0, 0.0, 50.0)]);
+
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Box("display:block;height:20px;margin-top:30px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 30.0, 40.0, 20.0));
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 1, 0, 0.0, 50.0), (1, 4, 1, 60.0, 0.0)]
+    );
+}
+
+#[test]
+fn a_block_that_starts_the_group_below_a_spanner_keeps_its_top_margin() {
+    // The spanner's 5px bottom margin and the block's 30px top margin do not
+    // collapse. Values match Chromium.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(2),
+            Part::Spanner("height:10px;margin-bottom:5px"),
+            Part::Box("display:block;height:20px;margin-top:30px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[0]), (0.0, 20.0, 100.0, 10.0));
+    assert_eq!(box_rect(&doc, boxes[1]), (0.0, 65.0, 40.0, 20.0));
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 1, 0, 0.0, 0.0),
+            (1, 2, 1, 60.0, 0.0),
+            (2, 3, 0, 0.0, 85.0),
+            (3, 6, 1, 60.0, 35.0),
+        ]
+    );
+}
+
+#[test]
 fn a_block_among_the_lines_of_a_paragraph_moves_to_its_column_from_the_right() {
     // Values match Chromium.
     let (mut doc, container, boxes) = column_container(

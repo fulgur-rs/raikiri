@@ -1726,6 +1726,9 @@ fn run_boxes_segment(
                     block.top,
                     block.next_y.max(block.top),
                     block.first_baseline,
+                    block
+                        .top_margin
+                        .map_or(0.0, |margin| margin.resolve().max(0.0)),
                 ));
                 (y, pending) = (block.next_y, block.pending);
                 block_ends.push((node.0 as usize, lines.len(), y + pending.resolve()));

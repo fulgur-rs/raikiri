@@ -231,23 +231,26 @@ enum Unit {
     Block(usize),
 }
 
-/// The flow extent and first baseline the line layout of `lines` gave the
-/// block `node`, the `index`th block of the paragraph.
-fn block_box(lines: &IfcLines, index: usize, node: usize) -> (f32, f32, Option<f32>) {
+/// The flow extent, first baseline and top margin the line layout of `lines`
+/// gave the block `node`, the `index`th block of the paragraph.
+fn block_box(lines: &IfcLines, index: usize, node: usize) -> (f32, f32, Option<f32>, f32) {
     lines
         .block_boxes
         .get(index)
         .filter(|entry| entry.0 == node)
         .or_else(|| lines.block_boxes.iter().find(|entry| entry.0 == node))
-        .map_or((0.0, 0.0, None), |&(_, top, bottom, baseline)| {
-            (top, bottom, baseline)
-        })
+        .map_or(
+            (0.0, 0.0, None, 0.0),
+            |&(_, top, bottom, baseline, margin)| (top, bottom, baseline, margin),
+        )
 }
 
 /// The units of the group of `lines` in `range` with the `blocks` among them,
 /// each with its block-start and block-end offsets from the content box. A
 /// block comes with the index of the first line after it and its index among
-/// the blocks of the paragraph.
+/// the blocks of the paragraph. A block that starts the group keeps its top
+/// margin in the first column, which no break precedes, so its unit starts
+/// above the margin.
 fn units_of(
     lines: &IfcLines,
     range: std::ops::Range<usize>,
@@ -257,7 +260,8 @@ fn units_of(
     let mut pending = blocks.iter().peekable();
     let mut push_blocks_before = |line: usize, units: &mut Vec<(Unit, f32, f32)>| {
         while let Some(&(node, _, index)) = pending.next_if(|&&(_, after, _)| after <= line) {
-            let (top, bottom, _) = block_box(lines, index, node);
+            let (top, bottom, _, margin) = block_box(lines, index, node);
+            let top = if units.is_empty() { top - margin } else { top };
             units.push((Unit::Block(node), top, bottom));
         }
     };
