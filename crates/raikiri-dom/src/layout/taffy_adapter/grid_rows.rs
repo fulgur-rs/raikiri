@@ -1,10 +1,11 @@
 use super::GridRowCounts;
 use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
+use smol_str::SmolStr;
 use std::ops::Range;
 use taffy::prelude::TaffyAuto;
 use taffy::{
-    GenericGridTemplateComponent, GenericRepetition, GridContainerStyle, RepetitionCount,
-    TrackSizingFunction,
+    GenericGridTemplateComponent, GenericRepetition, GridContainerStyle, GridItemStyle,
+    GridPlacement, Line, RepetitionCount, TrackSizingFunction,
 };
 
 /// Whether the rows of the grid laid out with `style` all size to their
@@ -191,16 +192,24 @@ impl RowSizing {
     }
 }
 
-/// Whether some row of the grid laid out with `style` that holds one of its
-/// `items` in-flow items has an `auto` maximum track size, which
+/// Whether some row of the grid laid out with `style` that its in-flow
+/// `items` bring into being has an `auto` maximum track size, which
 /// `align-content: normal` and `stretch` grow to fill a definite height (CSS
-/// Grid 1 §12.8). The explicit rows are all there; in a row flow the items
-/// that outnumber the explicit cells fill implicit rows a row of columns at a
-/// time, as automatic placement puts them, which an automatic repetition
-/// never lets them do.
-pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> bool {
+/// Grid 1 §12.8).
+///
+/// The explicit rows are all there. An item placed on a row line by number
+/// brings in the implicit rows up to it on either side of the explicit grid.
+/// The other items are placed automatically: in a row flow those that the
+/// free explicit cells do not hold fill implicit rows a row of columns at a
+/// time, which an automatic repetition never lets them do, and in either flow
+/// an item that spans more rows than the explicit grid has adds the rest.
+/// A named line is taken to be one the explicit grid has.
+pub(crate) fn some_row_stretches<'a>(
+    style: &LayoutStyleView<'_>,
+    items: impl IntoIterator<Item = LayoutStyleView<'a>>,
+) -> bool {
     let style = TaffyStyle::new(*style);
-    let stretches = |track: TrackSizingFunction| track.max.is_auto();
+    let stretches = |track: &TrackSizingFunction| track.max.is_auto();
     let rows = style
         .grid_template_rows()
         .into_iter()
@@ -219,19 +228,47 @@ pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> b
             GenericGridTemplateComponent::Repeat(repeat) => repeat_len(&repeat),
         })
         .fold(0, usize::saturating_add);
-    let explicit_cells = rows.saturating_mul(columns.max(1));
     let explicit = style.grid_template_rows().is_some_and(|mut components| {
         components.any(|component| match component {
-            GenericGridTemplateComponent::Single(track) => stretches(track),
-            GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().any(stretches),
+            GenericGridTemplateComponent::Single(track) => stretches(&track),
+            GenericGridTemplateComponent::Repeat(repetition) => {
+                repetition.tracks().any(|track| stretches(&track))
+            }
         })
     });
+    // Rows that an automatic repetition fills leave no line to count from.
+    let line_count = i32::try_from(rows).ok();
+    let mut after = 0_usize;
+    let mut before = 0_usize;
+    let mut occupied = 0_usize;
+    let mut automatic = 0_usize;
+    let mut automatic_span = 0_usize;
+    for item in items {
+        let placement = TaffyStyle::new(item).grid_row();
+        match line_count.and_then(|count| definite_lines(&placement, count)) {
+            Some((start, end)) => {
+                let count = line_count.unwrap_or_default();
+                after = after.max(usize::try_from(end - count).unwrap_or_default());
+                before = before.max(usize::try_from(-start).unwrap_or_default());
+                occupied += usize::from(start < count && end > 0);
+            }
+            None => {
+                automatic += 1;
+                automatic_span =
+                    automatic_span.max(span_of(&placement.start).max(span_of(&placement.end)));
+            }
+        }
+    }
+    if automatic > 0 {
+        after = after.max(automatic_span.saturating_sub(rows));
+    }
     // A column flow places the items that overflow the explicit grid in new
-    // columns, so it makes an implicit row only when there is no explicit one.
-    let implicit_rows = if matches!(
+    // columns, so only a row flow makes rows for them.
+    if matches!(
         style.grid_auto_flow(),
         taffy::GridAutoFlow::Row | taffy::GridAutoFlow::RowDense
     ) {
+        let free = rows.saturating_mul(columns.max(1)).saturating_sub(occupied);
         // How many columns an automatic repetition gives depends on the
         // width, so each item is then taken to start a row of its own.
         let per_row = if columns == usize::MAX {
@@ -239,14 +276,44 @@ pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> b
         } else {
             columns.max(1)
         };
-        items.saturating_sub(explicit_cells).div_ceil(per_row)
-    } else {
-        usize::from(items > 0 && rows == 0)
-    };
+        after = after.max(automatic.saturating_sub(free).div_ceil(per_row));
+    }
     // The implicit rows after the explicit grid take the entries of
-    // `grid-auto-rows` in turn from the first, so an entry no row reaches
-    // sizes nothing.
-    explicit || style.grid_auto_rows().take(implicit_rows).any(stretches)
+    // `grid-auto-rows` in turn from the first, and those before it from the
+    // last, so an entry no row reaches sizes nothing.
+    let auto_rows = style.grid_auto_rows().collect::<Vec<_>>();
+    explicit
+        || auto_rows.iter().take(after).any(stretches)
+        || auto_rows.iter().rev().take(before).any(stretches)
+}
+
+/// The lines, numbered from zero at the start of the explicit grid that has
+/// `count` row lines past the first, between which a placement on a numbered
+/// line puts an item, or `None` for an item placed automatically.
+fn definite_lines(placement: &Line<GridPlacement<SmolStr>>, count: i32) -> Option<(i32, i32)> {
+    let line = |placement: &GridPlacement<SmolStr>| match placement {
+        GridPlacement::Line(line) if line.as_i16() > 0 => Some(i32::from(line.as_i16()) - 1),
+        GridPlacement::Line(line) if line.as_i16() < 0 => {
+            Some(count + 1 + i32::from(line.as_i16()))
+        }
+        _ => None,
+    };
+    let span = |placement: &GridPlacement<SmolStr>| i32::try_from(span_of(placement)).unwrap_or(1);
+    match (line(&placement.start), line(&placement.end)) {
+        (Some(start), Some(end)) if start == end => Some((start, start + 1)),
+        (Some(start), Some(end)) => Some((start.min(end), start.max(end))),
+        (Some(start), None) => Some((start, start + span(&placement.end))),
+        (None, Some(end)) => Some((end - span(&placement.start), end)),
+        (None, None) => None,
+    }
+}
+
+/// The tracks a placement spans: its `span` count, or one.
+fn span_of(placement: &GridPlacement<SmolStr>) -> usize {
+    match placement {
+        GridPlacement::Span(span) => usize::from(*span).max(1),
+        _ => 1,
+    }
 }
 
 /// The tracks a repetition gives. An automatic one repeats to fill the grid,

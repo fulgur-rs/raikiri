@@ -686,11 +686,13 @@ fn keeps_definite_size(tree: &LayoutSession<'_>, idx: usize, height: bool) -> [b
         .map(usize::from)
         .filter(|&child| !tree.nodes[child].is_display_none() && !is_oof_box(tree, child));
     if tree.nodes[idx].layout_display() != Display::Flex {
-        let rows_stretch =
-            matches!(
-                style.align_content().keyword,
-                AlignContentKeyword::Normal | AlignContentKeyword::Stretch
-            ) && crate::layout::taffy_adapter::some_row_stretches(&style, items.count());
+        let rows_stretch = matches!(
+            style.align_content().keyword,
+            AlignContentKeyword::Normal | AlignContentKeyword::Stretch
+        ) && crate::layout::taffy_adapter::some_row_stretches(
+            &style,
+            items.map(|item| tree.physical_style(item)),
+        );
         return [false, rows_stretch];
     }
     if !style.flex_direction_is_row() || style.flex_wraps() {

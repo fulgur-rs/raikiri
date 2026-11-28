@@ -647,6 +647,32 @@ fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretc
 }
 
 #[test]
+fn a_grid_counts_the_implicit_rows_its_placed_items_bring_in() {
+    // An item placed on a numbered row line brings in the implicit rows up
+    // to it, before or after the explicit grid, and leaves fewer explicit
+    // cells for the items placed automatically.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-area:1/1'>xx</div><div style='grid-area:1/1'>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:1'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 30.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:2/span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:auto 10px;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 30.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-3'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-rows:10px auto;max-height:min-content'><div style='grid-row:-4'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-column:2'>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:span 2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;grid-auto-flow:column;max-height:min-content'><div style='grid-row:2'>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-rows:10px;max-height:min-content'><div style='grid-row:1/3'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 40.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div style='grid-row:auto/2'>xx</div><div style=''>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+    ]);
+}
+
+#[test]
 fn a_grid_grows_to_its_content_for_a_keyword_block_minimum() {
     // A keyword `max-width` leaves the stated block size.
     #[rustfmt::skip]
