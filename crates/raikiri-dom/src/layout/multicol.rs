@@ -154,6 +154,14 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         && style.padding() == Edges::splat(LengthPercentage::ZERO)
         && style.border() == Edges::splat(LengthPercentage::ZERO)
         && style.size().width.is_auto()
+        // Its children take the place of their own in the columns, at the
+        // column width, so the wrapper must be as wide as its column.
+        && layout_node(tree, id).multicol_auto_width
+        && {
+            let minimum: Dimension = style.min_size().width.into();
+            minimum.is_auto() || style_dimension_length(minimum) == Some(0.0)
+        }
+        && style.max_size().width.is_auto()
         // An aspect ratio gives the wrapper a height of its own, which its
         // children alone would not take up.
         && style.aspect_ratio().is_none()

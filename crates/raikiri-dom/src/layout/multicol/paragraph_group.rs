@@ -478,8 +478,9 @@ fn starts_formatting_context(node: &crate::node::Node) -> bool {
 /// Whether `id` is a wrapper whose boxes join the flow of the columns: a
 /// block that holds only blocks. Its width, which its boxes are laid out in,
 /// is resolved against the column, whatever sizes it states, so each piece
-/// of it in a column is as wide as the box. Its margins adjoin those of its first and last boxes, unless it starts a
-/// formatting context of its own, as a `flow-root` box does (see
+/// of it in a column is as wide as the box. Its margins adjoin those of its
+/// first and last boxes, unless it starts a formatting context of its own, as
+/// a `flow-root` box does (see
 /// [`starts_formatting_context`]), or padding or border above or below them
 /// keeps them apart: that edge is room in the flow, which a column end cuts,
 /// unless `box-decoration-break: clone` repeats it in every column, which the
@@ -525,6 +526,9 @@ fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
         && style.size().height.is_auto()
         && style.min_size().height.is_auto()
         && style.max_size().height.is_auto()
+        // An aspect ratio gives the wrapper a height of its own, which its
+        // boxes alone would not take up.
+        && style.aspect_ratio().is_none()
         && lineless::rendered_elements(tree, id).next().is_some()
 }
 
