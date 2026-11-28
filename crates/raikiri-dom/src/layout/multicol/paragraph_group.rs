@@ -2030,10 +2030,10 @@ fn fill_chunk_with(
     let mut moved: Option<Vec<Option<Paragraph>>> = None;
     // Column ends before this entry stay where they are.
     let mut from = resume.paragraph + 1;
-    // Each round moves one more break, a moved break is never avoided, and a
-    // column end that cannot move is passed over, so the rounds end; the
-    // bound keeps the work of a fill in proportion to its paragraphs.
-    for _ in 0..MAX_MOVED_BREAKS {
+    // Each round moves a break that no round moved before, or passes over a
+    // column end that cannot move, so the rounds end. Columns that cannot
+    // take a moved break leave the flow to the other strategies.
+    loop {
         let current = moved.as_deref().unwrap_or(paragraphs);
         let Some((end, earlier)) = avoided_column_end(current, &chunk, resume, from) else {
             return Some(chunk);
@@ -2050,20 +2050,9 @@ fn fill_chunk_with(
             paragraph.break_before = true;
             paragraph.margin_top = 0.0;
         }
-        match fill(moved) {
-            Some(refilled) => chunk = refilled,
-            // Columns that cannot take the moved break keep the column end
-            // where it fell.
-            None if trial => return None,
-            None => return Some(chunk),
-        }
+        chunk = fill(moved)?;
     }
-    (!trial).then_some(chunk)
 }
-
-/// The most column ends one fill moves up to an earlier break, so that none
-/// falls where a break is avoided.
-const MAX_MOVED_BREAKS: usize = 64;
 
 /// The first column end in `chunk`, filled from `resume`, that comes before
 /// the entry `from` or a later one and falls where a break is avoided, with
@@ -2115,14 +2104,10 @@ fn avoided_column_end(
     // nothing avoids, before a box that the column end has not cut and that
     // follows no padding of a wrapper, which goes on with the box.
     let movable = |index: usize| {
-        let Some(paragraph) = paragraphs[index].as_ref() else {
-            return false;
-        };
         index > resume.paragraph
-            && takes_room(index)
-            && !paragraph.avoids_before
-            && !paragraph.break_before
-            && !paragraph.closes
+            && paragraphs[index].as_ref().is_some_and(|paragraph| {
+                !paragraph.avoids_before && !paragraph.break_before && !paragraph.closes
+            })
             && !follows_padding(paragraphs, index)
             && placement(index).is_some_and(|placement| {
                 placement.entry_column == column && placement.first_column == column

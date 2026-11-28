@@ -427,4 +427,51 @@ const CASES: &[Case] = &[
             ("d", (200.0, 0.0, 100.0, 10.0)),
         ],
     },
+    Case {
+        name: "fill_auto_column_end_with_no_free_break",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:20px;column-fill:auto\"><div id=a>aa<br>aa<br>aa</div><div id=b style='break-before:avoid'>bb</div><div id=k style='break-before:avoid'>kk</div><div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 20.0)),
+            ("a", (100.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 10.0, 100.0, 10.0)),
+            ("k", (200.0, 0.0, 100.0, 10.0)),
+            ("d", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "fill_auto_chain_of_avoided_breaks",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px;height:20px;column-fill:auto\"><div id=a>aa</div><div id=b style='break-before:avoid'>bb</div><div id=k style='break-before:avoid'>kk</div><div id=d>dd</div><div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (0.0, 10.0, 100.0, 10.0)),
+            ("k", (100.0, 0.0, 100.0, 10.0)),
+            ("d", (100.0, 10.0, 100.0, 10.0)),
+            ("e", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "white_space_between_wrapper_padding_and_box",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div>\n<div id=w style='padding-top:5px'>\n<div id=b>bb</div>\n<div id=k style='break-before:avoid'>kk</div>\n</div>\n<div id=d>dd</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 25.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 5.0, 100.0, 10.0)),
+            ("k", (100.0, 15.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    Case {
+        name: "white_space_between_blocks",
+        body: "<div id=o style=\"columns:3;column-gap:0;width:300px\"><div id=a>aa</div>\n<div id=b>bb</div>\n<div id=k style='break-before:avoid'>kk</div>\n<div id=d>dd</div>\n<div id=e>ee</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 300.0, 20.0)),
+            ("a", (0.0, 0.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+            ("k", (100.0, 10.0, 100.0, 10.0)),
+            ("d", (200.0, 0.0, 100.0, 10.0)),
+            ("e", (200.0, 10.0, 100.0, 10.0)),
+        ],
+    },
 ];
