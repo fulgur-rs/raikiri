@@ -140,13 +140,7 @@ pub(super) fn prepared_borders(
         let state = borders.as_mut().expect("collapsed border state");
         resolve_centered_block_borders(doc, state, grid, index, table_idx, parent_width);
     }
-    // A vertical table stacks its columns along the block axis, which the
-    // collapse rules here do not model.
-    let collapsed_cols = if vertical_writing {
-        vec![false; usize::from(grid.n_cols)]
-    } else {
-        collapsed_columns(doc, table_idx, grid.n_cols)
-    };
+    let collapsed_cols = collapsed_columns(doc, table_idx, grid.n_cols);
     let columns_collapse = collapsed_cols.contains(&true);
     // Collapsed rows and columns take no part in border conflict resolution:
     // the tracks around them, and the table edge, resolve against each other.
