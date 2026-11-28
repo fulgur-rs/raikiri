@@ -1301,43 +1301,49 @@ pub(super) fn with_atomic_fit_content(
     // probes lift it: the max-content size is that of the items on one line,
     // which the limits then clamp.
     let wrapping_row = super::wraps_along(tree, idx, true);
-    let width = fit_content_size(
-        tree,
-        inputs.available_space.width,
-        margin,
-        |tree, available| {
-            let floor = flex_row.and_then(|row| row.wrapping_floor);
-            if available == AvailableSpace::MinContent
-                && let Some(floor) = floor
-            {
-                return floor;
+    let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
+        let floor = flex_row.and_then(|row| row.wrapping_floor);
+        if available == AvailableSpace::MinContent
+            && let Some(floor) = floor
+        {
+            return floor;
+        }
+        let probe = |tree: &mut LayoutSession<'_>| {
+            algorithm(tree, node_id, probe_inputs(inputs, available))
+                .size
+                .width
+                .max(floor.unwrap_or(0.0))
+        };
+        let lifted = |tree: &mut LayoutSession<'_>| {
+            if wrapping_row {
+                super::without_main_max(tree, idx, true, probe)
+            } else {
+                probe(tree)
             }
-            let probe = |tree: &mut LayoutSession<'_>| {
-                algorithm(tree, node_id, probe_inputs(inputs, available))
-                    .size
-                    .width
-                    .max(floor.unwrap_or(0.0))
-            };
-            let lifted = |tree: &mut LayoutSession<'_>| {
-                if wrapping_row {
-                    super::without_main_max(tree, idx, true, probe)
-                } else {
-                    probe(tree)
-                }
-            };
-            match flex_row {
-                Some(row) if row.bounds_items => super::with_flex_item_basis_bounds(
-                    tree,
-                    node_id,
-                    super::RowAxis::HEIGHT_ON_OWN_AXES,
-                    row.cross_room,
-                    available,
-                    lifted,
-                ),
-                _ => lifted(tree),
-            }
-        },
-    );
+        };
+        match flex_row {
+            Some(row) if row.bounds_items => super::with_flex_item_basis_bounds(
+                tree,
+                node_id,
+                super::RowAxis::HEIGHT_ON_OWN_AXES,
+                row.cross_room,
+                available,
+                lifted,
+            ),
+            _ => lifted(tree),
+        }
+    };
+    // A keyword `min-height` or `max-height` measures the box under the
+    // intrinsic constraint it stands for, which then names the inline size
+    // itself rather than a lack of room.
+    let width = match inputs.available_space.width {
+        space @ (AvailableSpace::MinContent | AvailableSpace::MaxContent)
+            if tree.context.content_limit_probes.contains(&idx) =>
+        {
+            measure(tree, space)
+        }
+        space => fit_content_size(tree, space, margin, measure),
+    };
     // The limits of the inline size are those of the physical height, whose
     // percentages refer to the height of the containing block.
     // The limits leave the box no shorter than its own padding and border.

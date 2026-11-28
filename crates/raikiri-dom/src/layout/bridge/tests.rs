@@ -2207,24 +2207,6 @@ fn unsupported_generic_box_content_limits_record_none() {
             "div",
             format!("{block};column-count:2;writing-mode:vertical-rl"),
         ),
-        // A vertical box in the flow of a vertical block container, which
-        // lays it out on its own axes.
-        (
-            "display:block;writing-mode:vertical-rl",
-            "div",
-            format!("{block};writing-mode:vertical-rl"),
-        ),
-        (
-            "display:block;writing-mode:vertical-rl",
-            "div",
-            format!("display:grid;{keyword};writing-mode:vertical-rl"),
-        ),
-        // An inline-level vertical flex or grid container.
-        (
-            "display:block",
-            "div",
-            format!("display:inline-grid;{keyword};writing-mode:vertical-rl"),
-        ),
     ];
     let borrowed: Vec<(&str, &str, &str)> = cases
         .iter()

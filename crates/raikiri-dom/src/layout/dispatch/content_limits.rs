@@ -2166,6 +2166,53 @@ pub(super) fn resolve_width_in_style(
     }
 }
 
+/// The border-box heights the keyword `min-height` and `max-height` of the
+/// vertical block child `node` of a vertical paragraph root stand for, as
+/// the function that holds a height within them. The root sets the inline
+/// size of the child, its physical height, before the child is laid out, and
+/// lays out the lines of the child at that size, so it resolves the keywords
+/// itself (CSS Sizing 3 §5.1). `parent_size` is the containing block the root
+/// offers, whose physical height is its inline size and the room a
+/// `fit-content` limit is offered.
+pub(crate) fn vertical_child_inline_limits(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    parent_size: Size<Option<f32>>,
+) -> impl Fn(f32) -> f32 + use<> {
+    let limits = tree.nodes[node].content_limits;
+    let bounds = if limits.has_height()
+        && applies(tree, node, &limits)
+        && resolves_on_vertical_axes(tree, node)
+    {
+        let inputs = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            parent_size,
+            available_space: Size {
+                width: parent_size
+                    .width
+                    .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                height: parent_size
+                    .height
+                    .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        scoped(tree, |tree| {
+            vertical_inline_bounds(tree, NodeId::from(node), &limits, &inputs)
+        })
+    } else {
+        Bounds::default()
+    };
+    move |height| bounds.apply(height)
+}
+
 /// Put the lengths a `stretch` `min-height` and `max-height` of the block child
 /// `child` stand for in `style`, when its parent, whose content box is `basis`
 /// wide, offers it `room` for a `stretch` height (see [`stretch_fit_height`]).

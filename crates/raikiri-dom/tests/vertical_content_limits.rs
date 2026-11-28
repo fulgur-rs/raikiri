@@ -206,3 +206,120 @@ fn a_flex_or_grid_container_takes_the_limit() {
         ("", "display:flex;flex-direction:column;width:300px;height:30px;max-width:min-content", "<div>xxxx yy zz</div>", (8.0, 8.0, 30.0, 30.0)),
     ]);
 }
+
+/// Each `(body, expected)` pair: the border box of `#b` in `body`.
+fn assert_bodies(cases: &[(&str, Rect)]) {
+    for &(body, expected) in cases {
+        assert_eq!(border_box(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn an_inline_flex_or_grid_container_takes_the_limit() {
+    // Its line offers it no room while the keyword is measured: it takes the
+    // min-content or max-content inline size the keyword asks for.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;flex-direction:column;width:100px;height:5px;min-height:min-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;writing-mode:vertical-rl;display:inline-grid;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;flex-direction:column;width:100px;height:5px;min-height:min-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 100.0, 40.0)),
+        ("<div style=''><div id=b style='writing-mode:vertical-lr;writing-mode:vertical-rl;display:inline-flex;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
+    ]);
+}
+
+#[test]
+fn a_vertical_box_in_a_vertical_flow_takes_the_limit() {
+    // The container lays out the lines of the box at the inline size the
+    // keyword gives, not at the stated height.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:300px;max-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:300px;max-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;box-sizing:content-box;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;width:5px;min-width:min-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 300.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;width:300px;max-width:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 300.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:max-content'><div>xxxx yy</div><div>zz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:block;height:5px;min-height:max-content;margin-left:4px'>xxxx yy</div></div>", (12.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:300px;max-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:300px;max-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;box-sizing:content-box;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;width:5px;min-width:min-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 300.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;width:300px;max-width:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 300.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:max-content'><div>xxxx yy</div><div>zz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flow-root;height:5px;min-height:max-content;margin-left:4px'>xxxx yy</div></div>", (12.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:300px;max-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:300px;max-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;box-sizing:content-box;height:5px;min-height:max-content;padding:3px;border:2px solid'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;width:5px;min-width:min-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;width:300px;max-width:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content'><div>xxxx yy</div><div>zz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content;margin-left:4px'>xxxx yy</div></div>", (12.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flex;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flex;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flex;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flex;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:flex;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:2%;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;margin:auto 0;min-height:max-content'>xxxx yy</div></div>", (8.0, 123.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:2%;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;margin:auto 0;min-height:min-content'>xxxx yy</div></div>", (8.0, 138.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:max-content;overflow:hidden'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div style='float:left;width:20px;height:30px'></div><div id=b style='height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 38.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'>aa<div id=b style='height:5px;min-height:max-content'>xxxx yy</div>bb</div>", (18.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:max-content;max-height:50px'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:300px;max-height:min-content;min-height:60px'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 60.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:5px;min-height:max-content'>xxxx yy</div></div>", (18.0, 38.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'>aa<div id=b style='height:5px;min-height:max-content'>xxxx yy</div>bb</div>", (18.0, 8.0, 10.0, 70.0)),
+    ]);
+}

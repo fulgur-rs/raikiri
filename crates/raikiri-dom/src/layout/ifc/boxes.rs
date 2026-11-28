@@ -3597,6 +3597,11 @@ fn layout_vertical_block_child_with_edges(
             tree.physical_style(node).size().height.expand(),
             ExpandedDimension::Stretch
         );
+    let keyword_limits = crate::layout::dispatch::content_limits::vertical_child_inline_limits(
+        tree,
+        node,
+        parent_size,
+    );
     let own_inline_size = stated_height
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
@@ -3652,12 +3657,12 @@ fn layout_vertical_block_child_with_edges(
             |probe| match probe {
                 BoxProbe::Width { stretch } => {
                     let stretch = stretch.max(-(margin.top + margin.bottom));
-                    clamp_block_height(
+                    keyword_limits(clamp_block_height(
                         tree,
                         node,
                         inline_basis,
                         own_inline_size.map_or(stretch, |own| own.at(stretch)),
-                    )
+                    ))
                 }
                 BoxProbe::Height {
                     width: inline_size, ..
@@ -3706,11 +3711,8 @@ fn layout_vertical_block_child_with_edges(
     } else {
         own_inline_size.map_or(inline_stretch, |own| own.at(inline_stretch))
     };
-    let height = clamp_block_height(tree, node, inline_basis, height).max(vertical_padding_border(
-        tree,
-        node,
-        inline_basis,
-    ));
+    let height = keyword_limits(clamp_block_height(tree, node, inline_basis, height))
+        .max(vertical_padding_border(tree, node, inline_basis));
     let inline_free = inline_stretch - height;
     let auto_margins =
         u8::from(style_margin.top.is_auto()) + u8::from(style_margin.bottom.is_auto());
