@@ -4969,22 +4969,24 @@ fn layout_column_group(
             Some(group) if planned.is_some() && group.wraps(local_order) => {
                 // The pieces come first, so that the boxes in each column
                 // sit in the piece there.
-                let pieces = match group
+                let pieces = group
                     .placement_of(local_order)
                     .zip(group.wrapper_end(local_order))
-                {
-                    Some((placement, end)) => push_wrapper_pieces(
-                        tree,
-                        child,
-                        child_fragment,
-                        &placement,
-                        end,
-                        group.height,
-                        context,
-                        None,
-                    ),
-                    None => Some(WrapperPieces::single(child_fragment)),
-                };
+                    .map_or(
+                        Some(WrapperPieces::single(child_fragment)),
+                        |(placement, end)| {
+                            push_wrapper_pieces(
+                                tree,
+                                child,
+                                child_fragment,
+                                &placement,
+                                end,
+                                group.height,
+                                context,
+                                None,
+                            )
+                        },
+                    );
                 if pieces
                     .and_then(|pieces| {
                         record_wrapped_fragments(
