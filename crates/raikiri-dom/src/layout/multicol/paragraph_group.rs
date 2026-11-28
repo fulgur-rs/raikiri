@@ -1012,7 +1012,7 @@ fn avoided_height(
     resume: FlowCursor,
     until: Option<FlowCursor>,
 ) -> f32 {
-    let from = resume.paragraph + usize::from(resume.line > 0);
+    let from = resume.paragraph + usize::from(resume.line > 0 || resume.offset > 0.0);
     let to = until.map_or(paragraphs.len(), |next| next.paragraph);
     let mut leading = (resume == FlowCursor::default()).then(Margins::default);
     let mut tallest = 0.0f32;
@@ -1048,8 +1048,9 @@ fn avoided_height(
 /// break and its `widows` after it, with the padding and border that sit
 /// with them in their columns. The last page's balanced columns are at least
 /// that tall, as Chromium balances them; the widows give way to the orphans
-/// when the lines left cannot hold both. The page stream takes no sized
-/// boxes, so every paragraph here breaks between its own lines.
+/// when the lines left cannot hold both. The sized boxes that the page stream
+/// takes hold no lines, so every paragraph here with lines breaks between
+/// its own lines.
 fn break_height(paragraphs: &[Option<Paragraph>], resume: FlowCursor) -> f32 {
     let mut tallest = 0.0f32;
     for (index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
@@ -1769,10 +1770,13 @@ impl Margins {
     }
 }
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
 struct FlowCursor {
     paragraph: usize,
     line: usize,
+    /// The block size of the paragraph, a sized box with no lines, that the
+    /// pages before took: the box goes on from there.
+    offset: f32,
 }
 
 struct Chunk {
@@ -1985,16 +1989,17 @@ fn fill_chunk_with(
         let Some(paragraph) = paragraph else {
             continue;
         };
-        let initial_line = if paragraph_index == resume.paragraph {
-            resume.line
+        let (initial_line, initial_offset) = if paragraph_index == resume.paragraph {
+            (resume.line, resume.offset)
         } else {
-            0
+            (0, 0.0)
         };
         // A forced break after content, an empty box included, starts the
         // next column, and the margins before it are cut (CSS Fragmentation
         // 3, 5.2).
         if paragraph.break_before
             && initial_line == 0
+            && initial_offset <= 0.0
             && (column_has_content || empty_box_column == Some(column))
         {
             maximum = maximum.max(cursor);
@@ -2005,6 +2010,7 @@ fn fill_chunk_with(
                     next: Some(FlowCursor {
                         paragraph: paragraph_index,
                         line: 0,
+                        offset: 0.0,
                     }),
                 });
             }
@@ -2044,6 +2050,7 @@ fn fill_chunk_with(
                         next: Some(FlowCursor {
                             paragraph: paragraph_index,
                             line: 0,
+                            offset: 0.0,
                         }),
                     });
                 }
@@ -2098,6 +2105,7 @@ fn fill_chunk_with(
                             next: Some(FlowCursor {
                                 paragraph: paragraph_index,
                                 line: 0,
+                                offset: 0.0,
                             }),
                         });
                     }
@@ -2127,6 +2135,7 @@ fn fill_chunk_with(
                         next: Some(FlowCursor {
                             paragraph: paragraph_index,
                             line: 0,
+                            offset: 0.0,
                         }),
                     });
                 }
@@ -2162,7 +2171,9 @@ fn fill_chunk_with(
             continue;
         }
         if paragraph.sliced {
-            let mut left = paragraph.extents[0].1 - paragraph.extents[0].0;
+            let total = paragraph.extents[0].1 - paragraph.extents[0].0;
+            // A box that an earlier page cut goes on with what is left of it.
+            let mut left = total - initial_offset;
             // The end of a wrapper with a height of its own takes what its
             // height leaves of the columns since the wrapper started, so a
             // gap that a column end left above a line inside it shortens it.
@@ -2214,8 +2225,10 @@ fn fill_chunk_with(
                 // block-end border and padding falls where its content ends
                 // instead, and they go on alone at the top of the next
                 // column, when it holds them.
-                // Only the first piece ends early: the pieces after it fill
-                // their columns, as their painting assumes.
+                // Only the first piece on a page ends early, the first one of
+                // the box or the one that goes on from an earlier page: the
+                // pieces after it fill their columns, as their painting
+                // assumes.
                 let (leading, trailing) = paragraph.slice_edges;
                 let ends_early = fragments.is_empty()
                     && left - room >= SLICE_MIN_ROOM
@@ -2288,11 +2301,41 @@ fn fill_chunk_with(
                         break;
                     }
                 }
-                // The streams that stop at their last column cannot resume a
-                // box in the middle, so running out of columns fails the plan.
-                column = column
+                let Some(next_column) = column
                     .checked_add(1)
-                    .filter(|&next| next < context.column_count)?;
+                    .filter(|&next| next < context.column_count)
+                else {
+                    // A sized box with no lines goes on at the next page from
+                    // where this one ends it, as a stream that stops at its
+                    // last column resumes it there. A box of other kinds
+                    // cannot resume in the middle, so running out of columns
+                    // fails the plan.
+                    if !paragraph.sized_leaf || paragraph.held_lines.is_some() {
+                        return None;
+                    }
+                    placements[slot] = Some(Placement {
+                        first_column,
+                        first_y,
+                        first_height,
+                        last_column: column,
+                        last_y: cursor,
+                        fragments,
+                        entry_column,
+                        entry_y,
+                        sliced: true,
+                        moved_whole: false,
+                        content_end: None,
+                    });
+                    return Some(Chunk {
+                        group: finish_group(placements, height),
+                        next: Some(FlowCursor {
+                            paragraph: paragraph_index,
+                            line: 0,
+                            offset: total - left,
+                        }),
+                    });
+                };
+                column = next_column;
                 top = 0.0;
                 column_has_content = false;
             }
@@ -2439,6 +2482,7 @@ fn fill_chunk_with(
                         next: Some(FlowCursor {
                             paragraph: paragraph_index,
                             line: start,
+                            offset: 0.0,
                         }),
                     });
                 }
@@ -2516,6 +2560,7 @@ fn fill_chunk_with(
                         next: Some(FlowCursor {
                             paragraph: paragraph_index,
                             line: start,
+                            offset: 0.0,
                         }),
                     });
                 }
@@ -2939,13 +2984,6 @@ pub(super) fn paginate(
     else {
         return Ok(None);
     };
-    // A page end that cuts a sized box fails the fill, as the stream resumes
-    // no box in the middle: such a box is left to the other strategies rather
-    // than moved whole to the next page.
-    let holds_sized_leaf = paragraphs
-        .iter()
-        .flatten()
-        .any(|paragraph| paragraph.sized_leaf && paragraph.sliced);
     if count == 0 || context.column_count == 0 {
         return Ok(None);
     }
@@ -3000,7 +3038,7 @@ pub(super) fn paginate(
             // A short remainder can contain fewer lines than the paragraph's
             // break minima. Retry at the next complete page, without a soft
             // break inside the paragraph or a zero-progress page loop.
-            if absolute_y > page_origin + 0.001 && !holds_sized_leaf {
+            if absolute_y > page_origin + 0.001 {
                 absolute_y = page_origin + page_height;
                 continue;
             }
@@ -3127,6 +3165,12 @@ pub(super) fn paginate(
                     index,
                     placement: &placement,
                     total: paragraph.extents[0].1 - paragraph.extents[0].0,
+                    taken: if index == resume.paragraph {
+                        resume.offset
+                    } else {
+                        0.0
+                    },
+                    continues: chunk.next.is_some_and(|next| next.paragraph == index),
                 };
                 let at = (page_index as usize, group_y, height, planned);
                 let out = (&mut result.fragments, &mut occupied);
@@ -3238,6 +3282,8 @@ pub(super) fn paginate(
         let Some(next) = chunk.next else {
             break;
         };
+        // A continuation advances a line, a paragraph or the offset into a
+        // sized box, so it never stands where the page began.
         if next == resume {
             return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
         }
@@ -3251,19 +3297,22 @@ pub(super) fn paginate(
 }
 
 /// Where the page stream placed a sized box with no lines: the `index`th
-/// entry of `flow`, of block size `total`.
+/// entry of `flow`, of block size `total`, of which the pages before took
+/// `taken`. The box `continues` on the next page when this one ends it.
 struct LeafPlacement<'a> {
     flow: &'a Flow,
     index: usize,
     placement: &'a Placement,
     total: f32,
+    taken: f32,
+    continues: bool,
 }
 
 /// Push the pieces of a sized box with no lines that the page stream placed
 /// on page `page` of the columns, whose group starts at `group_y` and is
 /// `height` tall, of the columns `planned` tall that the fill placed it in.
 /// Each piece but the last fills the rest of its column, and the last holds
-/// what is left of the box. The box paints whole in each piece, moved up by
+/// what is left of the box, unless the box goes on at the next page. The box paints whole in each piece, moved up by
 /// what the earlier pieces took, and the column clips it, which slices its
 /// block-axis border and padding (CSS Fragmentation 3, 5.4).
 fn push_leaf_pieces(
@@ -3282,14 +3331,20 @@ fn push_leaf_pieces(
         index,
         placement,
         total,
+        taken: resumed,
+        continues,
     } = leaf;
     let (child, _, layout, ..) = flow.entries[index];
     let count = placement.fragments.len();
-    let mut taken = 0.0f32;
+    let mut taken = resumed;
     for (piece, range) in placement.fragments.iter().enumerate() {
         work.charge(1)?;
         let y = placement.first_y + range.y;
-        let last = piece + 1 == count;
+        // The last piece of the box, which is not the last on this page when
+        // the box goes on at the next one.
+        let last = piece + 1 == count && !continues;
+        // The first piece of the box, which an earlier page may hold.
+        let first = piece == 0 && resumed <= 0.0;
         // A piece between the first and the last fills the column the fill
         // planned, which may be shorter than the columns of the page.
         let used = if last {
@@ -3326,8 +3381,8 @@ fn push_leaf_pieces(
             holds_lines: false,
             // The clip cuts a piece where the box breaks, and leaves the edges
             // where it begins and ends open, as a paragraph's are.
-            clip: (count > 1).then(|| {
-                let top = if piece == 0 {
+            clip: (count > 1 || continues || resumed > 0.0).then(|| {
+                let top = if first {
                     group_y - BLOCK_INK_REACH
                 } else {
                     group_y

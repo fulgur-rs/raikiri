@@ -1330,23 +1330,158 @@ fn a_sized_box_whose_bottom_border_goes_on_alone_shows_it_in_the_next_column_onl
 }
 
 #[test]
-fn a_sized_box_a_page_end_cuts_stays_in_the_columns_the_pages_cut() {
-    // The page fill resumes no box in the middle, so one that a page end
-    // cuts leaves the container to the columns that the pages cut, where
-    // every line is reported once.
+fn a_sized_box_a_page_end_cuts_goes_on_at_the_top_of_the_next_page() {
+    // The page fill resumes the box at the next page from where the page
+    // end cut it, and what follows it fills that page in column order
+    // (Chromium).
     let body = mc(&format!(
-        "<div>{}<div style='height:60px'></div></div>{}",
+        "<div>{}<div id=b style='height:60px;background:#00f'></div></div>{}",
         par("L", 1, 18),
         par("M", 1, 12)
     ));
-    let mut texts: Vec<_> = lines(&body, "").into_iter().map(|line| line.3).collect();
-    texts.sort();
-    let mut expected: Vec<_> = (1..=18)
-        .map(|n| format!("L{n}"))
-        .chain((1..=12).map(|n| format!("M{n}")))
-        .collect();
-    expected.sort();
-    assert_eq!(texts, expected);
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L18@0",
+            "p1 x0: M1-M6@20",
+            "p1 x100: M7-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 100, 160, 200), (1, 0, 0, 20)]
+    );
+    let between = mc(&format!(
+        "{}<div style='height:30px'></div>{}",
+        par("L", 1, 19),
+        par("M", 1, 30)
+    ));
+    assert_eq!(
+        columns(&between, ""),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L19@0",
+            "p1 x0: M1-M9@10",
+            "p1 x100: M10-M19@0",
+            "p2 x0: M20-M25@0",
+            "p2 x100: M26-M30@0",
+        ]
+    );
+}
+
+#[test]
+fn a_sized_box_taller_than_a_page_goes_on_over_the_pages_it_fills() {
+    // The box fills the columns of a whole page between its first and last
+    // pieces (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:500px;background:#00f'></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L8@0",
+            "p1 x100: M1-M7@60",
+            "p2 x0: M8-M10@0",
+            "p2 x100: M11-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [
+            (0, 0, 160, 200),
+            (0, 100, 0, 200),
+            (1, 0, 0, 200),
+            (1, 100, 0, 60)
+        ]
+    );
+}
+
+#[test]
+fn a_sized_box_a_page_end_cuts_shows_its_borders_where_it_begins_and_ends() {
+    // The top border shows on the first page and the bottom one on the
+    // next, below what is left of the box (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:60px;border-top:5px solid red;border-bottom:5px solid lime'>\
+         </div>{}",
+        par("L", 1, 18),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L18@0",
+            "p1 x0: M1-M5@30",
+            "p1 x100: M6-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 100, 160, 200), (1, 0, 0, 30)]
+    );
+}
+
+#[test]
+fn a_bottom_border_a_page_end_would_cut_goes_on_alone_in_the_next_column() {
+    // The piece that goes on from the page before ends with the content of
+    // the box, and its bottom border goes on alone to the next column, as
+    // the first piece of a box does (Chromium).
+    for before in [8, 18] {
+        let body = mc(&format!(
+            "{}<div id=b style='height:{}px;border-bottom:20px solid lime'></div>{}",
+            par("L", 1, before),
+            if before == 8 { 430 } else { 230 },
+            par("M", 1, 12)
+        ));
+        let mut expected = vec![(0, 100, 160, 200), (1, 0, 0, 190), (1, 100, 0, 20)];
+        if before == 8 {
+            expected.insert(0, (0, 0, 160, 200));
+            expected[1].2 = 0;
+        }
+        assert_eq!(
+            visible_boxes(&body, "", "b"),
+            expected,
+            "{before} lines before"
+        );
+        let columns = columns(&body, "");
+        assert_eq!(
+            columns[columns.len() - 3..],
+            ["p1 x100: M1-M9@20", "p2 x0: M10-M11@0", "p2 x100: M12@0"],
+            "{before} lines before"
+        );
+    }
+}
+
+#[test]
+fn a_painted_wrapper_around_a_sized_box_a_page_end_cuts_goes_on_with_it() {
+    // The wrapper has a piece in each column the box reaches, and the last
+    // one holds its padding below what is left of the box (Chromium).
+    let body = mc(&format!(
+        "<div id=w style='background:#ff0;padding-bottom:10px'>{}\
+         <div id=b style='height:60px;background:#00f'></div></div>{}",
+        par("L", 1, 18),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L18@0",
+            "p1 x0: M1-M5@30",
+            "p1 x100: M6-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 100, 160, 200), (1, 0, 0, 20)]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 200), (1, 0, 0, 30)]
+    );
 }
 
 #[test]
