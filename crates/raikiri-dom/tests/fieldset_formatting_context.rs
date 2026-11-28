@@ -878,4 +878,40 @@ const CASES: &[Case] = &[
             ("b", (100.0, 0.0, 100.0, 10.0)),
         ],
     },
+    // A fieldset whose minimum width, `min-content` from the user agent style,
+    // is wider than its column keeps that width in the column.
+    Case {
+        name: "columns_wider_than_a_column",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0'><div id=a style='width:300px;height:10px'></div><div id=b style='height:10px;width:50%'></div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 10.0)),
+            ("a", (0.0, 0.0, 300.0, 10.0)),
+            ("b", (100.0, 0.0, 150.0, 10.0)),
+        ],
+    },
+    // The margins of a fieldset do not collapse with those of its block.
+    Case {
+        name: "columns_margins_around_one_block",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:5px 0;padding:0;border:0;min-width:0'><div id=a style='margin:5px 0'>aa</div></fieldset><div id=b>bb</div></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
+    // A legend inside a `display: contents` box is not a child of the
+    // fieldset, so it is an ordinary block in the flow of the fieldset.
+    Case {
+        name: "columns_legend_in_contents",
+        group: Group::Columns,
+        body: "<div id=o style=\"columns:2;column-gap:0;width:200px\"><fieldset id=c style='margin:0;padding:0;border:0;min-width:0'><div id=w style='display:contents'><legend id=l>L</legend></div><div id=a>a</div><div id=b>b</div></fieldset></div>",
+        expected: &[
+            ("o", (0.0, 0.0, 200.0, 20.0)),
+            ("l", (0.0, 0.0, 14.0, 10.0)),
+            ("a", (0.0, 10.0, 100.0, 10.0)),
+            ("b", (100.0, 0.0, 100.0, 10.0)),
+        ],
+    },
 ];
