@@ -461,6 +461,7 @@ fn column_starts(
     height: f32,
     context: FragmentationContext,
 ) -> Vec<usize> {
+    let runs = line_runs(units);
     let mut starts = vec![0];
     let mut origin = units.first().map_or(0.0, |unit| unit.1);
     let mut index = 1;
@@ -470,7 +471,7 @@ fn column_starts(
             continue;
         }
         let column_start = starts[starts.len() - 1];
-        let start = keep_lines_together(units, index, column_start, context)
+        let start = keep_lines_together(&runs, index, column_start, context)
             .filter(|&start| start > column_start);
         let start = start.unwrap_or(index);
         starts.push(start);
@@ -480,23 +481,36 @@ fn column_starts(
     starts
 }
 
-/// Where a break before `units[index]` moves to keep `orphans` lines before
+/// For each of `units`, the run of lines it falls in, as the indices of its
+/// first unit and of the unit after it; `None` for a block.
+fn line_runs(units: &[(Unit, f32, f32)]) -> Vec<Option<(usize, usize)>> {
+    let mut runs = vec![None; units.len()];
+    let mut index = 0;
+    while index < units.len() {
+        let end = (index..units.len())
+            .find(|&at| !matches!(units[at].0, Unit::Line(_)))
+            .unwrap_or(units.len());
+        runs[index..end].fill(Some((index, end)));
+        index = end + 1;
+    }
+    runs
+}
+
+/// Where a break before the unit `index` moves to keep `orphans` lines before
 /// it in the column that starts at `column_start`, and `widows` after it, in
-/// the run of lines it falls in: earlier in the run, or before the run when
-/// the run cannot keep both. `None` when the break does not fall between two
-/// lines.
+/// the run of lines it falls in, as `runs` gives them: earlier in the run, or
+/// before the run when the run cannot keep both. `None` when the break does
+/// not fall between two lines.
 fn keep_lines_together(
-    units: &[(Unit, f32, f32)],
+    runs: &[Option<(usize, usize)>],
     index: usize,
     column_start: usize,
     context: FragmentationContext,
 ) -> Option<usize> {
-    let is_line = |at: usize| matches!(units.get(at), Some((Unit::Line(_), _, _)));
-    if index == 0 || !is_line(index) || !is_line(index - 1) {
+    let (run_start, run_end) = runs.get(index).copied().flatten()?;
+    if run_start == index {
         return None;
     }
-    let run_start = (0..index).rev().take_while(|&at| is_line(at)).last()?;
-    let run_end = (index..units.len()).take_while(|&at| is_line(at)).last()? + 1;
     let mut start = index;
     let after = run_end - start;
     if after < context.widows {
