@@ -8236,11 +8236,13 @@ fn a_sized_box_enters_the_stream_only_beside_a_paragraph() {
             Some("background:green"),
             true,
         ),
+        ("height:20px;margin-top:5px", Some("background:green"), true),
         (
-            "height:20px;margin-top:5px",
+            "height:20px;margin-top:-5px",
             Some("background:green"),
             false,
         ),
+        ("height:20px;margin-top:5%", Some("background:green"), false),
         ("height:20px;float:left", Some("background:green"), false),
         (
             "height:20px;overflow:hidden",
@@ -8799,7 +8801,9 @@ fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() 
             Some("margin:0"),
             false,
         ),
-        ("margin:10px 0;height:10px", Some("margin:0"), false),
+        // A block with a height is a sized box, which enters the stream
+        // with its margins.
+        ("margin:10px 0;height:10px", Some("margin:0"), true),
         ("margin:10px 0;float:left", Some("margin:0"), false),
         ("margin:10px 0;clear:both", Some("margin:0"), false),
         ("margin:10px 0;overflow:hidden", Some("margin:0"), false),

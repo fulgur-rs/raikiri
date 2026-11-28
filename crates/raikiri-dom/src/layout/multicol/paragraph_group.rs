@@ -1506,9 +1506,8 @@ fn collect(
                 margin_bottom,
                 Some(lines.lines.len()),
             );
-            // One with block margins goes whole to a column, as a sized box
-            // with no lines needs none to be sliced (see
-            // `lineless::is_sized_leaf`).
+            // One with block margins goes whole to a column: the pages do
+            // not yet place the pieces of its lines beside its margins.
             let sliced = margin_top == 0.0
                 && margin_bottom == 0.0
                 && lineless::slices_sized_leaf(tree, child);

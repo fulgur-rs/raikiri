@@ -1527,6 +1527,150 @@ fn a_block_button_between_paragraphs_fills_the_pages_in_order() {
     );
 }
 
+/// A sized box with the id `b`, block margins `margin` and a height of
+/// `height` pixels.
+fn margined_box(margin: &str, height: u32) -> String {
+    format!("<div id=b style='margin:{margin};height:{height}px;background:#00f'></div>")
+}
+
+#[test]
+fn a_sized_box_with_margins_fills_each_page_in_column_order() {
+    // The margins stand beside the box as they do beside a paragraph: kept
+    // where the box goes on in the same column, and truncated where a column
+    // or page end falls next to them (Chromium).
+    let cases = [
+        (
+            par("P", 1, 5) + &margined_box("10px 0", 300) + &par("Q", 1, 10),
+            vec!["p0 x0: P1-P5@0", "p1 x0: Q1-Q5@20", "p1 x100: Q6-Q10@0"],
+            vec![(0, 0, 110, 200), (0, 100, 0, 200), (1, 0, 0, 10)],
+        ),
+        (
+            margined_box("20px 0 0", 350) + &par("Q", 1, 10),
+            vec!["p1 x0: Q1-Q5@0", "p1 x100: Q6-Q10@0"],
+            vec![(0, 0, 20, 200), (0, 100, 0, 170)],
+        ),
+        (
+            par("P", 1, 8) + &margined_box("0 0 30px", 250) + &par("Q", 1, 10),
+            vec!["p0 x0: P1-P8@0", "p1 x0: Q1-Q4@40", "p1 x100: Q5-Q10@0"],
+            vec![(0, 0, 160, 200), (0, 100, 0, 200), (1, 0, 0, 10)],
+        ),
+        (
+            par("P", 1, 12) + &margined_box("15px 0", 100) + &par("Q", 1, 12),
+            vec![
+                "p0 x0: P1-P10@0",
+                "p0 x100: P11-P12@0",
+                "p1 x0: Q1-Q6@0",
+                "p1 x100: Q7-Q12@0",
+            ],
+            vec![(0, 100, 55, 155)],
+        ),
+        (
+            par("P", 1, 3) + &margined_box("10px 0", 500) + &par("Q", 1, 6),
+            vec!["p0 x0: P1-P3@0", "p1 x100: Q1-Q6@30"],
+            vec![
+                (0, 0, 70, 200),
+                (0, 100, 0, 200),
+                (1, 0, 0, 150),
+                (1, 100, 0, 20),
+            ],
+        ),
+        (
+            par("P", 1, 19) + &margined_box("25px 0", 60) + &par("Q", 1, 8),
+            vec![
+                "p0 x0: P1-P10@0",
+                "p0 x100: P11-P19@0",
+                "p1 x0: Q1-Q2@85",
+                "p1 x100: Q3-Q8@0",
+            ],
+            vec![(1, 0, 0, 60)],
+        ),
+    ];
+    for (inner, expected_lines, expected_box) in cases {
+        let body = mc(&inner);
+        assert_eq!(columns(&body, ""), expected_lines, "{inner}");
+        assert_eq!(visible_boxes(&body, "", "b"), expected_box, "{inner}");
+    }
+}
+
+#[test]
+fn a_sized_box_with_margins_balances_on_the_last_page() {
+    // On a page the container ends on, the margins count in the balanced
+    // column height, and one that would be cut at a column end goes away
+    // with it (Chromium).
+    let cases = [
+        (
+            par("P", 1, 3) + &margined_box("10px 0", 50) + &par("Q", 1, 3),
+            vec!["p0 x0: P1-P3@0", "p0 x100: Q1-Q3@35"],
+            vec![(0, 0, 70, 95), (0, 100, 0, 25)],
+        ),
+        (
+            par("P", 1, 4) + &margined_box("5px 0 15px", 90) + &par("Q", 1, 4),
+            vec!["p0 x0: P1-P4@0", "p0 x100: Q1-Q4@55"],
+            vec![(0, 0, 85, 135), (0, 100, 0, 40)],
+        ),
+        (
+            margined_box("20px 0", 60) + &par("Q", 1, 5),
+            vec!["p0 x100: Q1-Q5@0"],
+            vec![(0, 0, 20, 80)],
+        ),
+        (
+            par("P", 1, 5) + &margined_box("30px 0", 40),
+            vec!["p0 x0: P1-P5@0"],
+            vec![(0, 100, 0, 40)],
+        ),
+    ];
+    for (inner, expected_lines, expected_box) in cases {
+        let body = mc(&inner);
+        assert_eq!(columns(&body, ""), expected_lines, "{inner}");
+        assert_eq!(visible_boxes(&body, "", "b"), expected_box, "{inner}");
+    }
+}
+
+#[test]
+fn a_sized_box_with_margins_in_a_wrapper_fills_the_pages_in_order() {
+    // Inside a wrapper, the box and its margins join the flow beside the
+    // paragraphs around them (Chromium).
+    let body = mc(&format!(
+        "<div>{}{}</div>{}",
+        par("P", 1, 3),
+        margined_box("10px 0", 250),
+        par("Q", 1, 6)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: P1-P3@0",
+            "p0 x100: Q1-Q3@130",
+            "p1 x0: Q4-Q5@0",
+            "p1 x100: Q6@0"
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 0, 70, 200), (0, 100, 0, 120)]
+    );
+    let body = mc(&format!(
+        "{}<div>{}{}</div>{}",
+        par("P", 1, 9),
+        margined_box("12px 0", 100),
+        par("R", 1, 4),
+        par("Q", 1, 8)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: P1-P9@0",
+            "p0 x100: R1-R4@104",
+            "p1 x0: Q1-Q4@0",
+            "p1 x100: Q5-Q8@0"
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 0, 192, 200), (0, 100, 0, 92)]
+    );
+}
+
 /// `count` boxes `height` tall with ids from `a`, in a column flex container
 /// with `style`.
 fn flex_column(count: u8, height: u32, style: &str) -> String {
