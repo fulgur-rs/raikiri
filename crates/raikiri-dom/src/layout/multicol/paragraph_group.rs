@@ -672,7 +672,15 @@ pub(super) fn balance(
         high,
         room,
         sized_leaf,
-    } = collect(tree, &flow, true, BlockEdges::Refused, true, None, false)?;
+    } = collect(
+        tree,
+        &flow,
+        true,
+        BlockEdges::Refused,
+        SizedBoxes::All,
+        None,
+        false,
+    )?;
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place, a sized
     // box with no lines stands beside the paragraph, which the columns slice,
@@ -913,7 +921,7 @@ pub(super) fn fill_definite(
         &flow,
         true,
         BlockEdges::Sliced,
-        true,
+        SizedBoxes::All,
         Some(height),
         false,
     )?;
@@ -1068,6 +1076,17 @@ fn piece_lines(
     (fitting > start && !strict).then_some(Some(fitting))
 }
 
+/// Which sized boxes [`collect`] takes between the paragraphs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SizedBoxes {
+    /// None of them.
+    None,
+    /// Sized boxes with nothing inside them.
+    Leaves,
+    /// Those, and sized boxes with lines inside their height.
+    All,
+}
+
 /// The paragraphs of `entries` with their line extents, when each entry is a
 /// plain paragraph. With `atomics`, a paragraph may hold atomic inlines, which
 /// go to the column of their line. The row and page streams place only lines,
@@ -1077,7 +1096,8 @@ fn piece_lines(
 /// places those edges with the lines passes that. With `sized`, a sized box
 /// with nothing inside it, or with lines inside its height, may stand between
 /// the paragraphs, which a column end slices; only the streams that place the
-/// pieces of such a box pass that. With `boxes`, the height of the columns of
+/// pieces of such a box pass that; the page stream takes only the boxes with
+/// nothing inside them ([`SizedBoxes::Leaves`]). With `boxes`, the height of the columns of
 /// a stream that fills definite-height columns, a box that makes a formatting
 /// context of its own and holds one row of lines no taller than a column may
 /// stand there too, which goes whole to one.
@@ -1092,7 +1112,7 @@ fn collect(
     flow: &Flow,
     atomics: bool,
     edges: BlockEdges,
-    sized: bool,
+    sized: SizedBoxes,
     boxes: Option<f32>,
     forced: bool,
 ) -> Option<Collected> {
@@ -1192,7 +1212,10 @@ fn collect(
         // extent that a column end cuts.
         // One that avoids breaks, or that a cut would paint wrong, goes whole
         // to a column that holds it.
-        if sized && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+        if sized != SizedBoxes::None
+            && output.size.height > 0.0
+            && lineless::is_sized_leaf(tree, child)
+        {
             let sliced = lineless::slices_sized_leaf(tree, child);
             sized_leaf |= sliced;
             high += output.size.height + margin_top.abs() + margin_bottom.abs();
@@ -1213,7 +1236,7 @@ fn collect(
         // a cut would paint it wrong: then it goes whole to a column that
         // holds it. Its lines must lie inside its height, or they would reach
         // past the piece that holds them.
-        if sized && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
+        if sized == SizedBoxes::All && output.size.height > 0.0 && is_sized_paragraph(tree, child) {
             let lines = node.ifc.as_ref()?.lines.as_ref()?;
             let (before, after) = block_edges(&layout);
             let reach = lines
@@ -2391,7 +2414,7 @@ pub(super) fn fill_rows(
         &Flow::plain(entries),
         false,
         BlockEdges::Refused,
-        false,
+        SizedBoxes::None,
         None,
         false,
     )
@@ -2539,6 +2562,13 @@ pub(super) struct PagedFragment {
     pub(super) line_end: usize,
     pub(super) fragmentainer: usize,
     pub(super) rect: crate::fragment::FragmentRect,
+    /// Where what the fragment shows of its box ends: the bottom of `rect`,
+    /// unless the fragment is a piece of a sliced box that paints whole and
+    /// that its column clips.
+    bottom: f32,
+    /// Whether the fragment holds lines of its box, rather than a piece of a
+    /// box with no lines.
+    pub(super) holds_lines: bool,
     /// The cut of the column, or `None` for a fragment that holds its whole
     /// paragraph, which has no neighbour to keep out.
     pub(super) clip: Option<raikiri_traits::PaintClip>,
@@ -2626,25 +2656,25 @@ pub(super) fn paginate(
         high: ceiling,
         room,
         ..
-    }) = collect(tree, &flow, false, BlockEdges::Sliced, true, None, true)
+    }) = collect(
+        tree,
+        &flow,
+        false,
+        BlockEdges::Sliced,
+        SizedBoxes::Leaves,
+        None,
+        true,
+    )
     else {
         return Ok(None);
     };
-    // A sized box of lines is left to the other strategies.
-    if paragraphs
-        .iter()
-        .flatten()
-        .any(|paragraph| paragraph.held_lines.is_some())
-    {
-        return Ok(None);
-    }
     // A page end that cuts a sized box fails the fill, as the stream resumes
     // no box in the middle: such a box is left to the other strategies rather
     // than moved whole to the next page.
     let holds_sized_leaf = paragraphs
         .iter()
         .flatten()
-        .any(|paragraph| paragraph.sized_leaf);
+        .any(|paragraph| paragraph.sized_leaf && paragraph.sliced);
     if count == 0 || context.column_count == 0 {
         return Ok(None);
     }
@@ -2795,6 +2825,7 @@ pub(super) fn paginate(
             chunk.group.height.max(divided).max(kept)
         };
         let group_y = absolute_y - owner_y;
+        let planned = chunk.group.height;
         let mut occupied = std::collections::BTreeSet::new();
         for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
             let index = resume.paragraph + offset;
@@ -2831,7 +2862,7 @@ pub(super) fn paginate(
                         total: paragraph.extents[0].1 - paragraph.extents[0].0,
                     },
                     context,
-                    (page_index as usize, group_y, height),
+                    (page_index as usize, group_y, height, planned),
                     work,
                 )?;
                 continue;
@@ -2893,6 +2924,8 @@ pub(super) fn paginate(
                     line_end: range.line_end,
                     fragmentainer,
                     rect,
+                    bottom: rect.y + rect.height,
+                    holds_lines: true,
                     // The clip cuts a fragment at the block edges of its
                     // column, so the lines of its neighbours stay out, and
                     // leaves the inline axis open. The edge where the
@@ -2962,17 +2995,18 @@ struct LeafPlacement<'a> {
 
 /// Push the pieces of a sized box with no lines that the page stream placed
 /// on page `page` of the columns, whose group starts at `group_y` and is
-/// `height` tall. Each piece but the last fills the rest of its column, and
-/// the last holds what is left of the box. A box that slices its block-axis
-/// border and padding paints whole in each piece, moved up by what the
-/// earlier pieces took, and the column clips it (CSS Fragmentation 3, 5.4).
+/// `height` tall, of the columns `planned` tall that the fill placed it in.
+/// Each piece but the last fills the rest of its column, and the last holds
+/// what is left of the box. The box paints whole in each piece, moved up by
+/// what the earlier pieces took, and the column clips it, which slices its
+/// block-axis border and padding (CSS Fragmentation 3, 5.4).
 fn push_leaf_pieces(
     tree: &LayoutSession<'_>,
     fragments: &mut Vec<PagedFragment>,
     occupied: &mut std::collections::BTreeSet<usize>,
     leaf: LeafPlacement<'_>,
     context: FragmentationContext,
-    (page, group_y, height): (usize, f32, f32),
+    (page, group_y, height, planned): (usize, f32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<(), LayoutError> {
     let LeafPlacement {
@@ -2983,18 +3017,19 @@ fn push_leaf_pieces(
     } = leaf;
     let (child, _, layout, ..) = flow.entries[index];
     let count = placement.fragments.len();
-    let whole = lineless::slices_decorations(tree, child);
     let mut taken = 0.0f32;
     for (piece, range) in placement.fragments.iter().enumerate() {
         work.charge(1)?;
         let y = placement.first_y + range.y;
         let last = piece + 1 == count;
+        // A piece between the first and the last fills the column the fill
+        // planned, which may be shorter than the columns of the page.
         let used = if last {
             (total - taken).max(0.0)
         } else if piece == 0 {
             placement.first_height
         } else {
-            (height - y).max(0.0)
+            (planned - y).max(0.0)
         };
         let column = range.fragmentainer;
         let fragmentainer = page
@@ -3018,7 +3053,9 @@ fn push_leaf_pieces(
             line_start: range.line_start,
             line_end: range.line_end,
             fragmentainer,
-            rect: lineless::sliced_rect(rect, whole.then_some((taken, total))),
+            rect: lineless::sliced_rect(rect, Some((taken, total))),
+            bottom: rect.y + rect.height,
+            holds_lines: false,
             // The clip cuts a piece where the box breaks, and leaves the edges
             // where it begins and ends open, as a paragraph's are.
             clip: (count > 1).then(|| {
@@ -3076,7 +3113,7 @@ fn paged_wrappers(
         let (layout, first_layout) = (flow.entries[open].2, flow.entries[first.entry].2);
         let bottom = fragments[start..end]
             .iter()
-            .map(|fragment| fragment.rect.y + fragment.rect.height)
+            .map(|fragment| fragment.bottom)
             .fold(first.rect.y, f32::max);
         // The pieces start at the left of a column, past the insets of their
         // wrappers.
@@ -3141,7 +3178,7 @@ fn wrapper_pieces(
 ) -> Vec<WrapperPiece> {
     let mut columns: Vec<(usize, f32)> = Vec::new();
     for fragment in fragments {
-        let bottom = fragment.rect.y + fragment.rect.height;
+        let bottom = fragment.bottom;
         match columns.last_mut() {
             Some((fragmentainer, end)) if *fragmentainer == fragment.fragmentainer => {
                 *end = end.max(bottom);

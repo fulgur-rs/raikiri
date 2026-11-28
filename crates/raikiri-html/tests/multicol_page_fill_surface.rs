@@ -1267,6 +1267,18 @@ fn a_column_end_slices_a_sized_box_on_a_filled_page() {
         visible_boxes(&bordered, "", "b"),
         [(0, 0, 160, 200), (0, 100, 0, 120)]
     );
+    // A wrapper around the box ends where the box's last piece does, not
+    // where the whole box its first piece paints would.
+    let wrapped = mc(&format!(
+        "<div id=w style='background:#ff0'>{}<div style='height:150px;border-top:5px solid red;\
+         border-bottom:5px solid lime'></div></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        visible_boxes(&wrapped, "", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 120)]
+    );
 }
 
 #[test]
@@ -1308,4 +1320,26 @@ fn a_wrapper_whose_padding_a_column_end_cuts_ends_with_what_it_holds() {
         .last()
         .expect("the wrapper paints");
     assert_eq!((last.0, last.1, last.3), (line.0, line.1, line.2 + 20));
+}
+
+#[test]
+fn a_block_button_between_paragraphs_fills_the_pages_in_order() {
+    // A block button of one line goes whole to a column, as in Chromium.
+    let body = mc(&format!(
+        "{}<button>B1</button>{}",
+        par("L", 1, 15),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(
+            &body,
+            "button{display:block;font:inherit;padding:0;border:0;margin:0}"
+        ),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-M4@0",
+            "p1 x0: M5-M8@0",
+            "p1 x100: M9-M12@0",
+        ]
+    );
 }

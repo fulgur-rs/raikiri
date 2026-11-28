@@ -533,7 +533,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 .collect(),
                         );
                         root.multicol_fragment_origins_recorded = true;
-                    } // cov:ignore: planned text ranges only originate from a paragraph with an IFC.
+                    }
                     let wrapper_pieces = wrapper
                         .and_then(|wrapper| piece_owner.get(&wrapper))
                         .and_then(|owner| pieces.get(owner));
@@ -563,8 +563,9 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 fragmentainer_clip: f.clip,
                                 fragment_index: 0,
                                 fragment_count: 1,
-                                line_start: Some(f.line_start),
-                                line_end: Some(f.line_end),
+                                // A piece of a box with no lines holds none.
+                                line_start: f.holds_lines.then_some(f.line_start),
+                                line_end: f.holds_lines.then_some(f.line_end),
                             })
                             .collect(),
                     ));
