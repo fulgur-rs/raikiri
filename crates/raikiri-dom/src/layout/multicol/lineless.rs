@@ -933,14 +933,13 @@ fn holds_only_still_empty_boxes(tree: &LayoutSession<'_>, id: usize) -> bool {
             || node.is_display_none()
             || match &node.data {
                 NodeData::Text(text) => text.text_content.trim().is_empty(),
-                NodeData::Element(_) => {
+                _ => {
                     let layout = node.layout;
                     !has_rendered_content(tree, child, false)
                         && node.layout_position() == Position::Static
                         && layout.location.x >= -EPSILON
                         && layout.location.x + layout.size.width <= width + EPSILON
                 }
-                _ => true,
             }
     })
 }
