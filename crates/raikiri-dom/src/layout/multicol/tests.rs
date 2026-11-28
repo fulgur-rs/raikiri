@@ -6649,6 +6649,24 @@ fn an_empty_block_that_starts_the_columns_leaves_its_margins_below_it() {
 }
 
 #[test]
+fn the_margin_below_the_group_before_a_spanner_does_not_reach_the_group_after_it() {
+    // The 30px margin below the first block stays in the group above the
+    // spanner. Values match Chromium.
+    let (mut doc, _, boxes) = column_container(
+        "column-count:1",
+        &[
+            Part::Box("display:block;height:20px;margin-bottom:30px"),
+            Part::Spanner("height:10px"),
+            Part::Box("display:block;height:20px"),
+            Part::Lines(1),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 260.0);
+    assert_eq!(box_rect(&doc, boxes[1]), (0.0, 50.0, 100.0, 10.0));
+    assert_eq!(box_rect(&doc, boxes[2]), (0.0, 60.0, 100.0, 20.0));
+}
+
+#[test]
 fn a_block_that_starts_the_group_below_a_spanner_keeps_its_top_margin() {
     // The spanner's 5px bottom margin and the block's 30px top margin do not
     // collapse. Values match Chromium.

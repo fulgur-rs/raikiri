@@ -3085,8 +3085,10 @@ impl BlockChild {
         Self {
             oof_candidates: OofCandidates::new(),
             top: y,
-            next_y: y,
-            pending,
+            // The margins above it end the content before it, so none of
+            // them collapses with what comes after it.
+            next_y: y + pending.resolve(),
+            pending: CollapsibleMarginSet::ZERO,
             floats_bottom: f32::NEG_INFINITY,
             top_margin: None,
             collapses_through: true,
