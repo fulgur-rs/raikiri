@@ -1818,7 +1818,11 @@ fn compute_table_layout_checked(
             grow_columns(&mut sizing.widths, natural_insets_width, None);
             sizing
         });
-        let mut column_sizing = if fixed_columns_collapse {
+        // A vertical table sizes its columns along its height from the whole
+        // grid (see `vertical_tracks` below), so the widths the natural pass
+        // gave it serve, without the collapsed columns.
+        let mut column_sizing = if fixed_columns_collapse || (columns_collapse && vertical_writing)
+        {
             let natural = natural_sizing
                 .as_ref()
                 .expect("collapsed columns have their natural widths");
@@ -2163,7 +2167,9 @@ fn compute_table_layout_checked(
         // the table states, share out over all the columns, and the collapsed
         // ones give up their share afterwards: the table ends up shorter than
         // the height it states, as its collapsed rows do across a horizontal
-        // table (Chromium).
+        // table, and its grid box stays as high as its caption asks, with room
+        // below the columns (Chromium). The height of a grid area is shared
+        // out over the columns that show only.
         let vertical_tracks = if vertical_writing {
             let rows = vertical_row_layout
                 .as_ref()
@@ -2178,14 +2184,29 @@ fn compute_table_layout_checked(
             } else {
                 known_target
             };
-            let columns = usize::from(grid.n_cols);
+            let in_grid_area = doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+                doc.nodes[parent].formatting_context == FormattingContext::Grid
+            });
             let mut tracks = vertical_column_tracks(
                 &grid,
                 border_spacing.1,
                 |cell| vertical_columns::preferred_height(doc, cell, rows.cell_width(cell)),
                 |cell| vertical_columns::states_height(doc, cell),
             );
-            let spacing_total = border_spacing.1 * (columns + 1) as f32;
+            let shown_only = |tracks: &mut Vec<f32>| {
+                if columns_collapse {
+                    *tracks = std::mem::take(tracks)
+                        .into_iter()
+                        .zip(collapsed_cols)
+                        .filter(|(_, collapsed)| !**collapsed)
+                        .map(|(track, _)| track)
+                        .collect();
+                }
+            };
+            if in_grid_area {
+                shown_only(&mut tracks);
+            }
+            let spacing_total = border_spacing.1 * (tracks.len() + 1) as f32;
             // The room the rows were given has the spacing of every visible
             // row taken out of it; the columns stack along that height with
             // spacing of their own, so all of it comes back.
@@ -2199,18 +2220,17 @@ fn compute_table_layout_checked(
             });
             let target = capped.max(floor);
             if target < natural {
-                let minimum = vertical_columns::minimum_tracks(doc, &grid, rows, border_spacing.1);
+                let mut minimum =
+                    vertical_columns::minimum_tracks(doc, &grid, rows, border_spacing.1);
+                if in_grid_area {
+                    shown_only(&mut minimum);
+                }
                 vertical_columns::fit(&mut tracks, &minimum, (target - spacing_total).max(0.0));
             } else if target > natural {
                 grow_tracks(&mut tracks, target - natural);
             }
-            if columns_collapse {
-                tracks = tracks
-                    .into_iter()
-                    .zip(collapsed_cols)
-                    .filter(|(_, collapsed)| !**collapsed)
-                    .map(|(track, _)| track)
-                    .collect();
+            if !in_grid_area {
+                shown_only(&mut tracks);
             }
             tracks
         } else {
@@ -2233,7 +2253,8 @@ fn compute_table_layout_checked(
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
-                vertical_content_height + padding_border_size.height
+                vertical_content_height.max(caption_inline_minimum - padding_border_size.height)
+                    + padding_border_size.height
             } else if collapse_shrinks_table {
                 // The collapsed rows take their share with them; the maximum
                 // still caps the rows that remain, without reapplying a minimum.

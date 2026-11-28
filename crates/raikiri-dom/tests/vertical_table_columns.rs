@@ -1440,3 +1440,66 @@ fn a_collapsed_column_keeps_the_width_it_gives_its_row() {
     );
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// The vertical-rl table `t` of three 20px by 30px cells whose middle column
+/// collapses, with the style `style`.
+fn collapsed_middle_column(style: &str) -> String {
+    format!(
+        "<table id=t style='writing-mode: vertical-rl; border-spacing: 0; {style}'>\
+         <col><col style='visibility: collapse'><col><tr>{}{}{}</tr></table>",
+        cell("a", ""),
+        cell("b", ""),
+        cell("c", "")
+    )
+}
+
+#[test]
+fn a_collapsed_column_gives_up_its_share_of_the_height_a_flex_line_or_a_maximum_gives() {
+    let mut mismatches = check(
+        "flex",
+        &format!(
+            "<div style='display: flex'>{}</div>",
+            collapsed_middle_column("")
+        ),
+        &[
+            ("t", [8.0, 8.0, 20.0, 40.0]),
+            ("a", [8.0, 8.0, 20.0, 20.0]),
+            ("c", [8.0, 28.0, 20.0, 20.0]),
+        ],
+    );
+    mismatches.extend(check(
+        "max-height",
+        &collapsed_middle_column("max-height: 60px"),
+        &[
+            ("t", [8.0, 8.0, 20.0, 40.0]),
+            ("a", [8.0, 8.0, 20.0, 20.0]),
+            ("c", [8.0, 28.0, 20.0, 20.0]),
+        ],
+    ));
+    // A grid area keeps the columns that show at their height.
+    mismatches.extend(check_extent(
+        "grid",
+        &format!(
+            "<div style='display: grid'>{}</div>",
+            collapsed_middle_column("")
+        ),
+        &[("t", 8.0, 60.0), ("a", 8.0, 30.0), ("c", 38.0, 30.0)],
+    ));
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn a_collapsed_column_gives_up_its_share_of_the_caption_minimum() {
+    let table = collapsed_middle_column("").replacen(
+        "<col>",
+        "<caption id=k style='padding: 0'><div style='height: 100px; width: 10px'></div>\
+         </caption><col>",
+        1,
+    );
+    let mismatches = check_extent(
+        "caption",
+        &table,
+        &[("t", 8.0, 100.0), ("a", 8.0, 33.33), ("c", 41.33, 33.33)],
+    );
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
