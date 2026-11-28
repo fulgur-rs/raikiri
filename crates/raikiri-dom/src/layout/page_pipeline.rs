@@ -1958,6 +1958,10 @@ pub struct PageImageOptions<'a> {
     pub resolver: &'a dyn ReplacedResolver,
     /// Base URL for relative image sources.
     pub base_url: Option<&'a url::Url>,
+    /// The environment that `<source media>` and `sizes` are evaluated in
+    /// when an image's source is chosen; absent uses the default print
+    /// context.
+    pub media_context: Option<&'a raikiri_style::MediaContext>,
 }
 
 /// Borrowed settings for [`layout_pages_with_options`].
@@ -5135,7 +5139,13 @@ pub fn layout_pages_with_options(
         super::validate_layout_depth(document)?;
         document.page_projection.clear();
         document.mark_in_document_flags();
-        resolve_document_images(document, cascade, images.resolver, images.base_url)?;
+        resolve_document_images(
+            document,
+            cascade,
+            images.resolver,
+            images.base_url,
+            images.media_context.copied().unwrap_or_default(),
+        )?;
     }
     layout_pages_core(
         document,
@@ -5155,19 +5165,15 @@ fn resolve_document_images(
     cascade: &CascadeResult,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
+    media_context: raikiri_style::MediaContext,
 ) -> Result<(), LayoutError> {
     if BoxPropertiesRef::from_computed(cascade.root_element_computed()).display()
         == DisplayValue::None
     {
         return Ok(());
     }
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)
+    crate::image_resolve::resolve_images_in(document, resolver, base_url, &media_context)
+        .map_err(LayoutError::Resolver)
 }
 
 /// How many more page attempts the boxes after forced breaks beside a float
@@ -10048,11 +10054,11 @@ fn has_footnote_ancestor(cascade: &CascadeResult, node_id: usize, document: &Doc
 /// without running taffy layout. The `ReplacedResolver` contract makes `Err`
 /// terminal; consumers request placeholder degradation by returning
 /// `Ok(ResolvedIntrinsic::new(intrinsic, ResolveDisposition::Fallback { .. }))` instead.
-/// See the documentation for `crate::image_resolve::resolve_images`.
+/// See the documentation for `crate::image_resolve::resolve_images_in`.
 ///
 /// # Execution order (essential)
-/// Call [`Document::mark_in_document_flags`] before `resolve_images`.
-/// `resolve_images` skips `<img>` in inert subtrees (such as descendants of
+/// Call [`Document::mark_in_document_flags`] before `resolve_images_in`.
+/// `resolve_images_in` skips `<img>` in inert subtrees (such as descendants of
 /// `<template>`) using membership flags. If flags are stale, it may fetch a URL
 /// that should not be fetched. [`layout_single_page`] synchronizes flags too,
 /// but only **after** this pre-pass, which would be too late.
@@ -10079,10 +10085,16 @@ pub fn layout_single_page_with_resolver_and_base_url(
 ) -> Result<(), LayoutError> {
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
-    // See “Execution order” above — this must precede `resolve_images`, whose
+    // See “Execution order” above — this must precede `resolve_images_in`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();
-    resolve_document_images(document, cascade, resolver, base_url)?;
+    resolve_document_images(
+        document,
+        cascade,
+        resolver,
+        base_url,
+        raikiri_style::MediaContext::default(),
+    )?;
     layout_single_page(document, cascade, page_box)
 }
 

@@ -3,13 +3,14 @@
 
 use std::sync::Arc;
 
-use cssparser::{Parser, ParserInput, Token, match_ignore_ascii_case};
+use cssparser::{Delimiter, Parser, ParserInput, Token, match_ignore_ascii_case};
 
+use crate::cascade::custom_property::parse_relative_calc_function;
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::condition::{Condition, Outcomes, kleene_and, kleene_not};
 use crate::grammar::{PResult, first_of, keyword, optional, parens, zero_or_more};
 use crate::property::{Length, parse_length_allow_negative};
-use crate::resolve::{ComputedLength, ResolveContext, resolve_length};
+use crate::resolve::{ComputedLength, ResolveContext, relative_calc_length_px, resolve_length};
 
 /// The media type selected for a cascade evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,6 +401,87 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
         }),
         paper_dependent,
     })
+}
+
+/// Whether the media query list `source` matches `context`, as the `media`
+/// attribute of an HTML `<source>` element is checked: a list with nothing in
+/// it matches every environment, and one that is invalid as a whole matches
+/// none.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#matches-the-environment>
+#[doc(hidden)]
+pub fn media_list_matches(source: &str, context: &MediaContext) -> bool {
+    source.trim_ascii().is_empty()
+        || parse_media_prelude(source).is_some_and(|condition| condition.matches(context))
+}
+
+/// The width in CSS px that the `sizes` attribute `source` gives an image in
+/// `context`: the size of the first entry whose media condition matches, or
+/// that has none. An entry that does not parse is skipped, and without a
+/// matching entry the width is `100vw`.
+///
+/// Lengths resolve as in media queries: font-relative units against the
+/// initial font size, viewport units against the width and height of
+/// `context`.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/images.html#parse-a-sizes-attribute>
+#[doc(hidden)]
+pub fn source_size(source: &str, context: &MediaContext) -> f32 {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    loop {
+        let size = parser
+            .parse_until_before(Delimiter::Comma, |entry| {
+                Ok::<_, cssparser::ParseError<'_, ()>>(source_size_entry(entry, context))
+            })
+            .ok()
+            .flatten();
+        if let Some(size) = size {
+            return size;
+        }
+        if parser.next().is_err() {
+            return context.viewport_width as f32;
+        }
+    }
+}
+
+/// `<media-condition>? <source-size-value>`: the size of one entry of a
+/// `sizes` attribute when it parses and its condition, if any, matches.
+///
+/// The size is the entry's last component value, so an entry that is one
+/// `calc()` is a size, not a condition of unknown meaning.
+fn source_size_entry(input: &mut Parser<'_, '_>, context: &MediaContext) -> Option<f32> {
+    let size = |input: &mut Parser<'_, '_>| -> Option<f32> {
+        let size = source_size_value(input, context)?;
+        input.expect_exhausted().ok()?;
+        (size >= 0.0).then_some(size)
+    };
+    if let Ok(size) = input.try_parse(|input| size(input).ok_or(())) {
+        return Some(size);
+    }
+    let condition = parse_media_condition(input).ok()?;
+    let size = size(input)?;
+    MediaQuery::Condition(condition)
+        .matches(context)
+        .then_some(size)
+}
+
+/// `<source-size-value>`: a `<length>` or a `calc()` without percentages, in
+/// CSS px. `lh` has no basis here.
+fn source_size_value(input: &mut Parser<'_, '_>, context: &MediaContext) -> Option<f32> {
+    let initial = ComputedLength(INITIAL_FONT_SIZE_PX);
+    let resolve = ResolveContext::new(initial).with_viewport(
+        context.viewport_width as f32,
+        context.viewport_height as f32,
+    );
+    if let Some(calc) = parse_relative_calc_function(input) {
+        return (calc.percent == 0.0)
+            .then(|| relative_calc_length_px(calc, initial, None, &resolve, |_, _| None))
+            .flatten();
+    }
+    parse_length_allow_negative(input)
+        .filter(|length| !matches!(length, Length::Lh(_) | Length::Rlh(_)))
+        .map(|length| resolve_length(length, initial, None, &resolve).0)
 }
 
 // ---------------------------------------------------------------------------

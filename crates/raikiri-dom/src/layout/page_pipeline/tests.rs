@@ -14354,6 +14354,7 @@ fn a_hidden_root_does_not_resolve_its_images() {
             images: Some(crate::PageImageOptions {
                 resolver: &Fails,
                 base_url: None,
+                media_context: None,
             }),
             control: Some(&PageLayoutControl::default()),
             ..Default::default()

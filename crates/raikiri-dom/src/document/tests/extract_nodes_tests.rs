@@ -16,9 +16,9 @@ fn listed_nodes_are_copied_in_order_with_their_tree_and_data() {
     let img = doc.append_element(Some(kept), "img", None::<&str>);
     let url = url::Url::parse("https://example.test/a.png").expect("url");
     doc.resolved_image_urls
-        .insert(img, ("a.png".to_owned(), url.clone()));
+        .insert(img, ("a.png".to_owned(), url.clone(), 1.0));
     doc.resolved_image_urls
-        .insert(after, ("b.png".to_owned(), url.clone()));
+        .insert(after, ("b.png".to_owned(), url.clone(), 1.0));
     let fragment = doc.append_element(None, "template-contents", None::<&str>);
     doc.nodes[kept]
         .data
