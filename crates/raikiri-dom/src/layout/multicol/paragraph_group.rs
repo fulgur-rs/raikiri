@@ -875,7 +875,7 @@ pub(super) fn balance(
         BlockEdges::Refused,
         SizedBoxes::All,
         None,
-        false,
+        true,
     )?;
     // A chain of wrappers around one paragraph keeps the strategies of such
     // chains, unless the wrappers hold room that those cannot place, a sized
@@ -912,7 +912,11 @@ fn balanced(
     context: FragmentationContext,
     ceiling: f32,
 ) -> Option<(Group, f32)> {
-    let divided = divided_height(paragraphs, context, FlowCursor::default(), ceiling)?;
+    // A forced break between the paragraphs leaves no height that divides
+    // them evenly, so the search below finds the least height that holds
+    // them, starting from none.
+    let divided =
+        divided_height(paragraphs, context, FlowCursor::default(), ceiling).unwrap_or(0.0);
     // A monolithic box that a column could overflow sets the least height
     // the columns balance to: the columns are at least as tall as it, as
     // Chromium balances them, so no trial holds it by overflowing.
@@ -1301,8 +1305,8 @@ enum SizedBoxes {
 /// lines, and the start and end of a wrapper may have padding: both are room
 /// besides the paragraphs, which [`Collected::room`] notes.
 /// With `forced`, the flow may have forced column breaks between its boxes,
-/// which [`Paragraph::break_before`] notes; only the page stream, whose fill
-/// starts a column at each, passes that.
+/// which [`Paragraph::break_before`] notes; the fill of the streams that pass
+/// that starts a column at each.
 fn collect(
     tree: &LayoutSession<'_>,
     flow: &Flow,

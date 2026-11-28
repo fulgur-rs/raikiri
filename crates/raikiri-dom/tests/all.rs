@@ -43,6 +43,7 @@ mod column_flex_first_line;
 mod column_flex_hypothetical_height;
 mod column_flex_replaced_width;
 mod column_flex_stretch_margins;
+mod column_forced_breaks_balance;
 mod column_reverse_page_fragments;
 mod column_wrapper_room;
 mod constrained_ancestor_paragraph_tests;
