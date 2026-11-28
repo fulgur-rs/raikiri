@@ -324,10 +324,12 @@ pub(in crate::layout::multicol) fn paginate(
                     },
                     sliced.then_some((taken, size.height)),
                 ),
+                // The clip covers the column, and the box where its margins
+                // move it past the column's edges.
                 clip: (own.len() > 1).then_some(FragmentRect {
-                    x,
+                    x: x + offset.min(0.0),
                     y: top,
-                    width: size.width.max(context.column_width),
+                    width: (offset + size.width).max(context.column_width) - offset.min(0.0),
                     height: heights[row],
                 }),
                 index,
