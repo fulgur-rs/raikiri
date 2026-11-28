@@ -40,6 +40,9 @@ pub(crate) struct LineGapNote {
     pub(crate) follows: bool,
 }
 
+/// The grid lines of each in-flow item of a grid container, by item.
+pub(crate) type ItemLines = Vec<(usize, crate::layout::taffy_adapter::GridItemLines)>;
+
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
@@ -170,6 +173,16 @@ pub(crate) struct LayoutContext {
     /// Provisional row-area heights by grid owner and in-flow item. An empty
     /// entry marks a grid whose row measurement is already running.
     pub(crate) grid_row_rooms: Vec<(usize, Vec<(usize, f32)>)>,
+    /// The length added to the left margin of each grid item that shares a
+    /// baseline with others along its column while its container is laid
+    /// out, so that the column holds the room the alignment shifts it by
+    /// (see `grid_baseline_shims` in
+    /// [`crate::layout::taffy_adapter::algorithms`]).
+    pub(crate) grid_baseline_shims: HashMap<usize, f32>,
+    /// The grid lines of the in-flow items of each grid container whose
+    /// baseline shims were looked for, by container and the input it was laid
+    /// out under, so that the layout finding them runs once for each.
+    pub(crate) grid_item_lines: Vec<(usize, crate::layout::protocol::LayoutInput, ItemLines)>,
     /// Owners whose size-only layout must also provide a first baseline.
     pub(crate) baseline_measure_owners: Vec<usize>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,

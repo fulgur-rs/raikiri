@@ -10,15 +10,16 @@ use super::GridInfo;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::TaffyChildIter;
-use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
+use crate::layout::protocol::{AvailableSpace, LayoutInput, NodeId, RunMode};
 use crate::layout::style_views::ReadRole;
 use crate::layout::table;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::TaffyStyle;
+use taffy::util::ResolveOrZero;
 use taffy::{
-    CacheTree, DetailedGridInfo, DetailedLayoutInfo, LayoutBlockContainer, LayoutContainingBlock,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree, TraversePartialTree,
-    TraverseTree,
+    CacheTree, CoreStyle, DetailedGridInfo, DetailedLayoutInfo, LayoutBlockContainer,
+    LayoutContainingBlock, LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree,
+    TraversePartialTree, TraverseTree,
 };
 
 /// The children of a node, as the library's node ids.
@@ -104,7 +105,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
         let node = NodeId::from_taffy(node_id);
-        let inputs = LayoutInput::from_taffy(inputs);
+        let inputs = offered_without_shim(self, node, LayoutInput::from_taffy(inputs));
         let reversed = self
             .context
             .native_overflow
@@ -204,12 +205,19 @@ impl LayoutGridContainer for LayoutSession<'_> {
         // zero of CSS Grid 1 §6.6. The item it sizes the tracks with is built
         // from the first read, so only that read hides the ratio; the item's
         // own layout and its alignment still use it.
-        if scrolls_at_a_carried_size(&view)
+        let view = if scrolls_at_a_carried_size(&view)
             && super::placement_read(&self.context, self.taffy_parent_of(item), item)
         {
-            return TaffyStyle::new(view.with_hidden_aspect_ratio());
+            view.with_hidden_aspect_ratio()
+        } else {
+            view
+        };
+        // An item that shares a baseline along its column is sized and
+        // placed with the room its alignment shifts it by.
+        match self.context.grid_baseline_shims.get(&item) {
+            Some(&shim) => TaffyStyle::new(view).with_extra_margin_left(shim),
+            None => TaffyStyle::new(view),
         }
-        TaffyStyle::new(view)
     }
 
     fn set_detailed_grid_info(
@@ -300,4 +308,35 @@ fn scrolls_at_a_carried_size(view: &raikiri_layout_style::LayoutStyleView<'_>) -
     let overflow = view.overflow();
     (size.width.is_auto() && !size.height.is_auto() && overflow.x.is_scroll_container())
         || (size.height.is_auto() && !size.width.is_auto() && overflow.y.is_scroll_container())
+}
+
+/// The input a grid item is laid out under, where its left margin carries a
+/// baseline shim: the item is offered the space of its grid area less its own
+/// margins, as it is without the shim, for the shim only widens the columns
+/// and shifts the item.
+pub(crate) fn offered_without_shim(
+    session: &LayoutSession<'_>,
+    node: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node);
+    if let Some(&shim) = session.context.grid_baseline_shims.get(&idx)
+        && let AvailableSpace::Definite(width) = inputs.available_space.width
+    {
+        // The algorithm clamps the space at zero, where the shim alone no
+        // longer gives it back: take it from the grid area instead, which
+        // is the item's percentage basis.
+        let offered = match inputs.parent_size.width {
+            Some(area) if width <= 0.0 => {
+                let margin = TaffyStyle::new(session.physical_style(idx)).margin();
+                let calc = crate::layout::dispatch::resolve_calc;
+                let own = margin.left.resolve_or_zero(Some(area), calc)
+                    + margin.right.resolve_or_zero(Some(area), calc);
+                (area - own).max(0.0)
+            }
+            _ => width + shim,
+        };
+        inputs.available_space.width = AvailableSpace::Definite(offered);
+    }
+    inputs
 }

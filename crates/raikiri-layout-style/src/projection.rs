@@ -42,13 +42,26 @@ pub struct TaffyStyle<'a>(
     /// algorithm replay that finds the room its line gives it. The item's
     /// inset is dropped as well.
     Option<crate::values::AlignSelf>,
+    /// The length added to the left margin (see
+    /// [`Self::with_extra_margin_left`]).
+    f32,
 );
 
 impl<'a> TaffyStyle<'a> {
     /// Project `view` onto Taffy's style traits.
     #[inline]
     pub const fn new(view: LayoutStyleView<'a>) -> Self {
-        Self(view, None, None)
+        Self(view, None, None, 0.0)
+    }
+
+    /// Add `extra` to the left margin, which must be an absolute length,
+    /// for the algorithm to size and place the box with: a grid item that
+    /// shares a baseline with the other items of its column needs the room
+    /// its alignment shifts it by in the size of the column.
+    #[inline]
+    pub const fn with_extra_margin_left(mut self, extra: f32) -> Self {
+        self.3 = extra;
+        self
     }
 
     /// Override only flex line alignment for an algorithm replay.
@@ -193,10 +206,19 @@ impl CoreStyle for TaffyStyle<'_> {
         size -> taffy::Size<taffy::Dimension>,
         min_size -> taffy::Size<taffy::LengthPercentageAuto>,
         max_size -> taffy::Size<taffy::LengthPercentageAuto>,
-        margin -> taffy::Rect<taffy::LengthPercentageAuto>,
         padding -> taffy::Rect<taffy::LengthPercentage>,
         border -> taffy::Rect<taffy::LengthPercentage>,
         contain -> taffy::Contain,
+    }
+    #[inline]
+    fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+        let mut margin: taffy::Rect<taffy::LengthPercentageAuto> = self.0.margin().to_taffy();
+        if self.3 != 0.0
+            && let taffy::ExpandedLengthPercentageAuto::Length(left) = margin.left.expand()
+        {
+            margin.left = taffy::LengthPercentageAuto::length(left + self.3);
+        }
+        margin
     }
     #[inline]
     fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {

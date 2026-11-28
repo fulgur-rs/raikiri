@@ -2353,3 +2353,209 @@ fn rtl_wrap_lines_with_a_relative_item_share_the_line() {
         ],
     );
 }
+
+#[test]
+fn grid_columns_hold_the_baseline_shims_of_their_items() {
+    // An intrinsically sized column takes the room the alignment shifts its
+    // items by: the widest left margin of a group sharing a baseline before
+    // the left border edges it lines up (Chromium). Values are Chromium's.
+    let cases: &[(&str, &[(&str, Rect)])] = &[
+        // A shim wider than the area still leaves the item the area less its
+        // own margins.
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:200px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXX XXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 20.0)),
+                ("a", (208.0, 8.0, 20.0, 10.0)),
+                ("b", (208.0, 18.0, 90.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:200px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;margin-left:20px;margin-right:10%">XXXX XXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (208.0, 8.0, 20.0, 10.0)),
+                ("b", (208.0, 18.0, 70.0, 20.0)),
+            ],
+        ),
+        // A percentage margin resolves against the grid area, so the group
+        // takes no shim and a column wider than the items keeps its size.
+        (
+            r#"<div id=g style="display:grid;width:200px;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:10%;width:20px;height:10px"></div><div id=b style="justify-self:baseline;margin-left:5px;width:30px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 200.0, 20.0)),
+                ("a", (28.0, 8.0, 20.0, 10.0)),
+                ("b", (28.0, 18.0, 30.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:grid;width:200px;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:10%;width:20px;height:10px"></div><div id=b style="justify-self:baseline;margin-left:5px;width:30px;height:10px"></div><div id=c style="justify-self:baseline;width:30px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 200.0, 30.0)),
+                ("a", (18.0, 8.0, 20.0, 10.0)),
+                ("b", (18.0, 18.0, 30.0, 10.0)),
+                ("c", (18.0, 28.0, 30.0, 10.0)),
+            ],
+        ),
+        // A column the items do not size still offers each item its whole
+        // area: the shim only shifts the item.
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXXX XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 100.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:fit-content(100px)"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXXX XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 100.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto 40px"><div id=a style="justify-self:baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto 40px"><div id=a style="justify-self:last baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:last baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:min-content 40px"><div id=a style="justify-self:baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:max-content 40px"><div id=a style="justify-self:baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:fit-content(200px) 40px"><div id=a style="justify-self:baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:fit-content(200px) 40px"><div id=a style="justify-self:last baseline;margin-left:30px;margin-right:5px;width:20px;height:20px"></div><div id=x style="height:10px"></div><div id=b style="justify-self:last baseline;width:50px;height:20px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 120.0, 40.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("x", (88.0, 8.0, 40.0, 10.0)),
+                ("b", (38.0, 28.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px">XX</div><div id=b style="justify-self:baseline">XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 80.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=s style="grid-column:span 2;width:10px;height:5px"></div><div id=b style="justify-self:baseline;width:50px;height:20px;grid-column:1"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 80.0, 45.0)),
+                ("a", (38.0, 8.0, 20.0, 20.0)),
+                ("s", (8.0, 28.0, 10.0, 5.0)),
+                ("b", (38.0, 33.0, 50.0, 20.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;direction:rtl;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 80.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=c style="justify-self:baseline;margin-left:10px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:10px"></div><div id=d style="justify-self:baseline;margin-left:25px;width:5px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 125.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("c", (113.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+                ("d", (113.0, 18.0, 5.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:-10px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 50.0, 20.0)),
+                ("a", (8.0, 8.0, 20.0, 10.0)),
+                ("b", (8.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto;justify-items:baseline"><div id=a style="margin-left:30px;width:20px;height:10px"></div><div id=b style="width:50px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 80.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:last baseline;width:50px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 50.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (8.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px;position:relative;left:5px"></div><div id=b style="justify-self:baseline;width:50px;height:10px"></div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 80.0, 20.0)),
+                ("a", (43.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=w style="display:flex"><div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;width:50px;height:10px"></div></div><div id=n style="width:10px;height:10px"></div></div>"#,
+            &[
+                ("w", (8.0, 8.0, 784.0, 20.0)),
+                ("g", (8.0, 8.0, 80.0, 20.0)),
+                ("a", (38.0, 8.0, 20.0, 10.0)),
+                ("b", (38.0, 18.0, 50.0, 10.0)),
+                ("n", (88.0, 8.0, 10.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:auto"><div id=a style="justify-self:baseline;margin-left:30px">XX XX XX XX</div><div id=b style="justify-self:baseline">XXXXX XXXXX XXXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 200.0, 20.0)),
+                ("a", (38.0, 8.0, 110.0, 10.0)),
+                ("b", (38.0, 18.0, 170.0, 10.0)),
+            ],
+        ),
+    ];
+    for (body, expected) in cases {
+        check(body, expected);
+    }
+}

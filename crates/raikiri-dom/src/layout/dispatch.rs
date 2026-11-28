@@ -1736,6 +1736,7 @@ pub(crate) mod grid_baseline;
 mod grid_oof;
 mod grid_ratio_content;
 mod inline_baseline;
+pub(crate) use inline_baseline::{grid_baseline_shims, grid_shim_candidates};
 mod intrinsic_scopes;
 pub(super) mod table_items;
 use intrinsic_scopes::{

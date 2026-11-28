@@ -23,9 +23,19 @@ use taffy::{
 pub(crate) fn grid_item_row_rooms(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
+    inputs: LayoutInput,
+) -> Vec<(NodeId, f32)> {
+    let inputs = super::with_stretch_width(tree, node, inputs);
+    super::with_grid_baseline_shims(tree, node, inputs, |tree| {
+        measure_row_rooms(tree, node, inputs)
+    })
+}
+
+fn measure_row_rooms(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
     mut inputs: LayoutInput,
 ) -> Vec<(NodeId, f32)> {
-    inputs = super::with_stretch_width(tree, node, inputs);
     inputs.run_mode = RunMode::PerformLayout;
     let mut probe = RowMeasure::new(tree, node, false);
     let items = TraversePartialTree::child_ids(&probe, node.into_taffy())
@@ -48,6 +58,46 @@ pub(crate) fn grid_item_row_rooms(
         .enumerate()
         .filter_map(|(index, item)| report.item_area_size(index).map(|area| (item, area.height)))
         .collect()
+}
+
+/// The grid lines of each in-flow item of the grid container `node`, from a
+/// layout of the container whose writes stay in the probe.
+pub(crate) fn grid_item_lines(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    mut inputs: LayoutInput,
+) -> Vec<(usize, super::super::GridItemLines)> {
+    let idx = usize::from(node);
+    if let Some((_, _, lines)) = tree
+        .context
+        .grid_item_lines
+        .iter()
+        .find(|(owner, input, _)| *owner == idx && *input == inputs)
+    {
+        return lines.clone();
+    }
+    let key = inputs;
+    inputs = super::with_stretch_width(tree, node, inputs);
+    inputs.run_mode = RunMode::PerformLayout;
+    let mut probe = RowMeasure::new(tree, node, false);
+    let items = TraversePartialTree::child_ids(&probe, node.into_taffy())
+        .filter(|&child| {
+            let style = probe.get_grid_child_style(child);
+            style.box_generation_mode() != taffy::BoxGenerationMode::None
+                && !style.position().is_out_of_flow()
+        })
+        .map(|child| usize::from(NodeId::from_taffy(child)))
+        .collect::<Vec<_>>();
+    crate::layout::taffy_adapter::placing_grid(
+        &mut probe,
+        |probe| &probe.tree.context,
+        usize::from(node),
+        |probe| taffy::compute_grid_layout(probe, node.into_taffy(), inputs.into_taffy()),
+    );
+    let report = probe.report.expect("grid item lines report the tracks");
+    let lines: Vec<_> = items.into_iter().zip(report.items()).collect();
+    tree.context.grid_item_lines.push((idx, key, lines.clone()));
+    lines
 }
 
 /// Run a size query with native placement writes isolated. A baseline query
@@ -258,9 +308,13 @@ impl LayoutPartialTree for RowMeasure<'_, '_> {
         node: taffy::NodeId,
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
-        let mut inputs = LayoutInput::from_taffy(inputs);
-        let requested = inputs;
         let node = NodeId::from_taffy(node);
+        let mut inputs = super::super::tree::offered_without_shim(
+            self.tree,
+            node,
+            LayoutInput::from_taffy(inputs),
+        );
+        let requested = inputs;
         let baseline = self.baseline_request(usize::from(node), &inputs);
         let placed = inputs.run_mode == RunMode::PerformLayout;
         inputs.run_mode = RunMode::ComputeSize;
