@@ -460,28 +460,39 @@ fn own_height(
             height: layout.size.height,
             tail: 0.0,
             end: after,
+            truncated: 0.0,
             follows_content: true,
         });
     }
+    // Boxes that reach past the height overflow it. A bottom margin that
+    // does is truncated: the wrapper still ends at its height (Chromium).
     let tail = room - end_of(true);
-    (tail.is_finite() && tail >= -SLICE_MIN_ROOM).then_some(OwnHeight {
+    (tail.is_finite() && room - end_of(false) >= -SLICE_MIN_ROOM).then_some(OwnHeight {
         open,
         height: layout.size.height,
         tail: tail.max(0.0),
         end: after,
+        truncated: (-tail).max(0.0),
         follows_content: false,
     })
 }
 
 /// Whether the `height` of `id` computes to `auto`: it is `auto`, or a
-/// percentage of a parent whose height is not a length (CSS 2, 10.5).
+/// percentage of a parent whose height is not definite (CSS 2, 10.5).
 fn computes_to_auto_height(tree: &LayoutSession<'_>, id: usize) -> bool {
     let height = style_of(tree, id).size().height;
     height.is_auto()
         || resolve_dimension(height, None).is_none()
-            && tree.parent_of(id).is_none_or(|parent| {
-                style_dimension_length(style_of(tree, parent).size().height).is_none()
-            })
+            && tree
+                .parent_of(id)
+                .is_none_or(|parent| !has_definite_height(tree, parent))
+}
+
+/// Whether the `height` of `id` is a length, or a percentage of a parent
+/// whose height is definite in turn.
+fn has_definite_height(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let height = style_of(tree, id).size().height;
+    style_dimension_length(height).is_some() || !computes_to_auto_height(tree, id)
 }
 
 /// The height of a wrapper that has one of its own, as the columns take it.
@@ -497,6 +508,9 @@ pub(super) struct OwnHeight {
     tail: f32,
     /// The padding and border below its last box.
     end: f32,
+    /// How much of the bottom margin of its last box reaches past the
+    /// height, which the wrapper truncates.
+    truncated: f32,
     /// Whether the wrapper is as tall as its boxes, as one whose `min-height`
     /// or `max-height` does not bind is: its end is that of a wrapper with no
     /// height of its own, and the margin below its last box collapses
@@ -518,8 +532,7 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
             return None;
         }
         // The room a height of its own leaves below its boxes is cut at a
-        // column end as such padding is. A zero height or minimum, or a
-        // maximum alone, leaves none.
+        // column end as such padding is. A zero height leaves none.
         if has_block_edges(tree, wrapper) || may_leave_room_below_boxes(tree, wrapper) {
             room += 1;
         }
@@ -544,11 +557,16 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
     Some(if paragraphs > 0 { paragraphs + room } else { 0 })
 }
 
-/// Whether the `height` or `min-height` of `id` is a length or percentage
-/// other than zero, which can leave room below its boxes.
+/// Whether the `height`, `min-height` or `max-height` of `id` is a length or
+/// percentage other than zero. Such a wrapper may leave room below its
+/// boxes, and one as tall as its boxes still ends as the flow places it.
 fn may_leave_room_below_boxes(tree: &LayoutSession<'_>, id: usize) -> bool {
     let style = style_of(tree, id);
-    let heights: [Dimension; 2] = [style.size().height, style.min_size().height.into()];
+    let heights: [Dimension; 3] = [
+        style.size().height,
+        style.min_size().height.into(),
+        style.max_size().height.into(),
+    ];
     heights
         .iter()
         .any(|&value| resolve_dimension(value, Some(1.0)).is_some_and(|v| v > 0.0))
@@ -1304,6 +1322,12 @@ fn collect(
             let own = flow.tails[index].filter(|own| !own.follows_content);
             let tail = own.map(|own| own.tail);
             let (before, after) = block_edges(&layout);
+            // A negative margin above the end cancels the part of the margin
+            // below the last box that the height truncates.
+            let margin_top = match own {
+                Some(own) if role == Role::Close => margin_top - own.truncated,
+                _ => margin_top,
+            };
             let edge = if matches!(role, Role::Open(_)) {
                 before
             } else {

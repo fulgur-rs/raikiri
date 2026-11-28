@@ -9583,3 +9583,63 @@ fn a_percentage_height_of_a_wrapper_in_one_with_an_auto_height_follows_its_boxes
         [(0, 10, 0), (10, 12, 1)]
     );
 }
+
+#[test]
+fn a_percentage_height_of_a_percentage_of_a_definite_height_holds_the_last_bottom_margin() {
+    // Chromium: 25% of the outer wrapper's 200% of the 100px container is a
+    // 50px height of its own, which the 50px paragraph fills, so its 10px
+    // bottom margin stays inside the wrapper and the next paragraph starts
+    // 50px down: 5 of its 14 lines fit the first column.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("margin:0;font:10px/10px Ahem;orphans:1;widows:1"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let outer = doc.append_element(Some(container), "div", Some("display:block;height:200%"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:block;height:25%"));
+    let paragraph =
+        doc.append_element(Some(inner), "div", Some("display:block;margin-bottom:10px"));
+    for line in 0..5 {
+        doc.append_text(paragraph, "x");
+        if line < 4 {
+            doc.append_element(Some(paragraph), "br", None::<&str>);
+        }
+    }
+    let next = doc.append_element(Some(outer), "div", Some("display:block"));
+    for line in 0..14 {
+        doc.append_text(next, "y");
+        if line < 13 {
+            doc.append_element(Some(next), "br", None::<&str>);
+        }
+    }
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(paragraph_pieces(&doc, next).0, [(0, 5, 0), (5, 14, 1)]);
+}
+
+#[test]
+fn a_wrapper_with_only_a_maximum_height_that_does_not_bind_breaks_between_columns() {
+    // Chromium: the 200px maximum leaves the wrapper as tall as its 12 lines,
+    // which break after 10 of them into the second column.
+    let (doc, wrapper, paragraph, _) = sized_wrapper_columns(
+        TWO_FILLED_COLUMNS,
+        "display:block;max-height:200px;background:red",
+        "display:block",
+        12,
+        0,
+    );
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        [(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 20.0)]
+    );
+    assert_eq!(
+        paragraph_pieces(&doc, paragraph).0,
+        [(0, 10, 0), (10, 12, 1)]
+    );
+}
