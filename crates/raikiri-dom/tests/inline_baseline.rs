@@ -2360,6 +2360,24 @@ fn grid_columns_hold_the_baseline_shims_of_their_items() {
     // items by: the widest left margin of a group sharing a baseline before
     // the left border edges it lines up (Chromium). Values are Chromium's.
     let cases: &[(&str, &[(&str, Rect)])] = &[
+        // A shim wider than the area still leaves the item the area less its
+        // own margins.
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:200px;width:20px;height:10px"></div><div id=b style="justify-self:baseline">XXXX XXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 20.0)),
+                ("a", (208.0, 8.0, 20.0, 10.0)),
+                ("b", (208.0, 18.0, 90.0, 10.0)),
+            ],
+        ),
+        (
+            r#"<div id=g style="display:inline-grid;grid-template-columns:100px"><div id=a style="justify-self:baseline;margin-left:200px;width:20px;height:10px"></div><div id=b style="justify-self:baseline;margin-left:20px;margin-right:10%">XXXX XXXX</div></div>"#,
+            &[
+                ("g", (8.0, 8.0, 100.0, 30.0)),
+                ("a", (208.0, 8.0, 20.0, 10.0)),
+                ("b", (208.0, 18.0, 70.0, 20.0)),
+            ],
+        ),
         // A percentage margin resolves against the grid area, so the group
         // takes no shim and a column wider than the items keeps its size.
         (

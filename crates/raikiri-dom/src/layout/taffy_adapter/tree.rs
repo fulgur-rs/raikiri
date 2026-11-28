@@ -15,10 +15,11 @@ use crate::layout::style_views::ReadRole;
 use crate::layout::table;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::TaffyStyle;
+use taffy::util::ResolveOrZero;
 use taffy::{
-    CacheTree, DetailedGridInfo, DetailedLayoutInfo, LayoutBlockContainer, LayoutContainingBlock,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree, TraversePartialTree,
-    TraverseTree,
+    CacheTree, CoreStyle, DetailedGridInfo, DetailedLayoutInfo, LayoutBlockContainer,
+    LayoutContainingBlock, LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree,
+    TraversePartialTree, TraverseTree,
 };
 
 /// The children of a node, as the library's node ids.
@@ -318,10 +319,24 @@ pub(crate) fn offered_without_shim(
     node: NodeId,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    if let Some(&shim) = session.context.grid_baseline_shims.get(&usize::from(node))
+    let idx = usize::from(node);
+    if let Some(&shim) = session.context.grid_baseline_shims.get(&idx)
         && let AvailableSpace::Definite(width) = inputs.available_space.width
     {
-        inputs.available_space.width = AvailableSpace::Definite(width + shim);
+        // The algorithm clamps the space at zero, where the shim alone no
+        // longer gives it back: take it from the grid area instead, which
+        // is the item's percentage basis.
+        let offered = match inputs.parent_size.width {
+            Some(area) if width <= 0.0 => {
+                let margin = TaffyStyle::new(session.physical_style(idx)).margin();
+                let calc = crate::layout::dispatch::resolve_calc;
+                let own = margin.left.resolve_or_zero(Some(area), calc)
+                    + margin.right.resolve_or_zero(Some(area), calc);
+                (area - own).max(0.0)
+            }
+            _ => width + shim,
+        };
+        inputs.available_space.width = AvailableSpace::Definite(offered);
     }
     inputs
 }
