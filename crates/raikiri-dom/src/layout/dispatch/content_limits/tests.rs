@@ -2018,7 +2018,9 @@ fn flex_and_grid_containers_honor_intrinsic_min_max_height_values() {
                     display,
                     &format!("width:40px;height:100px;max-height:{keyword}"),
                 ),
-                (40.0, 20.0),
+                // The `auto` row of the grid stretches to its stated height,
+                // which it keeps against a keyword maximum.
+                (40.0, if display == "grid" { 100.0 } else { 20.0 }),
                 "display:{display};max-height:{keyword}"
             );
         }
