@@ -2855,16 +2855,22 @@ fn push_wrapper_pieces(
     // outer wrapper's piece there, which paints before it.
     let inside_pieces = outer.is_some_and(|outer| !outer.by_column.is_empty());
     let mut own = WrapperPieces::single(first_fragment);
-    if !(paragraph_group::paints_pieces(tree, wrapper) || inside_pieces) || end.0 <= start.0 {
+    // Boxes that overflow the wrapper's height reach columns past its end,
+    // where it has pieces with no height that hold them.
+    let last = placement
+        .overflow_column
+        .map_or(end.0, |column| column.max(end.0));
+    if !(paragraph_group::paints_pieces(tree, wrapper) || inside_pieces) || last <= start.0 {
         return Some(own);
     }
     let first = tree.fragment_tree.fragments[first_fragment];
     let column_top = first.rect.y - start.1;
-    let count = end.0 - start.0 + 1;
-    let heights: Vec<f32> = (start.0..=end.0)
+    let count = last - start.0 + 1;
+    let heights: Vec<f32> = (start.0..=last)
         .map(|column| {
             let top = if column == start.0 { start.1 } else { 0.0 };
             let bottom = match placement.content_end {
+                _ if column > end.0 => top,
                 _ if column == end.0 => end.1,
                 Some((content_column, y)) if column == content_column => y.min(column_height),
                 // Columns past the one the content ends in hold none of it.
@@ -2894,16 +2900,19 @@ fn push_wrapper_pieces(
         } else {
             0.0
         };
-        let below = if index + 1 == count {
+        // The pieces from the column the wrapper ends in on leave their
+        // ends open too: the boxes that overflow its height go on there.
+        let open_end = column >= end.0;
+        let below = if open_end {
             paragraph_group::BLOCK_INK_REACH
         } else {
             0.0
         };
         // A piece that ends above its column's end is cut there.
-        let window = if index + 1 < count {
-            (top + height).min(column_height)
-        } else {
+        let window = if open_end {
             column_height
+        } else {
+            (top + height).min(column_height)
         };
         let fragment = crate::fragment::LayoutFragment {
             fragmentainer: first.fragmentainer + index,
@@ -3138,6 +3147,7 @@ fn sliced_leaf_placement(
         sliced: true,
         moved_whole: false,
         content_end: None,
+        overflow_column: None,
     })
 }
 

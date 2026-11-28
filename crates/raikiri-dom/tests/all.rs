@@ -144,6 +144,7 @@ mod multicol_out_of_flow_children;
 mod multicol_out_of_flow_on_lines;
 mod multicol_page_break_values;
 mod multicol_scroll_container;
+mod multicol_sized_wrapper;
 mod multicol_spanner_in_inline;
 mod named_page_float_marker;
 mod negative_abspos_print;

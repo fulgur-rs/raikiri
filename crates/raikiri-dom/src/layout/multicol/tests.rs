@@ -10604,3 +10604,54 @@ fn a_block_among_lines_that_fits_its_column_again_forgets_its_columns() {
     assert!(pieces_of(&doc, block).is_empty());
     assert!(doc.nodes[block].ifc_multicol_fragments().is_none());
 }
+
+#[test]
+fn the_pieces_of_a_wrapper_whose_boxes_overflow_its_height_do_not_clip_them() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:300px;height:20px;columns:3;column-gap:0;column-fill:auto"),
+    );
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;height:10px;background:red"),
+    );
+    let content = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:50px;background:blue"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The wrapper ends 10px down its first column, and the box it holds goes
+    // on through the next two: each piece leaves the whole of its column to
+    // what overflows there.
+    let pieces: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == wrapper)
+        .map(|fragment| {
+            let clip = fragment.fragmentainer_clip.expect("a clip");
+            (fragment.fragmentainer, clip.rect.y, clip.rect.height)
+        })
+        .collect();
+    assert_eq!(pieces.len(), 3, "{pieces:?}");
+    for (column, y, height) in pieces {
+        assert!(
+            y <= 0.0 && y + height >= 20.0,
+            "column {column}: clip from {y} by {height}"
+        );
+    }
+    let boxes: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == content)
+        .map(|fragment| fragment.fragmentainer)
+        .collect();
+    assert_eq!(boxes, vec![0, 1, 2]);
+}

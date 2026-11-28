@@ -383,8 +383,9 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
 #[test]
 fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
     let mut differences = Vec::new();
-    // The widths are not listed: this strategy places a wrapper by the width
-    // its column gives it, as the column stream does.
+    // The widths are not compared: without the avoided break the planner
+    // places the wrapper at the width of its column, as Chromium does, while
+    // the avoided break leaves it at the unfragmented width.
     for css in ["min-height:60px", "max-height:20px"] {
         let markup = |constraint| {
             format!(
@@ -393,9 +394,14 @@ fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
         };
         let reference = laid_out(&markup(""));
         let mut doc = laid_out(&markup("break-before:avoid-column"));
+        assert_eq!(
+            reference.nodes[id(&reference, "wrapper")].layout.size.width,
+            50.0,
+            "{css}"
+        );
         let geometry = |tree: &Document| {
             (
-                tree.nodes[id(tree, "wrapper")].layout.size,
+                tree.nodes[id(tree, "wrapper")].layout.size.height,
                 tree.nodes[id(tree, "next")].layout.location.y,
             )
         };

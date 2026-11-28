@@ -15,10 +15,6 @@ fn additional_css_break_flexbox_pairs_are_pixel_exact_at_800x600() {
     // Keep this slice limited to cases that Fulgur v0.40.0 also passes.
     // Raikiri/Fulgur both-FAIL cases stay deferred until separately justified.
     let cases = [
-        "css/css-break/flexbox/flex-item-content-overflow-001a.html",
-        "css/css-break/flexbox/flex-item-content-overflow-001b.html",
-        "css/css-break/flexbox/flex-item-content-overflow-002a.html",
-        "css/css-break/flexbox/flex-item-content-overflow-002b.html",
         "css/css-break/flexbox/single-line-row-flex-fragmentation-021.html",
         "css/css-break/flexbox/single-line-row-flex-fragmentation-049.html",
         "css/css-break/flexbox/single-line-row-flex-fragmentation-050.html",

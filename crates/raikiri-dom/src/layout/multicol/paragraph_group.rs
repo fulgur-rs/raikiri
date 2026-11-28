@@ -37,6 +37,10 @@ pub(super) struct Placement {
     /// column, the column and block offset where its content ends: its piece
     /// in that column ends there.
     pub(super) content_end: Option<(usize, f32)>,
+    /// For a wrapper whose boxes overflow its height into columns past the
+    /// one it ends in, the last column they reach: it has a piece with no
+    /// height in each of those columns, which holds what it has there.
+    pub(super) overflow_column: Option<usize>,
 }
 
 impl Group {
@@ -111,6 +115,13 @@ impl Group {
         } else {
             self.height - first.first_y
         };
+        // Boxes that overflow the height of the wrapper can reach columns
+        // past the one it ends in.
+        let overflow_column = (index + 1..close)
+            .filter_map(|inner| self.placements.get(inner)?.as_ref())
+            .map(|inner| inner.last_column)
+            .max()
+            .filter(|&column| column > end_column);
         Some(Placement {
             first_column: first.first_column,
             first_y: first.first_y,
@@ -123,6 +134,7 @@ impl Group {
             sliced: false,
             moved_whole: false,
             content_end,
+            overflow_column,
         })
     }
 
@@ -403,10 +415,9 @@ impl Flow {
 /// A `min-height` or `max-height` that does not bind, or a height that
 /// computes to `auto`, leaves the wrapper as tall as its boxes, which collapse
 /// their margins through it as those of a wrapper with no height of its own
-/// do (Chromium; see [`OwnHeight::follows_content`]). `None` when the flow
-/// cannot model
-/// it: when its boxes reach past its height, whose overflow would go on into
-/// later columns while what follows the wrapper starts where it ends.
+/// do (Chromium; see [`OwnHeight::follows_content`]). Boxes that reach past
+/// the height go on into later columns while what follows the wrapper starts
+/// where it ends. `None` when the geometry of the wrapper is not finite.
 fn own_height(
     tree: &LayoutSession<'_>,
     id: usize,
@@ -464,15 +475,18 @@ fn own_height(
             follows_content: true,
         });
     }
-    // Boxes that reach past the height overflow it. A bottom margin that
-    // does is truncated: the wrapper still ends at its height (Chromium).
+    // Boxes that reach past the height overflow it, and go on into later
+    // columns while what follows the wrapper starts where its height ends.
+    // A bottom margin that reaches past it is truncated: the wrapper still
+    // ends at its height (Chromium).
     let tail = room - end_of(true);
-    (tail.is_finite() && room - end_of(false) >= -SLICE_MIN_ROOM).then_some(OwnHeight {
+    let truncated = end_of(true) - end_of(false).max(room);
+    tail.is_finite().then_some(OwnHeight {
         open,
         height: layout.size.height,
         tail: tail.max(0.0),
         end: after,
-        truncated: (-tail).max(0.0),
+        truncated: truncated.max(0.0),
         follows_content: false,
     })
 }
@@ -527,10 +541,14 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
     // padding or border above or below the boxes of a wrapper, which the columns place
     // as they place a box.
     let mut room = 0;
+    // Whether a wrapper has a height of its own.
+    let mut sized = false;
     while let Some((wrapper, depth)) = pending.pop() {
         if depth >= MAX_WRAPPER_DEPTH || !is_flow_wrapper(tree, wrapper) {
             return None;
         }
+        sized |=
+            may_leave_room_below_boxes(tree, wrapper) && !height_follows_content(tree, wrapper);
         // The room a height of its own leaves below its boxes is cut at a
         // column end as such padding is. A zero height leaves none.
         if has_block_edges(tree, wrapper) || may_leave_room_below_boxes(tree, wrapper) {
@@ -553,8 +571,14 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
         }
     }
     // Room with no paragraph beside it is left to the strategies for boxes
-    // with no lines.
-    Some(if paragraphs > 0 { paragraphs + room } else { 0 })
+    // with no lines, unless a wrapper has a height of its own: only the flow
+    // of the columns slices it and carries the boxes that overflow it on
+    // into later columns.
+    Some(if paragraphs > 0 || sized {
+        paragraphs + room
+    } else {
+        0
+    })
 }
 
 /// Whether the `height`, `min-height` or `max-height` of `id` is a length or
@@ -901,7 +925,9 @@ pub(super) fn balance(
         .iter()
         .flatten()
         .any(|paragraph| paragraph.edge_start + paragraph.edge_end > 0.0);
-    if paragraph_count == 0
+    // A wrapper with a height of its own, which only this plan slices or lets
+    // its boxes overflow into later columns, needs it even with no paragraph.
+    if paragraph_count == 0 && !has_sized_wrapper(&paragraphs)
         || (paragraph_count == 1 && !has_empty && !room && !sized_leaf && !cut_lines && !decorated)
         || !high.is_finite()
         || context.column_count == 0
@@ -933,6 +959,15 @@ fn repeated_edges(paragraphs: &[Option<Paragraph>], context: FragmentationContex
             (paragraph.edge_start + paragraph.edge_end) * pieces.saturating_sub(1) as f32
         })
         .sum()
+}
+
+/// Whether a wrapper among `paragraphs` has a height of its own, which
+/// leaves room below its boxes or lets them overflow into later columns.
+fn has_sized_wrapper(paragraphs: &[Option<Paragraph>]) -> bool {
+    paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.own_height.is_some())
 }
 
 /// The paragraphs placed in the columns of `context` at the height that
@@ -1172,8 +1207,10 @@ pub(super) fn fill_definite(
     )?;
     let flow = flow.has_wrappers().then_some(flow);
     // A chain of wrappers around one paragraph keeps the strategies of such
-    // chains, unless the wrappers hold room that those cannot place.
-    if paragraph_count == 0
+    // chains, unless the wrappers hold room that those cannot place. A
+    // wrapper with a height of its own needs this plan even with no
+    // paragraph, as in balanced columns.
+    if paragraph_count == 0 && !has_sized_wrapper(&paragraphs)
         || flow.is_some() && paragraph_count == 1 && !room
         || !height.is_finite()
         || height <= 0.0
@@ -2481,6 +2518,7 @@ fn fill_chunk_once(
                 sliced: false,
                 moved_whole: false,
                 content_end: None,
+                overflow_column: None,
             });
             continue;
         }
@@ -2517,6 +2555,27 @@ fn fill_chunk_once(
                     // padding.
                     return None;
                 }
+            }
+        }
+        // Boxes that overflow the height of a wrapper go on in the columns
+        // they reach, and the wrapper ends where its height ends, with what
+        // follows it from there (Chromium).
+        if let Some(own) = paragraph.own_height
+            && let Some((start_column, start_y)) =
+                wrapper_start(paragraphs, &placements, own.open, paragraph_index, resume)
+            && height > 0.0
+        {
+            let content = own.height - own.end;
+            let taken = (column - start_column) as f32 * height + top - start_y;
+            if taken > content + SLICE_MIN_ROOM {
+                // The overflow still takes room in the column it ends in.
+                maximum = maximum.max(cursor);
+                let reach = start_y + content;
+                let columns = ((reach / height).ceil() as usize).saturating_sub(1);
+                column = start_column + columns;
+                top = reach - columns as f32 * height;
+                cursor = top;
+                column_has_content = true;
             }
         }
         if paragraph.sliced && paragraph.is_edge() {
@@ -2568,6 +2627,7 @@ fn fill_chunk_once(
                 sliced: true,
                 moved_whole: false,
                 content_end: None,
+                overflow_column: None,
             });
             continue;
         }
@@ -2726,6 +2786,7 @@ fn fill_chunk_once(
                         sliced: true,
                         moved_whole: false,
                         content_end: None,
+                        overflow_column: None,
                     });
                     return Some(Chunk {
                         group: finish_group(placements, height),
@@ -2754,6 +2815,7 @@ fn fill_chunk_once(
                 sliced: true,
                 moved_whole,
                 content_end: None,
+                overflow_column: None,
             });
             continue;
         }
@@ -2962,6 +3024,7 @@ fn fill_chunk_once(
                         sliced: false,
                         moved_whole: false,
                         content_end: None,
+                        overflow_column: None,
                     });
                     return Some(Chunk {
                         group: finish_group(placements, height),
@@ -2989,6 +3052,7 @@ fn fill_chunk_once(
             sliced: false,
             moved_whole: false,
             content_end: None,
+            overflow_column: None,
         });
     }
     let used = maximum.max(if trailing_margin {
