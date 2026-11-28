@@ -882,7 +882,7 @@ pub(super) fn balance(
         tree,
         &flow,
         true,
-        BlockEdges::Refused,
+        BlockEdges::Sliced,
         SizedBoxes::All,
         None,
         true,
@@ -891,13 +891,18 @@ pub(super) fn balance(
     // chains, unless the wrappers hold room that those cannot place, a sized
     // box with no lines stands beside the paragraph, which the columns slice,
     // or the paragraph is a sliced box whose lines a column end may break
-    // between, which only this plan does.
+    // between, or has padding or border above or below its lines, which only
+    // this plan slices.
     let cut_lines = paragraphs
         .iter()
         .flatten()
         .any(|paragraph| paragraph.sliced && !paragraph.held_extents.is_empty());
+    let decorated = paragraphs
+        .iter()
+        .flatten()
+        .any(|paragraph| paragraph.edge_start + paragraph.edge_end > 0.0);
     if paragraph_count == 0
-        || (paragraph_count == 1 && !has_empty && !room && !sized_leaf && !cut_lines)
+        || (paragraph_count == 1 && !has_empty && !room && !sized_leaf && !cut_lines && !decorated)
         || !high.is_finite()
         || context.column_count == 0
     {
@@ -1193,19 +1198,15 @@ fn fill_definite_paragraphs(
         && context.column_count > 0
         && fill(paragraphs, context, height, false).is_some()
     {
-        // The padding and border of the paragraphs are part of what one
-        // column holds.
+        // The ceiling holds the padding and border of each paragraph once;
+        // cloned edges repeat in each further piece, one per line at most.
         let edges: f32 = paragraphs
             .iter()
             .flatten()
+            .filter(|paragraph| paragraph.cloned)
             .map(|paragraph| {
-                // Cloned edges repeat in each piece, one per line at most.
-                let pieces = if paragraph.cloned {
-                    paragraph.extents.len().min(context.column_count)
-                } else {
-                    1
-                };
-                (paragraph.edge_start + paragraph.edge_end) * pieces as f32
+                let pieces = paragraph.extents.len().min(context.column_count);
+                (paragraph.edge_start + paragraph.edge_end) * pieces.saturating_sub(1) as f32
             })
             .sum();
         if let Some((group, balanced)) = balanced(paragraphs, context, ceiling + edges)
@@ -1667,8 +1668,8 @@ fn collect(
         if !height.is_finite() || height <= 0.0 {
             return None;
         }
-        high += height + margin_top.abs() + margin_bottom.abs();
         let (edge_start, edge_end) = block_edges(&layout);
+        high += height + edge_start + edge_end + margin_top.abs() + margin_bottom.abs();
         paragraphs.push(Some(Paragraph {
             break_before: false,
             avoids_before: false,
