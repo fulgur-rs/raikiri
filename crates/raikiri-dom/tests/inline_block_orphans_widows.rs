@@ -648,3 +648,38 @@ fn an_inline_box_that_holds_only_blocks_stacks_them_in_block_flow() {
         ),
     ]);
 }
+
+/// `lines` lines of `A`, then a block 20px tall that holds `#t`, then the
+/// line `C` (`#z`) and `more` lines of `C` more, all inside one span.
+fn lines_around_block(lines: usize, more: usize) -> String {
+    format!(
+        "<span>{}<div style=\"height:20px\"><span id=t>T</span></div>\
+         <span id=z>C</span>{}</span>",
+        vec!["A"; lines].join("<br>"),
+        "<br>C".repeat(more)
+    )
+}
+
+#[test]
+fn a_break_after_the_block_counts_the_block_and_the_lines_before_it() {
+    assert_places(&[
+        // The break before the `C` would leave `A` and the block, two lines
+        // of the three `orphans` asks for: the paragraph moves whole.
+        (
+            paragraph(30, "orphans:3", &lines_around_block(1, 0)),
+            [(1, 35.0), (1, 55.0)],
+        ),
+        // `A`, the block and the first `C` make the orphans; only the last
+        // `C` goes to the next page.
+        (
+            paragraph(10, "widows:1", &lines_around_block(1, 1)),
+            [(0, 45.0), (0, 65.0)],
+        ),
+        // The widows take the block along with the `C`, and the lines of
+        // `A` stay.
+        (
+            paragraph(10, "", &lines_around_block(2, 0)),
+            [(1, 5.0), (1, 25.0)],
+        ),
+    ]);
+}
