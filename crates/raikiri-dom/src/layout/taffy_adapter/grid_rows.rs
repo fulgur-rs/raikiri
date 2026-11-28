@@ -194,9 +194,10 @@ impl RowSizing {
 /// Whether some row of the grid laid out with `style` that holds one of its
 /// `items` in-flow items has an `auto` maximum track size, which
 /// `align-content: normal` and `stretch` grow to fill a definite height (CSS
-/// Grid 1 §12.8). The explicit rows are all there; implicit rows are counted
-/// as there when the items outnumber the explicit cells, as automatic
-/// placement puts them, which an automatic repetition never lets them do.
+/// Grid 1 §12.8). The explicit rows are all there; in a row flow implicit
+/// rows are counted as there when the items outnumber the explicit cells, as
+/// automatic placement puts them, which an automatic repetition never lets
+/// them do.
 pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> bool {
     let style = TaffyStyle::new(*style);
     let stretches = |track: TrackSizingFunction| track.max.is_auto();
@@ -230,7 +231,17 @@ pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> b
         let mut rows = style.grid_auto_rows().peekable();
         rows.peek().is_none() || rows.any(stretches)
     };
-    explicit || items > explicit_cells && implicit()
+    // A column flow places the items that overflow the explicit grid in new
+    // columns, so it makes an implicit row only when there is no explicit one.
+    let makes_implicit_row = if matches!(
+        style.grid_auto_flow(),
+        taffy::GridAutoFlow::Row | taffy::GridAutoFlow::RowDense
+    ) {
+        items > explicit_cells
+    } else {
+        items > 0 && rows == 0
+    };
+    explicit || makes_implicit_row && implicit()
 }
 
 /// The tracks a repetition gives. An automatic one repeats to fill the grid,
