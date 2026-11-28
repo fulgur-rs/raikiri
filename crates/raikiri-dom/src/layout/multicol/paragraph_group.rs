@@ -3061,10 +3061,13 @@ fn push_leaf_pieces(
                 } else {
                     group_y
                 };
+                // A piece before the last ends where the fill ended it, which
+                // is above the end of its column when the edge below the box
+                // goes on alone to the next one.
                 let bottom = if last {
                     group_y + height + BLOCK_INK_REACH
                 } else {
-                    group_y + height
+                    group_y + y + used
                 };
                 inline_open_clip(crate::fragment::FragmentRect {
                     x,

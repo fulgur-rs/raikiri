@@ -1306,6 +1306,30 @@ fn a_sized_box_fills_the_columns_between_its_first_and_last_pieces() {
 }
 
 #[test]
+fn a_sized_box_whose_bottom_border_goes_on_alone_shows_it_in_the_next_column_only() {
+    // The column end would cut the border below the box, so the first piece
+    // ends with its content and the border goes on alone (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:20px;border-bottom:30px solid red'></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 12)
+    ));
+    assert_eq!(
+        columns(&body, ""),
+        [
+            "p0 x0: L1-L8@0",
+            "p0 x100: M1-M8@30",
+            "p1 x0: M9-M10@0",
+            "p1 x100: M11-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, "", "b"),
+        [(0, 0, 160, 180), (0, 100, 0, 30)]
+    );
+}
+
+#[test]
 fn a_sized_box_a_page_end_cuts_stays_in_the_columns_the_pages_cut() {
     // The page fill resumes no box in the middle, so one that a page end
     // cuts leaves the container to the columns that the pages cut, where
