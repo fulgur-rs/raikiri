@@ -14,7 +14,7 @@ use crate::fragment::{FragmentRect, LayoutFragment, MulticolGroup};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_layout_geometry::{Edges, Point};
-use raikiri_layout_style::values::ExpandedLengthPercentage;
+use raikiri_layout_style::values::{ExpandedLengthPercentage, ExpandedLengthPercentageAuto};
 use raikiri_style::property::{BorderCollapseValue, BreakInside, VerticalAlign};
 use std::collections::HashMap;
 
@@ -290,8 +290,29 @@ fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) ->
         && !has_rendered_content(tree, child, false)
 }
 
+/// Whether `child` is a wrapper the stream can place, leaving aside its
+/// insets and what it holds. Its margins on the left or right only move it
+/// along its column: the stream places it past them, at the top level with
+/// [`inline_offset`] and inside another wrapper where the layout of that
+/// wrapper puts it. They are not negative, as the clips of the pieces of a
+/// box inside a wrapper start at the wrapper's left edge.
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
-    block_margins(&style_of(tree, child)).is_some() && is_stream_block(tree, child, true)
+    let style = style_of(tree, child);
+    let margin = style.margin();
+    // A `calc()` margin can be negative for some widths of the containing
+    // block and not for others, so a wrapper with one keeps the other
+    // strategies.
+    let not_negative = |value: LengthPercentageAuto| match value.expand() {
+        ExpandedLengthPercentageAuto::Length(px) | ExpandedLengthPercentageAuto::Percent(px) => {
+            px >= 0.0
+        }
+        ExpandedLengthPercentageAuto::Auto => true,
+        ExpandedLengthPercentageAuto::Calc(_) => false,
+    };
+    block_margins_beside_inline(&style).is_some()
+        && not_negative(margin.left)
+        && not_negative(margin.right)
+        && is_stream_block(tree, child, true)
 }
 
 /// [`is_plain_block`] for a box that may hold lines of text, and whose insets

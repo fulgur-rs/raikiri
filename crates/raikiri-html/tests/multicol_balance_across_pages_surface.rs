@@ -644,3 +644,98 @@ fn boxes_with_inline_margins_in_a_wrapper_fill_each_page_in_column_order() {
         ["c=15,0 d=15,40 a=75,0 b=75,40"]
     );
 }
+
+#[test]
+fn a_wrapper_with_inline_margins_fills_each_page_in_column_order() {
+    // Margins on the left or right of a wrapper only move it, and what it
+    // holds, along the column, so the columns fill page by page (Chromium).
+    let pages_of = |body: &str, rtl: bool, left: i32| {
+        let page = |first: u8, rows: u8| {
+            (0..2u8)
+                .flat_map(|column| (0..rows).map(move |row| (column, row)))
+                .map(|(column, row)| {
+                    let id = if rtl {
+                        first + (1 - column) * rows + row
+                    } else {
+                        first + column * rows + row
+                    };
+                    let x = i32::from(column) * 60 + left;
+                    format!("{}={x},{}", char::from(b'a' + id), i32::from(row) * 40)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let direction = if rtl { " style=direction:rtl" } else { "" };
+        assert_eq!(
+            pages(&format!("<div class=mc{direction}>{body}</div>")),
+            [page(0, 4), page(8, 4), page(16, 2)],
+            "{body}"
+        );
+    };
+    let wrapped = |style: &str, boxes: String| format!("<div style='{style}'>{boxes}</div>");
+    pages_of(&wrapped("margin-left:5px", boxes(20, 40, "")), false, 5);
+    pages_of(&wrapped("margin-left:10%", boxes(20, 40, "")), false, 4);
+    pages_of(
+        &wrapped(
+            "margin:0 3px 0 5px;padding-left:2px",
+            boxes(20, 40, "width:20px"),
+        ),
+        false,
+        7,
+    );
+    pages_of(
+        &wrapped("width:30px;margin:0 auto", boxes(20, 40, "")),
+        false,
+        5,
+    );
+    pages_of(
+        &wrapped(
+            "margin-left:5px",
+            wrapped("margin-left:4px", boxes(20, 40, "")),
+        ),
+        false,
+        9,
+    );
+    pages_of(
+        &wrapped(
+            "margin-left:5px;border-left:2px solid;padding-right:3px",
+            boxes(20, 40, ""),
+        ),
+        false,
+        7,
+    );
+    pages_of(
+        &wrapped("margin-right:5px", boxes(20, 40, "width:20px")),
+        true,
+        15,
+    );
+    pages_of(
+        &wrapped(
+            "margin-left:5px;border-left:2px solid;width:25px;padding-right:3px",
+            boxes(20, 40, "width:22px"),
+        ),
+        true,
+        15,
+    );
+    // On one page, inside another wrapper.
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc>{}</div>",
+            wrapped(
+                "margin-left:5px",
+                wrapped("margin-left:4px", boxes(4, 40, ""))
+            )
+        )),
+        ["a=9,0 b=9,40 c=69,0 d=69,40"]
+    );
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc style=direction:rtl>{}</div>",
+            wrapped(
+                "margin-right:5px",
+                wrapped("width:25px", boxes(4, 40, "width:20px"))
+            )
+        )),
+        ["c=15,0 d=15,40 a=75,0 b=75,40"]
+    );
+}
