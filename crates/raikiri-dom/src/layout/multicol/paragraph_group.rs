@@ -518,8 +518,9 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
             return None;
         }
         // The room a height of its own leaves below its boxes is cut at a
-        // column end as such padding is.
-        if has_block_edges(tree, wrapper) || !height_follows_content(tree, wrapper) {
+        // column end as such padding is. A zero height or minimum, or a
+        // maximum alone, leaves none.
+        if has_block_edges(tree, wrapper) || may_leave_room_below_boxes(tree, wrapper) {
             room += 1;
         }
         for child in flow_children(tree, wrapper) {
@@ -541,6 +542,16 @@ pub(super) fn wrapped_paragraphs(tree: &LayoutSession<'_>, id: usize) -> Option<
     // Room with no paragraph beside it is left to the strategies for boxes
     // with no lines.
     Some(if paragraphs > 0 { paragraphs + room } else { 0 })
+}
+
+/// Whether the `height` or `min-height` of `id` is a length or percentage
+/// other than zero, which can leave room below its boxes.
+fn may_leave_room_below_boxes(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let style = style_of(tree, id);
+    let heights: [Dimension; 2] = [style.size().height, style.min_size().height.into()];
+    heights
+        .iter()
+        .any(|&value| resolve_dimension(value, Some(1.0)).is_some_and(|v| v > 0.0))
 }
 
 /// Whether the wrapper `id` has padding or border above its boxes or below
