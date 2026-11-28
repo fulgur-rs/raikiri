@@ -1425,6 +1425,37 @@ fn a_sized_box_a_page_end_cuts_shows_its_borders_where_it_begins_and_ends() {
 }
 
 #[test]
+fn a_bottom_border_a_page_end_would_cut_goes_on_alone_in_the_next_column() {
+    // The piece that goes on from the page before ends with the content of
+    // the box, and its bottom border goes on alone to the next column, as
+    // the first piece of a box does (Chromium).
+    for before in [8, 18] {
+        let body = mc(&format!(
+            "{}<div id=b style='height:{}px;border-bottom:20px solid lime'></div>{}",
+            par("L", 1, before),
+            if before == 8 { 430 } else { 230 },
+            par("M", 1, 12)
+        ));
+        let mut expected = vec![(0, 100, 160, 200), (1, 0, 0, 190), (1, 100, 0, 20)];
+        if before == 8 {
+            expected.insert(0, (0, 0, 160, 200));
+            expected[1].2 = 0;
+        }
+        assert_eq!(
+            visible_boxes(&body, "", "b"),
+            expected,
+            "{before} lines before"
+        );
+        let columns = columns(&body, "");
+        assert_eq!(
+            columns[columns.len() - 3..],
+            ["p1 x100: M1-M9@20", "p2 x0: M10-M11@0", "p2 x100: M12@0"],
+            "{before} lines before"
+        );
+    }
+}
+
+#[test]
 fn a_painted_wrapper_around_a_sized_box_a_page_end_cuts_goes_on_with_it() {
     // The wrapper has a piece in each column the box reaches, and the last
     // one holds its padding below what is left of the box (Chromium).

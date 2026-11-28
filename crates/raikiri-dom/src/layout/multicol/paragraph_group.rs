@@ -834,8 +834,9 @@ fn avoided_height(
 /// break and its `widows` after it, with the padding and border that sit
 /// with them in their columns. The last page's balanced columns are at least
 /// that tall, as Chromium balances them; the widows give way to the orphans
-/// when the lines left cannot hold both. The page stream takes no sized
-/// boxes, so every paragraph here breaks between its own lines.
+/// when the lines left cannot hold both. The sized boxes that the page stream
+/// takes hold no lines, so every paragraph here with lines breaks between
+/// its own lines.
 fn break_height(paragraphs: &[Option<Paragraph>], resume: FlowCursor) -> f32 {
     let mut tallest = 0.0f32;
     for (index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
@@ -1953,11 +1954,12 @@ fn fill_chunk_with(
                 // block-end border and padding falls where its content ends
                 // instead, and they go on alone at the top of the next
                 // column, when it holds them.
-                // Only the first piece ends early: the pieces after it fill
-                // their columns, as their painting assumes.
+                // Only the first piece on a page ends early, the first one of
+                // the box or the one that goes on from an earlier page: the
+                // pieces after it fill their columns, as their painting
+                // assumes.
                 let (leading, trailing) = paragraph.slice_edges;
                 let ends_early = fragments.is_empty()
-                    && initial_offset <= 0.0
                     && left - room >= SLICE_MIN_ROOM
                     && left - room < trailing
                     && left - trailing > f32::EPSILON
@@ -2711,13 +2713,6 @@ pub(super) fn paginate(
     else {
         return Ok(None);
     };
-    // A page end that cuts a sized box fails the fill, as the stream resumes
-    // no box in the middle: such a box is left to the other strategies rather
-    // than moved whole to the next page.
-    let holds_sized_leaf = paragraphs
-        .iter()
-        .flatten()
-        .any(|paragraph| paragraph.sized_leaf && paragraph.sliced);
     if count == 0 || context.column_count == 0 {
         return Ok(None);
     }
@@ -2772,7 +2767,7 @@ pub(super) fn paginate(
             // A short remainder can contain fewer lines than the paragraph's
             // break minima. Retry at the next complete page, without a soft
             // break inside the paragraph or a zero-progress page loop.
-            if absolute_y > page_origin + 0.001 && !holds_sized_leaf {
+            if absolute_y > page_origin + 0.001 {
                 absolute_y = page_origin + page_height;
                 continue;
             }
@@ -3017,7 +3012,7 @@ pub(super) fn paginate(
             break;
         };
         if next == resume {
-            return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
+            return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line, a paragraph or the offset into a sized box.
         }
         resume = next;
         absolute_y = page_origin + page_height;
