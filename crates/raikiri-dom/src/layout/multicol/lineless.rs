@@ -3032,7 +3032,7 @@ pub(super) fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> Frag
 /// around it, so they may be of any size.
 pub(super) fn slices_among_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
     layout_node(tree, child).display() == DisplayValue::Block
-        && is_plain_box_but_clearance(tree, child, false, false)
+        && is_plain_box_but_clearance(tree, child, false, false, false)
         && !has_rendered_content(tree, child, false)
         && has_block_size(&style_of(tree, child))
         && slices_sized_leaf(tree, child)
