@@ -2900,16 +2900,19 @@ fn push_wrapper_pieces(
         } else {
             0.0
         };
-        let below = if index + 1 == count {
+        // The pieces from the column the wrapper ends in on leave their
+        // ends open too: the boxes that overflow its height go on there.
+        let open_end = column >= end.0;
+        let below = if open_end {
             paragraph_group::BLOCK_INK_REACH
         } else {
             0.0
         };
         // A piece that ends above its column's end is cut there.
-        let window = if index + 1 < count {
-            (top + height).min(column_height)
-        } else {
+        let window = if open_end {
             column_height
+        } else {
+            (top + height).min(column_height)
         };
         let fragment = crate::fragment::LayoutFragment {
             fragmentainer: first.fragmentainer + index,

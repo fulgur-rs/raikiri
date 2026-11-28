@@ -415,10 +415,9 @@ impl Flow {
 /// A `min-height` or `max-height` that does not bind, or a height that
 /// computes to `auto`, leaves the wrapper as tall as its boxes, which collapse
 /// their margins through it as those of a wrapper with no height of its own
-/// do (Chromium; see [`OwnHeight::follows_content`]). `None` when the flow
-/// cannot model
-/// it: when its boxes reach past its height, whose overflow would go on into
-/// later columns while what follows the wrapper starts where it ends.
+/// do (Chromium; see [`OwnHeight::follows_content`]). Boxes that reach past
+/// the height go on into later columns while what follows the wrapper starts
+/// where it ends. `None` when the geometry of the wrapper is not finite.
 fn own_height(
     tree: &LayoutSession<'_>,
     id: usize,
@@ -2569,6 +2568,8 @@ fn fill_chunk_once(
             let content = own.height - own.end;
             let taken = (column - start_column) as f32 * height + top - start_y;
             if taken > content + SLICE_MIN_ROOM {
+                // The overflow still takes room in the column it ends in.
+                maximum = maximum.max(cursor);
                 let reach = start_y + content;
                 let columns = ((reach / height).ceil() as usize).saturating_sub(1);
                 column = start_column + columns;
