@@ -50,10 +50,15 @@ pub struct InlineSvg {
     /// of the CSS pixel grid of the viewport at
     /// [`Page::svg_raster_scale`] device pixels per CSS pixel, so they are
     /// drawn from the same corner at their size divided by that scale. Draw
-    /// either clipped to the viewport.
+    /// either clipped to [`Self::clip`].
     pub content: ImageContent,
     /// Whole content box in CSS page coordinates, before pagination cuts.
     pub viewport: PaintRect,
+    /// The part of [`Self::viewport`] inside this fragment, in CSS page
+    /// coordinates. It is the whole viewport unless a page end cuts the root,
+    /// and keeps the pieces of the picture on other pages out of the page
+    /// margin.
+    pub clip: PaintRect,
     /// Host root opacity represented by the page's paint events.
     ///
     /// The content holds no host opacity, whichever it is: the page's paint
@@ -123,7 +128,12 @@ pub struct RasterImage {
     /// Like [`Fragment::paint_rect`], it is in layout coordinates, which the
     /// enclosing [`PaintEvent::PushTransform`] events of its paint event move.
     pub rect: PaintRect,
-    /// Whole content-edge clip or marker rectangle, before pagination cuts.
+    /// Content-edge clip or marker rectangle. For an element's own image it
+    /// is the part of the content box inside this fragment, so the piece of
+    /// an image cut by a page end is not drawn into the page margin. A
+    /// marker or `content` image sits in a line, which no page end cuts, and
+    /// keeps its whole rectangle. Column clips stay in the page's paint
+    /// events.
     pub clip: raikiri_traits::PaintClip,
     /// Innermost node whose overflow clip applies. Standalone markers start
     /// at their parent's clip; inline image markers and replaced content
@@ -157,7 +167,7 @@ pub struct PlacedImage {
     pub content: ImageContent,
     /// Object rectangle, as for [`RasterImage::rect`].
     pub rect: PaintRect,
-    /// Whole content-edge clip or marker rectangle, before pagination cuts.
+    /// Content-edge clip or marker rectangle, as for [`RasterImage::clip`].
     pub clip: raikiri_traits::PaintClip,
     /// Innermost node whose overflow clip applies, as for
     /// [`RasterImage::clip_owner`].
@@ -366,12 +376,13 @@ impl<'a> Page<'a> {
         if !is_finite_rect(&rect) {
             return None;
         }
+        let clip = page_cut(content, fragment.rect())?;
         Some(Placement {
             node: fragment.node(),
             url,
             raster: self.raster_size_for(raster_size(&rect)),
             rect,
-            clip: raikiri_traits::PaintClip::new(content),
+            clip: raikiri_traits::PaintClip::new(clip),
             clip_owner: Some(fragment.node()),
             rendering: None,
         })
@@ -661,8 +672,10 @@ impl<'a> Page<'a> {
     /// The picture of an SVG root placed by this page, and where to draw it.
     ///
     /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
-    /// empty SVG viewports return `None`. Hidden roots retain content so their
-    /// explicitly visible descendants can still be drawn. The host box is drawn
+    /// empty SVG viewports return `None`, and so does the piece of a root
+    /// cut by a page end that holds only its border or padding. Hidden roots
+    /// retain content so their explicitly visible descendants can still be
+    /// drawn. The host box is drawn
     /// separately; source admission, preparation and picture errors are
     /// returned. [`InlineSvg`] says when the picture is a scene and when it is
     /// pixels. A picture is built once for roots with the same markup, style and
@@ -676,6 +689,9 @@ impl<'a> Page<'a> {
         fragment: &Fragment<'a>,
     ) -> Result<Option<InlineSvg>, raikiri_svg::SvgSceneError> {
         let Some((viewport, prepared)) = self.prepared_inline_svg(fragment)? else {
+            return Ok(None);
+        };
+        let Some(clip) = page_cut(viewport, fragment.rect()) else {
             return Ok(None);
         };
         let key = PictureKey::new(&prepared, viewport);
@@ -698,6 +714,7 @@ impl<'a> Page<'a> {
         Ok(Some(InlineSvg {
             content,
             viewport,
+            clip,
             host_opacity: prepared.host_opacity,
         }))
     }
@@ -1315,6 +1332,22 @@ impl<'a> Page<'a> {
             .pop()
             .flatten()
     }
+}
+
+/// The part of the whole content box `content` inside `fragment`, the border
+/// box of one fragment. A box cut by a page end keeps the content of its
+/// other pages out of this one; an uncut box keeps its whole content box,
+/// which lies inside its border box. `None` when the fragment holds only
+/// border or padding of a box whose content is on other pages.
+fn page_cut(content: PaintRect, fragment: PaintRect) -> Option<PaintRect> {
+    let left = content.x.max(fragment.x);
+    let top = content.y.max(fragment.y);
+    let right = (content.x + content.width).min(fragment.x + fragment.width);
+    let bottom = (content.y + content.height).min(fragment.y + fragment.height);
+    let cut = PaintRect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0));
+    let emptied =
+        (cut.width <= 0.0 && content.width > 0.0) || (cut.height <= 0.0 && content.height > 0.0);
+    (!emptied).then_some(cut)
 }
 
 /// Whether every coordinate of `rect` is finite.

@@ -238,8 +238,10 @@ with either pixels or a scene, chosen by D6.
 - `<img>`, `background-image` (including pseudo-elements and margin boxes),
   `list-style-image` and `content: url()` use that method for SVG sources.
 - Inline `<svg>` goes through `Page::inline_svg`, which returns an
-  `InlineSvg`: the `ImageContent` of the root, its viewport and the host
-  opacity that the consumer composites around it. The picture is a scene
+  `InlineSvg`: the `ImageContent` of the root, its viewport, the clip of the
+  piece on the page (the part of the viewport inside the fragment, when a page
+  end cuts the root) and the host opacity that the consumer
+  composites around it. The picture is a scene
   unless the root's rendering (D6) is `raster`, and pixels, at
   `svg_raster_scale`, where D4 or a limit forces them; the policy is raikiri's
   and the consumer draws what it is given. A scene whose stroked glyphs sit
