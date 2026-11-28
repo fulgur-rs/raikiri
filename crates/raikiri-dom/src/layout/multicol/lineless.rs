@@ -118,7 +118,8 @@ fn supported_with_wrapped_blocks(
         let scrolls = is_monolithic_scroll_box(tree, child);
         let monolithic = scrolls || is_unbroken_column_container(tree, child);
         scroll_box |= scrolls;
-        let plain_block = is_plain_block_ignoring_insets(tree, child);
+        let plain_block = is_plain_block_ignoring_insets(tree, child)
+            || is_empty_block_with_inline_margins(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
             && has_rendered_content(tree, child, false);
@@ -264,6 +265,17 @@ fn is_plain_block(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// [`is_plain_block`] for a box whose insets the caller accepts.
 fn is_plain_block_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
     is_plain_block_with_display(tree, child, false, false)
+}
+
+/// Whether `child` is a plain block with nothing rendered inside it and
+/// margins on the left or right, which only move it along its column: the
+/// stream places it past them (see [`inline_offset`]).
+fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let style = style_of(tree, child);
+    has_inline_margins(&style)
+        && block_margins_beside_inline(&style).is_some()
+        && is_plain_block_apart_from_margins(tree, child, false, false)
+        && !has_rendered_content(tree, child, false)
 }
 
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
@@ -1382,14 +1394,51 @@ fn is_horizontal(node: &crate::Node) -> bool {
     !node.used_writing_mode.is_vertical()
 }
 
-/// The block-start and block-end margins of a child, when they are
-/// non-negative lengths and its inline margins are zero.
-fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
+/// Where `child`, `width` wide, starts in its column: past its left margin,
+/// moved along by `justify-self`, or, with auto margins, centred or pushed
+/// to the end the margins leave it; a right-to-left column aligns a
+/// narrower box to its right edge.
+pub(super) fn inline_offset(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    context: FragmentationContext,
+    width: f32,
+) -> f32 {
+    let style = style_of(tree, child);
+    let (left, right) = super::column_horizontal_margins(&style, context.column_width, width);
+    let justified = crate::layout::dispatch::block_flow::justified_offset(
+        tree,
+        child,
+        context.rtl,
+        context.column_width - left - right - width,
+    );
+    match justified {
+        Some(justified) => left + justified,
+        None if context.rtl => context.column_width - width - right,
+        None => left,
+    }
+}
+
+/// Whether `style` has a margin on the left or right.
+fn has_inline_margins(style: &LayoutStyleView<'_>) -> bool {
     let zero = LengthPercentageAuto::length(0.0);
     let margin = style.margin();
-    if margin.left != zero || margin.right != zero {
+    margin.left != zero || margin.right != zero
+}
+
+/// The block margins of `style`, when they are lengths that are not
+/// negative and it has no inline margins.
+fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
+    if has_inline_margins(style) {
         return None;
     }
+    block_margins_beside_inline(style)
+}
+
+/// [`block_margins`] for a box whose inline margins only move it along its
+/// column, which the caller places it past (see [`inline_offset`]).
+fn block_margins_beside_inline(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
+    let margin = style.margin();
     let length = |value: LengthPercentageAuto| {
         style_dimension_length(value.into()).filter(|px| px.is_finite() && *px >= 0.0)
     };
@@ -1432,7 +1481,7 @@ fn wrapper_layout(
     let node = layout_node(tree, wrapper);
     let style = style_of(tree, wrapper);
     let (padding, border) = (style.padding(), style.border());
-    let (margin_top, margin_bottom) = block_margins(&style).unwrap_or_default();
+    let (margin_top, margin_bottom) = block_margins_beside_inline(&style).unwrap_or_default();
     let top_inset = super::multicol_resolve_inset(tree, padding.top, column_width)
         + super::multicol_resolve_inset(tree, border.top, column_width);
     let bottom_inset = super::multicol_resolve_inset(tree, padding.bottom, column_width)
@@ -2929,7 +2978,7 @@ enum Insets {
 fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Insets>) -> Item {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
-    let (margin_top, margin_bottom) = block_margins(&style).unwrap_or_default();
+    let (margin_top, margin_bottom) = block_margins_beside_inline(&style).unwrap_or_default();
     let slice = slice
         .filter(|_| slices_decorations(tree, child))
         .map(|insets| match insets {
@@ -3729,14 +3778,7 @@ pub(super) fn layout(
                 });
         }
         previous_column = pieces.last()?.column;
-        // `justify-self` places a box in its column.
-        let justified = crate::layout::dispatch::block_flow::justified_offset(
-            tree,
-            child,
-            context.rtl,
-            context.column_width - size.width,
-        )
-        .unwrap_or(0.0);
+        let justified = inline_offset(tree, child, context, size.width);
         let mut layout = tree.nodes[child].layout;
         layout.order = order as u32;
         layout.size = size;

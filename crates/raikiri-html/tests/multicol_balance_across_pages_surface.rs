@@ -499,3 +499,54 @@ fn the_last_page_balances_own_lines_with_widows_in_every_column() {
         ]
     );
 }
+
+#[test]
+fn boxes_with_inline_margins_fill_each_page_before_the_next_one() {
+    // Margins on the left or right only move a box along its column, so the
+    // columns fill page by page as they do for boxes with none (Chromium).
+    let pages_of = |style: &str, left: i32| {
+        let at = |id: u8, x: i32, y: i32| format!("{}={},{y}", char::from(b'a' + id), x + left);
+        let page = |first: u8, rows: u8| {
+            (0..2)
+                .flat_map(|column| {
+                    (0..rows).map(move |row| (first + column * rows + row, column, row))
+                })
+                .map(|(id, column, row)| at(id, i32::from(column) * 60, i32::from(row) * 40))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(
+            pages(&format!("<div class=mc>{}</div>", boxes(20, 40, style))),
+            [page(0, 4), page(8, 4), page(16, 2)],
+            "{style}"
+        );
+    };
+    pages_of("margin-left:2px", 2);
+    pages_of("margin-left:4px;margin-right:6px", 4);
+    pages_of("width:20px;margin:0 auto", 10);
+    // `justify-self` moves a box along the room its margins leave.
+    assert_eq!(
+        pages(&format!(
+            "<div class=mc>{}</div>",
+            boxes(4, 40, "width:20px;justify-self:end;margin-right:3px")
+        )),
+        ["a=17,0 b=17,40 c=77,0 d=77,40"]
+    );
+    // Right to left, a narrower box keeps to the right of its column, past
+    // its right margin.
+    let rtl: String = (0..4)
+        .map(|index| {
+            let margin = if index % 2 == 1 {
+                "margin-right:3px"
+            } else {
+                ""
+            };
+            let id = char::from(b'a' + index);
+            format!("<div id={id} style='height:40px;width:20px;{margin}'></div>")
+        })
+        .collect();
+    assert_eq!(
+        pages(&format!("<div class=mc style=direction:rtl>{rtl}</div>")),
+        ["d=17,40 c=20,0 b=77,40 a=80,0"]
+    );
+}
