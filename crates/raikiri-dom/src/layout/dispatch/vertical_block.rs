@@ -1338,7 +1338,7 @@ pub(super) fn with_atomic_fit_content(
     // itself rather than a lack of room.
     let width = match inputs.available_space.width {
         space @ (AvailableSpace::MinContent | AvailableSpace::MaxContent)
-            if tree.context.content_limit_probes.contains(&idx) =>
+            if tree.context.inline_limit_measures.last() == Some(&idx) =>
         {
             measure(tree, space)
         }

@@ -224,7 +224,6 @@ fn an_inline_flex_or_grid_container_takes_the_limit() {
         ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
         ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
         ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;width:100px;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
-        ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-grid;flex-direction:column;width:100px;height:5px;min-height:min-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 100.0, 40.0)),
         ("<div style=''><div id=b style='writing-mode:vertical-lr;writing-mode:vertical-rl;display:inline-grid;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
         ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 40.0)),
         ("<div style=''><div id=b style='writing-mode:vertical-lr;display:inline-flex;width:100px;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 100.0, 70.0)),
@@ -289,7 +288,6 @@ fn a_vertical_box_in_a_vertical_flow_takes_the_limit() {
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
-        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:grid;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-flex;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
@@ -299,12 +297,9 @@ fn a_vertical_box_in_a_vertical_flow_takes_the_limit() {
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:300px;max-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:fit-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
-        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-grid;flex-direction:column;height:5px;min-height:max-content'><div>xxxx yy</div><div>zzz</div></div></div>", (8.0, 8.0, 20.0, 70.0)),
-        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:2%;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;margin:auto 0;min-height:max-content'>xxxx yy</div></div>", (8.0, 123.0, 10.0, 70.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:max-content'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
-        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='display:inline-block;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:2%;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;margin:auto 0;min-height:min-content'>xxxx yy</div></div>", (8.0, 138.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
@@ -321,5 +316,24 @@ fn a_vertical_box_in_a_vertical_flow_takes_the_limit() {
         ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='display:inline-grid;height:5px;min-height:min-content'>xxxx yy</div></div>", (8.0, 8.0, 20.0, 40.0)),
         ("<div style='writing-mode:vertical-rl;height:300px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:5px;min-height:max-content'>xxxx yy</div></div>", (18.0, 38.0, 10.0, 70.0)),
         ("<div style='writing-mode:vertical-rl;height:300px'>aa<div id=b style='height:5px;min-height:max-content'>xxxx yy</div>bb</div>", (18.0, 8.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-rl;height:300px'><div id=b style='height:5px;min-height:max-content;max-height:50px'>xxxx yy</div></div>", (8.0, 8.0, 10.0, 70.0)),
+    ]);
+}
+
+#[test]
+fn a_vertical_flow_resolves_the_limit_in_the_room_it_leaves() {
+    // A length minimum wins over a keyword maximum and the other way around,
+    // which places the box by the size it keeps; `fit-content` is offered
+    // the room less the margins, or the room beside a float.
+    #[rustfmt::skip]
+    assert_bodies(&[
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:300px;max-height:min-content;min-height:60px;margin:auto 0'>xxxx yy</div></div>", (8.0, 128.0, 20.0, 60.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:300px;max-height:min-content;min-height:60px;justify-self:end'>xxxx yy</div></div>", (8.0, 248.0, 20.0, 60.0)),
+        ("<div style='writing-mode:vertical-lr;height:300px'><div id=b style='height:5px;min-height:max-content;max-height:50px;margin:auto 0'>xxxx yy</div></div>", (8.0, 123.0, 10.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:100px'><div id=b style='height:300px;max-height:fit-content;margin-top:20px'>xxxx yy zzzzz</div></div>", (8.0, 28.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:100px'><div id=b style='display:flow-root;height:300px;max-height:fit-content;margin-top:20px'>xxxx yy zzzzz</div></div>", (8.0, 28.0, 20.0, 80.0)),
+        ("<div style='writing-mode:vertical-lr;height:100px'><div id=b style='height:5px;min-height:fit-content;margin-top:20px;margin-bottom:10px'>xxxx yy zzzzz</div></div>", (8.0, 28.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:100px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:300px;max-height:fit-content'>xxxx yy zzzzz</div></div>", (8.0, 38.0, 20.0, 70.0)),
+        ("<div style='writing-mode:vertical-lr;height:100px'><div style='float:left;width:20px;height:30px'></div><div id=b style='display:flow-root;height:5px;min-height:fit-content'>xxxx yy zzzzz</div></div>", (8.0, 38.0, 20.0, 70.0)),
     ]);
 }

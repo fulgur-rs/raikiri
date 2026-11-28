@@ -232,10 +232,14 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
     tree.context.content_limit_depth += 1;
     let checkpoint = tree.override_checkpoint();
     let probe_depth = tree.context.content_limit_probes.len();
+    let inline_measure_depth = tree.context.inline_limit_measures.len();
     let height_basis_depth = tree.context.content_limit_percentage_height_bases.len();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
     tree.restore_overrides_to(checkpoint);
     tree.context.content_limit_probes.truncate(probe_depth);
+    tree.context
+        .inline_limit_measures
+        .truncate(inline_measure_depth);
     tree.context
         .content_limit_percentage_height_bases
         .truncate(height_basis_depth);
@@ -337,7 +341,16 @@ fn with_vertical_content_limits(
     dispatch: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let height = vertical_inline_bounds(tree, node_id, &limits, &inputs);
+    // A vertical paragraph root that holds the inline size of the box within
+    // these limits has resolved them in the room it has, which the size it
+    // gives the box no longer shows.
+    let from_parent = (tree.context.inline_limits_from_parent.last())
+        .filter(|(node, _)| *node == idx)
+        .map(|&(_, (min, max))| Bounds { min, max });
+    let height = match from_parent {
+        Some(bounds) => bounds,
+        None => vertical_inline_bounds(tree, node_id, &limits, &inputs, None),
+    };
     let adjustment =
         box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
     with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
@@ -367,6 +380,7 @@ fn vertical_inline_bounds(
     node_id: NodeId,
     limits: &ContentLimits,
     inputs: &LayoutInput,
+    room: Option<f32>,
 ) -> Bounds {
     let idx = usize::from(node_id);
     let measure = |tree: &mut LayoutSession<'_>, space| {
@@ -408,7 +422,10 @@ fn vertical_inline_bounds(
             }
             entries.push(zero_length(MinHeight));
         }
-        probe(tree, node_id, key, along, entries)
+        tree.context.inline_limit_measures.push(idx);
+        let size = probe(tree, node_id, key, along, entries);
+        tree.context.inline_limit_measures.pop();
+        size
     };
     let wrapping_column = tree.nodes[idx].layout_display() == Display::Flex && {
         let style = tree.physical_style(idx);
@@ -445,9 +462,11 @@ fn vertical_inline_bounds(
                 // take from. A vertical box out of a vertical flow is offered
                 // a definite inline size; one that is not keeps its
                 // max-content size.
-                let margins = stretch_margins(tree, idx, inputs.parent_size.width, false);
-                let offered = (inputs.available_space.height.into_option())
-                    .map_or(f32::INFINITY, |room| room - margins);
+                let offered = room.unwrap_or_else(|| {
+                    let margins = stretch_margins(tree, idx, inputs.parent_size.width, false);
+                    (inputs.available_space.height.into_option())
+                        .map_or(f32::INFINITY, |room| room - margins)
+                });
                 let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
                     .unwrap_or(offered);
                 let max_content = measure(tree, AvailableSpace::MaxContent);
@@ -2166,51 +2185,73 @@ pub(super) fn resolve_width_in_style(
     }
 }
 
+/// The border-box minimum and maximum a keyword `min-height` and
+/// `max-height` stand for along the inline axis of a vertical box; `None` for
+/// a limit that is no keyword.
+pub(crate) type InlineBounds = (Option<f32>, Option<f32>);
+
 /// The border-box heights the keyword `min-height` and `max-height` of the
-/// vertical block child `node` of a vertical paragraph root stand for, as
-/// the function that holds a height within them. The root sets the inline
-/// size of the child, its physical height, before the child is laid out, and
-/// lays out the lines of the child at that size, so it resolves the keywords
-/// itself (CSS Sizing 3 §5.1). `parent_size` is the containing block the root
-/// offers, whose physical height is its inline size and the room a
-/// `fit-content` limit is offered.
-pub(crate) fn vertical_child_inline_limits(
+/// vertical block child `node` of a vertical paragraph root stand for, as a
+/// minimum and a maximum; `None` for a limit that is no keyword. The root sets
+/// the inline size of the child, its physical height, before the child is laid
+/// out, and lays out the lines of the child at that size, so it resolves the
+/// keywords itself (CSS Sizing 3 §5.1). `parent_size` is the containing block
+/// the root offers, whose physical height is its inline size, and `room` the
+/// border-box size the root leaves the child, which a `fit-content` limit is
+/// offered.
+pub(crate) fn vertical_child_inline_bounds(
     tree: &mut LayoutSession<'_>,
     node: usize,
     parent_size: Size<Option<f32>>,
-) -> impl Fn(f32) -> f32 + use<> {
+    room: f32,
+) -> InlineBounds {
     let limits = tree.nodes[node].content_limits;
-    let bounds = if limits.has_height()
-        && applies(tree, node, &limits)
-        && resolves_on_vertical_axes(tree, node)
+    if !limits.has_height()
+        || !applies(tree, node, &limits)
+        || !resolves_on_vertical_axes(tree, node)
     {
-        let inputs = LayoutInput {
-            run_mode: RunMode::ComputeSize,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size::NONE,
-            known_dimensions_are_definite: Size {
-                width: false,
-                height: false,
-            },
-            parent_size,
-            available_space: Size {
-                width: parent_size
-                    .width
-                    .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
-                height: parent_size
-                    .height
-                    .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        };
-        scoped(tree, |tree| {
-            vertical_inline_bounds(tree, NodeId::from(node), &limits, &inputs)
-        })
-    } else {
-        Bounds::default()
+        return (None, None);
+    }
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: parent_size
+                .width
+                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: parent_size
+                .height
+                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
     };
-    move |height| bounds.apply(height)
+    let bounds = scoped(tree, |tree| {
+        vertical_inline_bounds(tree, NodeId::from(node), &limits, &inputs, Some(room))
+    });
+    (bounds.min, bounds.max)
+}
+
+/// Run `f`, a layout of the vertical box `node` at an inline size its
+/// vertical paragraph root held within the `bounds`
+/// [`vertical_child_inline_bounds`] gave, so that the box takes those bounds
+/// rather than resolve its keywords again against that size.
+pub(crate) fn with_inline_limits_from_parent<R>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    bounds: InlineBounds,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    tree.context.inline_limits_from_parent.push((node, bounds));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
+    tree.context.inline_limits_from_parent.pop();
+    result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }
 
 /// Put the lengths a `stretch` `min-height` and `max-height` of the block child
@@ -3184,7 +3225,8 @@ fn with_item_content_limits_for_parent_sizes(
                     // path below, which caps it at the stated size.
                     if item.ratio_minimum.is_none() && resolves_on_vertical_axes(tree, idx) {
                         // The inline axis of a vertical item is its height.
-                        let height = vertical_inline_bounds(tree, child, &limits, &item_inputs);
+                        let height =
+                            vertical_inline_bounds(tree, child, &limits, &item_inputs, None);
                         let adjustment = box_sizing_height_adjustment(
                             tree,
                             idx,
@@ -3794,7 +3836,7 @@ fn vertical_width_bounds(
     inputs: &LayoutInput,
 ) -> Bounds {
     let idx = usize::from(node_id);
-    let height = vertical_inline_bounds(tree, node_id, limits, inputs);
+    let height = vertical_inline_bounds(tree, node_id, limits, inputs, None);
     let adjustment =
         box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
     with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
@@ -3819,7 +3861,7 @@ fn resolved_height_bounds(
         return replaced_keyword_bounds(tree, idx, limits, inputs).1;
     }
     if resolves_on_vertical_axes(tree, idx) {
-        return vertical_inline_bounds(tree, node_id, limits, inputs);
+        return vertical_inline_bounds(tree, node_id, limits, inputs, None);
     }
     height_bounds(tree, node_id, limits, inputs, width)
 }

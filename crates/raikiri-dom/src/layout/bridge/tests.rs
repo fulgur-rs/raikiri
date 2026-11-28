@@ -2218,6 +2218,46 @@ fn unsupported_generic_box_content_limits_record_none() {
 }
 
 #[test]
+fn vertical_boxes_in_a_vertical_flow_and_vertical_inline_containers_record_their_limits() {
+    use crate::layout::dispatch::content_limits::ContentLimits;
+
+    let keyword = "min-width:min-content;max-height:max-content";
+    let block = format!("display:block;{keyword}");
+    let cases: Vec<(&str, &str, String)> = vec![
+        // A vertical box in the flow of a vertical block container, which
+        // resolves the limits along the inline axis of the box itself.
+        (
+            "display:block;writing-mode:vertical-rl",
+            "div",
+            format!("{block};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:block;writing-mode:vertical-rl",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        // An inline-level vertical flex or grid container.
+        (
+            "display:block",
+            "div",
+            format!("display:inline-grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:block",
+            "div",
+            format!("display:inline-flex;{keyword};writing-mode:vertical-lr"),
+        ),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
+        .collect();
+    for (case, (limits, ..)) in borrowed.iter().zip(bridged_content_limits(&borrowed)) {
+        assert_ne!(limits, ContentLimits::NONE, "{case:?}");
+    }
+}
+
+#[test]
 fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
     use raikiri_style::{build_rule_tree, cascade};
 
