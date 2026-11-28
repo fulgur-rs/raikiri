@@ -1046,11 +1046,13 @@ pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
 ///   whose inline size is measured at its max-content size even when it is
 ///   offered min-content room, so its keywords would all stand for that size.
 ///
-/// A block, float or inline-block in a multicol flow uses them as well: like a
-/// box that a page break cuts, it resolves them against the content size it
-/// has before it is fragmented (CSS Fragmentation 3 §4.4). One in a vertical
-/// writing mode does not, since the columns lay it out on horizontal axes,
-/// where its keywords do not stand for its content size.
+/// A block, float or inline-block in the columns of a multicol container uses
+/// them as well: like a box that a page break cuts, it resolves them against
+/// the content size it has before it is fragmented (CSS Fragmentation 3 §4.4).
+/// One in a vertical writing mode does not, since the columns lay it out on
+/// horizontal axes, where its keywords do not stand for its content size. Nor
+/// does a multicol container, whose content size depends on how its columns
+/// balance.
 ///
 /// A vertical box resolves the keywords on its own axes: its physical height
 /// is its inline size, its physical width its block size. A vertical flex or
@@ -1097,7 +1099,8 @@ pub(super) fn honors_content_limits(
     if table
         || (!block_sized && !non_block_sized && !out_of_flow)
         || in_vertical_block_flow(doc, cascade, idx, cv)
-        || (cv.multicol_flow && uses_vertical_writing_mode(cv))
+        || (cv.multicol_flow
+            && (uses_vertical_writing_mode(cv) || multicol_style_from_computed(cv).is_some()))
         || !sized_by_content_keyword(doc, cascade, idx, cv)
     {
         return false;

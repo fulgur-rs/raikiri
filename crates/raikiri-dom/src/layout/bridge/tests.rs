@@ -2200,9 +2200,13 @@ fn unsupported_generic_box_content_limits_record_none() {
     let cases: Vec<(&str, &str, String)> = vec![
         // An inline-level box.
         ("display:block", "span", format!("display:inline;{keyword}")),
-        // A multicol container and a box in its columns.
+        // A multicol container, in either writing mode.
         ("display:block", "div", format!("{block};column-count:2")),
-        ("display:block;column-count:2", "div", block.clone()),
+        (
+            "display:block",
+            "div",
+            format!("{block};column-count:2;writing-mode:vertical-rl"),
+        ),
         // A vertical box in the flow of a vertical block container, which
         // lays it out on its own axes.
         (
@@ -2940,4 +2944,17 @@ fn content_limit_bridge_retains_programmatic_comparison_owners() {
     assert_eq!(handle.resolve(1000.0), 30.0);
     assert_eq!(owners.len(), 1);
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn a_block_in_columns_records_its_content_limits() {
+    use crate::layout::dispatch::content_limits::ContentLimits;
+
+    let cases = [(
+        "display:block;column-count:2",
+        "div",
+        "display:block;min-width:min-content;max-height:max-content",
+    )];
+    let (limits, ..) = &bridged_content_limits(&cases)[0];
+    assert_ne!(*limits, ContentLimits::NONE);
 }
