@@ -2851,20 +2851,15 @@ pub(super) fn paginate(
                 return Ok(None);
             }
             if paragraph.sized_leaf {
-                push_leaf_pieces(
-                    tree,
-                    &mut result.fragments,
-                    &mut occupied,
-                    LeafPlacement {
-                        flow: &flow,
-                        index,
-                        placement: &placement,
-                        total: paragraph.extents[0].1 - paragraph.extents[0].0,
-                    },
-                    context,
-                    (page_index as usize, group_y, height, planned),
-                    work,
-                )?;
+                let leaf = LeafPlacement {
+                    flow: &flow,
+                    index,
+                    placement: &placement,
+                    total: paragraph.extents[0].1 - paragraph.extents[0].0,
+                };
+                let at = (page_index as usize, group_y, height, planned);
+                let out = (&mut result.fragments, &mut occupied);
+                push_leaf_pieces(tree, out, leaf, context, at, work)?;
                 continue;
             }
             let mut ranges = placement.fragments.into_iter().peekable();
@@ -3002,8 +2997,10 @@ struct LeafPlacement<'a> {
 /// block-axis border and padding (CSS Fragmentation 3, 5.4).
 fn push_leaf_pieces(
     tree: &LayoutSession<'_>,
-    fragments: &mut Vec<PagedFragment>,
-    occupied: &mut std::collections::BTreeSet<usize>,
+    (fragments, occupied): (
+        &mut Vec<PagedFragment>,
+        &mut std::collections::BTreeSet<usize>,
+    ),
     leaf: LeafPlacement<'_>,
     context: FragmentationContext,
     (page, group_y, height, planned): (usize, f32, f32, f32),

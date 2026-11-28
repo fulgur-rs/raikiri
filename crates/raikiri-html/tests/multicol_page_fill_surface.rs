@@ -1282,6 +1282,30 @@ fn a_column_end_slices_a_sized_box_on_a_filled_page() {
 }
 
 #[test]
+fn a_sized_box_fills_the_columns_between_its_first_and_last_pieces() {
+    // Of three columns, the box fills the middle one whole (Chromium).
+    let body = mc(&format!(
+        "{}<div id=b style='height:400px;background:#00f'></div>{}",
+        par("L", 1, 8),
+        par("M", 1, 6)
+    ));
+    let css = ".mc{columns:3;width:180px}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: L1-L8@0",
+            "p0 x120: M1-M2@160",
+            "p1 x0: M3-M4@0",
+            "p1 x60: M5-M6@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "b"),
+        [(0, 0, 160, 200), (0, 60, 0, 200), (0, 120, 0, 160)]
+    );
+}
+
+#[test]
 fn a_sized_box_a_page_end_cuts_stays_in_the_columns_the_pages_cut() {
     // The page fill resumes no box in the middle, so one that a page end
     // cuts leaves the container to the columns that the pages cut, where
