@@ -194,10 +194,10 @@ impl RowSizing {
 /// Whether some row of the grid laid out with `style` that holds one of its
 /// `items` in-flow items has an `auto` maximum track size, which
 /// `align-content: normal` and `stretch` grow to fill a definite height (CSS
-/// Grid 1 §12.8). The explicit rows are all there; in a row flow implicit
-/// rows are counted as there when the items outnumber the explicit cells, as
-/// automatic placement puts them, which an automatic repetition never lets
-/// them do.
+/// Grid 1 §12.8). The explicit rows are all there; in a row flow the items
+/// that outnumber the explicit cells fill implicit rows a row of columns at a
+/// time, as automatic placement puts them, which an automatic repetition
+/// never lets them do.
 pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> bool {
     let style = TaffyStyle::new(*style);
     let stretches = |track: TrackSizingFunction| track.max.is_auto();
@@ -226,22 +226,27 @@ pub(crate) fn some_row_stretches(style: &LayoutStyleView<'_>, items: usize) -> b
             GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().any(stretches),
         })
     });
-    // Without `grid-auto-rows`, implicit rows are `auto`.
-    let implicit = || {
-        let mut rows = style.grid_auto_rows().peekable();
-        rows.peek().is_none() || rows.any(stretches)
-    };
     // A column flow places the items that overflow the explicit grid in new
     // columns, so it makes an implicit row only when there is no explicit one.
-    let makes_implicit_row = if matches!(
+    let implicit_rows = if matches!(
         style.grid_auto_flow(),
         taffy::GridAutoFlow::Row | taffy::GridAutoFlow::RowDense
     ) {
-        items > explicit_cells
+        // How many columns an automatic repetition gives depends on the
+        // width, so each item is then taken to start a row of its own.
+        let per_row = if columns == usize::MAX {
+            1
+        } else {
+            columns.max(1)
+        };
+        items.saturating_sub(explicit_cells).div_ceil(per_row)
     } else {
-        items > 0 && rows == 0
+        usize::from(items > 0 && rows == 0)
     };
-    explicit || makes_implicit_row && implicit()
+    // The implicit rows after the explicit grid take the entries of
+    // `grid-auto-rows` in turn from the first, so an entry no row reaches
+    // sizes nothing.
+    explicit || style.grid_auto_rows().take(implicit_rows).any(stretches)
 }
 
 /// The tracks a repetition gives. An automatic one repeats to fill the grid,

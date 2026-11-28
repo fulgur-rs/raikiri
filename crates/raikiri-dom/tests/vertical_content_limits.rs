@@ -578,7 +578,8 @@ fn a_flex_or_grid_container_keeps_only_a_size_its_content_fills() {
 fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretches() {
     // `align-content: normal` stretches only the rows with an `auto` maximum,
     // explicit or implicit, to fill the stated height; other rows leave the
-    // grid the height of its tracks. A column flow adds columns, not rows.
+    // grid the height of its tracks. A column flow adds columns, not rows,
+    // and an implicit row takes only the `grid-auto-rows` entry it reaches.
     #[rustfmt::skip]
     assert_bodies(&[
         ("<div id=b style='display:grid;width:20px;height:100px;grid-template-rows:min-content;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 20.0, 100.0)),
@@ -632,6 +633,16 @@ fn a_grid_keeps_its_height_against_a_keyword_maximum_only_with_a_row_that_stretc
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:20px;grid-auto-flow:column dense;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template:20px / 20px;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
         ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:min-content;grid-auto-flow:column;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 10.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:auto 20px;max-height:min-content'><div>xx</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px 30px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 50.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-auto-rows:20px 30px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:5px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 25.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-rows:5px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div></div>", (8.0, 8.0, 40.0, 20.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:20px 20px;grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
+        ("<div id=b style='display:grid;width:40px;height:100px;grid-template-columns:repeat(auto-fill,20px);grid-auto-rows:20px auto;max-height:min-content'><div>xx</div><div>yyyy</div><div>z</div></div>", (8.0, 8.0, 40.0, 100.0)),
     ]);
 }
 
