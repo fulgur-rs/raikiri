@@ -649,13 +649,16 @@ fn starts_formatting_context(node: &crate::node::Node) -> bool {
 /// flow does not model. Padding and border at its sides narrow its boxes,
 /// which are laid out in it. Its background and borders are cut where its
 /// boxes break, a piece in each column it reaches, as one effect painted over
-/// the whole box could not be.
+/// the whole box could not be. It may avoid a break before or after itself
+/// (`avoid` or `avoid-column`), which the flow keeps a column end clear of.
 pub(super) fn is_flow_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
     flow_wrapper(tree, id, false)
 }
 
 /// [`is_flow_wrapper`] that, with `breaks`, lets the wrapper force a column
-/// break before or after itself.
+/// break before or after itself. Either way, the wrapper may avoid one, which
+/// a caller keeps a column end clear of, or keeps the wrapper out of its
+/// strategy for.
 fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
     let node = layout_node(tree, id);
     if node.kind() != NodeKind::Element
@@ -673,11 +676,9 @@ fn flow_wrapper(tree: &LayoutSession<'_>, id: usize, breaks: bool) -> bool {
             node.display(),
             DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
         )
-        || !if breaks {
-            lineless::is_plain_box_apart_from_display_and_breaks(tree, id)
-        } else {
-            lineless::is_plain_box_apart_from_display(tree, id, false)
-        }
+        // The flow keeps a column end clear of a break the wrapper avoids
+        // before or after itself (see `Paragraph::avoids_before`).
+        || !lineless::is_plain_box_apart_from_display_and_avoids(tree, id, breaks)
     {
         return false;
     }
@@ -1710,29 +1711,38 @@ fn collect(
             }
             let node = layout_node(tree, entries[index].0);
             let role = flow.roles[index];
-            if role == Role::Close {
-                after |= node.break_after == BreakBetween::Column;
-                avoided_after |= avoids(node.break_after);
-                continue;
+            match role {
+                Role::Close => {
+                    after |= node.break_after == BreakBetween::Column;
+                    avoided_after |= avoids(node.break_after);
+                    continue;
+                }
+                // The start of a wrapper takes the breaks before it with the
+                // first box inside it, which looks back for them.
+                Role::Open(_) => continue,
+                Role::Box => {}
             }
             // The outermost wrapper that starts with this box.
             let mut start = index;
             let mut probe = index;
-            // Whether a wrapper that starts with this box avoids a break
-            // before itself.
-            let mut wrapper_avoids = false;
+            // Whether a wrapper that starts with this box forces or avoids a
+            // break before itself.
+            let (mut wrapper_forces, mut wrapper_avoids) = (false, false);
             while let Some(previous) = probe.checked_sub(1) {
                 probe = previous;
                 match flow.roles[probe] {
                     Role::Open(_) => {
                         start = probe;
-                        wrapper_avoids |= avoids(layout_node(tree, entries[probe].0).break_before);
+                        let before = layout_node(tree, entries[probe].0).break_before;
+                        wrapper_forces |= before == BreakBetween::Column;
+                        wrapper_avoids |= avoids(before);
                     }
                     _ if paragraphs[probe].is_none() => {}
                     _ => break,
                 }
             }
-            let forced_before = after || node.break_before == BreakBetween::Column;
+            let forced_before =
+                after || wrapper_forces || node.break_before == BreakBetween::Column;
             // The start of the flow has no break before it to avoid.
             let avoided_before =
                 !first && (avoided_after || wrapper_avoids || avoids(node.break_before));
@@ -1746,8 +1756,8 @@ fn collect(
                 .iter_mut()
                 .flatten()
                 .for_each(|paragraph| paragraph.avoids_before |= avoided_before);
-            after = role == Role::Box && node.break_after == BreakBetween::Column;
-            avoided_after = role == Role::Box && avoids(node.break_after);
+            after = node.break_after == BreakBetween::Column;
+            avoided_after = avoids(node.break_after);
             first = false;
         }
     }
