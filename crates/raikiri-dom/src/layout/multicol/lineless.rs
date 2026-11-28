@@ -290,8 +290,24 @@ fn is_empty_block_with_inline_margins(tree: &LayoutSession<'_>, child: usize) ->
         && !has_rendered_content(tree, child, false)
 }
 
+/// Whether `child` is a wrapper the stream can place, leaving aside its
+/// insets and what it holds. Its margins on the left or right only move it
+/// along its column: the stream places it past them, at the top level with
+/// [`inline_offset`] and inside another wrapper where the layout of that
+/// wrapper puts it. They are not negative, as the clips of the pieces of a
+/// box inside a wrapper start at the wrapper's left edge.
 fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
-    block_margins(&style_of(tree, child)).is_some() && is_stream_block(tree, child, true)
+    let style = style_of(tree, child);
+    let margin = style.margin();
+    let not_negative = |value: LengthPercentageAuto| {
+        value
+            .maybe_resolve(Some(1.0))
+            .is_none_or(|px: f32| px >= 0.0)
+    };
+    block_margins_beside_inline(&style).is_some()
+        && not_negative(margin.left)
+        && not_negative(margin.right)
+        && is_stream_block(tree, child, true)
 }
 
 /// [`is_plain_block`] for a box that may hold lines of text, and whose insets
