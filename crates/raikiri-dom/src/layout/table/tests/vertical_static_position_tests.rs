@@ -171,6 +171,7 @@ fn an_invalid_vertical_track_keeps_pending_candidates() {
                 &mut grid,
                 super::super::VerticalPlacement {
                     inline_tracks: &[height],
+                    collapsed_columns: &[],
                     rows: super::super::VerticalRows::new(vec![], &[], &[], 0.0, 0.0, &[], &[])
                         .visible(&[]),
                     row_origins: &[],

@@ -1017,7 +1017,7 @@ fn a_table_whose_columns_all_collapse_shows_only_its_own_border() {
 }
 
 #[test]
-fn a_vertical_table_keeps_its_collapsed_columns() {
+fn a_vertical_table_takes_its_collapsed_columns_out_of_its_height() {
     let fixture = table_with(
         "display:table;writing-mode:vertical-rl;border-spacing:10px",
         &[Column::Col(COL, None), Column::Col(COLLAPSED_COL, None)],
@@ -1026,9 +1026,12 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
         None,
         "",
     );
-    let layout = fixture.doc.nodes[fixture.cells[0][1]].layout;
-    assert!(layout.size.width > 0.0 && layout.size.height > 0.0);
-    assert!(!fixture.doc.nodes[fixture.cells[0][1]].clips_collapsed_table_span);
+    let shown = fixture.doc.nodes[fixture.cells[0][0]].layout;
+    let collapsed = fixture.doc.nodes[fixture.cells[0][1]].layout;
+    assert_eq!(collapsed.size.height, 0.0);
+    assert!(fixture.doc.nodes[fixture.cells[0][1]].clips_collapsed_table_span);
+    // One column shows, with the spacing above and below it.
+    assert_eq!(table_size(&fixture).1, shown.size.height + 20.0);
 }
 
 #[test]

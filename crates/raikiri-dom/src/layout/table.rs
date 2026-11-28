@@ -1818,7 +1818,11 @@ fn compute_table_layout_checked(
             grow_columns(&mut sizing.widths, natural_insets_width, None);
             sizing
         });
-        let mut column_sizing = if fixed_columns_collapse {
+        // A vertical table sizes its columns along its height from the whole
+        // grid (see `vertical_tracks` below), so the widths the natural pass
+        // gave it serve, without the collapsed columns.
+        let mut column_sizing = if fixed_columns_collapse || (columns_collapse && vertical_writing)
+        {
             let natural = natural_sizing
                 .as_ref()
                 .expect("collapsed columns have their natural widths");
@@ -2156,26 +2160,21 @@ fn compute_table_layout_checked(
         // Preferred heights grow proportionally, or shrink toward their true
         // inline minima when a definite height or maximum requires it.
         // A minimum height and the captions only floor the available room.
+        // Columns that `visibility: collapse` removes take no room along the
+        // physical height, nor the spacing next to them (CSS Tables 3,
+        // "Visibility-collapse rendering"). They are sized with the others
+        // first, so the cells spanning them, and a height or minimum height
+        // the table states, share out over all the columns, and the collapsed
+        // ones give up their share afterwards: the table ends up shorter than
+        // the height it states, as its collapsed rows do across a horizontal
+        // table, and its grid box stays as high as its caption asks, with room
+        // below the columns (Chromium). The height of a grid area is shared
+        // out over the columns that show only.
         let vertical_tracks = if vertical_writing {
-            let columns = usize::from(grid.n_cols);
             let rows = vertical_row_layout
                 .as_ref()
                 .expect("vertical rows measured")
                 .natural();
-            let mut tracks = vertical_column_tracks(
-                &grid,
-                border_spacing.1,
-                |cell| vertical_columns::preferred_height(doc, cell, rows.cell_width(cell)),
-                |cell| vertical_columns::states_height(doc, cell),
-            );
-            let spacing_total = border_spacing.1 * (columns + 1) as f32;
-            // The room the rows were given has the spacing of every visible
-            // row taken out of it; the columns stack along that height with
-            // spacing of their own, so all of it comes back.
-            let floor = min_target
-                .map_or(0.0, |room| room + spacing.height)
-                .max(caption_inline_minimum - padding_border_size.height);
-            let natural = tracks.iter().sum::<f32>() + spacing_total;
             // The row-height pass excludes vertical flex/grid items, but
             // their assigned inline extent still sizes the column tracks.
             let inline_target = if parent_is_flex_or_grid {
@@ -2185,23 +2184,67 @@ fn compute_table_layout_checked(
             } else {
                 known_target
             };
+            let in_grid_area = doc.taffy_parent_of(table_idx).is_some_and(|parent| {
+                doc.nodes[parent].formatting_context == FormattingContext::Grid
+            });
+            let mut tracks = vertical_column_tracks(
+                &grid,
+                border_spacing.1,
+                |cell| vertical_columns::preferred_height(doc, cell, rows.cell_width(cell)),
+                |cell| vertical_columns::states_height(doc, cell),
+            );
+            let shown_only = |tracks: &mut Vec<f32>| {
+                if columns_collapse {
+                    *tracks = std::mem::take(tracks)
+                        .into_iter()
+                        .zip(collapsed_cols)
+                        .filter(|(_, collapsed)| !**collapsed)
+                        .map(|(track, _)| track)
+                        .collect();
+                }
+            };
+            if in_grid_area {
+                shown_only(&mut tracks);
+            }
+            let spacing_total = border_spacing.1 * (tracks.len() + 1) as f32;
+            // The room the rows were given has the spacing of every visible
+            // row taken out of it; the columns stack along that height with
+            // spacing of their own, so all of it comes back.
+            let floor = min_target
+                .map_or(0.0, |room| room + spacing.height)
+                .max(caption_inline_minimum - padding_border_size.height);
+            let natural = tracks.iter().sum::<f32>() + spacing_total;
             let requested = inline_target.map_or(natural, |room| room + spacing.height);
             let capped = max_h_outer.map_or(requested, |maximum| {
                 requested.min((maximum - padding_border_size.height).max(0.0))
             });
             let target = capped.max(floor);
             if target < natural {
-                let minimum = vertical_columns::minimum_tracks(doc, &grid, rows, border_spacing.1);
+                let mut minimum =
+                    vertical_columns::minimum_tracks(doc, &grid, rows, border_spacing.1);
+                if in_grid_area {
+                    shown_only(&mut minimum);
+                }
                 vertical_columns::fit(&mut tracks, &minimum, (target - spacing_total).max(0.0));
             } else if target > natural {
                 grow_tracks(&mut tracks, target - natural);
+            }
+            if !in_grid_area {
+                shown_only(&mut tracks);
             }
             tracks
         } else {
             Vec::new()
         };
+        // The spacing before the first column and after the last stays when
+        // every column collapses.
+        let vertical_gaps = if columns_collapse && vertical_tracks.is_empty() {
+            2
+        } else {
+            vertical_tracks.len() + 1
+        };
         let vertical_content_height =
-            vertical_tracks.iter().sum::<f32>() + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+            vertical_tracks.iter().sum::<f32>() + border_spacing.1 * vertical_gaps as f32;
         // A flex column retains the main size it assigns, but a row flex or
         // grid item gives up the collapsed rows' share of its cross size.
         let collapse_shrinks_table = collapsed_rows_share
@@ -2210,7 +2253,8 @@ fn compute_table_layout_checked(
         let final_size = Size {
             width: final_width,
             height: if vertical_writing {
-                vertical_content_height + padding_border_size.height
+                vertical_content_height.max(caption_inline_minimum - padding_border_size.height)
+                    + padding_border_size.height
             } else if collapse_shrinks_table {
                 // The collapsed rows take their share with them; the maximum
                 // still caps the rows that remain, without reapplying a minimum.
@@ -2277,7 +2321,9 @@ fn compute_table_layout_checked(
         // Position cells: origin includes padding + collapsed outer border.
         let x_origin = pad.left
             + collapsed.outer_left
-            + if shown_columns == 0 && !fixed_columns_collapse {
+            // The rows of a vertical table run along the physical width,
+            // so its collapsed columns leave this spacing alone.
+            + if shown_columns == 0 && !fixed_columns_collapse && !vertical_writing {
                 0.0
             } else {
                 border_spacing.0
@@ -2386,6 +2432,7 @@ fn compute_table_layout_checked(
                 &mut grid,
                 VerticalPlacement {
                     inline_tracks: &vertical_tracks,
+                    collapsed_columns: collapsed_cols,
                     rows: visible_rows.expect("vertical rows are measured"),
                     row_origins: vertical_row_origins
                         .as_deref()
@@ -6302,7 +6349,10 @@ fn grow_tracks(tracks: &mut [f32], extra: f32) {
 }
 
 struct VerticalPlacement<'a> {
+    /// The tracks of the columns that show, in order.
     inline_tracks: &'a [f32],
+    /// Which columns of the grid `visibility: collapse` removes.
+    collapsed_columns: &'a [bool],
     rows: RowTrackView<'a>,
     row_origins: &'a [f32],
     origin: Point<f32>,
@@ -6324,6 +6374,7 @@ fn reposition_cells_for_vertical_writing(
 ) -> OofCandidates {
     let VerticalPlacement {
         inline_tracks: tracks,
+        collapsed_columns,
         rows,
         row_origins,
         origin,
@@ -6350,12 +6401,28 @@ fn reposition_cells_for_vertical_writing(
         } else {
             OofCandidates::new()
         };
-        let col_start = usize::from(cell.col_start).min(tracks.len());
-        let col_end = col_start
-            .saturating_add(usize::from(cell.col_span))
-            .min(tracks.len());
-        let offset =
-            spanned_size(&tracks[..col_start], spacing) + if col_start > 0 { spacing } else { 0.0 };
+        // A cell keeps the columns of its span that show, and no height when
+        // none does.
+        let shown_before = |column: usize| {
+            column
+                - collapsed_columns[..column.min(collapsed_columns.len())]
+                    .iter()
+                    .filter(|collapsed| **collapsed)
+                    .count()
+        };
+        let col_start = shown_before(usize::from(cell.col_start)).min(tracks.len());
+        let col_end =
+            shown_before(usize::from(cell.col_start).saturating_add(usize::from(cell.col_span)))
+                .min(tracks.len())
+                .max(col_start);
+        // A cell whose columns all collapse sits where the column before
+        // them ends, without the spacing after it.
+        let offset = spanned_size(&tracks[..col_start], spacing)
+            + if col_start > 0 && col_end > col_start {
+                spacing
+            } else {
+                0.0
+            };
         let height = spanned_size(&tracks[col_start..col_end], spacing);
         let y = origin.y
             + if columns_backwards {
