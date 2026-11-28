@@ -2274,6 +2274,33 @@ fn sample_table_html() -> String {
 }
 
 #[test]
+fn starting_with_write_preserves_regular_layout_for_write_and_feed() {
+    let html = sample_table_html();
+    let expected = batch_pages(&html);
+    let resources = RenderResources::new();
+    for finish_with_feed in [false, true] {
+        let mut sink = Record::default();
+        let mut stream = StreamingLayout::new(
+            &resources,
+            Default::default(),
+            Default::default(),
+            &mut sink,
+        );
+        let (first, rest) = html.as_bytes().split_at(1);
+        stream.write_all(first).unwrap();
+        if finish_with_feed {
+            stream.feed(rest).unwrap();
+        } else {
+            stream.write_all(rest).unwrap();
+        }
+        assert!(stream.table_input.is_none());
+        completed(stream.finish().unwrap());
+        assert_eq!(sink.offered_table_pages, 0);
+        assert_eq!(sink.pages, expected);
+    }
+}
+
+#[test]
 fn mixed_write_and_feed_deliver_measured_cells_within_the_sink_budget() {
     let html = sample_table_html();
     let fonts = crate::FontCollectionBuilder::new()

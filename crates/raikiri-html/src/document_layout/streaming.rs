@@ -1525,6 +1525,11 @@ impl<S: PageSink> Write for StreamingLayout<'_, '_, S> {
         if !matches!(self.failure, Failure::None) {
             return Err(std::io::Error::other(failed_earlier().to_string()));
         }
+        // A write-only stream uses the regular parser. Once feed starts probing,
+        // the probe must see every later byte, including bytes supplied by Write.
+        if !buf.is_empty() && self.table_prefix.as_ref().is_some_and(Vec::is_empty) {
+            self.table_prefix = None;
+        }
         match self.feed_selecting_table(buf) {
             Ok(()) => Ok(buf.len()),
             Err(error) => {
