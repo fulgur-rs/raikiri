@@ -141,6 +141,10 @@ fn is_transparent_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
         || node.roots_block_context()
         || node.layout_position() != Position::Static
         || node.paints_background_color
+        // A break the wrapper forces or avoids around itself would go with
+        // its children, which take its place.
+        || sets_break_in_columns(node.break_before)
+        || sets_break_in_columns(node.break_after)
         || !paragraph_group::is_flow_wrapper(tree, id)
         || !paragraph_group::height_follows_content(tree, id)
     {
@@ -3754,9 +3758,15 @@ impl ColumnStack {
 }
 
 /// Whether `child` is a box with no lines that a column end slices wherever
-/// it falls (CSS Fragmentation 3, 4.4), with no margins to keep with it.
+/// it falls (CSS Fragmentation 3, 4.4), with no margins to keep with it. The
+/// columns here place a sliced box from its border box, so one with block
+/// margins goes whole to a column.
 fn slices_at_column_end(tree: &LayoutSession<'_>, child: usize) -> bool {
-    lineless::is_sized_leaf_below_floats(tree, child) && lineless::slices_sized_leaf(tree, child)
+    let margin = tree.nodes[child].layout.margin;
+    margin.top == 0.0
+        && margin.bottom == 0.0
+        && lineless::is_sized_leaf_below_floats(tree, child)
+        && lineless::slices_sized_leaf(tree, child)
 }
 
 /// A measured child of a column container where it stands in one column:
