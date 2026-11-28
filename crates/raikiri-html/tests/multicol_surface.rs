@@ -1531,9 +1531,10 @@ fn a_paragraph_that_cannot_join_the_balance_keeps_all_its_lines_in_its_column() 
 }
 
 #[test]
-fn the_paragraphs_of_a_block_that_is_balanced_whole_keep_all_their_lines() {
-    // The wrapper is one item of the balance, so both of its paragraphs stay
-    // in the first column; the padded paragraph is the second item.
+fn the_paragraphs_of_a_block_and_a_padded_paragraph_balance_together() {
+    // The paragraphs in the wrapper and the padded paragraph after it share
+    // the three columns, as in Chromium: each paragraph keeps its lines
+    // together in a column of its own.
     let document = lay_out(
         "<div class=mc><div><p>A<br>B</p><p>C<br>D</p></div><p style='padding-top:1px'>E<br>F</p></div>",
         ".mc{column-count:3;width:160px}",
@@ -1543,10 +1544,10 @@ fn the_paragraphs_of_a_block_that_is_balanced_whole_keep_all_their_lines() {
         [
             ("A".into(), (0.0, 16.0)),
             ("B".into(), (0.0, 36.0)),
-            ("C".into(), (0.0, 56.0)),
-            ("D".into(), (0.0, 76.0)),
-            ("E".into(), (60.0, 17.0)),
-            ("F".into(), (60.0, 37.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+            ("E".into(), (120.0, 17.0)),
+            ("F".into(), (120.0, 37.0)),
         ]
     );
 }
