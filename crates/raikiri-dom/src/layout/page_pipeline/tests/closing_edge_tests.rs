@@ -139,7 +139,7 @@ fn a_box_moves_only_when_the_next_page_can_hold_it_without_the_edges() {
             page_end: 100.0,
             next_page_step,
         };
-        closing_edges_move(&candidate, &fit)
+        closing_edges_move(&candidate, &fit, 0.0)
     };
     // A box of 60 that fills the rest of its page: the next page holds it
     // from 60 up, whatever the edges that run on after it.
@@ -4961,4 +4961,26 @@ fn a_spanning_cell_is_beside_no_row_of_a_later_row_group() {
         block(doc, later, "display:table-cell;height:10px");
     });
     assert!(row_beside_spanning_cell(&doc, table, later));
+}
+
+#[test]
+fn a_block_of_set_size_moves_whole_only_for_the_edges_that_follow_its_box() {
+    // `body > spacer > outer(height:70px) > inner(height:30px; border 20px) >
+    // box(30px)` on 100px pages: the outer block has 20px of room below the
+    // inner border. Only the border follows the box, so the outer block moves
+    // when that border crosses the page end, not when the room does.
+    for (spacer, outer_y) in [(40.0, 40.0), (60.0, 100.0)] {
+        let mut outer = 0;
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            outer = block(doc, body, "display:block;height:70px");
+            let inner = block(
+                doc,
+                outer,
+                "display:block;height:30px;border-bottom:20px solid",
+            );
+            block(doc, inner, "display:block;height:30px");
+        });
+        assert_eq!(page_flow_y(&doc, outer), outer_y, "{spacer}");
+    }
 }

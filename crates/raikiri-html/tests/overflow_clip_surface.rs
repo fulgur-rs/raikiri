@@ -681,12 +681,15 @@ fn columns_in_a_clip_keep_their_pages() {
 }
 
 #[test]
-fn a_forced_break_past_a_clip_edge_still_breaks() {
+fn a_forced_break_past_a_clip_edge_adds_no_page() {
+    // The box with the break starts below the end of the box that clips it,
+    // so it is hidden there, and its page holds nothing: Chromium prints the
+    // document on one page.
     let result = laid_out(
         "<div id='clip'><div style='height:120px'></div><div style='break-before:page'>X</div></div>",
         "#clip{height:100px;overflow:hidden}",
     );
-    assert_eq!(result.page_count(), 2);
+    assert_eq!(result.page_count(), 1);
 }
 
 #[test]

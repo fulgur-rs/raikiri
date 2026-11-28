@@ -68,6 +68,10 @@ pub(crate) struct IfcRoot {
     pub(crate) generated_boxes: Arc<[super::generated_atomics::GeneratedAtomic]>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
+    /// The rendered legend of a fieldset root, the first of its boxes, which
+    /// the line loop lays out over the block-start border of the root (see
+    /// [`super::projection::paragraph_legend`]).
+    pub(crate) legend: Option<usize>,
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
@@ -196,6 +200,9 @@ pub(crate) struct IfcLines {
     /// True when some line was laid out beside a float (its space was
     /// narrower than the content box or did not start at the content start).
     pub(crate) beside_floats: bool,
+    /// True when floats from outside the paragraph moved some line down
+    /// below them, to where it fits the room they leave.
+    pub(crate) below_floats: bool,
     /// Empty content-start space below inherited floats, with no owned
     /// content above their exclusion end. Pagination may consume it once.
     pub(crate) external_float_gap: f32,
@@ -495,6 +502,7 @@ impl IfcRoot {
             generated_blocks: meta.generated_blocks.into(),
             generated_boxes: meta.generated_boxes.into(),
             rtl: meta.rtl,
+            legend: None,
             offsets: meta.offsets,
             offset_index,
             percent_insets: meta.percent_insets,
@@ -607,6 +615,7 @@ impl IfcRoot {
             generated_blocks: self.generated_blocks.clone(),
             generated_boxes: self.generated_boxes.clone(),
             rtl: self.rtl,
+            legend: self.legend,
             offsets: self.offsets.clone(),
             offset_index: self.offset_index.clone(),
             percent_insets: self.percent_insets.clone(),
@@ -856,6 +865,7 @@ impl fmt::Debug for IfcLines {
             .field("lines", &self.lines.len())
             .field("height", &self.height)
             .field("beside_floats", &self.beside_floats)
+            .field("below_floats", &self.below_floats)
             .field("escaping_margin", &self.escaping_margin.resolve())
             .field("shifts", &self.shifts)
             .field(

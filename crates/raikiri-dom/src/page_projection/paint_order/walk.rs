@@ -42,6 +42,25 @@ pub(super) struct PaintWalk<'a, 'l> {
     negative_contexts: Vec<negative_levels::Context<'a>>,
     negative_boxes: Vec<negative_levels::BoxCapture>,
     scopes: Vec<Scope>,
+    /// How many clips, transforms and opacity groups are open.
+    open_scopes: usize,
+    /// The overflow clips open around the events that follow, innermost
+    /// last.
+    open_overflow_clips: Vec<OpenOverflowClip>,
+}
+
+/// An overflow clip open around the events that follow.
+#[derive(Clone, Copy)]
+struct OpenOverflowClip {
+    /// The block that clips.
+    owner: usize,
+    /// The depth of the open scopes and negative-level captures right after
+    /// the clip opened (see [`PaintWalk::scope_depth`]).
+    depth: (usize, usize),
+    /// Where the event that reopened the clip around the content a layer
+    /// handed on, or after a box that left it, is listed. Such a clip is
+    /// dropped when nothing painted inside it, as the painter drops it.
+    reopened_at: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +124,8 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             negative_contexts: Vec::new(),
             negative_boxes: Vec::new(),
             scopes: Vec::new(),
+            open_scopes: 0,
+            open_overflow_clips: Vec::new(),
         }
     }
 
@@ -134,7 +155,9 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             }
             Frame::PushClip(owner) => {
                 if let Some(entry) = self.items.overflow_clips.get(&NodeId::new(owner as u64)) {
+                    let start = self.events.len();
                     self.push_scope(Scope::Clip(entry.clip, ClipKind::Overflow));
+                    self.opened_overflow_clip(owner, Some(start));
                 }
             }
             Frame::Content(node_id) => self.content(node_id),
@@ -145,18 +168,8 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             Frame::PopClip => self.pop_scope(PaintEvent::PopClip),
             Frame::PopClipIfPainted(start) => {
                 self.scopes.pop();
-                let paints = self.events[start..].iter().copied().any(|event| {
-                    !matches!(
-                        event,
-                        PaintEvent::PushClip(..)
-                            | PaintEvent::PopClip
-                            | PaintEvent::PushOpacity(_)
-                            | PaintEvent::PopOpacity
-                            | PaintEvent::PushTransform(_)
-                            | PaintEvent::PopTransform
-                    ) && !super::event_clips::hides_decoration(self.cascade, event)
-                });
-                if paints {
+                self.closed_scope();
+                if self.paints_since(start) {
                     self.events.push(PaintEvent::PopClip);
                 } else {
                     self.events.truncate(start);
@@ -194,12 +207,96 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         if !self.negative_levels.is_empty() {
             self.scopes.push(scope);
         }
+        self.open_scopes += 1;
         self.events.push(scope.open());
     }
 
     fn pop_scope(&mut self, event: PaintEvent<'a>) {
-        self.events
-            .push(self.scopes.pop().map_or(event, Scope::close));
+        let close = self.scopes.pop().map_or(event, Scope::close);
+        // A reopened clip that holds no paint is dropped.
+        let reopened = self
+            .open_overflow_clips
+            .last()
+            .filter(|open| open.depth.0 == self.open_scopes)
+            .and_then(|open| open.reopened_at);
+        match reopened {
+            Some(start) if !self.paints_since(start) => self.events.truncate(start),
+            _ => self.events.push(close),
+        }
+        self.closed_scope();
+    }
+
+    /// Whether the events listed from `start` on paint anything.
+    fn paints_since(&self, start: usize) -> bool {
+        self.events[start..].iter().copied().any(|event| {
+            !matches!(
+                event,
+                PaintEvent::PushClip(..)
+                    | PaintEvent::PopClip
+                    | PaintEvent::PushOpacity(_)
+                    | PaintEvent::PopOpacity
+                    | PaintEvent::PushTransform(_)
+                    | PaintEvent::PopTransform
+            ) && !super::event_clips::hides_decoration(self.cascade, event)
+        })
+    }
+
+    /// Note that the innermost open scope closed, with the overflow clip it
+    /// may be.
+    fn closed_scope(&mut self) {
+        self.open_scopes = self.open_scopes.saturating_sub(1);
+        while self
+            .open_overflow_clips
+            .last()
+            .is_some_and(|open| open.depth.0 > self.open_scopes)
+        {
+            self.open_overflow_clips.pop();
+        }
+    }
+
+    /// The depth of the open scopes and negative-level captures now. A clip
+    /// opened at the current depth is the innermost scope.
+    fn scope_depth(&self) -> (usize, usize) {
+        (
+            self.open_scopes,
+            self.negative_contexts.len() + self.negative_boxes.len(),
+        )
+    }
+
+    /// Note that the overflow clip of block `owner` opened, reopened by the
+    /// event listed at `reopened_at`.
+    fn opened_overflow_clip(&mut self, owner: usize, reopened_at: Option<usize>) {
+        let depth = self.scope_depth();
+        self.open_overflow_clips.push(OpenOverflowClip {
+            owner,
+            depth,
+            reopened_at,
+        });
+    }
+
+    /// Close the overflow clips that are open innermost around the box of
+    /// element `node_id` and do not cut it, and push the frames that visit
+    /// it and then reopen them. Return whether it closed any.
+    ///
+    /// An overflow clip does not cut a box whose containing block is outside
+    /// the block that clips (CSS 2.1 §11.1.1). Such a box listed in place,
+    /// as in the columns of a multi-column container, would otherwise be
+    /// listed inside the clip.
+    fn leave_escaped_clips(&mut self, node_id: usize) -> bool {
+        let mut left = Vec::new();
+        while let Some(&open) = self.open_overflow_clips.last()
+            && open.depth == self.scope_depth()
+            && paint_rules::escapes_overflow_clip(self.document, self.cascade, open.owner, node_id)
+        {
+            self.pop_scope(PaintEvent::PopClip);
+            left.push(open.owner);
+        }
+        if left.is_empty() {
+            return false;
+        }
+        self.stack.extend(left.into_iter().map(Frame::PushClip));
+        self.stack.push(Frame::Visit(node_id));
+        true
     }
 
     /// List the inline content of a paragraph between the frames around it.
@@ -560,7 +657,10 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         let Some(node) = document.get_node(node_id) else {
             return; // cov:ignore: node ids on the stack come from the arena
         };
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
+            return;
+        }
+        if self.leave_escaped_clips(node_id) {
             return;
         }
         match node.kind() {
@@ -637,6 +737,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                 Frame::PopClip
             };
             self.push_scope(Scope::Clip(entry.clip, ClipKind::Overflow));
+            self.opened_overflow_clip(node_id, None);
             self.stack.push(close);
         }
         self.enter_subtree(node_id, node, cv, clip.is_some());

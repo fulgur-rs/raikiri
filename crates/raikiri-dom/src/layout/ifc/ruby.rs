@@ -138,8 +138,7 @@ fn is_skipped(doc: &Document, id: usize) -> bool {
             NodeKind::Comment | NodeKind::ProcessingInstruction
         )
         || (node.kind() == NodeKind::Element
-            && (doc.nodes[id].display() == DisplayValue::None
-                || node.is_non_rendered_html_element()))
+            && (doc.nodes[id].display() == DisplayValue::None || node.is_unrendered_html_element()))
 }
 
 /// Whether `id` is a float or an absolutely positioned box.

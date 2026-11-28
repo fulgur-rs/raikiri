@@ -19,6 +19,11 @@ const ADVANCE: f32 = 10.0;
 /// Every word of `body` as `word@page:x,y`, the left and top of its glyphs on
 /// its page, on 100x100 pages with no margin and 10px Ahem lines 10px apart.
 fn words(body: &str) -> String {
+    words_and_pages(body).0
+}
+
+/// `words` with the number of pages.
+fn words_and_pages(body: &str) -> (String, usize) {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -55,7 +60,7 @@ fn words(body: &str) -> String {
             }
         }
     }
-    words.join(" ")
+    (words.join(" "), result.page_count() as usize)
 }
 
 /// A 50px box with a block-end margin of `margin_bottom` and a line, then a
@@ -184,35 +189,497 @@ fn the_block_before_is_found_past_empty_boxes_and_contents_wrappers() {
     }
 }
 
-/// The page of `word` in `words`.
-fn page_of(words: &str, word: &str) -> u32 {
-    words
-        .split(' ')
-        .find_map(|entry| entry.strip_prefix(&format!("{word}@")))
-        .and_then(|rest| rest.split(':').next())
-        .and_then(|page| page.parse().ok())
-        .unwrap_or_else(|| panic!("{word} in {words}"))
-}
-
 #[test]
 fn content_between_the_block_and_the_break_keeps_its_place_before_it() {
-    // The margin of an inline-block is part of its line, which Chromium ends
-    // on the fourth page with the box after it: no block margin to cut.
+    // The margin of an inline-block is part of its line: no block margin to
+    // cut. The line starts the second page and runs on to the fourth, where
+    // the box after it follows (see the test below).
     let inline = words(
         "<div style='height:40px'></div><span style='display:inline-block;width:10px;\
          height:10px;margin-bottom:250px;vertical-align:top'></span>\
          <div style='break-before:page'>S</div><div>X</div>",
     );
-    assert!(page_of(&inline, "S") >= 3, "{inline}");
-    // A generated block between the two comes before the box, on an earlier
-    // page.
+    assert_eq!(inline, "S@3:0,60 X@3:0,70");
+    // A generated block between the two starts the page after the margin's
+    // first page edge, which cuts the margin, and the box follows it on the
+    // page after.
     let generated = words(
         "<style>.w::after{content:'G';display:block}</style>\
          <div style='display:contents' class=w><div style='height:50px;margin-bottom:250px'>A</div></div>\
          <div style='break-before:page'>S</div><div>X</div>",
     );
-    assert!(
-        page_of(&generated, "G") < page_of(&generated, "S"),
-        "{generated}"
+    assert_eq!(generated, "A@0:0,0 G@1:0,0 S@2:0,0 X@2:0,10");
+}
+
+#[test]
+fn a_forced_break_at_the_start_of_a_wrapper_cuts_the_margin_before_the_wrapper() {
+    // The break before the first box of a block sits before the block too,
+    // and keeps the margins of the block and of the boxes it begins.
+    let cases = [
+        (
+            "<div><div style='break-before:page'>S</div></div>",
+            "S@1:0,0",
+        ),
+        (
+            "<div><div><div style='break-before:page'>S</div></div></div>",
+            "S@1:0,0",
+        ),
+        (
+            "<div style='margin-top:20px'><div style='break-before:page'>S</div></div>",
+            "S@1:0,20",
+        ),
+        (
+            "<div><div style='break-before:page;margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+        (
+            "<div style='margin-top:10px'><div style='break-before:page;margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+        (
+            "<div style='padding-top:5px'><div style='break-before:page'>S</div></div>",
+            "S@1:0,5",
+        ),
+        (
+            "<div style='break-before:page'><div style='margin-top:30px'>S</div></div>",
+            "S@1:0,30",
+        ),
+    ];
+    for margin_bottom in [160, 250] {
+        for (after, expected) in cases {
+            let words = words(&format!(
+                "<div style='height:50px;margin-bottom:{margin_bottom}px'>A</div>{after}"
+            ));
+            assert_eq!(
+                words,
+                format!("A@0:0,0 {expected}"),
+                "{margin_bottom} {after}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_margin_over_several_pages_is_cut_at_its_first_page_edge() {
+    // Without any forced break, the first page edge in the margin breaks the
+    // page, even where the rest of the margin would end right at a later
+    // edge, and the box after it starts the next page.
+    for (height, margin_bottom) in [(50, 150), (50, 250), (100, 100), (100, 200), (30, 170)] {
+        for after in [
+            "<div>S</div>",
+            "<div style='margin-top:20px'>S</div>",
+            "<div><div>S</div></div>",
+            "<div style='break-inside:avoid;height:30px'>S</div>",
+        ] {
+            let words = words(&format!(
+                "<div style='height:{height}px;margin-bottom:{margin_bottom}px'>A</div>{after}"
+            ));
+            assert_eq!(words, "A@0:0,0 S@1:0,0", "{height} {margin_bottom} {after}");
+        }
+    }
+    // The margin of a nested block, and one cut before the lines of a
+    // paragraph, a single line of an inline-block among them.
+    for (body, expected) in [
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div><div>S</div>",
+            "A@0:0,0 S@1:0,0",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:160px'>A</div>S<br>T</div>",
+            "A@0:0,0 S@1:0,0 T@1:0,10",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div>S</div>",
+            "A@0:0,0 S@1:0,0",
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:160px'>A</div>\
+             <span style='display:inline-block;width:10px;height:10px'></span></div><div>X</div>",
+            "A@0:0,0 X@1:0,12",
+        ),
+    ] {
+        assert_eq!(words(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_margin_inside_its_page_keeps_the_lines_below_it() {
+    // On a later page, the lines after a block whose margin ends on that
+    // page stay below the margin; one that reaches the next page is cut.
+    for (body, expected) in [
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@1:0,70 T@1:0,80",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:10px'>A</div>\
+             <span style='display:inline-block;width:10px;height:10px'></span></div><div>X</div>",
+            "Z@0:0,0 A@1:0,50 X@1:0,82",
+        ),
+        (
+            "<div style='height:150px'>Z</div>\
+             <div><div style='height:10px;margin-bottom:160px'>A</div>S<br>T</div>",
+            "Z@0:0,0 A@1:0,50 S@2:0,0 T@2:0,10",
+        ),
+    ] {
+        let mut words = words(body)
+            .split(' ')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        words.sort_by_key(|word| {
+            let (page, y) = word.split_once('@').unwrap().1.split_once(':').unwrap();
+            (
+                page.to_owned(),
+                y.split(',').nth(1).unwrap().parse::<i32>().unwrap(),
+            )
+        });
+        assert_eq!(words.join(" "), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_forced_break_after_a_line_that_runs_past_its_page_opens_the_next_page() {
+    // No page break goes through a line, so what runs past the page it starts
+    // on is overflow. The break opens the page after the line's, and the box
+    // keeps its place in the flow below the overflow there, as in Chromium.
+    let tall = "<span style='display:inline-block;width:10px;height:10px;\
+                margin-bottom:150px;vertical-align:top'></span>";
+    let cases = [
+        (
+            format!("{tall}<div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The line holds text too.
+        (
+            format!("R{tall}<div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A box of the line's height in place of its margin.
+        (
+            "<span style='display:inline-block;width:10px;height:160px;\
+             vertical-align:top'></span><div style='break-before:page'>S</div>"
+                .to_owned(),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A line below the baseline of a box as tall as the line.
+        (
+            "<span style='display:inline-block;width:10px;height:160px'></span>\
+             <div style='break-before:page'>S</div>"
+                .to_owned(),
+            "S@2:0,62 X@2:0,72",
+        ),
+        // Blocks around the line end with it.
+        (
+            format!("<div>{tall}</div><div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        (
+            format!("<div><div>{tall}</div></div><div style='break-before:page'>S</div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The break at the start of a wrapper.
+        (
+            format!("<div>{tall}</div><div><div style='break-before:page'>S</div></div>"),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // The box keeps its own margin below the overflow.
+        (
+            format!("{tall}<div style='break-before:page;margin-top:20px'>S</div>"),
+            "S@2:0,80 X@2:0,90",
+        ),
+        // The margin of a block around the line goes with the break.
+        (
+            format!(
+                "<div style='margin-bottom:20px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A relative offset moves the line only where it paints.
+        (
+            format!(
+                "<div style='position:relative;top:5px'><div>{tall}</div></div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A relative offset on the block that holds the line.
+        (
+            format!(
+                "<div style='position:relative;top:5px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@2:0,60 X@2:0,70",
+        ),
+        // A block of set height runs on past its line, and the break follows
+        // it.
+        (
+            "<div style='height:165px'>R</div><div style='break-before:page'>S</div>".to_owned(),
+            "S@3:0,0 X@3:0,10",
+        ),
+        // An empty box opens the page after the overflow, and the margin that
+        // collapses through it goes with it.
+        (
+            format!("{tall}<div style='break-before:page;margin-top:20px'></div><div>S</div>"),
+            "S@3:0,20 X@3:0,30",
+        ),
+        // Padding below the line is no line: the break follows it.
+        (
+            format!(
+                "<div style='padding-bottom:10px'>{tall}</div><div style='break-before:page'>S</div>"
+            ),
+            "S@3:0,0 X@3:0,10",
+        ),
+    ];
+    for (content, expected) in cases {
+        let words = words(&format!(
+            "<div style='height:40px'></div>{content}<div>X</div>"
+        ));
+        let boxes = words
+            .split(' ')
+            .filter(|word| word.starts_with("S@") || word.starts_with("X@"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(boxes, expected, "{content}: {words}");
+    }
+}
+
+#[test]
+fn a_cut_margin_leaves_no_page_after_the_content() {
+    // The box that a forced break takes up to the page after the margin's
+    // first page edge takes the end of the flow up with it, as an unforced
+    // break that cuts the margin does: no page follows the content.
+    for (body, expected) in [
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div><div>X</div>",
+            ("A@0:0,0 S@1:0,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:250px'>A</div>\
+             <div style='break-before:page'>S</div><div>X</div>",
+            ("A@0:0,0 S@1:0,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:150px;break-after:page'>A</div><div>S</div>",
+            ("A@0:0,0 S@1:0,0", 2),
+        ),
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div>\
+             <div style='break-before:page;height:30px'>S</div>",
+            ("A@0:0,0 S@1:0,0", 2),
+        ),
+        (
+            "<div style='float:left;width:10px;height:10px'></div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div>",
+            ("A@0:10,0 S@1:0,0", 2),
+        ),
+        // A box of set height around the box that the break takes up keeps
+        // its height, and a later break opens the page after.
+        (
+            "<div style='height:120px'><div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='break-before:page'>S</div></div><div style='break-before:page'>Y</div>",
+            ("A@0:0,0 S@1:0,0 Y@2:0,0", 3),
+        ),
+    ] {
+        let (words, pages) = words_and_pages(body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_float_below_a_cut_margin_starts_the_page_with_the_box_after_it() {
+    // The page edge cuts the margin above the float as it cuts the one above
+    // the box after it, which sits beside the float at the top of the page.
+    for (body, expected) in [
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div><div>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        (
+            "<div style='height:50px;margin-bottom:250px'>A</div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // The margin may be that of the last box in the block before it.
+        (
+            "<div><div style='height:50px;margin-bottom:150px'>A</div></div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // A float at the end of the flow lands there too.
+        (
+            "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>",
+            ("A@0:0,0 F@1:0,0", 2),
+        ),
+        // A float in the margin above a box that ends it keeps its place.
+        (
+            "<div style='height:50px;margin-bottom:30px'>A</div>\
+             <div style='float:left;width:10px;height:10px'></div><div>S</div><div>X</div>",
+            ("A@0:0,0 S@0:10,80 X@0:0,90", 1),
+        ),
+    ] {
+        let (words, pages) = words_and_pages(body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_box_that_clears_a_float_below_a_cut_margin_follows_it() {
+    // A box after the float that clears it keeps its clearance, so it
+    // follows the float to the top of the page, and the flow after it too.
+    let a = "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>";
+    for (after, expected) in [
+        (
+            "<div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // A box that clears only the other side sits beside it.
+        (
+            "<div style='clear:right'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:10,0 X@1:0,10", 2),
+        ),
+        // A float that clears it follows it too.
+        (
+            "<div style='float:left;clear:left;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:0,10 S@1:10,0", 2),
+        ),
+        (
+            "<div style='float:right;clear:left;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:90,10 S@1:10,0", 2),
+        ),
+        // A float that clears only the other side sits beside it.
+        (
+            "<div style='float:right;clear:right;width:10px;height:10px'>G</div><div>S</div>",
+            ("A@0:0,0 F@1:0,0 G@1:90,0 S@1:10,0", 2),
+        ),
+    ] {
+        let body = format!("{a}{after}");
+        let (words, pages) = words_and_pages(&body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_box_that_clears_floats_below_a_cut_margin_stays_below_the_others() {
+    let a = "<div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:10px;height:10px'>F</div>";
+    for (before, after, expected) in [
+        // A box that also clears an earlier float on the other side stays
+        // below that float's end.
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,50 X@1:0,60", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:120px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,20 X@1:0,30", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:250px'>R</div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@2:0,50 X@2:0,60", 3),
+        ),
+        // One that clears only the float below the margin follows it.
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:left'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // Nor in a contents wrapper, nor with a relative offset on the box,
+        // which paints it on the next page here.
+        (
+            "<div style='display:contents'><div style='float:right;width:10px;height:150px'>R</div></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 S@1:0,50 X@1:0,60", 2),
+        ),
+        (
+            "<div style='float:right;width:10px;height:150px'>R</div>",
+            "<div style='clear:both;position:relative;top:50px'>S</div><div>X</div>",
+            ("R@0:90,0 A@0:0,0 F@1:0,0 X@1:0,60 S@2:0,0", 3),
+        ),
+        // A float that is not shown does not hold it down.
+        (
+            "<div style='display:none'><div style='float:right;height:500px'>H</div></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // Nor does a float inside a box that holds its own floats.
+        (
+            "<div style='overflow:hidden'></div>",
+            "<div style='clear:both'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        // The box is found past white space, a box that is not shown, an
+        // out-of-flow box and into a contents wrapper.
+        (
+            "",
+            " <div style='display:none'></div> <div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        (
+            "",
+            "<div style='position:absolute'></div><div style='clear:left'>S</div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+        (
+            "",
+            "<div style='display:contents'><div style='clear:left'>S</div></div><div>X</div>",
+            ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20", 2),
+        ),
+    ] {
+        let body = format!("{before}{a}{after}");
+        let (words, pages) = words_and_pages(&body);
+        assert_eq!((words.as_str(), pages), expected, "{body}");
+    }
+    // The box after a float at the end of a contents wrapper follows the
+    // wrapper.
+    let body = "<div style='height:50px;margin-bottom:150px'>A</div>\
+                <div style='display:contents'><div style='float:left;width:10px;height:10px'>F</div></div>\
+                <div style='clear:left'>S</div><div>X</div>";
+    assert_eq!(
+        words_and_pages(body),
+        ("A@0:0,0 F@1:0,0 S@1:0,10 X@1:0,20".to_string(), 2),
+        "{body}"
     );
+}
+
+#[test]
+fn a_float_below_a_cut_margin_keeps_clear_of_the_floats_that_run_past_the_edge() {
+    for (body, expected) in [
+        // One that clears an earlier float, or does not fit beside it,
+        // starts below it.
+        (
+            "<div style='float:right;width:90px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px;clear:right'>F</div>",
+            "R@0:10,0 A@0:0,0 F@1:0,50",
+        ),
+        (
+            "<div style='float:right;width:90px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "R@0:10,0 A@0:0,0 F@1:0,50",
+        ),
+        (
+            "<div style='float:left;width:90px;height:150px'>L</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "L@0:0,0 A@0:90,0 F@1:0,50",
+        ),
+        // One that fits beside it starts at the edge.
+        (
+            "<div style='float:right;width:50px;height:150px'>R</div>\
+             <div style='height:50px;margin-bottom:150px'>A</div>\
+             <div style='float:left;width:20px;height:10px'>F</div>",
+            "R@0:50,0 A@0:0,0 F@1:0,0",
+        ),
+    ] {
+        assert_eq!(words(body), expected, "{body}");
+    }
 }

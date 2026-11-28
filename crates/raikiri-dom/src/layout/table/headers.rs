@@ -30,8 +30,16 @@ pub(crate) struct HeaderRepeat {
     /// Closing edges after the source footer, excluding the footer's rows.
     /// Copies on earlier pages do not reserve this space.
     pub(crate) closing_edges: f32,
+    /// For a footer, the block size below its end of the boxes that the page
+    /// may not break from it, and whether that run moves to the next page
+    /// even when it does not fit there.
+    pub(crate) tied_run: Option<(f32, bool)>,
     /// The table's block start before pagination.
     pub(crate) table_source_y: f32,
+    /// The block offset that `position: relative` on the table and the
+    /// boxes around it adds to where the flow puts it. The pages break the
+    /// flow without it, and every copy is painted with it, as the rows are.
+    pub(crate) relative_offset: f32,
     /// Page origin and header y per page index. Call
     /// [`HeaderRepeats::index`] after changing it.
     pub(crate) placements: BTreeMap<u32, (f32, f32)>,
@@ -53,6 +61,8 @@ impl HeaderRepeat {
             last_row: None,
             visit_shift: None,
             closing_edges: 0.0,
+            tied_run: None,
+            relative_offset: 0.0,
             placements: BTreeMap::new(),
             by_origin: Vec::new(),
         }
@@ -82,6 +92,13 @@ pub(crate) struct HeaderRepeats {
     /// the caption alone to the next page with the edges that close the
     /// table's parent, the page opens with a copy of the header above it.
     pub(crate) tail_captions: HashMap<usize, (usize, f32)>,
+    /// The boxes of `monolithic` inside each body part around them: a part
+    /// whose box runs on under a copy is drawn on under it (see
+    /// [`Self::copy_bands`]).
+    unbroken_in: HashMap<usize, Vec<usize>>,
+    /// The bands of [`Self::copy_bands`] by table, rebuilt by
+    /// [`Self::index`].
+    bands: HashMap<usize, Vec<(f32, f32, bool)>>,
     owners: Vec<Option<usize>>,
 }
 
@@ -208,7 +225,26 @@ impl HeaderRepeats {
                     }
                 }
             }
-            if body_rows.is_empty() {
+            // The anonymous cells around the table's content outside any cell
+            // stand for their anonymous rows, whose lines are placed as those
+            // of a cell.
+            let mut anonymous_cells: Vec<usize> = Vec::new();
+            let mut seen_cells = std::collections::HashSet::new();
+            // Those of explicit rows too.
+            let row_parts = body_rows
+                .iter()
+                .copied()
+                .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow);
+            for part in parts.iter().copied().chain(row_parts) {
+                for &child in &document.nodes[part].children {
+                    if let Some(cell) = document.anonymous_cell_of(child)
+                        && seen_cells.insert(cell)
+                    {
+                        anonymous_cells.push(cell);
+                    }
+                }
+            }
+            if body_rows.is_empty() && anonymous_cells.is_empty() {
                 continue;
             }
             // Spanning-row breaks need their own table fragmentation pass.
@@ -265,22 +301,28 @@ impl HeaderRepeats {
                     }));
                 }
             }
-            // A header copy is placed on a page where a body row starts, or
-            // where a box that does not break runs on. Bound those pages by
-            // the rows, and by the table's unfragmented height over the body
-            // area left beside the copies (at least three quarters of a page
-            // beside one group, half a page beside both). Pushing an
-            // unfitting row to the next page can waste up to one row per
-            // page, hence the doubling; forced row breaks each open at most
-            // one further page. Footer copies close the same pages.
-            let forced_breaks = body_rows
-                .iter()
-                .filter(|&&row| {
-                    let computed = &cascade.computed[row];
+            // A header copy is placed on each page a body row starts or runs
+            // on, and on each page a box that does not break runs over. Rows
+            // break between their lines and at forced breaks in their cells,
+            // so bound those pages by the table's unfragmented height over the
+            // body area left beside the copies (at least three quarters of a
+            // page beside one group, half a page beside both). Pushing an
+            // unfitting row or line to the next page can waste up to one of
+            // them per page, hence the doubling; each forced break in the
+            // body opens at most one further page. Footer copies close the
+            // same pages.
+            let forces_break = |id: usize| {
+                cascade.computed.get(id).is_some_and(|computed| {
                     computed.break_before.may_force_page_break()
                         || computed.break_after.may_force_page_break()
                 })
-                .count();
+            };
+            let mut forced_breaks = 0usize;
+            let mut body_boxes = body_rows.clone();
+            while let Some(id) = body_boxes.pop() {
+                forced_breaks += usize::from(forces_break(id));
+                body_boxes.extend(document.nodes[id].children.iter().copied());
+            }
             let table_height = node.layout.size.height;
             let body_area = if header.is_some() && footer.is_some() {
                 0.5
@@ -290,17 +332,10 @@ impl HeaderRepeats {
             let flow_pages = Some((table_height / (page_height * body_area)).ceil())
                 .filter(|pages| pages.is_finite())
                 .map_or(usize::MAX, |pages| pages.max(0.0) as usize);
-            let row_pages = if unbroken.is_empty() {
-                body_rows.len() + 1
-            } else {
-                usize::MAX
-            };
-            let pages = row_pages.min(
-                flow_pages
-                    .saturating_mul(2)
-                    .saturating_add(forced_breaks)
-                    .saturating_add(1),
-            );
+            let pages = flow_pages
+                .saturating_mul(2)
+                .saturating_add(forced_breaks)
+                .saturating_add(1);
             let copies = sources.len().saturating_mul(pages);
             if copies > copy_budget {
                 continue;
@@ -313,18 +348,34 @@ impl HeaderRepeats {
                     node.border_spacing.vertical.0.max(0.0)
                 };
             // The last body row is followed by the footer itself, which moves
-            // on its own when it does not fit after the row.
+            // on its own when it does not fit after the row. A box in an
+            // anonymous cell stands for the anonymous row around the cell, and
+            // an anonymous cell in an explicit row belongs to that row.
+            let row_of = |id: usize| {
+                if document.nodes.is_anonymous_cell(id) {
+                    document
+                        .parent_of(id)
+                        .filter(|&parent| {
+                            document.nodes[parent].display() == DisplayValue::TableRow
+                        })
+                        .unwrap_or(id)
+                } else {
+                    document.anonymous_cell_of(id).unwrap_or(id)
+                }
+            };
             let last_row = body_rows
                 .iter()
+                .chain(&anonymous_cells)
                 .copied()
-                .max_by(|&a, &b| absolute_y(a).total_cmp(&absolute_y(b)));
-            for &row in &body_rows {
+                .max_by(|&a, &b| absolute_y(a).total_cmp(&absolute_y(b)))
+                .map(row_of);
+            for &row in body_rows.iter().chain(&anonymous_cells) {
                 if let Some(header) = header {
                     result.rows.insert(row, header);
                 }
                 if let Some(footer) = footer {
                     result.footer_rows.insert(row, footer);
-                    if Some(row) == last_row {
+                    if Some(row_of(row)) == last_row {
                         result.last_rows.insert(row);
                     }
                 }
@@ -338,6 +389,15 @@ impl HeaderRepeats {
                     .all(|&row| document.nodes[row].display() != DisplayValue::TableRow)
             {
                 result.anonymous_body_tables.insert(table, header);
+            }
+            for &id in &unbroken {
+                for part in document
+                    .inclusive_ancestors(id)
+                    .skip(1)
+                    .take_while(|&part| part != table)
+                {
+                    result.unbroken_in.entry(part).or_default().push(id);
+                }
             }
             result
                 .monolithic
@@ -403,11 +463,84 @@ impl HeaderRepeats {
             .map_or(0.0, |footer| footer.height + footer.gap)
     }
 
-    /// Whether `group` is a repeated header group.
-    pub(crate) fn repeats_header(&self, group: usize) -> bool {
-        self.headers
-            .get(&group)
-            .is_some_and(|header| !header.footer)
+    /// Places copies of the repeated header and footer groups of the table
+    /// of body row `row` around a break inside the row: the footer's at the
+    /// end of the page `left`, which starts at `left_origin` and ends at
+    /// `left_end`, above the table's spacing there, and the header's at the
+    /// top of the page `next`, which starts at `next_origin`. The source of
+    /// the footer follows only the last fragment of the table's last body
+    /// row.
+    pub(crate) fn place_copies_around_row_break(
+        &mut self,
+        row: usize,
+        (left, left_origin, left_end): (u32, f32, f32),
+        (next, next_origin): (u32, f32),
+    ) {
+        if let Some(header) = self.rows.get(&row).and_then(|id| self.headers.get_mut(id)) {
+            header
+                .placements
+                .entry(next)
+                .or_insert((next_origin, next_origin + header.relative_offset));
+        }
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
+        {
+            footer.placements.entry(left).or_insert((
+                left_origin,
+                left_end - footer.gap - footer.height + footer.relative_offset,
+            ));
+        }
+    }
+
+    /// Moves the end of body row `row`, the last body row placed so far, down
+    /// by `growth`, how far the row grew when lines inside it moved: the
+    /// footer's copy on the page the row ends on goes below it. `page_of`
+    /// gives the page of a position in the flow, without the table's
+    /// relative offset, which `last_row` keeps.
+    pub(crate) fn grow_last_row(&mut self, row: usize, growth: f32, page_of: impl Fn(f32) -> u32) {
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
+            && let Some((_, bottom)) = footer.last_row
+        {
+            let bottom = bottom + growth;
+            let page = page_of(bottom - footer.relative_offset - 0.001);
+            footer.last_row = Some((page, bottom));
+        }
+    }
+
+    /// Moves the end of the body rows placed so far down to `bottom`, where
+    /// body row `row` now ends, when that is lower. `page_of` gives the page
+    /// of a position in the flow, without the table's relative offset.
+    pub(crate) fn extend_last_row(
+        &mut self,
+        row: usize,
+        bottom: f32,
+        page_of: impl Fn(f32) -> u32,
+    ) {
+        if let Some(footer) = self
+            .footer_rows
+            .get(&row)
+            .and_then(|id| self.headers.get_mut(id))
+            && footer.last_row.is_none_or(|(_, end)| end < bottom)
+        {
+            let page = page_of(bottom - footer.relative_offset - 0.001);
+            footer.last_row = Some((page, bottom));
+        }
+    }
+
+    /// The block size of the copy of the repeated footer below body row
+    /// `row`, including its gap to the row, on each page the row leaves when
+    /// it breaks, the last body row's included; zero when the row's table
+    /// repeats no footer.
+    pub(crate) fn footer_copy_height(&self, row: usize) -> f32 {
+        self.footer_rows
+            .get(&row)
+            .and_then(|footer_id| self.headers.get(footer_id))
+            .map_or(0.0, |footer| footer.height + footer.gap)
     }
 
     /// Whether `source` belongs to a repeated footer group.
@@ -426,11 +559,23 @@ impl HeaderRepeats {
     /// Call after the placements are final; page origins increase with the
     /// page index, so the order matches the page order.
     pub(crate) fn index(&mut self) {
+        self.bands.clear();
         for header in self.headers.values_mut() {
             header.by_origin = header.placements.values().copied().collect();
             header
                 .by_origin
                 .sort_by(|left, right| left.0.total_cmp(&right.0));
+            // A header copy keeps the spacing below it.
+            let gap = if header.footer { 0.0 } else { header.gap };
+            self.bands.entry(header.table).or_default().extend(
+                header
+                    .placements
+                    .values()
+                    .map(|&(_, y)| (y, y + header.height + gap, header.footer)),
+            );
+        }
+        for bands in self.bands.values_mut() {
+            bands.sort_by(|left, right| left.0.total_cmp(&right.0));
         }
     }
 
@@ -446,6 +591,50 @@ impl HeaderRepeats {
                 .filter(|&&(origin, _)| (origin - page_origin).abs() <= 0.001)
                 .map(|&(_, y)| y - header.source_y),
         )
+    }
+
+    /// The block ranges in the flow that the copies of the repeated header
+    /// and footer groups of the table around `part`, a body row group, row
+    /// or cell of it, take on the pages the table crosses, sorted, a header
+    /// copy with the spacing below it, and whether each is a footer's.
+    /// Chromium starts the fragments of the body parts that a page break
+    /// splits below the header copies and ends them at the footer copies.
+    /// Empty for any other box, and for a part around a box that does not
+    /// break and runs on under a copy, which Chromium draws on under it.
+    pub(crate) fn copy_bands(&self, document: &Document, part: usize) -> &[(f32, f32, bool)] {
+        if self.bands.is_empty()
+            || self.owner(part).is_some()
+            || !matches!(
+                document.nodes[part].display(),
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+                    | DisplayValue::TableRow
+                    | DisplayValue::TableCell
+            )
+        {
+            return &[];
+        }
+        // An inline box that is not replaced, such as a line break, breaks
+        // with the lines it sits on, which stay clear of the copies.
+        let under_copy = |bands: &[(f32, f32, bool)], id: usize| {
+            let top = absolute_position(document, id).1;
+            let bottom = top + document.nodes[id].layout.size.height;
+            // The bands do not overlap, so their ends are sorted too.
+            let first = bands.partition_point(|&(_, end, _)| end <= top);
+            (document.nodes[id].display() != DisplayValue::Inline
+                || crate::paint_rules::is_replaced_element(document, id))
+                && bands.get(first).is_some_and(|&(start, ..)| start < bottom)
+        };
+        document
+            .table_of_row(part)
+            .and_then(|table| self.bands.get(&table))
+            .filter(|bands| {
+                self.unbroken_in
+                    .get(&part)
+                    .is_none_or(|boxes| !boxes.iter().any(|&id| under_copy(bands, id)))
+            })
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The pages of `source` as a repeated header box: page index, page
@@ -712,7 +901,10 @@ fn shares_growing_block_flow(document: &Document, cascade: &CascadeResult, id: u
         && !node.size_containment.height
         && !node.used_writing_mode.is_vertical()
         && !values.cssom_writing_mode.is_vertical()
-        && values.position == PositionValue::Static
+        && matches!(
+            values.position,
+            PositionValue::Static | PositionValue::Relative
+        )
         && values.float == FloatValue::None
         && values.overflow.y == OverflowValue::Visible
         && values.height == Length::Auto

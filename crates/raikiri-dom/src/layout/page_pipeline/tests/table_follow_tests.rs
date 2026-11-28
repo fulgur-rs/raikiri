@@ -359,7 +359,7 @@ fn a_footer_written_before_the_body_moves_without_the_body_rows() {
             "tfoot",
             Some("display:table-footer-group;break-inside:avoid"),
         );
-        let footer_row = append_row(doc, footer, "", 20.0).0;
+        let footer_row = append_row(doc, footer, "", 30.0).0;
         let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let body_row = append_row(doc, group, "", 20.0).0;
         let after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
@@ -369,11 +369,43 @@ fn a_footer_written_before_the_body_moves_without_the_body_rows() {
         unreachable!()
     };
     // The table lays the footer out below the body, so only the footer
-    // crosses the page edge and moves.
+    // crosses the page edge and moves. The footer is taller than a quarter
+    // of the page, so it does not repeat and reserves no copy below the
+    // body row.
     assert_eq!(span(&doc, body_row), (62.0, 82.0));
-    assert_eq!(span(&doc, footer_row), (100.0, 120.0));
-    assert_eq!(span(&doc, table), (60.0, 122.0));
-    assert_eq!(span(&doc, after), (122.0, 132.0));
+    assert_eq!(span(&doc, footer_row), (100.0, 130.0));
+    assert_eq!(span(&doc, table), (60.0, 132.0));
+    assert_eq!(span(&doc, after), (132.0, 142.0));
+}
+
+#[test]
+fn a_repeating_footer_written_before_the_body_takes_the_body_row_along() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let footer = doc.append_element(
+            Some(table),
+            "tfoot",
+            Some("display:table-footer-group;break-inside:avoid"),
+        );
+        let footer_row = append_row(doc, footer, "", 20.0).0;
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+        let body_row = append_row(doc, group, "", 20.0).0;
+        ids.extend([footer_row, body_row]);
+    });
+    let [footer_row, body_row] = ids[..] else {
+        unreachable!()
+    };
+    // A footer that repeats needs room for its copy below the body row on
+    // the first page. The row and the copy do not fit there, so the row
+    // starts the next page and the footer follows it.
+    assert_eq!(span(&doc, body_row), (102.0, 122.0));
+    assert_eq!(span(&doc, footer_row), (124.0, 144.0));
 }
 
 #[test]

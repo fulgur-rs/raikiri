@@ -846,13 +846,18 @@ pub(super) fn column_clip_owner(
     context: &RunContext,
     id: usize,
 ) -> bool {
-    context.fragment_clipped.contains(&id)
-        || document
-            .get_node(id)
-            .is_some_and(|node| node.is_multicol_container())
-            && cascade.computed.get(id).is_some_and(
-                |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
-            )
+    context.fragment_clipped.contains(&id) || columns_clip_owner(document, cascade, id)
+}
+
+/// Whether element `id` lays its contents out in more than one column,
+/// each of which the painter clips.
+fn columns_clip_owner(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    document
+        .get_node(id)
+        .is_some_and(|node| node.is_multicol_container())
+        && cascade.computed.get(id).is_some_and(
+            |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
+        )
         || used_columns(document, id) > 1
 }
 
@@ -904,9 +909,9 @@ pub(super) fn paint_shift(
         .and_then(|html| cascade.computed.get(html))
         .is_some_and(|cv| cv.direction == Direction::Rtl);
     let (mut dx, mut dy) = (0.0, 0.0);
-    // Whether a clip was among the boxes passed so far: the painter moves
-    // that clip with the boxes above it, and the clips of the paint order
-    // inside columns stay at their layout location.
+    // Whether a clip was among the boxes passed so far. The runs do not
+    // model where the painter puts the clips inside columns, so an offset
+    // of a box at or above such a clip omits them.
     let mut clipped = false;
     let mut fixed = false;
     for (id, in_columns) in paint_chain(document, cascade, context, root) {
@@ -941,11 +946,17 @@ pub(super) fn paint_shift(
             if shift.general {
                 return Err(TextRunOmission::Transform);
             }
-            clipped |= column_clip_owner(document, cascade, context, id)
+            // The one exception is the clip of a box's own column fragment:
+            // the painter places it from where it paints that box, its own
+            // offset included, so that offset moves the clip and the lines
+            // together and the clip keeps the same lines.
+            let own_fragment_clip = context.fragment_clipped.contains(&id);
+            let other_clip = columns_clip_owner(document, cascade, id)
                 || crate::paint_rules::element_has_overflow_clip(document, cascade, id);
-            if clipped && shift.offset != (0.0, 0.0) {
+            if (clipped || other_clip) && shift.offset != (0.0, 0.0) {
                 return Err(TextRunOmission::ShiftedClip);
             }
+            clipped |= own_fragment_clip || other_clip;
             dx += shift.offset.0;
             dy += shift.offset.1;
         }
@@ -1349,6 +1360,38 @@ fn marker_runs<'a>(
         out,
         None,
     );
+}
+
+impl crate::StandaloneText {
+    /// Append the glyphs of a horizontal text cell at its content-box origin.
+    /// Returns false for vertical lines, leaving the output untouched.
+    pub fn append_cell_runs<'a>(
+        &'a self,
+        origin: (f32, f32),
+        color: CssColor,
+        cell: NodeId,
+        text_node: NodeId,
+        out: &mut Vec<PositionedGlyphRun<'a>>,
+    ) -> bool {
+        if self
+            .lines()
+            .iter()
+            .any(|line| line.writing_mode().is_vertical())
+        {
+            return false;
+        }
+        standalone_runs(
+            self,
+            origin,
+            color,
+            &[],
+            cell,
+            RunSource::Text(text_node),
+            out,
+            None,
+        );
+        true
+    }
 }
 
 /// Glyph runs of standalone text whose container's top-left is at `origin`,

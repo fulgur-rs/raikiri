@@ -26,9 +26,12 @@ use crate::node::BoxPropertiesRef;
 use crate::target::{CompactCounterSnapshots, CounterSnapshotLimitExceeded};
 use raikiri_layout_style::values::Clear;
 use raikiri_style::property::{
-    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
+    ClearValue, ColumnCountValue, Direction, DisplayValue, FloatValue, OverflowValue,
+    PositionValue, TextWrapMode,
 };
-use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
+use raikiri_style::{
+    CascadeResult, ComputedColumnWidth, ComputedTextIndent, ComputedValues, PseudoElem,
+};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
@@ -514,8 +517,13 @@ fn push_generated(
             images.rtl,
         );
     }
-    // Atomic text is outside this IFC; a block after-pseudo starts a later line.
-    if atomic || (!inline_level && pseudo == PseudoElem::After) {
+    // Atomic text is outside this IFC. A block after-pseudo starts a later
+    // line, unless, as in Chromium, it is the first thing in its paragraph.
+    if atomic
+        || (!inline_level
+            && pseudo == PseudoElem::After
+            && (block.is_none() || !first_letter.opens_with(doc, cascade, element)))
+    {
         first_letter.stop();
     }
     let marker_fallback;
@@ -559,6 +567,18 @@ fn push_generated(
         None
     };
     if let Some(block) = &block {
+        // As in Chromium, a block-level box with no letter in it, empty or
+        // only white space, takes the first formatted line, which then holds
+        // no letter.
+        if text
+            .trim_matches([' ', '\t', '\n', '\r', '\u{000c}'])
+            .is_empty()
+            && !has_images
+        {
+            first_letter.stop();
+        } else {
+            first_letter.start_block();
+        }
         builder.push_block_in_inline(NodeId(block.start));
         images.blocks.push(block.clone());
     }
@@ -599,6 +619,8 @@ fn push_generated(
             paragraph,
             has_images,
         });
+        // The box held the first letter, or took the first formatted line.
+        first_letter.stop();
         builder.push_block_in_inline(NodeId(block.end));
         return builder.error().map(IfcError::Limit).map_or(Ok(()), Err);
     }
@@ -701,6 +723,8 @@ fn push_generated(
         builder.close_inline();
     }
     if let Some(block) = &block {
+        // The box held the first letter, or took the first formatted line.
+        first_letter.stop();
         builder.push_block_in_inline(NodeId(block.end));
     }
     match builder.error() {
@@ -791,6 +815,50 @@ pub(crate) fn box_kind_in(
         });
     }
     None
+}
+
+/// The rendered legend of `root` when `root` is an HTML `fieldset` whose
+/// content is a paragraph: the first `legend` child that is neither floated
+/// nor absolutely positioned, when it is a block. The legend sits over the
+/// block-start border of the fieldset, above all its lines, so it is the
+/// first box of the paragraph wherever it stands among the children, and the
+/// line loop places it over the border (HTML Living Standard, "Rendering"
+/// §15.3.13 "The fieldset and legend elements").
+///
+/// As for a fieldset with block content, one in a vertical writing mode or
+/// one that clips its overflow keeps the legend as a block between its lines,
+/// and so do a multicol fieldset, whose lines are as wide as a column, and a
+/// ruby fieldset, which lays out its content as ruby.
+// spec: https://html.spec.whatwg.org/multipage/rendering.html#the-fieldset-and-legend-elements
+pub(crate) fn paragraph_legend(
+    cascade: &CascadeResult,
+    doc: &Document,
+    root: usize,
+) -> Option<usize> {
+    let fieldset = doc.get_node(root)?;
+    let cv = cascade.computed.get(root)?;
+    if !fieldset.is_html_fieldset()
+        || cv.cssom_writing_mode.is_vertical()
+        || cv.overflow.x != OverflowValue::Visible
+        || cv.overflow.y != OverflowValue::Visible
+        || !matches!(cv.column_count, ColumnCountValue::Auto)
+        || !matches!(cv.column_width, ComputedColumnWidth::Auto)
+        || fieldset.display().is_ruby_container()
+    {
+        return None;
+    }
+    let legend = fieldset.children.iter().copied().find(|&child| {
+        let node = &doc.nodes[child];
+        node.is_in_document()
+            && node.tag_name() == Some("legend")
+            && node.namespace_uri().is_none()
+            && node.display() != DisplayValue::None
+            && !matches!(
+                box_kind(cascade, doc, child),
+                Some(IfcBoxKind::Float | IfcBoxKind::OutOfFlow)
+            )
+    })?;
+    (box_kind(cascade, doc, legend) == Some(IfcBoxKind::Block)).then_some(legend)
 }
 
 /// How many inline boxes between a block-level box and a ruby box are looked
@@ -1300,7 +1368,13 @@ fn project_children_builder_as(
         )?;
         None
     };
-    if anonymous_children.is_none() {
+    // The rendered legend of a fieldset comes before the `::before` of the
+    // fieldset, which is part of the content below the legend.
+    let legend = anonymous_children
+        .is_none()
+        .then(|| paragraph_legend(cascade, doc, root))
+        .flatten();
+    if anonymous_children.is_none() && legend.is_none() {
         push_generated(
             &mut builder,
             doc,
@@ -1360,16 +1434,23 @@ fn project_children_builder_as(
             // The first summary of a `details` comes first in its paragraph
             // too, so the text around it joins up after it.
             let summary = crate::layout::page::summary_out_of_place(doc, cascade, root);
+            // The rendered legend of a fieldset comes first too: it sits over
+            // the border, above all the lines.
             let rest = root_node
                 .children
                 .iter()
                 .copied()
-                .filter(|&id| Some(id) != summary);
+                .filter(|&id| Some(id) != summary && Some(id) != legend)
+                .map(Step::Enter);
+            let legend = legend
+                .into_iter()
+                .flat_map(|legend| [Step::Enter(legend), Step::Before(root)]);
             summary
                 .into_iter()
+                .map(Step::Enter)
+                .chain(legend)
                 .chain(rest)
                 .rev()
-                .map(Step::Enter)
                 .collect()
         }
     };
@@ -1508,7 +1589,7 @@ fn project_children_builder_as(
                 if matches!(
                     node.display(),
                     DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) || node.is_non_rendered_html_element()
+                ) || node.is_unrendered_html_element()
                 {
                     continue;
                 }
@@ -1773,7 +1854,12 @@ fn project_children_builder_as(
                 indent,
                 boxes,
                 marker_atomic,
-                outside_marker_height: super::outside_marker::height(doc, cascade, root),
+                outside_marker_height: super::outside_marker::height_in(
+                    doc,
+                    cascade,
+                    Some((fonts, limits)),
+                    root,
+                ),
                 generated_atomics: generated_images.atomics,
                 generated_blocks: generated_images.blocks,
                 generated_boxes: generated_images.boxes,

@@ -76,6 +76,7 @@ mod source_walk_tests;
 mod table_caption_page_end_tests;
 mod table_follow_tests;
 mod table_header_caption_tests;
+mod table_row_coordinate_tests;
 mod table_tail_tests;
 mod top_edge_tests;
 mod tree_order_tests;
@@ -151,6 +152,39 @@ fn a_block_taller_than_a_page_is_judged_by_its_first_line() {
         first_line_judged_height(300.0, 100.0, 80.0, 80.0, 90.0, || None),
         None
     );
+}
+
+#[test]
+fn a_free_break_keeps_no_minimum_of_lines_on_either_side() {
+    // Six 10px lines from y=60 on pages 100px tall: four fit the first page
+    // and leave two, fewer than the three widows.
+    let lines = [
+        (0.0, 10.0),
+        (10.0, 20.0),
+        (20.0, 30.0),
+        (30.0, 40.0),
+        (40.0, 50.0),
+        (50.0, 60.0),
+    ];
+    let pages = PageOrigins::new(&[], 100.0);
+    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 3, 3, 0.0);
+    assert!(fit.violates_line_constraints);
+    assert_eq!(
+        super::paragraph_line_moves(&lines, 60.0, 0, &fit, &pages),
+        vec![(3, 10.0, 1)]
+    );
+    // Free before the fifth line, the natural break stays.
+    let fit = fit.with_free_break(Some(4));
+    assert!(!fit.violates_line_constraints);
+    assert!(super::paragraph_line_moves(&lines, 60.0, 0, &fit, &pages).is_empty());
+    // Too few orphans before a free break do not move the paragraph either.
+    let fit = ParagraphLineFit::measure(&lines, 80.0, 0.0, 100.0, 3, 3, 0.0);
+    assert!(fit.leaves_too_few_orphans());
+    assert!(!fit.with_free_break(Some(2)).leaves_too_few_orphans());
+    // Free before another line, the break keeps its minimums.
+    let fit =
+        ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 3, 3, 0.0).with_free_break(Some(2));
+    assert!(fit.violates_line_constraints);
 }
 
 #[test]
@@ -13269,12 +13303,13 @@ fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
             "tfoot",
             Some("display:table-footer-group;break-inside:avoid"),
         );
-        footer_cell = append_row(doc, footer, "", 20.0).1;
+        footer_cell = append_row(doc, footer, "", 30.0).1;
         let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         append_row(doc, group, "", 20.0);
     });
     // The footer is laid out after the body, so the body row is the table's
-    // first row and the footer moves to the top of the next page alone.
+    // first row and the footer moves to the top of the next page alone. It
+    // is taller than a quarter of the page, so it does not repeat.
     assert_eq!(page_flow_y(&doc, footer_cell), 100.0);
 }
 
@@ -14191,13 +14226,13 @@ fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
             "display:block;height:10px;break-before:page",
             true,
         ),
-        // A float that took a break of its own starts the page by that
-        // break, and a break before the box is another one.
+        // A float's own break does not apply, so a break before the box
+        // still coincides with the one the float started the page after.
         (
             "display:block",
             "break-before:page",
             "display:block;height:10px;break-before:page",
-            false,
+            true,
         ),
         (
             "display:block",
@@ -15120,8 +15155,8 @@ fn text_after_a_forced_break_starts_below_the_earlier_floats() {
 fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        // The lines after the first block come before the break, and the
-        // float that carries it is not a block of the paragraph.
+        // The lines after the first block come before no break: a float's
+        // own break does not apply, and a float is no block of the paragraph.
         ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
         doc.append_text(body, "a");
         doc.append_element(
@@ -15130,7 +15165,7 @@ fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
             Some("float:left;width:10px;height:10px;break-before:page"),
         );
         doc.append_text(body, "b");
-        // Nor does a float's own break after it.
+        // Nor does its break after it.
         doc.append_element(Some(body), "div", Some("display:block;height:10px"));
         doc.append_element(
             Some(body),
@@ -18753,11 +18788,13 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         margins_collapse_through: false,
         collapses_with_previous_block: false,
         pending_break_applies: false,
+        holds_forced_break: false,
         keeps_continuation_margin: false,
         keeps_margin_at_break: false,
         holder: None,
         forced_holder: None,
         flex_line: None,
+        clip_holds_page_name: false,
     }
 }
 
@@ -19973,11 +20010,13 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         margins_collapse_through: true,
         collapses_with_previous_block: true,
         pending_break_applies: forced,
+        holds_forced_break: false,
         keeps_continuation_margin: false,
         keeps_margin_at_break: forced,
         holder: None,
         forced_holder: None,
         flex_line: None,
+        clip_holds_page_name: false,
     }
 }
 
@@ -21109,9 +21148,9 @@ fn a_flex_container_with_a_border_and_an_orthogonal_item_moves_whole_to_the_next
 }
 
 #[test]
-fn a_paragraph_of_several_lines_with_no_text_is_not_kept_whole() {
-    // Only a single line is kept whole: a break between the lines of this
-    // paragraph is allowed, and nothing moves its second line yet.
+fn a_paragraph_of_several_lines_with_no_text_keeps_its_orphans() {
+    // Only the first line fits below the block, fewer than the two orphans
+    // the paragraph keeps, so it starts the next page whole, as in Chromium.
     let ys = paginated_ys(
         |doc, body| {
             let first = doc.append_element(Some(body), "div", Some("display:block;height:60px"));
@@ -21127,7 +21166,7 @@ fn a_paragraph_of_several_lines_with_no_text_is_not_kept_whole() {
         },
         &[],
     );
-    assert_eq!(ys, [0.0, 60.0]);
+    assert_eq!(ys, [0.0, 100.0]);
 }
 
 #[test]
@@ -21686,6 +21725,7 @@ fn out_of_flow_children_move_by_what_their_insets_resolve_against() {
             shift: 12.0,
             page: 0,
             with_block_before: false,
+            growth: None,
         };
         out_of_flow_moves(&session, &cascade, &moved, 10.0)
     };
@@ -21763,6 +21803,7 @@ fn an_out_of_flow_box_listed_twice_in_its_paragraph_moves_once() {
         shift: 12.0,
         page: 0,
         with_block_before: false,
+        growth: None,
     };
     assert_eq!(
         out_of_flow_moves(&session, &cascade, &moved, 10.0),
@@ -22236,4 +22277,94 @@ fn a_paragraph_with_no_text_and_no_atomic_inline_has_nothing_before_its_text() {
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).expect("cascade Ok");
     assert!(atomics_follow_text(&document, &cascade, paragraph, &[]));
+}
+
+/// A block whose break stays inside a float or a positioned box, even past
+/// an inline box that closes inside it, or a block that does not sit inside
+/// the paragraph at all, has no line of the paragraph after it.
+#[test]
+fn no_paragraph_line_follows_a_block_in_a_float_a_positioned_box_or_outside_the_paragraph() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = document.append_element(Some(body), "div", Some("display:block"));
+    let span = document.append_element(Some(paragraph), "span", Some("display:inline"));
+    let float = document.append_element(Some(span), "div", Some("display:block;float:left"));
+    let in_float = document.append_element(Some(float), "div", Some("display:block"));
+    let in_span = document.append_element(Some(span), "div", Some("display:block"));
+    document.append_element(Some(paragraph), "b", Some("display:inline"));
+    let positioned = document.append_element(
+        Some(paragraph),
+        "div",
+        Some("display:block;position:absolute"),
+    );
+    let positioned_span = document.append_element(Some(positioned), "span", Some("display:inline"));
+    let in_positioned_span =
+        document.append_element(Some(positioned_span), "div", Some("display:block"));
+    document.append_element(Some(positioned), "b", Some("display:inline"));
+    let elsewhere = document.append_element(Some(body), "div", Some("display:block"));
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    drop(crate::layout::context::LayoutSession::bridged(
+        &mut document,
+        &cascade,
+    ));
+
+    assert!(line_follows_paragraph_block(
+        &document, &cascade, paragraph, in_span
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document, &cascade, paragraph, in_float
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document, &cascade, paragraph, elsewhere
+    ));
+    assert!(!line_follows_paragraph_block(
+        &document,
+        &cascade,
+        paragraph,
+        in_positioned_span
+    ));
+}
+
+#[test]
+fn a_row_ends_below_the_copies_on_the_pages_it_crosses() {
+    use super::pagination_state::row_end_below_copies;
+    let pages = PageOrigins::new(&[], 100.0);
+    // 60px on the first page above a 20px footer copy, then 60px on each
+    // page between a 20px header copy and the footer copy.
+    assert_eq!(
+        row_end_below_copies(20.0, 150.0, (20.0, 20.0), &pages),
+        (250.0, 2)
+    );
+    assert_eq!(
+        row_end_below_copies(20.0, 50.0, (20.0, 20.0), &pages),
+        (70.0, 0)
+    );
+    // A page the copies fill holds the rest of the row.
+    assert_eq!(
+        row_end_below_copies(20.0, 150.0, (50.0, 50.0), &pages),
+        (270.0, 1)
+    );
+}
+
+#[test]
+fn has_sibling_cell_needs_another_cell_in_the_row() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let pair = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let first = doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    doc.append_element(Some(pair), "td", Some("display:table-cell"));
+    let single = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let lone = doc.append_element(Some(single), "td", Some("display:table-cell"));
+    doc.mark_in_document_flags();
+    crate::layout::test_support::with_bridged_session(&mut doc, |session| {
+        assert!(has_sibling_cell(session, first));
+        assert!(!has_sibling_cell(session, lone));
+        assert!(!has_sibling_cell(session, body));
+    });
 }

@@ -29,7 +29,7 @@ pub(crate) fn page_fragment_events_from_pages(
     let mut stack = vec![(body_id, None::<usize>)];
     while let Some((node_id, inherited_owner)) = stack.pop() {
         let node = &document.nodes[node_id];
-        if !node.is_in_document() || node.is_non_rendered_html_element() || node.is_display_none() {
+        if !node.is_in_document() || node.is_unrendered_html_element() || node.is_display_none() {
             continue;
         }
         let owner = if node.kind() == NodeKind::Element && node.tag_name() == Some("a") {

@@ -32,5 +32,5 @@ The native test uses an 800×600 page with zero page margin and the same offset,
 so the measured boxes stay clear of page cuts.
 
 ```sh
-RUSTUP_TOOLCHAIN=1.95.0 TMPDIR="$HOME/tmp" cargo test -p raikiri-dom --test vertical_container_ratio
+RUSTUP_TOOLCHAIN=1.95.0 TMPDIR="$HOME/tmp" cargo test -p raikiri-dom --test all vertical_container_ratio::
 ```

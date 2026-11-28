@@ -713,6 +713,11 @@ impl<'a> Relayout<'a> {
     }
 
     /// The pages of the copy from the resumed one on, numbered from it.
+    ///
+    /// The resumed page keeps the type the earlier layout gave it, which the
+    /// copy is laid out with. The copy cannot always tell that type: a box
+    /// that the earlier layout saw open before the page start and go on onto
+    /// the resumed page can set it, and the copy only sees the box go on.
     fn resumed_pages(&self, laid_out: &[PageSlice]) -> Vec<PageSlice> {
         laid_out
             .iter()
@@ -720,7 +725,11 @@ impl<'a> Relayout<'a> {
             .map(|(index, slice)| PageSlice {
                 page_index: self.resume.page as u32 + index as u32,
                 content_origin_y: slice.content_origin_y,
-                page_name: slice.page_name.clone(),
+                page_name: if index == 0 {
+                    self.slices[self.resume.page].page_name.clone()
+                } else {
+                    slice.page_name.clone()
+                },
             })
             .collect()
     }

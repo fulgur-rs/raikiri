@@ -778,7 +778,7 @@ fn first_page_name_skips_a_non_rendered_table_header() {
     doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.append_element(
         Some(table),
-        "script",
+        "template",
         Some("display:table-header-group;page:ghost"),
     );
     doc.mark_in_document_flags();

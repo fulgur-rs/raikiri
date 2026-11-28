@@ -430,7 +430,7 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
             next_page_step: needed - 5.0,
             ..base_fit
         };
-        assert!(item_tail_move(&tail, &short));
+        assert!(item_tail_move(&tail, &short, 0.0));
         let overflow = breaks.measure(
             &tree,
             &cascade,
@@ -472,7 +472,7 @@ fn a_tail_row_does_not_move_to_a_shorter_page_without_room_for_its_header() {
         height: 20.0,
         ..candidate(first, 170.0, 40.0)
     };
-    assert!(item_tail_move(&group, &short));
+    assert!(item_tail_move(&group, &short, 0.0));
     assert!(
         !breaks
             .measure(
@@ -521,8 +521,10 @@ fn a_source_footer_at_the_page_top_does_not_move_again_for_oversized_edges() {
     let footer = headers.headers.get_mut(&footer_id).unwrap();
     assert_eq!(footer.source_y, 200.0);
     footer.closing_edges = 300.0;
+    let cascade = crate::layout::test_support::cascaded(&doc);
     let shift = place_table_footer(
         &mut doc,
+        &cascade,
         &mut headers,
         footer_id,
         0.0,

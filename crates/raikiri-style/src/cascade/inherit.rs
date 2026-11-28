@@ -477,6 +477,16 @@ fn is_html_element<E: StyleElement>(element: &E, tag: &str) -> bool {
     ) && element.tag_name().eq_ignore_ascii_case(tag)
 }
 
+/// Whether `element` is the HTML `legend`. The name matches case-sensitively,
+/// as the HTML parser lowercases it and an XHTML `LEGEND` is not the legend
+/// element.
+fn is_html_legend<E: StyleElement>(element: &E) -> bool {
+    matches!(
+        element.namespace_uri(),
+        None | Some("http://www.w3.org/1999/xhtml")
+    ) && element.tag_name() == "legend"
+}
+
 /// Whether `id`, a child of `parent`, is content a closed HTML `<details>`
 /// does not show.
 ///
@@ -673,6 +683,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             &mut first_summaries,
         );
         let default_summary = default_summary_text(dom, id, &mut first_summaries);
+        let is_legend_element = node
+            .as_element()
+            .is_some_and(|element| is_html_legend(&element));
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
         // The painting properties a presentation attribute of the element sets,
@@ -755,6 +768,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                         // The legend of a `details` without a summary is a
                         // `::before` its candidates do not give.
                         && default_summary_text(dom, source.id, &mut first_summaries) == default_summary
+                        // A `legend` blockifies the display its candidates give.
+                        && dom.node(source.id).is_some_and(|node| {
+                            node.as_element().is_some_and(|element| is_html_legend(&element))
+                        }) == is_legend_element
                 })
                 .map(|source| source.id),
             _ => None,
@@ -828,6 +845,12 @@ pub(crate) fn walk_from<D: StyleDom>(
             // computed values; non-inherited fields initialized). The target is a
             // staging representation, so winner application order does not matter.
             let mut specified = SpecifiedValues::inherit_from(parent_computed);
+            // Chromium blockifies every HTML `legend`, wherever it stands, as
+            // a float is blockified (CSS 2.1 §9.7): an `inline-block` becomes
+            // a `block`. The HTML Standard ("The fieldset and legend
+            // elements" in its Rendering section) blockifies only the
+            // rendered legend of a fieldset.
+            specified.blockified = is_legend_element;
             if let Some(candidates) = element_candidates {
                 let parent_page = parent.map_or(crate::property::PageValue::Auto, |parent| {
                     out.page_values[parent.0 as usize].clone()
@@ -1630,7 +1653,7 @@ pub(crate) fn apply_winners(
     let mut spread = Vec::new();
     let candidates = candidates.with_all_spread(&mut spread);
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
-    let flow = flow_mapping(candidates, inherited, |key, idx| {
+    let flow = flow_mapping(candidates, inherited, specified.blockified, |key, idx| {
         flow_winner_value(candidates, key, idx, &mut deferred_resolver)
             .map(|value| resolve_defaulting_value(value, inherited))
     });

@@ -137,10 +137,9 @@ xmp       { display: block; }
  * not shrink below its min-content inline size. The border color is the
  * `ThreeDFace` of the browsers this renderer is checked against; the system
  * color keywords are approximated by black and white here. Block layout
- * places the rendered legend over the top border of a fieldset whose other
- * children are blocks; in a fieldset whose content is a paragraph, or one in
- * a vertical writing mode, the legend is still an ordinary block at the
- * start of the padding box. */
+ * places the rendered legend over the top border of a fieldset; in one in a
+ * vertical writing mode, or one that clips its overflow, the legend is still
+ * an ordinary block at the start of the padding box. */
 fieldset  {
   display: block;
   margin-inline: 2px;
@@ -150,6 +149,13 @@ fieldset  {
   min-inline-size: min-content;
 }
 legend    { display: block; padding-inline: 2px; }
+/* The `align` attribute of a legend places it along the top border of its
+ * fieldset. The HTML Standard maps it to `justify-self`; Chromium maps it to
+ * `text-align`, which is what places the legend there, so it is mapped to
+ * `text-align` here. */
+legend[align=left i]   { text-align: left; }
+legend[align=center i] { text-align: center; }
+legend[align=right i]  { text-align: right; }
 
 /* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) includes
  * `dialog` as a member of the section's shared `display: block` group

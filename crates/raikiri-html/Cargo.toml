@@ -1,5 +1,8 @@
 [package]
 name = "raikiri-html"
+# Integration tests build as one binary (tests/all.rs) plus the [[test]]
+# targets at the end of this file; see tests/all.rs.
+autotests = false
 version.workspace = true
 description = "HTML document entry points for raikiri: html5ever parsing, cascade assembly, resource handoff, and the layout entry point returning an owned DocumentLayout"
 readme = "README.md"
@@ -31,6 +34,7 @@ smol_str       = { workspace = true }
 url            = { workspace = true }
 data-url       = { workspace = true }
 unicode-script = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -47,3 +51,21 @@ harness = false
 [[bench]]
 name = "multi_page_layout"
 harness = false
+
+# One binary for the plain integration-test files (see tests/all.rs). The
+# targets after it need a process of their own.
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "fragment_budget_probe"
+path = "tests/fragment_budget_probe.rs"
+
+[[test]]
+name = "collapsed_table_scaling"
+path = "tests/collapsed_table_scaling.rs"
+
+[[test]]
+name = "multicol_scaling"
+path = "tests/multicol_scaling.rs"

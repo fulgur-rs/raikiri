@@ -62,12 +62,15 @@ impl Row {
 /// by page. Its content starts at `owner_y` plus `context.origin_y` in the
 /// flow, and `page_for` tells the page of a position. `None` when the
 /// container keeps the columns it has: a box in it must stay whole where a
-/// page would cut it, or the pages do not hold it.
+/// page would cut it, or the pages do not hold it. A container of a definite
+/// height has its columns end at `content_end`, in its own coordinates, and
+/// keeps them too when its content runs past there.
 pub(in crate::layout::multicol) fn paginate(
     tree: &LayoutSession<'_>,
     children: &[usize],
     context: FragmentationContext,
     owner_y: f32,
+    content_end: Option<f32>,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<Option<Paged>, LayoutError> {
@@ -108,10 +111,17 @@ pub(in crate::layout::multicol) fn paginate(
     // stream reaches them.
     let start = owner_y + context.origin_y;
     let (page, origin, height) = page_for(start);
+    // The content box of a container of a definite height ends the columns
+    // of its last page.
+    let limit = content_end.map(|end| owner_y + end);
+    let end_at = |end: f32| limit.map_or(end, |limit| end.min(limit));
+    // The columns start no higher than the page origin, which is below the
+    // end of the previous page when the container repeats its border and
+    // padding there.
     let rows = RefCell::new(vec![Row {
         page,
-        top: start,
-        end: origin + height,
+        top: start.max(origin),
+        end: end_at(origin + height),
     }]);
     let row_at = |row: usize| {
         let mut rows = rows.borrow_mut();
@@ -120,10 +130,17 @@ pub(in crate::layout::multicol) fn paginate(
             rows.push(Row {
                 page,
                 top,
-                end: top + height,
+                end: end_at(top + height),
             });
         }
         rows[row]
+    };
+    // A row that starts where the content box ends, or that follows the row
+    // the content box ends in, has no room left.
+    let past_limit = |row: usize| {
+        limit.is_some_and(|limit| {
+            row_at(row).top >= limit - EPSILON || row > 0 && row_at(row - 1).end >= limit - EPSILON
+        })
     };
     let max_pieces = tree
         .fragment_tree
@@ -138,23 +155,56 @@ pub(in crate::layout::multicol) fn paginate(
         .map(|limit| usize::try_from(limit.saturating_sub(page)).unwrap_or(usize::MAX));
     let height_of = |column: usize| {
         let row = column / columns;
-        if allowed_rows.is_some_and(|allowed| row > allowed) {
+        if allowed_rows.is_some_and(|allowed| row > allowed) || past_limit(row) {
             return UNBOUNDED;
         }
         row_at(row).capacity()
     };
-    let placement = match place_columns(&items, &height_of, max_pieces, usize::MAX, true) {
-        Ok(placement) => placement,
-        // A box that must stay whole would be cut by a page.
-        Err(Stop::Cut) => return Ok(None),
-        // More pieces than the fragment arena holds is a failure, as it is
-        // for the pieces of every other paged container.
-        Err(Stop::Exhausted) => {
-            return Err(LayoutError::FragmentLimitExceeded {
+    let place = |height_of: &dyn Fn(usize) -> f32| {
+        match place_columns(&items, height_of, max_pieces, usize::MAX, true) {
+            Ok(placement) => Ok(Some(placement)),
+            // A box that must stay whole would be cut by a page.
+            Err(Stop::Cut) => Ok(None),
+            // More pieces than the fragment arena holds is a failure, as it
+            // is for the pieces of every other paged container.
+            Err(Stop::Exhausted) => Err(LayoutError::FragmentLimitExceeded {
                 limit: tree.fragment_tree.limit,
-            });
+            }),
         }
     };
+    let Some(placement) = place(&height_of)? else {
+        return Ok(None);
+    };
+    // Content that runs past the content box of the container overflows its
+    // columns, which the pages do not fill again.
+    if past_limit((placement.columns_used().max(1) - 1) / columns) {
+        return Ok(None);
+    }
+    // Balanced columns fill the pages they run past and balance only in the
+    // last page they reach (CSS Multi-column 1, 8.1): the columns there are
+    // the shortest that keep what is left in that page's set.
+    // Should the shorter columns cut a box that must stay whole, the page's
+    // columns stay as tall as the page lets them.
+    let last_row = |balanced: Option<(usize, f32)>| {
+        move |column: usize| match balanced {
+            Some((fixed, height)) if column >= fixed => height,
+            _ => height_of(column),
+        }
+    };
+    let balanced = (context.column_fill != ColumnFillValue::Auto).then(|| {
+        let fixed = (placement.columns_used().max(1) - 1) / columns * columns;
+        let capacity = height_of(fixed);
+        let height =
+            balanced_height_after(&items, fixed, &height_of, columns, columns, capacity, true);
+        (fixed, height.min(capacity))
+    });
+    let rebalanced = match balanced {
+        Some(_) => place(&last_row(balanced))?,
+        None => None,
+    };
+    let balanced = balanced.filter(|_| rebalanced.is_some());
+    let placement = rebalanced.unwrap_or(placement);
+    let height_of = last_row(balanced);
     // The pieces of each child: those of its box, or for a wrapper, those
     // from the first box it holds to the last, with its own insets.
     // Where each column starts in the stream, which places the pieces of the
@@ -207,8 +257,8 @@ pub(in crate::layout::multicol) fn paginate(
         .iter()
         .flatten()
         .filter(|piece| piece.height > 0.0);
-    let ends_in_first_column =
-        shown_last.map(|piece| piece.column).max().unwrap_or(0) <= natural_last * columns;
+    let ends_in_first_column = balanced.is_some()
+        || shown_last.map(|piece| piece.column).max().unwrap_or(0) <= natural_last * columns;
     let heights: Vec<f32> = (0..kept)
         .map(|row| {
             if row == natural_last && ends_in_first_column {
@@ -291,7 +341,7 @@ pub(in crate::layout::multicol) fn paginate(
                 kept,
                 heights: &heights,
                 tops: &tops,
-                column_width: context.column_width,
+                context,
                 grid,
             };
             let parent = Parent {
@@ -317,6 +367,7 @@ pub(in crate::layout::multicol) fn paginate(
             occupied,
             slice: None,
             run_start: None,
+            min_height: 0.0,
         })
         .collect();
     Ok(Some(Paged {
@@ -365,7 +416,9 @@ struct Frame<'a> {
     heights: &'a [f32],
     /// Where the columns of each page kept start in the container.
     tops: &'a [f32],
-    column_width: f32,
+    /// The columns of the container, for where each column stands and how
+    /// wide.
+    context: FragmentationContext,
     grid: Columns<'a>,
 }
 
@@ -373,6 +426,11 @@ impl Frame<'_> {
     /// Where `piece` starts in the container's block axis.
     fn top_of(&self, piece: &Piece) -> f32 {
         self.tops[piece.column / self.columns] + piece.top
+    }
+
+    /// Where column `column` of a page stands in the container's inline axis.
+    fn column_offset_x(&self, column: usize) -> f32 {
+        self.context.column_offset_x(column)
     }
 }
 
@@ -449,14 +507,36 @@ fn push_inside(
         .filter(|piece| piece.column / frame.columns < frame.kept)
         .collect();
     let layout = tree.nodes[node].layout;
-    let x = layout.location.x;
     let size = layout.size;
+    // The layout of the container placed the node as far right of the
+    // wrapper's first piece as the columns of its first piece and of that
+    // one stand apart. Within the piece of the wrapper in its own column, it
+    // stands at its margin edge inside the wrapper's content box, where
+    // `justify-self` puts it.
+    let wrapper = tree.nodes[parent.node].layout;
+    let content_width = wrapper.size.width
+        - wrapper.border.left
+        - wrapper.border.right
+        - wrapper.padding.left
+        - wrapper.padding.right;
+    let rtl = style_of(tree, parent.node).direction().is_rtl();
+    let justified = crate::layout::dispatch::block_flow::justified_offset(
+        tree,
+        node,
+        rtl,
+        content_width - layout.margin.left - layout.margin.right - size.width,
+    )
+    .unwrap_or(0.0);
+    let x = wrapper.border.left + wrapper.padding.left + layout.margin.left + justified;
     let sliced = own.len() > 1 && slices_decorations(tree, node);
     let first_parent = parent.pieces.first()?;
     // The node stands as far down the wrapper as its first piece starts below
-    // the wrapper's, in the flow of the container.
+    // the wrapper's, in the flow of the container, and as far right as the
+    // column of its first piece stands from that of the wrapper's.
     out.nested.extend(own.first().map(|first| {
         let y = frame.top_of(first) - frame.top_of(first_parent);
+        let x = x + frame.column_offset_x(first.column % frame.columns)
+            - frame.column_offset_x(first_parent.column % frame.columns);
         (node, Point { x, y })
     }));
     let mut taken = 0.0f32;
@@ -481,7 +561,7 @@ fn push_inside(
             clip: (own.len() > 1).then_some(FragmentRect {
                 x: 0.0,
                 y: shift - parent_piece.top,
-                width: (x + size.width).max(frame.column_width),
+                width: (x + size.width).max(frame.context.column_width),
                 height: frame.heights[piece.column / frame.columns],
             }),
             index,

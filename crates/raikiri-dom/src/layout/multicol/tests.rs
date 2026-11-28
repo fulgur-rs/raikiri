@@ -223,9 +223,14 @@ fn balanced_column_height_keeps_the_orphans_of_every_column_before_a_break() {
             expected,
         );
     }
-    // An `orphans` that no height below the number of steps keeps gives up on
-    // it, and the columns stay as tall as the last step made them.
-    assert_height(height(2000, 2, 100_000, 1), 12_560.0);
+    // An `orphans` larger than the lines makes the columns tall enough for
+    // all of them, without a step for each line.
+    assert_height(height(2000, 2, 100_000, 1), 20_000.0);
+    // The first `orphans` lines and the last `widows` lines set the least
+    // height the columns start from; the widows give way to the orphans.
+    assert_height(height(7, 3, 2, 4), 40.0);
+    assert_height(height(5, 3, 2, 4), 30.0);
+    assert_height(height(10, 3, 3, 5), 50.0);
 
     // A definite height caps the columns. When no height below the cap keeps
     // the `orphans`, the columns take the cap, and the lines that do not fit
@@ -602,7 +607,7 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
 
     assert_eq!(
         with_bridged_session(&mut doc, |session| multicol_max_fragmentainer_height(
-            session, node, 120.0, None, None
+            session, node, 120.0, true, None, None
         )),
         Some(100.0),
     );
@@ -2357,6 +2362,139 @@ fn a_no_break_space_gives_a_flex_item_a_line() {
 }
 
 #[test]
+fn only_a_table_whose_breaks_match_a_whole_layout_is_sliced() {
+    // A table of one row of 150px whose cell holds `content`.
+    let supported_in_row = |table: &str, row: &str, cell: &str, content: Option<&str>| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+        );
+        let table = doc.append_element(Some(parent), "div", Some(table));
+        let row = doc.append_element(Some(table), "div", Some(row));
+        let cell = doc.append_element(Some(row), "div", Some(cell));
+        // Each `|` in `content` nests the next box in the one before it.
+        let mut holder = cell;
+        for css in content.into_iter().flat_map(|content| content.split('|')) {
+            holder = doc.append_element(Some(holder), "div", Some(css));
+        }
+        layout_nested_flex_float_fixture(&mut doc);
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported_with_wrappers(session, parent)
+        })
+        .is_some()
+    };
+    let row = "display:table-row;height:150px";
+    let supported = |table: &str, cell: &str, content: Option<&str>| {
+        supported_in_row(table, row, cell, content)
+    };
+    let table = "display:table;width:100%;border-spacing:0";
+    let cell = "display:table-cell";
+    assert!(supported(table, cell, None));
+    // A break between rows drops the vertical border spacing there, unless
+    // the borders collapse, which leaves no spacing.
+    assert!(!supported(
+        "display:table;width:100%;border-spacing:2px",
+        cell,
+        None
+    ));
+    assert!(!supported(
+        "display:table;width:100%;border-spacing:0 2px",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-spacing:2px 0",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-collapse:collapse",
+        cell,
+        None
+    ));
+    // Block borders of a cell, and content that its alignment moves.
+    assert!(!supported(
+        table,
+        "display:table-cell;border-top:2px solid",
+        None
+    ));
+    assert!(!supported(
+        table,
+        "display:table-cell;border-bottom:2px solid",
+        None
+    ));
+    assert!(supported(table, "display:table-cell;padding:5px", None));
+    assert!(supported(
+        table,
+        "display:table-cell;border-left:2px solid",
+        None
+    ));
+    let held = Some("display:block;height:30px");
+    assert!(!supported(table, cell, held));
+    assert!(!supported(
+        table,
+        "display:table-cell;vertical-align:middle",
+        held
+    ));
+    assert!(supported(
+        table,
+        "display:table-cell;vertical-align:top",
+        held
+    ));
+    // The block borders of a table that collapses its borders, and those of
+    // its rows, collapse with those of the cells. A table that keeps its
+    // borders apart is cut with its own.
+    assert!(!supported(
+        "display:table;width:100%;border-collapse:collapse;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(supported(
+        "display:table;width:100%;border-spacing:0;border-top:2px solid",
+        cell,
+        None
+    ));
+    assert!(!supported_in_row(
+        table,
+        "display:table-row;height:150px;border-bottom:2px solid",
+        cell,
+        None
+    ));
+    // The static position of an absolutely positioned box in a cell follows
+    // its alignment too.
+    let absolute = Some("position:absolute;width:10px;height:10px");
+    assert!(!supported(
+        table,
+        "display:table-cell;position:relative",
+        absolute
+    ));
+    // A box of a size of its own in a cell may hold boxes that reach past
+    // the table, which is not laid out yet when the strategy is chosen.
+    let top = "display:table-cell;vertical-align:top";
+    for (held, sliced) in [
+        ("display:block;height:30px|display:block;height:60px", false),
+        (
+            "display:block;max-height:30px|display:block;height:60px",
+            false,
+        ),
+        ("display:block;height:30px", true),
+        ("display:block|display:block;height:60px", true),
+    ] {
+        assert_eq!(supported(table, top, Some(held)), sliced, "{held}");
+    }
+    // Lines in a cell keep the table with the other strategies.
+    assert!(!supported(
+        table,
+        "display:table-cell;vertical-align:top",
+        Some("display:inline-block;height:10px;width:10px")
+    ));
+}
+
+#[test]
 fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     let supported = |flex: &str, held: &[&str], outermost: bool| {
         let mut doc = Document::new();
@@ -2397,16 +2535,86 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     assert!(!supported(sized, &[item], false));
     // A box the container holds that breaks, clips or paints on its own
     // terms.
+    // A forced column break before or after a flex item falls between the
+    // items, or before or after the container.
     for held in [
-        "display:block;break-before:column",
-        "display:block;break-after:column",
-        "display:block;break-inside:avoid",
-        // A container that holds a flex container keeps its absolutely
-        // positioned boxes in its flow.
+        "display:block;width:10px;height:150px;break-before:column",
+        "display:block;width:10px;height:150px;break-after:column",
+    ] {
+        assert!(supported("display:flex", &[held], true), "{held}");
+        // A container with a block size of its own would not grow with the
+        // items that a break moves down.
+        assert!(!supported(sized, &[held], true), "{held}");
+        // Nor would a box placed against its bottom, or the paint of an
+        // item moved by a relative offset, follow them.
+        assert!(!supported(
+            "display:flex;position:relative",
+            &[
+                held,
+                "display:block;position:absolute;bottom:0;width:10px;height:10px"
+            ],
+            true
+        ));
+        assert!(!supported(
+            "display:flex",
+            &[
+                held,
+                "display:block;position:relative;top:5px;width:10px;height:10px"
+            ],
+            true
+        ));
+    }
+    // A box that a negative margin pulls up over the one before it would
+    // stay on the wrong side of the break.
+    for pulled in [["", "margin-top:-20px"], ["margin-bottom:-35px", ""]] {
+        assert!(!supported(
+            "display:flex;flex-direction:column",
+            &[
+                &format!("display:block;width:10px;height:150px;{}", pulled[0]),
+                &format!(
+                    "display:block;width:10px;height:20px;break-before:column;{}",
+                    pulled[1]
+                ),
+            ],
+            true
+        ));
+    }
+    // A percentage gap resolves against a block size the style fixes; one
+    // that the items grow leaves its used size unknown.
+    let tall = "display:block;width:10px;height:150px";
+    assert!(!supported(
+        "display:flex;flex-direction:column;row-gap:10%",
+        &[tall, item],
+        true
+    ));
+    assert!(supported(
+        "display:flex;flex-direction:column;row-gap:10%;height:150px",
+        &[item, item],
+        true
+    ));
+    // A box placed from the top stays where it is.
+    assert!(supported(
+        "display:flex;position:relative",
+        &[
+            "display:block;width:10px;height:150px;break-after:column",
+            "display:block;position:absolute;top:5px;width:10px;height:10px"
+        ],
+        true
+    ));
+    // A box that avoids breaks inside it moves whole to the next column.
+    assert!(supported(
+        sized,
+        &["display:block;break-inside:avoid"],
+        true
+    ));
+    for held in [
+        // A break avoided before the first item is one before the container.
+        "display:block;break-before:avoid",
+        // An absolutely positioned box whose containing block is outside
+        // the container.
         "display:block;position:absolute",
         "display:block;float:left",
         "display:block;overflow:hidden",
-        "display:grid",
         "display:inline-block",
         "display:block;columns:2",
         "display:block;transform:translateX(80px)",
@@ -2419,6 +2627,45 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
          box-decoration-break:clone",
     ] {
         assert!(!supported(sized, &[held], true), "{held}");
+    }
+    // A grid container is sliced as a flex container is, held or holding,
+    // but a forced break inside it stays with the other strategies.
+    assert!(supported(sized, &["display:grid;width:10px"], true));
+    assert!(supported("display:grid;height:150px", &[item], true));
+    assert!(supported(
+        "display:grid;grid-template-rows:150px",
+        &["display:block"],
+        true
+    ));
+    assert!(!supported(
+        "display:grid",
+        &["display:block;width:10px;height:150px;break-before:column"],
+        true
+    ));
+    // Rows of a length give a grid a block size of its own; rows sized by
+    // their content, a fraction or a percentage do not.
+    for (grid, sized) in [
+        ("display:grid;grid-template-rows:repeat(2, 30px)", true),
+        ("display:grid;grid-auto-rows:30px", true),
+        ("display:grid;grid-template-rows:auto 1fr", false),
+        ("display:grid;grid-template-rows:50%", false),
+    ] {
+        assert_eq!(supported(grid, &["display:block"], true), sized, "{grid}");
+    }
+    // Implicit rows of a length size nothing without items to place in them.
+    assert!(!supported("display:grid;grid-auto-rows:30px", &[], true));
+    // Row gaps are truncated at a break, which slicing would not do, and a
+    // zero row gap or a column gap alone leaves nothing to truncate.
+    for (gap, sliced) in [
+        ("row-gap:20px", false),
+        ("row-gap:10%", false),
+        ("row-gap:0", true),
+        ("column-gap:20px", true),
+    ] {
+        let grid = format!("display:grid;height:150px;{gap}");
+        assert_eq!(supported(&grid, &[item], true), sliced, "{gap}");
+        let nested = format!("display:grid;width:10px;{gap}");
+        assert_eq!(supported(sized, &[nested.as_str()], true), sliced, "{gap}");
     }
     // A background inside the box stays inside the clip, and so do block
     // edges that are cut with the box, or that have nothing to repeat.
@@ -2439,7 +2686,6 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:flex;height:150px;outline:4px solid blue",
         "display:flex;height:150px;border-top:5px solid red;border-bottom:5px solid red;\
          box-decoration-break:clone",
-        "display:grid;height:150px",
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
     }
@@ -6310,13 +6556,13 @@ fn a_paragraph_in_the_columns_of_another_container_is_not_split_in_groups() {
 }
 
 #[test]
-fn a_container_with_a_height_is_not_split_in_groups() {
+fn a_container_with_a_height_is_split_in_groups_too() {
     let (mut doc, container, _) = column_container(
         "height:200px",
         &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)],
     );
     lay_out_in_ahem(&mut doc, 180.0, 400.0);
-    assert!(doc.nodes[container].multicol_groups.is_empty());
+    assert_eq!(doc.nodes[container].multicol_groups.len(), 2);
 }
 
 /// A flex container that aligns its items by their baselines: a box of one
@@ -6772,15 +7018,25 @@ fn a_middle_piece_has_neither_edge_and_both_fall_outside_its_column() {
 }
 
 #[test]
-fn a_line_taller_than_a_column_with_its_edge_is_left_to_the_other_strategies() {
-    // The last line and the 60px of padding below it fit no column: the
-    // planner gives up instead of cutting the padding, and the paragraph stays
-    // whole in the first column, past its end, as on the path that places
-    // it without slicing.
+fn a_last_line_that_fits_no_column_with_its_edge_breaks_before_the_edge() {
+    // The last line and the 60px of padding below it fit no column. The
+    // columns break between the lines first, so the last line starts the
+    // second column, and then between it and the padding, which goes on alone
+    // in the third, as Chromium breaks them. Each piece runs down its column
+    // to the edge below the box and the column clips it: the first to the
+    // column's end, the second to its line, and the third, which holds the
+    // padding, to the padding's end.
     let (doc, _, paragraph) = padded_paragraph_columns("padding-bottom:60px;background:green", 3);
     let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
-    assert_eq!(ranges, [(0, 3, 0)]);
-    assert_eq!(boxes, [(0.0, 90.0, None)]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1), (3, 3, 2)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 110.0, Some((0.0, 50.0))),
+            (0.0, 70.0, Some((0.0, 10.0))),
+            (0.0, 60.0, Some((0.0, 60.0)))
+        ]
+    );
 }
 
 #[test]
@@ -6841,16 +7097,13 @@ fn a_single_plain_paragraph_enters_the_stream_when_the_columns_balance() {
             "{css}"
         );
     }
-    // A lone box of lines with a height of its own is placed whole by the
-    // planner, which the columns that balance need.
+    // A lone box of lines with a height of its own is placed by the planner,
+    // which breaks it between its lines, whether the columns balance or not.
     let (mut doc, container, _) = padded_paragraph_columns("height:60px", 2);
     for balances in [true, false] {
-        assert_eq!(
-            with_bridged_session(&mut doc, |session| {
-                multicol_has_only_paragraph_children(session, container, balances)
-            }),
-            balances
-        );
+        assert!(with_bridged_session(&mut doc, |session| {
+            multicol_has_only_paragraph_children(session, container, balances)
+        }));
     }
 }
 

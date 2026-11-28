@@ -59,8 +59,10 @@ pub use document_layout::{
     RasterImage, RepeatKind, RootBox, RunSource, RunningElementLayout, Synthesis, Tag, TextLineId,
     TextShadow, layout,
 };
+// cov:ignore: these public streaming re-exports have no executable body.
 pub use document_layout::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
+    TableTextCell, TableTextRows,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{

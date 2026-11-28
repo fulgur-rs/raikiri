@@ -27,8 +27,8 @@ use super::candidate::{CandidateSink, Precedence};
 /// the other elements of §15.3.1 with a type selector, as no other namespace
 /// uses their names. Scripting counts as enabled, as in browsers, so
 /// `noscript` is among them. The names match case-sensitively, as in
-/// `Node::is_non_rendered_html_element` in raikiri-dom, whose paint gate
-/// skips the same elements: the HTML parser lowercases them, and an XHTML
+/// `Node::is_non_rendered_html_element` in raikiri-dom, which names the same
+/// elements: the HTML parser lowercases them, and an XHTML
 /// `SCRIPT` is not the script element.
 pub(crate) fn push_hidden_element_display(
     elem: &impl StyleElement,

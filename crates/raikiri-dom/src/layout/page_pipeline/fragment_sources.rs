@@ -33,6 +33,10 @@ pub(super) struct PageFragmentSource {
     pub(super) fragment_clip: Option<PaintClip>,
     pub(super) overflow_chain: Option<usize>,
     pub(super) own_overflow_source: Option<usize>,
+    /// How far down the painter moves the box by the relative offsets that
+    /// layout leaves to it (see [`super::painter_relative_shift_y`]). The
+    /// box is drawn on the pages it reaches where it is painted.
+    pub(super) painted_shift: f32,
 }
 
 impl PageFragmentSource {
@@ -44,6 +48,13 @@ impl PageFragmentSource {
         Self {
             abs_x,
             abs_y,
+            // The painter moves boxes down the page, which is the flow only
+            // when it runs along y.
+            painted_shift: if matches!(axis, FlowAxis::Y) {
+                self.painted_shift
+            } else {
+                0.0
+            },
             width,
             height,
             content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
@@ -115,6 +126,36 @@ impl FlowSlots {
         Self { ranges, ordered }
     }
 
+    /// The page slots whose flow range starts at `origin`, all of one page:
+    /// the last page that starts there, as an empty page that comes before
+    /// it starts there too.
+    fn starting_at(&self, origin: f32, pages: &[PageFragment]) -> Vec<(usize, f32)> {
+        let near = |start: f32| (start - origin).abs() <= 0.001;
+        let candidates: Vec<(usize, f32)> = if self.ordered {
+            let first = self
+                .ranges
+                .partition_point(|&(_, start, _)| start < origin - 0.001);
+            self.ranges[first..]
+                .iter()
+                .take_while(|&&(_, start, _)| near(start))
+                .map(|&(slot, start, _)| (slot, start))
+                .collect()
+        } else {
+            self.ranges
+                .iter()
+                .filter(|&&(_, start, _)| near(start))
+                .map(|&(slot, start, _)| (slot, start))
+                .collect()
+        };
+        let Some(page_index) = candidates.last().map(|&(slot, _)| pages[slot].page_index) else {
+            return Vec::new();
+        };
+        candidates
+            .into_iter()
+            .filter(|&(slot, _)| pages[slot].page_index == page_index)
+            .collect()
+    }
+
     /// The pages `source` can intersect. A repeated source lands on every
     /// page. Any other source only intersects the pages whose flow range
     /// overlaps it, which form one run of the ranges when they are ordered.
@@ -122,19 +163,16 @@ impl FlowSlots {
         if source.is_repeat || !self.ordered {
             &self.ranges[..]
         } else if source.height > 0.0 {
-            let bottom = source.abs_y + source.height;
-            let first = self
-                .ranges
-                .partition_point(|&(_, _, end)| end <= source.abs_y);
+            let top = source.abs_y + source.painted_shift;
+            let bottom = top + source.height;
+            let first = self.ranges.partition_point(|&(_, _, end)| end <= top);
             let last =
                 first + self.ranges[first..].partition_point(|&(_, start, _)| start < bottom);
             &self.ranges[first..last]
         } else {
-            let first = self
-                .ranges
-                .partition_point(|&(_, _, end)| end < source.abs_y);
-            let last = first
-                + self.ranges[first..].partition_point(|&(_, start, _)| start <= source.abs_y);
+            let top = source.abs_y + source.painted_shift;
+            let first = self.ranges.partition_point(|&(_, _, end)| end < top);
+            let last = first + self.ranges[first..].partition_point(|&(_, start, _)| start <= top);
             &self.ranges[first..last]
         }
     }
@@ -174,7 +212,12 @@ pub(super) fn place_sources(
                 .table_objects
                 .headers
                 .is_footer_source(source.node_id.0 as usize);
-        let placements = fragment_placements(source, header_placements, pages, &slots, work)?;
+        let copy_bands = document
+            .table_objects
+            .headers
+            .copy_bands(document, source.node_id.0 as usize);
+        let placements =
+            fragment_placements(source, header_placements, copy_bands, pages, &slots, work)?;
         let fragment_count = placements.len() as u32;
         for (fragment_index, placement) in placements.into_iter().enumerate() {
             if let Some(page) = pages.get_mut(placement.page_slot) {
@@ -200,6 +243,7 @@ pub(super) fn place_sources(
 fn fragment_placements(
     source: &PageFragmentSource,
     header_placements: Option<impl Iterator<Item = (u32, f32, f32)>>,
+    copy_bands: &[(f32, f32, bool)],
     pages: &[PageFragment],
     slots: &FlowSlots,
     work: &mut ProjectionWork<'_, '_>,
@@ -212,7 +256,7 @@ fn fragment_placements(
             // copy is charged so header size times page count stays bounded.
             for (page_index, origin, shift) in header_placements {
                 let start = pages.partition_point(|page| page.page_index < page_index);
-                let header_pages = pages
+                let mut header_pages: Vec<(usize, f32)> = pages
                     .iter()
                     .enumerate()
                     .skip(start)
@@ -221,7 +265,16 @@ fn fragment_placements(
                         page.flow_range
                             .filter(|&(page_start, _)| (page_start - origin).abs() <= 0.001)
                             .map(|(page_start, _)| (page_slot, page_start))
-                    });
+                    })
+                    .collect();
+                // The table layout numbers the pages it places a header on
+                // from the first page it laid out. A relayout projects its
+                // pages under the numbers of the pages they stand for, so
+                // there the page is the one that begins where the header's
+                // page did, as for painting the header.
+                if header_pages.is_empty() {
+                    header_pages = slots.starting_at(origin, pages);
+                }
                 for (page_slot, page_start) in header_pages {
                     work.charge(1)?;
                     let y = source.abs_y + shift - page_start;
@@ -250,22 +303,33 @@ fn fragment_placements(
             });
             continue;
         }
+        // The box lies where the painter draws it when the page is chosen,
+        // and keeps its layout position on that page: the painter moves it
+        // by `shift` again.
+        let shift = source.painted_shift;
+        let painted_y = source.abs_y + shift;
         let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-            match flow_page_overlap(source.abs_y, source.height, page_start, page_end) {
-                Some((y, height)) => (true, y, height),
+            let continues = (
+                painted_y < page_start - 0.001,
+                painted_y + source.height > page_end + 0.001,
+            );
+            match flow_page_overlap(painted_y, source.height, page_start, page_end)
+                .and_then(|(y, height)| below_copies(copy_bands, continues, page_start, y, height))
+            {
+                Some((y, height)) => (true, y - shift, height),
                 None => (false, 0.0, 0.0),
             }
         } else {
             (
-                source.abs_y >= page_start && source.abs_y <= page_end,
-                (source.abs_y - page_start).max(0.0),
+                painted_y >= page_start && painted_y <= page_end,
+                (painted_y - page_start).max(0.0) - shift,
                 0.0,
             )
         };
         if intersects {
             let line_range = source.line_metrics.as_deref().and_then(|metrics| {
                 line_ranges
-                    .get_or_insert_with(|| LineRanges::new(metrics, source.abs_y))
+                    .get_or_insert_with(|| LineRanges::new(metrics, painted_y))
                     .range(page_start, page_end)
             });
             placements.push(FragmentPlacement {
@@ -278,6 +342,45 @@ fn fragment_placements(
         }
     }
     Ok(placements)
+}
+
+/// The fragment at `y` with `height` on the page that starts at
+/// `page_start` in the flow, shortened where the box goes on from the page
+/// before or to the page after, as `continues` tells: it then starts below
+/// the header copies of `bands` (see [`HeaderRepeats::copy_bands`]) that
+/// cover its top, or ends at the footer copies inside it. `None` when the
+/// copies cover all of it.
+///
+/// [`HeaderRepeats::copy_bands`]: crate::layout::table::headers::HeaderRepeats::copy_bands
+fn below_copies(
+    bands: &[(f32, f32, bool)],
+    (from_before, to_after): (bool, bool),
+    page_start: f32,
+    y: f32,
+    height: f32,
+) -> Option<(f32, f32)> {
+    let mut top = page_start + y;
+    let mut bottom = top + height;
+    if !from_before && !to_after {
+        return Some((y, height));
+    }
+    // The bands do not overlap, so their ends are sorted as their starts
+    // are: only the bands from the first one ending below the top to the
+    // last one starting above the bottom can cut the fragment.
+    let first = bands.partition_point(|&(_, end, _)| end <= top);
+    for &(start, end, footer) in &bands[first..] {
+        if start >= bottom {
+            break;
+        }
+        if footer {
+            if to_after && start < bottom && end > top {
+                bottom = bottom.min(start);
+            }
+        } else if from_before && start <= top + 0.001 && end > top {
+            top = end;
+        }
+    }
+    (bottom > top + 0.001 || height <= 0.001).then_some((top - page_start, (bottom - top).max(0.0)))
 }
 
 /// The item of `page` for the fragment of `source` at `placement`, which is
@@ -470,3 +573,6 @@ pub(super) fn overflow_clip_sources(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

@@ -267,6 +267,18 @@ fn apply_computed_to_style_in_session_inner(
         {
             doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
         }
+        // A block box that spans all columns establishes a new block
+        // formatting context (CSS Multi-column Layout 1, 6.1). Chromium goes
+        // beyond the spec here and gives one to any block box with
+        // `column-span: all`, whether or not a multicol container holds it.
+        if doc.nodes[idx].column_span_all
+            && matches!(
+                doc.nodes[idx].display(),
+                DisplayValue::Block | DisplayValue::ListItem
+            )
+        {
+            doc.nodes[idx].flags.insert(NodeFlags::ROOTS_BLOCK_CONTEXT);
+        }
         // Table engine inputs — no taffy::Style counterpart (taffy 0.15
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
@@ -1030,7 +1042,17 @@ pub(super) fn is_limit_keyword(size: &ComputedLengthPercentageOrAuto) -> bool {
 /// - table containers and items, replaced items, and inline-level boxes
 ///   other than inline-blocks, form controls and MathML roots measure
 ///   themselves by algorithms of their own;
-/// - a vertical box swaps the axes a keyword refers to.
+/// - a vertical box in the flow of a vertical block container is laid out by
+///   that container on its own axes (see [`in_vertical_block_flow`]);
+/// - an inline-level flex or grid container in a vertical writing mode,
+///   whose inline size is measured at its max-content size even when it is
+///   offered min-content room, so its keywords would all stand for that size.
+///
+/// A vertical box resolves the keywords on its own axes: its physical height
+/// is its inline size, its physical width its block size. A vertical flex or
+/// grid item uses them too, even when the keyword `height` of such an item is
+/// not one its layout sizes it by, and so does a vertical block-level flex or
+/// grid container, as a horizontal one does.
 pub(super) fn honors_content_limits(
     doc: &Document,
     cascade: &CascadeResult,
@@ -1043,7 +1065,23 @@ pub(super) fn honors_content_limits(
     if is_supported_flex_grid_container(doc, idx, cv) {
         return true;
     }
+    if cv.display.is_block_flex_or_grid_container()
+        && lays_out_vertically(cascade, idx)
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && !in_vertical_block_flow(doc, cascade, idx, cv)
+    {
+        return true;
+    }
     let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+    if !out_of_flow
+        && lays_out_vertically(cascade, idx)
+        && !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
+        && !cv.display.is_flex_or_grid_container()
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && is_flex_or_grid_item(doc, cascade, idx)
+    {
+        return true;
+    }
     let block_sized = matches!(
         cv.display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
@@ -1054,13 +1092,35 @@ pub(super) fn honors_content_limits(
     let table = matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
     if table
         || (!block_sized && !non_block_sized && !out_of_flow)
+        || in_vertical_block_flow(doc, cascade, idx, cv)
         || cv.multicol_flow
-        || lays_out_vertically(cascade, idx)
         || !sized_by_content_keyword(doc, cascade, idx, cv)
     {
         return false;
     }
     out_of_flow || !is_flex_or_grid_item(doc, cascade, idx)
+}
+
+/// Whether the vertical box of element `idx` is in the flow of a block
+/// container that lays out vertically too. Such a container lays out the
+/// lines and blocks of the box on its own transposed axes with the sizes it
+/// reads before the box resolves its keyword limits, so the box leaves them
+/// unresolved rather than break its lines at a size it does not keep.
+fn in_vertical_block_flow(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
+    lays_out_vertically(cascade, idx)
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && cv.float == FloatValue::None
+        && layout_container(doc, cascade, idx).is_some_and(|container| {
+            lays_out_vertically(cascade, container)
+                && !cascade.computed[container]
+                    .display
+                    .is_flex_or_grid_container()
+        })
 }
 
 /// Whether element `idx` is an atomic inline that is not a replaced element

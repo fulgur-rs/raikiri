@@ -62,6 +62,7 @@ mod margin_box;
 mod negative_levels;
 mod page_geometry;
 mod paint_walk;
+mod rounded_border;
 mod rounded_dashes;
 mod visit;
 mod visit_element;
@@ -2164,7 +2165,8 @@ pub(crate) fn paint_document_impl(
     let root_font_size = cascade.computed[root_id].font_size.px();
     let canvas_owner = canvas_background_owner(document, cascade);
     let layout_fragments = document.layout_fragments();
-    let (fragments_by_parent_and_node, fragmented_nodes) = index_fragments(layout_fragments);
+    let (fragments_by_parent_and_node, fragmented_nodes, split_nodes) =
+        index_fragments(layout_fragments);
 
     let geometry = PageGeometry::new(
         document,
@@ -2204,6 +2206,7 @@ pub(crate) fn paint_document_impl(
         layout_fragments,
         fragments_by_parent_and_node,
         fragmented_nodes,
+        split_nodes,
         // The document, cascade, and counter snapshots are stable for this
         // pass, so each node's generated flow height is computed once and
         // reused.
@@ -2222,6 +2225,8 @@ pub(crate) fn paint_document_impl(
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
         clip_scopes: Vec::new(),
+        open_overflow_clips: Vec::new(),
+        open_opacities: 0,
         negative_levels,
         negative_contexts: Vec::new(),
         negative_boxes: Vec::new(),
@@ -3620,8 +3625,8 @@ pub(crate) fn paint_element_box_shadows(
 /// sides share one width, color and style that is solid, dashed or dotted.  A
 /// dashed or dotted border follows the curve when its inner edge is rounded,
 /// and is drawn in straight sides inside the rounded outer edge when it is not.
-/// The existing strip painter remains the conservative fallback for mixed
-/// sides and for the other styles.
+/// Sides that are not painted alike, and the `double`, `groove`, `ridge`,
+/// `inset` and `outset` styles, are drawn in bands that follow the curves.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_border_rounded(
     scene: &mut impl PaintScene,
@@ -3675,12 +3680,18 @@ pub(crate) fn paint_element_border_rounded(
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color); // cov:ignore: BorderColor variants currently always produce Some
         return; // cov:ignore: all current BorderColor variants produce Some
     };
+    let rect = (abs_x, abs_y, width, height);
     if !(uniform_width && uniform_style && uniform_color) {
-        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        // When any side is drawn in dashes or dots, every side keeps its
+        // straight strip, cut to the rounded outer edge.
+        if !rounded_border::paint_rounded_border_bands(scene, rect, radii, border, current_color) {
+            within_rounded_outer_edge(scene, rect, radii, |scene| {
+                paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+            });
+        }
         return;
     }
 
-    let rect = (abs_x, abs_y, width, height);
     match style {
         BorderStyle::Solid => fill_rounded_border_ring(scene, rect, radii, widths[0], color),
         BorderStyle::Dashed | BorderStyle::Dotted if inner_edge_is_rounded(radii, widths[0]) => {
@@ -3698,7 +3709,9 @@ pub(crate) fn paint_element_border_rounded(
                 paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
             });
         }
-        _ => paint_element_border(scene, width, height, abs_x, abs_y, border, current_color),
+        _ => {
+            rounded_border::paint_rounded_border_bands(scene, rect, radii, border, current_color);
+        }
     }
 }
 

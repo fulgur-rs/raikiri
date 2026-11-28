@@ -16,6 +16,7 @@ pub use running::RunningElementLayout;
 pub use streaming::StreamingDiagnostics;
 pub use streaming::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
+    TableTextCell, TableTextRows,
 };
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
@@ -387,6 +388,8 @@ impl DocumentLayout {
             self.out.page_styles.get(i + 1)
         };
         Page {
+            window_node_ids: false,
+            document_index: page_index,
             slice: &self.out.slices[i],
             geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],

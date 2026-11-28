@@ -256,6 +256,7 @@ pub(super) fn prepare(
                             + relative.0
                             + offset.0
                             + rect.x
+                            - shift.0
                             + page_shift.0,
                         page.content_box.y
                             + root.y
@@ -263,7 +264,7 @@ pub(super) fn prepare(
                             + relative.1
                             + offset.1
                             + rect.y
-                            - shift
+                            - shift.1
                             + page_shift.1,
                         rect.width,
                         rect.height,

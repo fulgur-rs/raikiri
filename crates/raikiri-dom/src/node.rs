@@ -920,6 +920,26 @@ impl Node {
     }
 }
 
+/// The display a `<button>` with the computed `display` lays out as. Button
+/// layout gives a button no table box: an inline-level table behaves as
+/// `inline-block` and the other table displays as `flow-root` (HTML Standard
+/// §15.5.13, "Button layout").
+fn button_display(display: DisplayValue) -> DisplayValue {
+    match display {
+        DisplayValue::InlineTable => DisplayValue::InlineBlock,
+        DisplayValue::Table
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup
+        | DisplayValue::TableRow
+        | DisplayValue::TableColumnGroup
+        | DisplayValue::TableColumn
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption => DisplayValue::FlowRoot,
+        display => display,
+    }
+}
+
 impl Node {
     /// The CSS display retained before lowering the box for Taffy.
     pub(crate) fn display(&self) -> DisplayValue {
@@ -952,6 +972,11 @@ impl Node {
 
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        let display = if self.is_html_button() {
+            button_display(display)
+        } else {
+            display
+        };
         self.flags.set(
             NodeFlags::ROOTS_BLOCK_CONTEXT,
             display == DisplayValue::Block && self.is_html_fieldset(),
@@ -1072,6 +1097,13 @@ impl Node {
     #[inline]
     pub fn layout(&self) -> &BoxLayout {
         &self.layout
+    }
+
+    /// Whether size containment (CSS Containment 2, 3.2) makes this box
+    /// ignore its content for its height.
+    #[inline]
+    pub fn height_is_size_contained(&self) -> bool {
+        self.size_containment.height
     }
 
     /// Return this Node's [`NodeKind`].
@@ -1533,8 +1565,9 @@ impl Node {
     }
 
     /// Whether this box roots a block formatting context, as a block-level
-    /// HTML `fieldset` (HTML Standard §15.5.12) or a size query container:
-    /// it keeps clear of floats, holds its floats and does not collapse its
+    /// HTML `fieldset` (HTML Standard §15.5.12), a size query container or a
+    /// block box with `column-span: all` (CSS Multi-column Layout 1, 6.1): it
+    /// keeps clear of floats, holds its floats and does not collapse its
     /// margins with those of its children.
     #[inline]
     pub(crate) fn roots_block_context(&self) -> bool {
@@ -1674,8 +1707,9 @@ impl Node {
     }
 
     /// Identify "non-rendered" elements in the HTML namespace (metadata
-    /// content, raw text containers, and ruby parenthesis fallbacks). Paint
-    /// uses this gate to skip their entire subtrees.
+    /// content, raw text containers, and ruby parenthesis fallbacks), which
+    /// HTML hides whatever their content. Layout and paint skip them through
+    /// [`Self::is_unrendered_html_element`], which also reads their display.
     ///
     /// Covered elements (HTML LS §15.3.1 "Hidden elements",
     /// <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>):
@@ -1699,14 +1733,11 @@ impl Node {
     /// `<basefont>` is obsolete-void, and `<param>` acts like an attribute inside
     /// an object), so they offer no content leak path and are omitted here.
     ///
-    /// # Motivation
-    ///
     /// Author or user CSS can override hiding by UA CSS
-    /// (`style { display: none }`, etc.; HTML LS §15.3.1). Attacker-controlled
-    /// HTML plus overriding CSS could therefore expose text from `<style>` or
-    /// `<script>` in rendered output. A cascade-independent paint gate provides
-    /// defense in depth (datalist, noembed, noframes, and rp were added later
-    /// to complete §15.3.1 coverage).
+    /// (`style { display: none }`, etc.; HTML LS §15.3.1), and browsers then
+    /// render the element and its text. Callers that ask whether an element
+    /// renders use [`Self::is_unrendered_html_element`] or
+    /// [`Self::hides_contents_whatever_display`] instead.
     ///
     /// # Non-goals
     ///
@@ -1749,6 +1780,36 @@ impl Node {
                 | "noframes"
                 | "rp"
         )
+    }
+
+    /// Whether layout and paint skip this element and its subtree: a hidden
+    /// HTML element (see [`Self::is_non_rendered_html_element`]) that keeps
+    /// the user agent `display: none`, or whose contents never render.
+    ///
+    /// HTML LS §15.3.1 hides most of these elements with a user agent rule,
+    /// which author style overrides: an author `display` on `head`, `title`,
+    /// `meta`, `link`, `base`, `script`, `style`, `datalist`, `noframes` or
+    /// `rp` renders the element and its contents, as browsers do. The
+    /// contents of `template`, of `noscript` (scripting counts as enabled)
+    /// and of `noembed` (plugin content counts as supported) never render.
+    ///
+    /// The display read here is the one the style bridge copied from the
+    /// cascade onto the node, so callers ask after the cascade ran.
+    #[inline]
+    pub fn is_unrendered_html_element(&self) -> bool {
+        (self.is_non_rendered_html_element() && self.display() == DisplayValue::None)
+            || self.hides_contents_whatever_display()
+    }
+
+    /// Whether this is a hidden HTML element whose contents never render,
+    /// whatever its display: `template`, `noscript` (scripting counts as
+    /// enabled) and `noembed` (plugin content counts as supported). See
+    /// [`Self::is_unrendered_html_element`] for the hidden elements that an
+    /// author `display` renders.
+    #[inline]
+    pub fn hides_contents_whatever_display(&self) -> bool {
+        self.is_non_rendered_html_element()
+            && matches!(self.tag_name(), Some("template" | "noscript" | "noembed"))
     }
 
     /// Explicitly overwrite the [`NodeFlags::IS_IN_DOCUMENT`] bit (crate-private).

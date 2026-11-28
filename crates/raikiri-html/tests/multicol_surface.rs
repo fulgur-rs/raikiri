@@ -593,14 +593,16 @@ fn variable_height_wrapper_lines_keep_public_origins_and_feasible_break_minima()
     assert_eq!(
         text_origins(&document),
         [
+            // As in Chromium, the widows ask for the lines after the last
+            // break only, and the middle column holds fewer lines.
             ("A".into(), (0.0, 11.5)),
-            ("B".into(), (60.0, 4.0)),
-            ("C".into(), (60.0, 11.5)),
-            ("D".into(), (60.0, 24.0)),
-            ("E".into(), (120.0, 11.5)),
-            ("F".into(), (120.0, 26.5)),
-            ("G".into(), (120.0, 34.0)),
-            ("H".into(), (120.0, 39.0)),
+            ("B".into(), (0.0, 24.0)),
+            ("C".into(), (0.0, 31.5)),
+            ("D".into(), (60.0, 9.0)),
+            ("E".into(), (60.0, 26.5)),
+            ("F".into(), (120.0, 6.5)),
+            ("G".into(), (120.0, 14.0)),
+            ("H".into(), (120.0, 19.0)),
             ("I".into(), (0.0, 44.0)),
         ]
     );
@@ -616,7 +618,7 @@ fn variable_height_wrapper_lines_keep_public_origins_and_feasible_break_minima()
         [
             (0, raikiri_traits::PaintRect::new(0.0, 0.0, 80.0, 40.0)),
             (1, raikiri_traits::PaintRect::new(60.0, 0.0, 80.0, 40.0)),
-            (2, raikiri_traits::PaintRect::new(120.0, 0.0, 80.0, 40.0)),
+            (2, raikiri_traits::PaintRect::new(120.0, 0.0, 80.0, 20.0)),
             (0, raikiri_traits::PaintRect::new(0.0, 40.0, 180.0, 5.0)),
         ]
     );

@@ -2695,6 +2695,7 @@ dependencies = [
  "rustc-hash",
  "shodo",
  "smol_str",
+ "tempfile",
  "unicode-script",
  "url",
  "xml5ever 0.40.0",

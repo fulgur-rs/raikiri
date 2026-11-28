@@ -34,6 +34,12 @@ use crate::node::{
     Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, TextContent,
 };
 
+#[derive(Debug)]
+struct WindowSourceIds {
+    source: Vec<usize>,
+    local: HashMap<usize, usize>,
+}
+
 #[derive(Clone, Copy, Debug)]
 /// Positioning input retained when pagination changes the containing block.
 pub(crate) struct OofPlacement {
@@ -248,6 +254,8 @@ pub struct Document {
     base_url_inputs: base_url::Tracker,
     stylesheet_revision: stylesheet_source::Tracker,
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
+    window_source_ids: Option<Arc<WindowSourceIds>>,
+    pub(crate) window_columns: Option<crate::layout::table::WindowColumns>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
@@ -319,6 +327,22 @@ pub struct Document {
     /// float itself. Sorted, like `forced_break_clearance`, and dirties the
     /// layout cache the same way when it changes.
     pub(crate) forced_break_float_floor: Vec<usize>,
+    /// The blocks of a paragraph laid out by the inline engine that end with
+    /// a float that starts a page, whose following lines the last paged
+    /// layout started below the floats before that float, but not below the
+    /// float itself. Sorted, and dirties the layout cache the same way.
+    pub(crate) forced_break_line_float_floor: Vec<usize>,
+    /// The floats right before text whose page type differs from the box
+    /// before them, which the last paged layout took to break the page
+    /// before them, as the text after them does. Sorted, and dirties the
+    /// layout cache the same way.
+    pub(crate) named_break_floats: Vec<usize>,
+    /// The boxes where a change of page type that no box or text of the
+    /// page flow takes forces a page break before (`true`) or after
+    /// (`false`) them: in the flow of a float, and before generated
+    /// `::after` text, as the last paged layout found them. Sorted, and dirties the layout cache the same
+    /// way.
+    pub(crate) page_name_breaks: Vec<(usize, bool)>,
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
@@ -595,6 +619,8 @@ impl Document {
             base_url_inputs: Default::default(),
             stylesheet_revision: Default::default(),
             stylesheet_sources: HashMap::new(),
+            window_source_ids: None,
+            window_columns: None,
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             inline_svg_cache: Default::default(),
@@ -619,6 +645,9 @@ impl Document {
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
             forced_break_float_floor: Vec::new(),
+            forced_break_line_float_floor: Vec::new(),
+            named_break_floats: Vec::new(),
+            page_name_breaks: Vec::new(),
             clearance_breaks: None,
             ifc: None,
             normal_line_height: None,
@@ -2094,6 +2123,8 @@ impl Document {
             base_url_inputs: _,
             stylesheet_revision: _,
             stylesheet_sources,
+            window_source_ids: _,
+            window_columns: _,
             table_objects: _,
             page_projection: _,
             inline_svg_cache: _,
@@ -2114,6 +2145,9 @@ impl Document {
             forced_break_clearance: _,
             forced_break_line_clearance: _,
             forced_break_float_floor: _,
+            forced_break_line_float_floor: _,
+            named_break_floats: _,
+            page_name_breaks: _,
             clearance_breaks: _,
             ifc,
             normal_line_height,
@@ -3096,6 +3130,36 @@ impl Document {
     /// as many nodes again; call this once the tree is complete.
     pub fn shrink_node_storage(&mut self) {
         self.nodes.shrink_to_fit();
+    }
+
+    /// Associate a restored window's arena entries with their original source nodes.
+    #[doc(hidden)]
+    pub fn set_window_source_ids(&mut self, source: Vec<usize>) {
+        assert_eq!(source.len(), self.node_count());
+        let local = source
+            .iter()
+            .enumerate()
+            .map(|(local, &id)| (id, local))
+            .collect();
+        self.window_source_ids = Some(Arc::new(WindowSourceIds { source, local }));
+    }
+
+    /// Translate a window arena entry to its original source node.
+    #[doc(hidden)]
+    pub fn source_node_index(&self, local: usize) -> Option<usize> {
+        match &self.window_source_ids {
+            Some(ids) => ids.source.get(local).copied(),
+            None => (local < self.node_count()).then_some(local),
+        }
+    }
+
+    /// Resolve a source node in the current window.
+    #[doc(hidden)]
+    pub fn local_node_index(&self, source: usize) -> Option<usize> {
+        match &self.window_source_ids {
+            Some(ids) => ids.local.get(&source).copied(),
+            None => (source < self.node_count()).then_some(source),
+        }
     }
 
     /// Arena index of the Document root (always 0).

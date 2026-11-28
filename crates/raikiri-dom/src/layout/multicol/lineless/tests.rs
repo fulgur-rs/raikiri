@@ -28,6 +28,7 @@ fn split(height: f32) -> Item {
         monolithic: false,
         slice: None,
         edges: 0.0,
+        break_before: false,
     }
 }
 
@@ -193,9 +194,7 @@ fn a_splittable_box_that_must_stay_whole_moves_to_the_next_column_when_it_fits_o
 /// `leading` at its block start and `trailing` at its block end.
 fn sliced(height: f32, leading: f32, trailing: f32) -> Item {
     Item {
-        whole: true,
         slice: Some((leading, trailing)),
-        edges: trailing,
         ..split(height)
     }
 }
@@ -413,7 +412,10 @@ fn placement_stops_at_the_piece_budget() {
 }
 
 #[test]
-fn balancing_ignores_margins_truncated_at_the_break() {
+fn balancing_starts_from_the_stream_with_its_margins_divided() {
+    // The margins between the boxes collapse to 20px and are truncated at
+    // the break, but the columns are as tall as the whole stream divided
+    // among them, 50px, as Chromium balances two such boxes.
     let first = Item {
         margin_bottom: 20.0,
         ..avoid(40.0)
@@ -422,7 +424,7 @@ fn balancing_ignores_margins_truncated_at_the_break() {
         margin_top: 10.0,
         ..avoid(40.0)
     };
-    assert_eq!(balanced_height(&[first, second], 2, usize::MAX), 40.0);
+    assert_eq!(balanced_height(&[first, second], 2, usize::MAX), 50.0);
 }
 
 #[test]

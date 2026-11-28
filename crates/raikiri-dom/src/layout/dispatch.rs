@@ -919,6 +919,12 @@ impl LayoutSession<'_> {
             pending.extend(self.nodes[idx].children.iter().copied());
         }
     }
+
+    /// Stop answering a performed layout of the node from its cache (see
+    /// [`crate::layout::taffy_adapter::LayoutCache::forget_final_layout`]).
+    pub(crate) fn forget_final_layout(&mut self, node_id: NodeId) {
+        self.nodes[usize::from(node_id)].cache.forget_final_layout();
+    }
 }
 
 impl LayoutSession<'_> {
@@ -1012,6 +1018,7 @@ impl LayoutSession<'_> {
                 self.context.text_group_shortest.take(),
             )
         });
+        let writes_before = self.context.arena_writes;
         let mut output = if let Some(output) =
             self.compute_transposed_child(node_id, inputs, block_ctx.as_deref_mut())
         {
@@ -1021,6 +1028,12 @@ impl LayoutSession<'_> {
                 self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
             })
         };
+        // A measure that laid out boxes inside the box left them as it laid
+        // them out, so a later layout of the box at the inputs of the final
+        // layout it holds must lay them out again rather than take that.
+        if inputs.run_mode == RunMode::ComputeSize && self.context.arena_writes != writes_before {
+            self.forget_final_layout(node_id);
+        }
         self.context.group_child_uncached = false;
         if let Some((group, shortest)) = outer_group {
             self.context.text_group = group;
@@ -1906,7 +1919,27 @@ fn compute_ifc_root(
             let width = if metrics.ratio_width
                 || grid_cyclic_ratio_content_minimum(tree, idx, &layout_style, inputs)
             {
-                let minimum = ifc_min_content_width(tree, node_id, inputs.parent_size);
+                // The lines of a vertical paragraph in a row of a container on
+                // vertical axes break at the height it flexed to, and the
+                // width they take there is the width of its content.
+                let minimum = if vertical_paragraph
+                    && tree.container_is_vertical(idx)
+                    && inputs.known_dimensions.height.is_some()
+                    && flex_item_follows_main_size(tree, idx, &inputs)
+                {
+                    let probe = LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        axis: RequestedAxis::Horizontal,
+                        ..inputs
+                    };
+                    without_container_ratio(tree, node_id, |tree| {
+                        compute_ifc_root(tree, node_id, probe, None)
+                    })
+                    .size
+                    .width
+                } else {
+                    ifc_min_content_width(tree, node_id, inputs.parent_size)
+                };
                 width.max(minimum.maybe_clamp(None, metrics.own_max.width))
             } else {
                 width
@@ -2270,13 +2303,16 @@ fn compute_ifc_root(
     }
     output.oof_candidates.append(&mut nested_oof_candidates);
     // A table cell aligns its content by `vertical-align` (see `table.rs`).
-    if !vertical_paragraph
-        && !multicol
-        && !is_table_box(tree.nodes[idx].display())
+    // A vertical paragraph aligns it along its block axis, the physical
+    // width.
+    if !is_table_box(tree.nodes[idx].display())
         && let Some(measured) = measured_size
     {
-        let free =
-            output.size.height - measure.insets.top - measure.insets.bottom - measured.height;
+        let free = if vertical_paragraph {
+            output.size.width - measure.insets.left - measure.insets.right - measured.width
+        } else {
+            output.size.height - measure.insets.top - measure.insets.bottom - measured.height
+        };
         let offset = block_flow::content_alignment_offset(style.align_content, free);
         if offset != 0.0 {
             align_ifc_content(tree, idx, offset, inputs.run_mode, &mut output);
@@ -2333,8 +2369,9 @@ fn compute_ifc_root(
     output
 }
 
-/// Move the content of the horizontal paragraph box `idx` down by `offset`,
-/// the `align-content` it states, as block flow moves block children (CSS
+/// Move the content of the paragraph box `idx` along its block axis by
+/// `offset`, the `align-content` it states: down in a horizontal paragraph,
+/// across the page in a vertical one, as block flow moves block children (CSS
 /// Box Alignment 3 §5.1): its lines, the floats, atomic inlines and blocks
 /// among them, and the out-of-flow candidates, baseline and overflow they
 /// carry. The box's own out-of-flow children are placed afterwards from the
@@ -2350,6 +2387,17 @@ fn align_ifc_content(
     if run_mode != RunMode::PerformLayout {
         return;
     }
+    // The block axis runs down the page, or across it in a vertical
+    // paragraph, leftwards in `vertical-rl`.
+    let writing_mode = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .map_or(shodo::geometry::WritingMode::HorizontalTb, |root| {
+            root.writing_mode
+        });
+    let (dx, dy) = crate::layout::ifc::positioned_runs::block_shift(writing_mode, offset);
+    // The rendered legend of a fieldset stays over the border.
+    let legend = tree.nodes[idx].ifc.as_ref().and_then(|root| root.legend);
     let boxes: Vec<usize> = tree.nodes[idx]
         .ifc
         .as_mut()
@@ -2359,21 +2407,48 @@ fn align_ifc_content(
             }
             root.boxes
                 .iter()
-                .filter(|b| b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow)
+                .filter(|b| {
+                    b.kind != crate::layout::ifc::boxes::IfcBoxKind::OutOfFlow
+                        && Some(b.node) != legend
+                })
                 .map(|b| b.node)
                 .collect()
         })
         .unwrap_or_default();
     for node in boxes {
         let mut layout = tree.nodes[node].layout;
-        layout.location.y += offset;
+        layout.location.x += dx;
+        layout.location.y += dy;
         tree.set_unrounded_layout(NodeId::from(node), &layout);
     }
     if output.scrollable_overflow_rect != Edges::ZERO {
-        output.scrollable_overflow_rect.top += offset;
-        output.scrollable_overflow_rect.bottom += offset;
+        output.scrollable_overflow_rect.left += dx;
+        output.scrollable_overflow_rect.right += dx;
+        output.scrollable_overflow_rect.top += dy;
+        output.scrollable_overflow_rect.bottom += dy;
     }
-    output.oof_candidates.translate(Point { x: 0.0, y: offset });
+    match legend {
+        // The out-of-flow boxes in the legend stay with it.
+        Some(legend) => {
+            let mut kept = OofCandidates::new();
+            let mut moved = OofCandidates::new();
+            for candidate in output.oof_candidates.iter() {
+                if tree
+                    .document
+                    .ancestors(usize::from(candidate.node))
+                    .any(|ancestor| ancestor == legend)
+                {
+                    kept.push(candidate);
+                } else {
+                    moved.push(candidate);
+                }
+            }
+            moved.translate(Point { x: dx, y: dy });
+            kept.append(&mut moved);
+            output.oof_candidates = kept;
+        }
+        None => output.oof_candidates.translate(Point { x: dx, y: dy }),
+    }
 }
 
 /// The min-content width of the border box of the paragraph box `node_id`,
@@ -2737,18 +2812,24 @@ fn measure_ifc_root(
         max_content.max(box_intrinsics.blocks.1),
     );
     // The lines of a multicol container are laid out in its columns, so the
-    // widths of the container repeat the widths of its lines.
-    let (min_content, max_content) = tree.nodes[idx]
+    // inline sizes of the container repeat the inline sizes of its lines.
+    let multicol_sizes = tree.nodes[idx]
         .multicol
-        .filter(|style| style.horizontal && !vertical)
-        .map_or((min_content, max_content), |style| {
-            style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0))
-        });
+        .map(|style| style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0)));
+    // A horizontal paragraph is measured along its width, so its widths
+    // become the container's. A vertical paragraph keeps the widths of its
+    // lines for its block extent below and takes the container's only for
+    // its inline size, the height.
+    let (min_content, max_content) = match multicol_sizes {
+        Some(sizes) if !vertical => sizes,
+        _ => (min_content, max_content),
+    };
+    let (inline_min, inline_max) = multicol_sizes.unwrap_or((min_content, max_content));
     let width = match inline_available {
         AvailableSpace::Definite(width) if inline_stretched => width,
-        AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
-        AvailableSpace::MinContent => min_content,
-        AvailableSpace::MaxContent => max_content,
+        AvailableSpace::Definite(width) => width.max(inline_min).min(inline_max),
+        AvailableSpace::MinContent => inline_min,
+        AvailableSpace::MaxContent => inline_max,
     };
     // A stretched or fixed box already carries its clamped width; a
     // shrink-to-fit box is clamped by its own min/max after measurement.
@@ -3012,6 +3093,15 @@ fn measure_ifc_root(
                 if !spanner_groups {
                     return crate::layout::root_column_fragments(&lines, context);
                 }
+                // The groups fill no more than what the used height leaves
+                // of the content box, or a maximum height when the height
+                // is auto, and go on in more columns past it.
+                let maximum = Some(measure.height_bounds.1.max(measure.height_bounds.0))
+                    .filter(|height| height.is_finite());
+                let context = crate::fragment::FragmentationContext {
+                    available_height: measure.definite_height.or(maximum),
+                    ..context
+                };
                 let groups = crate::layout::multicol::paragraph_spanners::arrange(
                     tree, idx, &lines, context, geometry, width, perform,
                 );
@@ -6301,6 +6391,25 @@ fn with_clamped_keyword_width(
 /// A container with a preferred aspect ratio and an `auto` height is given the
 /// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    if inputs.run_mode == RunMode::PerformLayout
+        && inputs.known_dimensions.height.is_none()
+        && rows_follow_area_percentages(tree, usize::from(node_id))
+    {
+        let measured = grid_layout(
+            tree,
+            node_id,
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: RequestedAxis::Vertical,
+                ..inputs
+            },
+        );
+        // The height stays indefinite for the items, as it is for an `auto`
+        // container.
+        let mut sized = inputs;
+        sized.known_dimensions.height = Some(measured.size.height);
+        return grid_layout(tree, node_id, sized);
+    }
     let inputs = with_container_page_room(tree, usize::from(node_id), inputs);
     let inputs = if grid_oof::right_to_left(tree, usize::from(node_id)).is_some() {
         with_vertical_keyword_height(tree, node_id, inputs, grid_layout_sized)
@@ -6336,6 +6445,51 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
             grid_layout_sized(tree, node_id, inputs)
         },
     )
+}
+
+/// Whether the horizontal grid container `idx` has an in-flow item with an
+/// aspect ratio whose `height`, `min-height` or `max-height` is a percentage
+/// of its grid area.
+///
+/// Such an item contributes to the rows once at the height an unknown area
+/// gives it, and again, with its percentage resolved, after the columns are
+/// sized against those rows. The library then makes an `auto` container as
+/// tall as the rows of the second pass, but Chromium keeps the height of the
+/// first and lets the rows overflow it: `aspect-ratio: 2/1; height: 50%` with
+/// 25px borders above a 75px item makes a 100px grid 150px tall, though its
+/// rows come to 87.5px and 75px. The size the library reports when only asked
+/// for the size of the container is that first height, so the container is
+/// laid out at it. Only the ratio carries the resolved height over to a new
+/// width, and rows that repeat to fill the height would be counted again for
+/// one that is known.
+fn rows_follow_area_percentages(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    if grid_oof::right_to_left(tree, idx).is_some()
+        || tree.nodes[idx].used_writing_mode.is_vertical()
+        || crate::layout::taffy_adapter::RowSizing::repeat_to_fill(&tree.physical_style(idx))
+    {
+        return false;
+    }
+    tree.child_ids(NodeId::from(idx)).any(|child| {
+        let child = usize::from(child);
+        if tree.nodes[child].layout_display() == Display::None
+            || tree.nodes[child].layout_position() == Position::Absolute
+        {
+            return false;
+        }
+        let style = tree.physical_style(child);
+        if style.stated_aspect_ratio().is_none() {
+            return false;
+        }
+        let depends = |basis: f32| {
+            let basis = Some(basis);
+            [
+                style.size().height.maybe_resolve(basis),
+                style.min_size().height.maybe_resolve(basis),
+                style.max_size().height.maybe_resolve(basis),
+            ]
+        };
+        depends(0.0) != depends(1.0e3)
+    })
 }
 
 /// Give a flex or grid container with a preferred aspect ratio and an `auto`
@@ -6771,8 +6925,19 @@ fn with_ratio_width(
     let vertical_content_size = (intrinsic_contribution || flex_cross_measure)
         && inputs.known_dimensions.height.is_some()
         && inputs.known_dimensions_are_definite.height;
+    // An item of a row of a container on vertical axes is given the height it
+    // flexed to, and the ratio gives its width from that height, raised to
+    // the width of its content as in a horizontal row.
+    let vertical_row_item = vertical
+        && tree.container_is_vertical(idx)
+        && inputs.known_dimensions.height.is_some()
+        && inputs.known_dimensions_are_definite.height
+        && flex_item_follows_main_size(tree, idx, &inputs);
     if style.aspect_ratio.is_none()
-        || (vertical && inputs.sizing_mode != SizingMode::InherentSize && !vertical_content_size)
+        || (vertical
+            && inputs.sizing_mode != SizingMode::InherentSize
+            && !vertical_content_size
+            && !vertical_row_item)
     {
         return inputs;
     }

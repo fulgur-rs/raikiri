@@ -133,9 +133,25 @@ fn continuation_cascade_drops_breaks_before_the_token() {
     assert_eq!(token.break_before, BreakBetween::Auto);
     assert_eq!(token.break_inside, BreakInside::Auto);
     assert_eq!(cascade.computed[root].break_inside, BreakInside::Auto);
-    assert_eq!(cascade.computed[root].orphans, 1);
+    // The ancestors of a box token keep their orphans and widows, which the
+    // breaks after the token still count.
+    assert_eq!(cascade.computed[root].orphans, 2);
+    assert_eq!(cascade.computed[root].widows, 2);
     // A box after the token keeps its breaks.
     assert_eq!(cascade.computed[blocks[2]].break_before, BreakBetween::Page);
+}
+
+#[test]
+fn continuation_cascade_keeps_the_minimum_of_lines_around_a_line_token() {
+    // Layout lets the break at the token itself leave fewer lines, and
+    // the breaks after it count them.
+    let mut text = 0;
+    let (mut doc, mut cascade, root) = ahem_paragraph_with("orphans:3;widows:3", |doc, root| {
+        text = doc.append_text(root, WORDS);
+    });
+    doc.prepare_continuation_cascade(&mut cascade, PageStartToken::Line { text, offset: 20 });
+    assert_eq!(cascade.computed[root].orphans, 3);
+    assert_eq!(cascade.computed[root].widows, 3);
 }
 
 #[test]
@@ -153,6 +169,27 @@ fn page_start_skips_a_float_that_comes_first() {
     });
     let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));
     assert_eq!(slices.len(), 2);
+    let start = doc.page_start(&cascade, 1).expect("a page start");
+    assert_eq!(start.token, PageStartToken::Node(blocks[3]));
+}
+
+#[test]
+fn page_start_skips_a_box_the_painter_moved_onto_the_page() {
+    let mut blocks = Vec::new();
+    let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        for style in [
+            "display:block;height:15px",
+            "display:table-cell;position:relative;top:20px;height:10px",
+            "display:block;height:5px",
+            "display:block;height:15px",
+        ] {
+            blocks.push(doc.append_element(Some(root), "div", Some(style)));
+        }
+    });
+    let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));
+    assert_eq!(slices.len(), 2);
+    // The cell is printed on the second page, where its offset puts it, but
+    // layout placed it on the first.
     let start = doc.page_start(&cascade, 1).expect("a page start");
     assert_eq!(start.token, PageStartToken::Node(blocks[3]));
 }
@@ -562,6 +599,92 @@ fn repeated_table_headers_do_not_become_continuation_starts() {
         assert!(!doc.is_ancestor_or_self(header, start.token.node()));
     }
     assert_owner_index_matches_uncached_records(&doc);
+}
+
+/// A table with a one-row header and six 40px body rows, which a 100px page
+/// breaks so that the header repeats, and the header group's node.
+fn table_with_repeated_header() -> (Document, CascadeResult, usize) {
+    let mut header = 0;
+    let (doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        let body_parent = doc.parent_of(root).unwrap();
+        let table = doc.append_element(
+            Some(body_parent),
+            "table",
+            Some("display:table;border-spacing:0;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        header = doc.append_element(
+            Some(table),
+            "thead",
+            Some("display:table-header-group;break-inside:avoid"),
+        );
+        let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Some("display:table-cell;padding:0;height:10px"),
+        );
+        doc.append_text(cell, "H");
+        let body = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+        for _ in 0..6 {
+            let row = doc.append_element(Some(body), "tr", Some("display:table-row"));
+            let cell = doc.append_element(
+                Some(row),
+                "td",
+                Some("display:table-cell;padding:0;height:40px"),
+            );
+            doc.append_text(cell, "B");
+        }
+    });
+    (doc, cascade, header)
+}
+
+#[test]
+fn a_repeated_table_header_lands_on_pages_numbered_from_another_page() {
+    let (mut doc, cascade, header) = table_with_repeated_header();
+    let page = page_box(100.0, 100.0);
+    let slices = paginate(&mut doc, &cascade, page);
+    let header_id = NodeId::new(header as u64);
+    let header_pages = |doc: &Document| -> Vec<(u32, f32)> {
+        doc.page_projection
+            .pages
+            .iter()
+            .flat_map(|projected| {
+                projected
+                    .items
+                    .iter()
+                    .filter(|item| item.node_id == header_id)
+                    .map(move |item| (projected.page_index, item.rect.y))
+            })
+            .collect()
+    };
+    let laid_out = header_pages(&doc);
+    assert!(laid_out.len() > 2, "{laid_out:?}");
+    // The same pages projected under numbers five higher, as a relayout
+    // numbers the pages it lays out after those of an earlier layout.
+    let renumbered: Vec<PageSlice> = slices
+        .iter()
+        .map(|slice| PageSlice {
+            page_index: slice.page_index + 5,
+            ..slice.clone()
+        })
+        .collect();
+    let geometries: Vec<_> = renumbered
+        .iter()
+        .map(|_| {
+            (
+                page,
+                crate::PageMargins::default(),
+                crate::PageContentInsets::default(),
+            )
+        })
+        .collect();
+    doc.project_pages(&cascade, page, &renumbered, &geometries)
+        .expect("projection");
+    let expected: Vec<(u32, f32)> = laid_out
+        .iter()
+        .map(|&(page_index, y)| (page_index + 5, y))
+        .collect();
+    assert_eq!(header_pages(&doc), expected);
 }
 
 // The old public-path calculation is an oracle for raw line offsets, which

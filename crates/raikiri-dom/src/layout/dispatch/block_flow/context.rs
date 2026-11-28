@@ -126,12 +126,18 @@ fn beside_floats(
 /// Float placement storage owned by one CSS block formatting context.
 pub(crate) struct BlockFormattingContext {
     floats: Arc<FloatContext>,
+    /// How low the floats reached before the float that last started a
+    /// page, in the float storage's own coordinates. The context keeps it
+    /// rather than the block that holds that float, so the box after it
+    /// sees it when that block ends with the float.
+    page_start_floor: Option<f32>,
 }
 
 impl BlockFormattingContext {
     pub(crate) fn new() -> Self {
         Self {
             floats: Arc::new(FloatContext::new()),
+            page_start_floor: None,
         }
     }
 
@@ -164,9 +170,6 @@ struct FlowState {
     leading_adjoining: Option<[bool; 2]>,
     resolved: bool,
     leading_strut: Option<LeadingStrut>,
-    /// How low the floats reached before the float that starts a page, in the
-    /// float storage's own coordinates.
-    page_start_floor: Option<f32>,
 }
 
 impl FlowState {
@@ -177,7 +180,6 @@ impl FlowState {
             leading_adjoining: None,
             resolved: false,
             leading_strut: None,
-            page_start_floor: None,
         }
     }
 }
@@ -186,6 +188,7 @@ impl FlowState {
 /// Saved float storage is shared until placement or width changes require a copy.
 pub(crate) struct BlockContextSnapshot {
     floats: Arc<FloatContext>,
+    page_start_floor: Option<f32>,
     state: FlowState,
     content_insets: [f32; 2],
 }
@@ -206,6 +209,7 @@ impl FloatView {
     pub(crate) fn query<R>(&self, query: impl FnOnce(&BlockContext<'_>) -> R) -> R {
         let mut owner = BlockFormattingContext {
             floats: Arc::clone(&self.floats),
+            page_start_floor: None,
         };
         let context = BlockContext {
             owner: &mut owner,
@@ -315,6 +319,7 @@ impl BlockContext<'_> {
     pub(crate) fn snapshot(&self) -> BlockContextSnapshot {
         BlockContextSnapshot {
             floats: Arc::clone(&self.owner.floats),
+            page_start_floor: self.owner.page_start_floor,
             state: self.state,
             content_insets: self.content_insets,
         }
@@ -322,6 +327,7 @@ impl BlockContext<'_> {
 
     pub(crate) fn restore(&mut self, saved: &BlockContextSnapshot) {
         self.owner.floats = Arc::clone(&saved.floats);
+        self.owner.page_start_floor = saved.page_start_floor;
         self.state = saved.state;
         self.content_insets = saved.content_insets;
     }
@@ -393,6 +399,76 @@ impl BlockContext<'_> {
         };
         self.state.float_end = self.state.float_end.max(local.y + size.height);
         local
+    }
+
+    /// Breaks the lines below the float placed at `position` with the
+    /// margin-box `size`, down to `extent` below it, against it as if it
+    /// reached that far (see [`FloatContext::extend_for_lines`]).
+    pub(crate) fn extend_float_for_lines(
+        &mut self,
+        position: Point<f32>,
+        size: Size<f32>,
+        direction: FloatDirection,
+        extent: f32,
+    ) {
+        let absolute = Point {
+            x: position.x + self.border_insets[0],
+            y: position.y + self.origin,
+        };
+        Arc::make_mut(&mut self.owner.floats).extend_for_lines(
+            absolute,
+            size,
+            direction,
+            absolute.y + size.height + extent,
+        );
+    }
+
+    /// Drops the bands below floats that lines are broken against on the
+    /// sides `clear` clears: a box that clears them starts below the floats
+    /// as they end on the page after, and so does the flow after it.
+    pub(crate) fn clear_line_extensions(&mut self, clear: Clear) {
+        if self.owner.floats.has_cleared_line_extensions(clear) {
+            Arc::make_mut(&mut self.owner.floats).clear_line_extensions(clear);
+        }
+    }
+
+    /// The inline edges, from the border-box start, that the bands below
+    /// floats which lines are broken against leave a line from `from` that
+    /// is `height` tall: the start the left bands push it past and the end
+    /// the right bands pull it before.
+    pub(crate) fn line_extension_edges(&self, from: f32, height: f32) -> [Option<f32>; 2] {
+        let top = self.origin + from;
+        let bottom = top + height.max(0.0);
+        let mut edges = [None::<f32>; 2];
+        for band in self.owner.floats.line_extensions() {
+            if band.top >= bottom.max(top + 0.001) || band.bottom <= top {
+                continue;
+            }
+            let edge = band.edge - self.border_insets[0];
+            let slot = &mut edges[band.direction as usize];
+            *slot = Some(match (band.direction, *slot) {
+                (_, None) => edge,
+                (FloatDirection::Left, Some(other)) => other.max(edge),
+                (FloatDirection::Right, Some(other)) => other.min(edge),
+            });
+        }
+        edges
+    }
+
+    /// Where the nearest band below a float that lines are broken against,
+    /// of those beside `from`, ends, from the border-box start: a line too
+    /// wide for the space beside the band moves there.
+    pub(crate) fn next_line_extension_end(&self, from: f32) -> Option<f32> {
+        let top = self.origin + from;
+        self.owner
+            .floats
+            .line_extensions()
+            .iter()
+            .filter(|band| band.top <= top + 0.001)
+            .map(|band| band.bottom)
+            .filter(|&bottom| bottom > top)
+            .min_by(f32::total_cmp)
+            .map(|bottom| bottom - self.origin)
     }
 
     pub(crate) fn find_content_slot(
@@ -614,12 +690,19 @@ impl BlockContext<'_> {
     /// the float about to be placed when it starts a page: the box after it
     /// is held below them but not below that float.
     pub(crate) fn record_page_start_float_floor(&mut self, clear: Clear) {
-        self.state.page_start_floor = self.owner.floats.cleared_threshold(clear);
+        self.owner.page_start_floor = self.owner.floats.cleared_threshold(clear);
+    }
+
+    /// Notes `top`, in the coordinates of this context, as the floor for the
+    /// box after a float that starts a page at that top beside an earlier
+    /// float running on onto it: the box lines up beside the float there.
+    pub(crate) fn set_page_start_float_floor(&mut self, top: f32) {
+        self.owner.page_start_floor = Some(top + self.origin);
     }
 
     /// The floor recorded for the last float that started a page.
     pub(crate) fn page_start_float_floor(&self) -> Option<f32> {
-        self.state.page_start_floor.map(|floor| floor - self.origin)
+        self.owner.page_start_floor.map(|floor| floor - self.origin)
     }
 
     pub(crate) fn has_adjoining_float(&self, clear: Clear) -> bool {

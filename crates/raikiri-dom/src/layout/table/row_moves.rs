@@ -233,14 +233,20 @@ pub(crate) fn follow_moved_rows(
         {
             move_top(document, table, delta);
         }
-        let node = document.ifc_layout_node(table).unwrap();
-        let gap = if node.border_collapse == BorderCollapseValue::Collapse {
-            0.0
-        } else {
-            node.border_spacing.vertical.0.max(0.0)
-        };
-        super::headers::finish_table_boxes(document, table, gap);
+        finish_grown_table(document, table);
     }
+}
+
+/// Grows the rows, row groups and box of `table` over its cells, keeping
+/// the spacing below its last row.
+pub(crate) fn finish_grown_table(document: &mut Document, table: usize) {
+    let node = document.ifc_layout_node(table).unwrap();
+    let gap = if node.border_collapse == BorderCollapseValue::Collapse {
+        0.0
+    } else {
+        node.border_spacing.vertical.0.max(0.0)
+    };
+    super::headers::finish_table_boxes(document, table, gap);
 }
 
 /// The topmost rendered row among the direct children of `part`.

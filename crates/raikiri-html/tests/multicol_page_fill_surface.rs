@@ -2,8 +2,8 @@
 //! The positions are the ones Chromium prints for the same documents.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
-    parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 use std::collections::BTreeMap;
@@ -34,8 +34,8 @@ fn articles() -> String {
         .collect()
 }
 
-/// The page, left edge, top and text of every line the pages report.
-fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
+/// The pages of `body` with `css`, in Ahem on 200px pages.
+fn pages(body: &str, css: &str) -> DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -59,6 +59,12 @@ fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
     .unwrap() else {
         panic!("layout must complete")
     };
+    result
+}
+
+/// The page, left edge, top and text of every line the pages report.
+fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
+    let result = pages(body, css);
     let mut lines = Vec::new();
     for index in 0..12 {
         let Some(page) = result.page(index) else {
@@ -530,22 +536,61 @@ fn a_paragraph_that_is_shifted_keeps_its_runs_where_it_stays_whole() {
 }
 
 #[test]
-fn a_paragraph_that_is_cut_and_shifted_keeps_its_runs() {
-    // A piece of a paragraph is clipped at its column, and the painter moves
-    // the paragraph's own offset inside that clip, so the runs of the pieces
-    // are not reported. The paragraph stays in the columns that the pages cut,
-    // where all its lines are reported.
-    for shift in [
-        "p{position:relative;top:3px}",
-        "p{transform:translate(5px,3px)}",
+fn a_paragraph_that_is_cut_and_shifted_fills_each_page_in_column_order() {
+    // The painter moves the clip of each piece with the paragraph's own
+    // offset, so the pages report the runs of every piece where the
+    // paragraph's own offset puts them.
+    for (shift, x, y) in [
+        ("p{position:relative;top:3px}", 0, 3),
+        ("p{position:relative;top:-9px}", 0, -9),
+        ("p{position:relative;left:7px}", 7, 0),
+        ("p{transform:translate(5px,3px)}", 5, 3),
     ] {
-        let mut texts: Vec<_> = lines(&mc(&par("L", 1, 45)), shift)
-            .into_iter()
-            .map(|line| line.3)
-            .collect();
+        let right = 100 + x;
+        assert_eq!(
+            columns(&mc(&par("L", 1, 45)), shift),
+            [
+                format!("p0 x{x}: L1-L10@{y}"),
+                format!("p0 x{right}: L11-L20@{y}"),
+                format!("p1 x{x}: L21-L30@{y}"),
+                format!("p1 x{right}: L31-L40@{y}"),
+                format!("p2 x{x}: L41-L43@{y}"),
+                format!("p2 x{right}: L44-L45@{y}"),
+            ],
+            "{shift}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_shifted_past_its_pages_stays_in_the_columns_the_pages_cut() {
+    // An offset of half a line or more would report the edge lines of a
+    // piece on another page than the one that paints them. Such a paragraph
+    // stays in the columns that the pages cut, where every line is reported
+    // once.
+    for (shift, y) in [
+        ("p{position:relative;top:-15px}", -15),
+        ("p{position:relative;top:10px}", 10),
+        ("p{transform:translate(0,10px)}", 10),
+    ] {
+        let lines = lines(&mc(&par("L", 1, 45)), shift);
+        let mut texts: Vec<_> = lines.iter().map(|line| line.3.clone()).collect();
         texts.sort_by_key(|text| text[1..].parse::<u32>().unwrap());
         let expected: Vec<_> = (1..=45).map(|n| format!("L{n}")).collect();
         assert_eq!(texts, expected, "{shift}");
+        let right = lines
+            .iter()
+            .filter(|line| line.0 == 0 && line.1 == 100)
+            .min_by_key(|line| line.2)
+            .unwrap();
+        assert_eq!((right.2, right.3.as_str()), (y, "L24"), "{shift}");
+    }
+    // A transform that does more than translate, or translates by a
+    // percentage, resolves against the box size the pieces of a filled page
+    // do not keep. The runs of a transformed paragraph in columns are not
+    // reported either way.
+    for shift in ["p{transform:translate(0,10%)}", "p{transform:rotate(1deg)}"] {
+        assert!(lines(&mc(&par("L", 1, 45)), shift).is_empty(), "{shift}");
     }
 }
 
@@ -603,4 +648,568 @@ fn a_container_in_an_inline_block_is_cut_as_one_tall_box() {
         ],
         "inline_block"
     );
+}
+
+/// Paragraphs `prefix`1 through `prefix``sizes[0]`, then the next prefix
+/// letter for the next size, and so on, labeled from `L`.
+fn pars(sizes: &[u32]) -> String {
+    sizes
+        .iter()
+        .zip("LMN".chars())
+        .map(|(&size, prefix)| par(&prefix.to_string(), 1, size))
+        .collect()
+}
+
+/// Labels lines `L1`.. of `count` paragraphs of `size` lines each, numbered
+/// on from one paragraph to the next.
+fn numbered(count: u32, size: u32) -> String {
+    (0..count)
+        .map(|index| par("L", index * size + 1, (index + 1) * size))
+        .collect()
+}
+
+#[test]
+fn paragraphs_with_padding_and_border_fill_each_page_before_the_next_one() {
+    const DECORATED: &str = "p{background:#ccc;border:2px solid blue;padding:2px}";
+    // A piece that goes on in the next column ends at the column end, and the
+    // next piece begins with its first line at the top of its column.
+    assert_eq!(
+        columns(&mc(&numbered(5, 8)), DECORATED),
+        [
+            "p0 x4: L1-L8@4",
+            "p0 x104: L9-L16@4",
+            "p1 x4: L17-L24@4",
+            "p1 x104: L25-L32@4",
+            "p2 x4: L33-L36@4",
+            "p2 x104: L37-L40@0",
+        ],
+        "five"
+    );
+    assert_eq!(
+        columns(&mc(&par("L", 1, 30)), DECORATED),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L19@0",
+            "p1 x4: L20-L25@0",
+            "p1 x104: L26-L30@0",
+        ],
+        "one"
+    );
+    assert_eq!(
+        columns(&mc(&numbered(5, 8)), "p{background:#ccc}"),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L30@0",
+            "p1 x100: L31-L40@0",
+        ],
+        "background"
+    );
+    assert_eq!(
+        columns(&mc(&pars(&[30, 12])), "p{padding:10px 0;background:#cfc}"),
+        [
+            "p0 x0: L1-L9@10",
+            "p0 x100: L10-L19@0",
+            "p1 x0: L20-L28@0",
+            "p1 x100: L29-L30@0 M1-M7@60",
+            "p2 x0: M8-M10@0",
+            "p2 x100: M11-M12@0",
+        ],
+        "padding"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 25])),
+            "p{border-top:4px solid red;border-bottom:6px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L9@4",
+            "p0 x100: L10-L12@0 M1-M6@70",
+            "p1 x0: M7-M16@0",
+            "p1 x100: M17-M25@0",
+        ],
+        "borders"
+    );
+    assert_eq!(
+        columns(
+            &mc(&numbered(6, 7)),
+            "p{margin:10px 0;background:#ccc;border:2px solid blue;padding:3px}"
+        ),
+        [
+            "p0 x5: L1-L7@15",
+            "p0 x105: L8-L14@5",
+            "p1 x5: L15-L21@5",
+            "p1 x105: L22-L28@5",
+            "p2 x5: L29-L35@5",
+            "p2 x105: L36-L42@5",
+        ],
+        "margins"
+    );
+    // The last line stays with a bottom border that a column cannot hold
+    // after it.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[9, 20])),
+            "p{background:#ccc;border-bottom:30px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L7@0",
+            "p0 x100: L8-L9@0 M1-M6@70",
+            "p1 x0: M7-M14@0",
+            "p1 x100: M15-M20@0",
+        ],
+        "bottom_border"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[6, 14, 20])),
+            ".mc p:nth-child(2){background:#ccc;border:4px solid blue}"
+        ),
+        [
+            "p0 x0: L1-L6@0",
+            "p0 x4: M1-M3@124",
+            "p0 x104: M4-M12@0",
+            "p1 x0: N1-N7@44",
+            "p1 x4: M13-M14@0",
+            "p1 x100: N8-N17@0",
+            "p2 x0: N18-N19@0",
+            "p2 x100: N20@0",
+        ],
+        "mixed"
+    );
+}
+
+#[test]
+fn cloned_edges_sit_in_every_piece_of_a_paginated_paragraph() {
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 30)),
+            "p{background:#ccc;border:3px solid blue;padding:2px;box-decoration-break:clone}"
+        ),
+        [
+            "p0 x5: L1-L9@5",
+            "p0 x105: L10-L18@5",
+            "p1 x5: L19-L24@5",
+            "p1 x105: L25-L30@5",
+        ],
+        "clone"
+    );
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 23)),
+            "p{background:#ccc;border:3px solid blue;padding:2px;\
+             box-decoration-break:clone;widows:2;orphans:2}"
+        ),
+        [
+            "p0 x5: L1-L9@5",
+            "p0 x105: L10-L18@5",
+            "p1 x5: L19-L21@5",
+            "p1 x105: L22-L23@5",
+        ],
+        "clone_widows"
+    );
+}
+
+#[test]
+fn decorated_paragraphs_fill_columns_in_sequence_when_asked() {
+    assert_eq!(
+        columns(
+            &mc(&pars(&[25, 5])),
+            "p{background:#ccc;border:2px solid blue;padding:2px}.mc{column-fill:auto}"
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L19@0",
+            "p1 x4: L20-L25@0 M1-M3@128",
+            "p1 x104: M4-M5@0",
+        ],
+        "fill_auto"
+    );
+}
+
+#[test]
+fn the_last_page_of_decorated_paragraphs_balances_to_the_lines_a_break_keeps() {
+    const DECORATED: &str = "p{background:#ccc;border:2px solid blue;padding:2px}";
+    // Four lines left under `orphans: 3` keep three before the break, and
+    // the widows give way.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 30])),
+            &format!("{DECORATED}p{{widows:3;orphans:3}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M26@0",
+            "p2 x4: M27-M29@0",
+            "p2 x104: M30@0",
+        ],
+        "widows"
+    );
+    // Three lines left are as tall as the orphans, and the bottom edge that
+    // the column cannot hold after them moves the last line on.
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 28])),
+            &format!("{DECORATED}p{{widows:3;orphans:3}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M25@0",
+            "p2 x4: M26-M27@0",
+            "p2 x104: M28@0",
+        ],
+        "three_left"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[12, 29])),
+            &format!("{DECORATED}p{{widows:1;orphans:5}}")
+        ),
+        [
+            "p0 x4: L1-L9@4",
+            "p0 x104: L10-L12@0 M1-M6@68",
+            "p1 x4: M7-M16@0",
+            "p1 x104: M17-M26@0",
+            "p2 x4: M27-M28@0",
+            "p2 x104: M29@0",
+        ],
+        "orphans"
+    );
+    assert_eq!(
+        columns(
+            &mc(&pars(&[5, 29])),
+            &format!("{DECORATED}p{{widows:2;orphans:4}}")
+        ),
+        [
+            "p0 x4: L1-L5@4 M1-M4@112",
+            "p0 x104: M5-M14@0",
+            "p1 x4: M15-M22@0",
+            "p1 x104: M23-M29@0",
+        ],
+        "first_page"
+    );
+    assert_eq!(
+        columns(
+            &mc(&par("L", 1, 24)),
+            "p{background:#ccc;border-bottom:30px solid blue;widows:2;orphans:2}"
+        ),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L22@0",
+            "p1 x100: L23-L24@0",
+        ],
+        "bottom_border"
+    );
+    // Plain paragraphs balance the same way.
+    assert_eq!(
+        columns(&mc(&pars(&[12, 28])), "p{widows:3;orphans:3}"),
+        [
+            "p0 x0: L1-L9@0",
+            "p0 x100: L10-M7@0",
+            "p1 x0: M8-M17@0",
+            "p1 x100: M18-M25@0",
+            "p2 x0: M26-M28@0",
+        ],
+        "plain"
+    );
+}
+
+/// The page, left edge, top and bottom of what the clips around it leave
+/// visible of each box of the element with id `id`.
+fn visible_boxes(body: &str, css: &str, id: &str) -> Vec<(u32, i32, i32, i32)> {
+    let result = pages(body, css);
+    let mut boxes = Vec::new();
+    for page in result.pages() {
+        let dom = page.dom();
+        let mut clips: Vec<(f32, f32)> = Vec::new();
+        for event in page.paint_order() {
+            match event {
+                PaintEvent::PushClip(clip, _) => clips.push(if clip.clip_y {
+                    (clip.rect.y, clip.rect.y + clip.rect.height)
+                } else {
+                    (f32::MIN, f32::MAX)
+                }),
+                PaintEvent::PopClip => {
+                    clips.pop();
+                }
+                PaintEvent::Box(fragment) if dom.attr(fragment.node(), "id") == Some(id) => {
+                    let rect = fragment.rect();
+                    let (top, bottom) = clips
+                        .iter()
+                        .fold((rect.y, rect.y + rect.height), |(top, bottom), clip| {
+                            (top.max(clip.0), bottom.min(clip.1))
+                        });
+                    if bottom > top {
+                        boxes.push((
+                            page.index(),
+                            rect.x.round() as i32,
+                            top.round() as i32,
+                            bottom.round() as i32,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    boxes
+}
+
+#[test]
+fn a_bottom_border_that_goes_on_alone_shows_in_the_next_column_only() {
+    // The line and the border below it do not fit one column together, and
+    // no break comes before the line, so the columns break between them: the
+    // border goes on alone at the top of the next column (Chromium).
+    let body = mc(&format!("<p id=x>X1</p>{}", par("M", 1, 30)));
+    let css = "p{background:#ccc}#x{border-bottom:190px solid blue}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: X1@0",
+            "p1 x0: M1-M10@0",
+            "p1 x100: M11-M20@0",
+            "p2 x0: M21-M25@0",
+            "p2 x100: M26-M30@0",
+        ],
+        "lines"
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "x"),
+        [(0, 0, 0, 20), (0, 100, 0, 190)],
+        "boxes"
+    );
+}
+
+#[test]
+fn the_last_page_columns_are_as_tall_as_the_orphans_a_break_keeps() {
+    // Three lines left under `orphans: 3` make the columns three lines tall;
+    // the bottom border cannot follow the third line there, so that line
+    // goes on with it, and the piece before runs to the column end
+    // (Chromium).
+    let body = mc(&format!("{}<p id=m>{}</p>", par("L", 1, 12), {
+        let lines: Vec<_> = (1..=28).map(|n| format!("M{n}")).collect();
+        lines.join("<br>")
+    }));
+    let css = "p{background:#ccc;border:2px solid blue;padding:2px;widows:3;orphans:3}";
+    let last: Vec<_> = visible_boxes(&body, css, "m")
+        .into_iter()
+        .filter(|piece| piece.0 == 2)
+        .collect();
+    assert_eq!(last, [(2, 0, 0, 60), (2, 100, 0, 24)]);
+}
+
+#[test]
+fn wrappers_with_edges_or_paint_fill_each_page_in_column_order() {
+    // Padding and border above or below the boxes of a wrapper, a wrapper
+    // that paints, and paragraphs with padding or border inside a wrapper
+    // fill the pages as plain paragraphs do (Chromium).
+    let l = par("L", 1, 15);
+    let m = par("M", 1, 12);
+    let wrapped = mc(&format!("<div class=w id=w>{l}</div>{m}"));
+    for (body, css, expected) in [
+        (
+            &wrapped,
+            ".w{padding-bottom:6px}",
+            &[
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-L15@0 M1-M4@106",
+                "p1 x0: M5-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{padding-top:6px}",
+            &[
+                "p0 x0: L1-L9@6",
+                "p0 x100: L10-M4@0",
+                "p1 x0: M5-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{background:#fcc}",
+            &[
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M5@0",
+                "p1 x0: M6-M9@0",
+                "p1 x100: M10-M12@0",
+            ][..],
+        ),
+        (
+            &wrapped,
+            ".w{border:3px solid green;background:#fcc}",
+            &[
+                "p0 x3: L1-L9@3",
+                "p0 x100: M1-M3@123",
+                "p0 x103: L10-L15@0",
+                "p1 x0: M4-M8@0",
+                "p1 x100: M9-M12@0",
+            ][..],
+        ),
+        (
+            &mc(&format!("<div class=w>{l}{}</div>{m}", par("N", 1, 3))),
+            "p{background:#ccc;border:2px solid blue}",
+            &[
+                "p0 x2: L1-L9@2",
+                "p0 x102: L10-L15@0 N1-N3@124",
+                "p1 x2: M1-M6@2",
+                "p1 x102: M7-M12@0",
+            ][..],
+        ),
+    ] {
+        assert_eq!(columns(body, css), expected, "{css}");
+    }
+    assert_eq!(
+        visible_boxes(&wrapped, ".w{border:3px solid green;background:#fcc}", "w"),
+        [(0, 0, 0, 200), (0, 100, 0, 123)],
+        "border pieces"
+    );
+}
+
+#[test]
+fn a_painted_wrapper_has_a_piece_in_each_column_of_every_page() {
+    // The boxes inside the wrapper are placed in the piece of their column,
+    // so each page paints the wrapper's background there before its lines,
+    // and the border below the boxes shows only in the last piece (Chromium).
+    let body = mc(&format!(
+        "<div class=w id=w>{}</div>{}",
+        par("L", 1, 45),
+        par("M", 1, 12)
+    ));
+    let css = ".w{background:#fcc;border-bottom:4px solid green}";
+    assert_eq!(
+        columns(&body, css),
+        [
+            "p0 x0: L1-L10@0",
+            "p0 x100: L11-L20@0",
+            "p1 x0: L21-L30@0",
+            "p1 x100: L31-L40@0",
+            "p2 x0: L41-L45@0 M1-M3@104",
+            "p2 x100: M4-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&body, css, "w"),
+        [
+            (0, 0, 0, 200),
+            (0, 100, 0, 200),
+            (1, 0, 0, 200),
+            (1, 100, 0, 200),
+            (2, 0, 0, 104),
+        ]
+    );
+}
+
+#[test]
+fn wrappers_inside_a_painted_wrapper_have_a_piece_in_each_column_too() {
+    // A wrapper inside one with pieces has a piece in each column it
+    // reaches, placed in the outer piece there, and the boxes it holds are
+    // placed in its piece of their column (Chromium).
+    let m = par("M", 1, 12);
+    let nested = mc(&format!(
+        "<div class=w><div class=v id=v>{}</div>{}</div>{m}",
+        par("L", 1, 45),
+        par("K", 1, 3)
+    ));
+    let css =
+        ".w{background:#fcc}.v{background:#cfc;border-bottom:4px solid blue;padding-left:5px}";
+    assert_eq!(
+        columns(&nested, css),
+        [
+            "p0 x5: L1-L10@0",
+            "p0 x105: L11-L20@0",
+            "p1 x5: L21-L30@0",
+            "p1 x105: L31-L40@0",
+            "p2 x0: K1-K3@104",
+            "p2 x5: L41-L45@0",
+            "p2 x100: M1-M10@0",
+            "p3 x0: M11-M12@0",
+        ]
+    );
+    assert_eq!(
+        visible_boxes(&nested, css, "v"),
+        [
+            (0, 0, 0, 200),
+            (0, 100, 0, 200),
+            (1, 0, 0, 200),
+            (1, 100, 0, 200),
+            (2, 0, 0, 104),
+        ]
+    );
+    // An unpainted wrapper inside, and a painted wrapper that one column
+    // holds.
+    let l = par("L", 1, 15);
+    for (body, expected) in [
+        (
+            mc(&format!("<div class=w><div>{l}</div></div>{m}")),
+            [
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M5@0",
+                "p1 x0: M6-M9@0",
+                "p1 x100: M10-M12@0",
+            ],
+        ),
+        (
+            mc(&format!("{l}<div class=w>{}</div>{m}", par("N", 1, 2))),
+            [
+                "p0 x0: L1-L10@0",
+                "p0 x100: L11-M3@0",
+                "p1 x0: M4-M8@0",
+                "p1 x100: M9-M12@0",
+            ],
+        ),
+    ] {
+        assert_eq!(columns(&body, ".w{background:#fcc}"), expected, "{body}");
+    }
+}
+
+#[test]
+fn a_wrapper_holding_a_sized_box_stays_in_the_columns_the_pages_cut() {
+    // The page fill places lines and the edges of wrappers; a sized box with
+    // no lines inside a wrapper leaves the wrapper to the columns that the
+    // pages cut, where every line is reported once.
+    let body = mc(&format!(
+        "<div class=w>{}<div style='height:30px'></div></div>{}",
+        par("L", 1, 15),
+        par("M", 1, 12)
+    ));
+    let mut texts: Vec<_> = lines(&body, ".w{padding-bottom:6px}")
+        .into_iter()
+        .map(|line| line.3)
+        .collect();
+    texts.sort();
+    let mut expected: Vec<_> = (1..=15)
+        .map(|n| format!("L{n}"))
+        .chain((1..=12).map(|n| format!("M{n}")))
+        .collect();
+    expected.sort();
+    assert_eq!(texts, expected);
+}
+
+#[test]
+fn a_wrapper_whose_padding_a_column_end_cuts_ends_with_what_it_holds() {
+    // Padding taller than a column is not sliced into pieces that each
+    // hold all of it: the wrapper's background ends with its line, so it
+    // paints over none of what follows, as in Chromium.
+    let body = mc(&format!(
+        "<div class=w id=w>{}</div>{}",
+        par("L", 1, 1),
+        par("M", 1, 30)
+    ));
+    let css = ".mc{column-fill:auto}.w{background:#fcc;padding-top:250px}";
+    let line = lines(&body, css)
+        .into_iter()
+        .find(|(.., text)| text == "L1")
+        .expect("the wrapper's line is laid out");
+    let last = *visible_boxes(&body, css, "w")
+        .last()
+        .expect("the wrapper paints");
+    assert_eq!((last.0, last.1, last.3), (line.0, line.1, line.2 + 20));
 }

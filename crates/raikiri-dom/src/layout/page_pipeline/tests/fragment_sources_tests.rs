@@ -22,6 +22,7 @@ fn source(abs_y: f32, height: f32) -> PageFragmentSource {
         fragment_clip: None,
         overflow_chain: None,
         own_overflow_source: None,
+        painted_shift: 0.0,
     }
 }
 
@@ -214,6 +215,7 @@ fn the_content_box_and_clip_of_a_fragment_follow_its_page() {
         fragmentainer: 3,
         overflow_chain: Some(7),
         own_overflow_source: Some(9),
+        painted_shift: 0.0,
         ..source(70.0, 60.0)
     };
     place(&mut pages, &[clipped]);

@@ -47,11 +47,11 @@ impl MulticolStyle {
     /// is as wide as the container whatever the number of its columns, so it
     /// raises the sizes but is not repeated for each column.
     ///
-    /// - With `column-width` the columns are `column-width` wide: the
-    ///   max-content size is that width for each of the `column-count`
-    ///   columns, and one column when the count is `auto`; the min-content
-    ///   size is the smaller of that width and the contribution of the
-    ///   content, as the container can narrow to a single column.
+    /// - With `column-width` the min-content size is the smaller of that
+    ///   width and the contribution of the content, as the container can
+    ///   narrow to a single column. The max-content size is that width when
+    ///   the count is `auto`, and the larger of it and the content for each
+    ///   of the `column-count` columns otherwise.
     /// - Without it the columns are as wide as their content, for each of
     ///   the `column-count` columns.
     ///
@@ -66,7 +66,10 @@ impl MulticolStyle {
         let count = self.count.map_or(1.0, |count| count as f32);
         let gaps = self.gap * (count - 1.0);
         let (min, max) = match self.width {
-            Some(width) => (width.min(columns.0), count * width + gaps),
+            Some(width) => match self.count {
+                Some(_) => (width.min(columns.0), count * width.max(columns.1) + gaps),
+                None => (width.min(columns.0), width),
+            },
             None => (count * columns.0 + gaps, count * columns.1 + gaps),
         };
         (min.max(spanners.0), max.max(spanners.1))
@@ -123,10 +126,17 @@ impl FragmentationContext {
             .gap_percent
             .map_or(0.0, |percent| available_width * percent / 100.0);
         let gap = (px + percent).max(0.0);
-        let count = style.count.unwrap_or_else(|| {
-            let width = style.width.unwrap_or(available_width).max(1.0);
-            (((available_width + gap) / (width + gap)).floor() as usize).max(1)
+        // CSS Multi-column 1 §3.4: a `column-width` caps the count at the
+        // number of columns of at least that width that fit.
+        let fitting = style.width.map(|width| {
+            (((available_width + gap) / (width.max(1.0) + gap)).floor() as usize).max(1)
         });
+        let count = match (style.count, fitting) {
+            (Some(count), Some(fitting)) => count.min(fitting),
+            (Some(count), None) => count,
+            (None, Some(fitting)) => fitting,
+            (None, None) => 1,
+        };
         let count = count.max(1);
         let usable = (available_width - gap * count.saturating_sub(1) as f32).max(0.0);
         let column_width = usable / count as f32;
@@ -203,6 +213,10 @@ pub(crate) struct MulticolGroup {
     /// this group lays out, where the columns keep one: the groups after a
     /// spanner are the ones whose run starts after it.
     pub(crate) run_start: Option<usize>,
+    /// The least border-box block size of the container, from its minimum
+    /// height, which the pages keep when they fill the columns again; zero
+    /// for the groups that keep none.
+    pub(crate) min_height: f32,
 }
 
 /// A resumable point in a fragmented child flow.
@@ -534,6 +548,14 @@ impl FragmentTree {
     /// The indices of every record of `node`, retired ones included.
     pub(crate) fn records_of(&self, node: usize) -> &[usize] {
         self.by_node.get(&node).map_or(&[][..], Vec::as_slice)
+    }
+
+    /// The indices of the records placed under the record at `parent`,
+    /// retired ones included.
+    pub(crate) fn children_of(&self, parent: usize) -> &[usize] {
+        self.children_by_parent
+            .get(&parent)
+            .map_or(&[][..], Vec::as_slice)
     }
 
     /// Whether the record at `index` was retired by a later layout.

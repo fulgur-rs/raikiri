@@ -151,6 +151,7 @@ fn the_clip_of_a_piece_reaches_as_far_as_the_pieces_of_boxes_that_sit_in_it() {
         parent_piece,
         rect: rect(0.0, 1.0),
         clip: rect(x, width),
+        carried: raikiri_layout_geometry::Point { x: 0.0, y: 0.0 },
     })
     .collect();
     for count in [2, 3, 5] {

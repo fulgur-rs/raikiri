@@ -97,7 +97,7 @@ pub(super) fn transform_boxes(
 }
 
 /// Whether every function of `cv`'s transform list translates.
-pub(super) fn translation_only(cv: &ComputedValues) -> bool {
+pub(crate) fn translation_only(cv: &ComputedValues) -> bool {
     cv.transform.iter().all(|function| {
         matches!(
             function,

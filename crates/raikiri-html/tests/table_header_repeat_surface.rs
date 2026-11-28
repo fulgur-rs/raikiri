@@ -739,3 +739,239 @@ fn a_header_too_tall_to_repeat_still_moves_whole_unless_the_author_allows_a_brea
     assert_eq!(tops(&document, "r6"), [(1, 60.0)]);
     assert_eq!(tops(&document, "z"), [(1, 70.0)]);
 }
+
+#[test]
+fn cells_stay_aligned_with_rows_after_fractional_page_breaks() {
+    let rows = (0..500)
+        .map(|row| format!("<tr><td>{row}</td><td>Item name {row}</td><td>0.00</td></tr>"))
+        .collect::<String>();
+    let document = lay_out_with_css(
+        &format!(
+            "<table><thead><tr><th>Id</th><th>Name</th><th>Amount</th></tr></thead><tbody>{rows}</tbody></table>"
+        ),
+        "@page{size:A4;margin:0}body{margin:8px;font:10px Ahem}table{border-collapse:collapse;width:100%}td,th{width:auto;height:auto;border:1px solid;padding:2px}tbody tr:nth-child(7n+2) td{font-size:18px}",
+    );
+    assert!(document.page_count() >= 7);
+    let mut count = 0;
+    for page in document.pages() {
+        let dom = page.dom();
+        let mut row_y = None;
+        let mut next_body_y = None;
+        for fragment in page.fragments() {
+            match dom.local_name(fragment.node()) {
+                Some("tr") => {
+                    let rect = fragment.rect();
+                    row_y = Some(rect.y);
+                    if dom.parent(fragment.node()).and_then(|p| dom.local_name(p)) == Some("tbody")
+                    {
+                        if let Some(expected) = next_body_y {
+                            assert_eq!(rect.y, expected, "adjacent row at cell {count}");
+                        }
+                        next_body_y = Some(rect.y + rect.height);
+                    }
+                }
+                Some("td") => {
+                    assert_eq!(Some(fragment.rect().y), row_y, "cell {count}");
+                    count += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(count, 1500);
+}
+
+/// The tops of the boxes with one-letter ids on each page, in paint order.
+fn letter_tops_by_page(document: &DocumentLayout) -> Vec<Vec<(String, f32)>> {
+    (0..document.page_count())
+        .map(|index| {
+            let page = document.page(index).unwrap();
+            let dom = page.dom();
+            page.fragments()
+                .filter_map(|fragment| {
+                    let id = dom.attr(fragment.node(), "id")?;
+                    (id.len() == 1).then(|| (id.to_owned(), fragment.rect().y))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn letter_tops(page: &[(&str, f32)]) -> Vec<(String, f32)> {
+    page.iter().map(|&(id, y)| (id.to_owned(), y)).collect()
+}
+
+/// A table inside a relatively positioned block repeats its header and
+/// footer groups on each page, and the copies and rows move by the block's
+/// offset as the rows of the first page do, as Chromium prints them. The
+/// pages break the flow without the offset, so the source footer stays on
+/// the last page even where the offset paints it past its end.
+#[test]
+fn tables_in_relatively_positioned_blocks_repeat_their_groups() {
+    let rows: String = "ABCDEF"
+        .chars()
+        .map(|row| format!("<tr><td id='{row}'>{row}</td></tr>"))
+        .collect();
+    let table = |wrapper: &str, own: &str| {
+        format!(
+            "<div style='{wrapper}'><table style='font: 20px/20px Ahem; {own}'>\
+             <thead><tr><td id='h'>H</td></tr></thead><tbody>{rows}</tbody>\
+             <tfoot><tr><td id='f'>F</td></tr></tfoot></table></div>"
+        )
+    };
+    let document = lay_out(&table("position: relative", ""));
+    assert_eq!(
+        letter_tops_by_page(&document),
+        [
+            letter_tops(&[
+                ("h", 0.0),
+                ("A", 20.0),
+                ("B", 40.0),
+                ("C", 60.0),
+                ("f", 80.0)
+            ]),
+            letter_tops(&[
+                ("h", 0.0),
+                ("D", 20.0),
+                ("E", 40.0),
+                ("F", 60.0),
+                ("f", 80.0)
+            ]),
+        ]
+    );
+    let shifted = [
+        letter_tops(&[
+            ("h", 10.0),
+            ("A", 30.0),
+            ("B", 50.0),
+            ("C", 70.0),
+            ("f", 90.0),
+        ]),
+        letter_tops(&[
+            ("h", 10.0),
+            ("D", 30.0),
+            ("E", 50.0),
+            ("F", 70.0),
+            ("f", 90.0),
+        ]),
+        letter_tops(&[]),
+    ];
+    assert_eq!(
+        letter_tops_by_page(&lay_out(&table("position: relative; top: 10px", ""))),
+        shifted
+    );
+    assert_eq!(
+        letter_tops_by_page(&lay_out(&table("", "position: relative; top: 10px"))),
+        shifted
+    );
+}
+
+/// A forced break between the blocks of a cell in a relatively positioned
+/// block closes the page with a footer copy and opens the next with a
+/// header copy, both moved by the offset.
+#[test]
+fn forced_cell_breaks_in_relatively_positioned_blocks_repeat_the_groups() {
+    let document = lay_out(
+        "<div style='position: relative; top: 10px'><table style='font: 20px/20px Ahem'>\
+         <thead><tr><td id='h'>H</td></tr></thead><tbody><tr><td><div id='A'>A</div>\
+         <div id='B' style='break-before: page'>B</div></td></tr><tr><td id='C'>C</td></tr>\
+         </tbody><tfoot><tr><td id='f'>F</td></tr></tfoot></table></div>",
+    );
+    assert_eq!(
+        letter_tops_by_page(&document),
+        [
+            letter_tops(&[("h", 10.0), ("A", 30.0), ("f", 90.0)]),
+            letter_tops(&[("h", 10.0), ("B", 30.0), ("C", 50.0), ("f", 70.0)]),
+        ]
+    );
+}
+
+/// The pages break a table in a relatively positioned block where they
+/// break its flow, so a row the offset paints past a page's end still
+/// closes that page with a footer copy, and a header the offset paints on
+/// the next page still starts on the page its flow starts on. A column flex
+/// container moved by the offset stacks its table as a block does.
+#[test]
+fn offsets_past_the_page_end_keep_the_pages_of_the_flow() {
+    let rows = |letters: &str| -> String {
+        letters
+            .chars()
+            .map(|row| format!("<tr><td id='{row}'>{row}</td></tr>"))
+            .collect()
+    };
+    let table = |before: &str, wrapper: &str, letters: &str| {
+        lay_out(&format!(
+            "{before}<div style='{wrapper}'><table style='font: 20px/20px Ahem'>\
+             <thead><tr><td id='h'>H</td></tr></thead><tbody>{}</tbody>\
+             <tfoot><tr><td id='f'>F</td></tr></tfoot></table></div>",
+            rows(letters)
+        ))
+    };
+    // Chromium paints the rows and copies 30px below where the flow puts
+    // them; the row C and the footers reach past the page ends.
+    assert_eq!(
+        letter_tops_by_page(&table("", "position: relative; top: 30px", "ABCDEF")),
+        [
+            letter_tops(&[
+                ("h", 30.0),
+                ("A", 50.0),
+                ("B", 70.0),
+                ("C", 90.0),
+                ("f", 110.0)
+            ]),
+            letter_tops(&[
+                ("h", 30.0),
+                ("C", 0.0),
+                ("D", 50.0),
+                ("E", 70.0),
+                ("F", 90.0),
+                ("f", 110.0)
+            ]),
+            letter_tops(&[("F", 0.0)]),
+        ]
+    );
+    // The header's flow starts at 75px, so the table moves to the second
+    // page whole although the offset paints it below 100px.
+    assert_eq!(
+        letter_tops_by_page(&table(
+            "<div style='height: 75px'></div>",
+            "position: relative; top: 30px",
+            "ABCD"
+        )),
+        [
+            letter_tops(&[]),
+            letter_tops(&[
+                ("h", 30.0),
+                ("A", 50.0),
+                ("B", 70.0),
+                ("C", 90.0),
+                ("f", 110.0)
+            ]),
+            letter_tops(&[("h", 30.0), ("C", 0.0), ("D", 50.0), ("f", 70.0)]),
+        ]
+    );
+    assert_eq!(
+        letter_tops_by_page(&table(
+            "",
+            "display: flex; flex-direction: column; position: relative; top: 10px",
+            "ABCDEF"
+        )),
+        [
+            letter_tops(&[
+                ("h", 10.0),
+                ("A", 30.0),
+                ("B", 50.0),
+                ("C", 70.0),
+                ("f", 90.0)
+            ]),
+            letter_tops(&[
+                ("h", 10.0),
+                ("D", 30.0),
+                ("E", 50.0),
+                ("F", 70.0),
+                ("f", 90.0)
+            ]),
+            letter_tops(&[]),
+        ]
+    );
+}

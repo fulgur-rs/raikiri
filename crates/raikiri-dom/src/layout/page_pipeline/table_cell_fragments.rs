@@ -445,6 +445,64 @@ pub(super) fn row_splits(
         })
 }
 
+/// Whether the break at `page_end` that splits `row`, placed with its top at
+/// `top` in the flow, leaves lines of its cells to go on below a copy of a
+/// repeated header on the next page: every cell either ends its content
+/// before the break or lays it out in lines that move down inside it (see
+/// [`super::cell_flow_inline`]), and some cell has lines past the break.
+/// Those moves carry the copies of the table's repeated groups (see
+/// `HeaderRepeats::place_copies_around_row_break`); a row that breaks
+/// without moving lines still moves whole in such a table.
+pub(super) fn lines_carry_row_break(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    row: usize,
+    top: f32,
+    page_end: f32,
+) -> bool {
+    let cells: Vec<usize> = document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| sibling_renders(document, cell))
+        .collect();
+    let row_top = cells
+        .iter()
+        .map(|&cell| document.pagination_local_y(cell))
+        .fold(f32::INFINITY, f32::min);
+    let spanned = document
+        .ancestors(row)
+        .find(|&id| {
+            matches!(
+                document.nodes[id].display(),
+                DisplayValue::Table | DisplayValue::InlineTable
+            )
+        })
+        .is_some_and(|table| {
+            !crate::layout::table::row_moves::spanning_cells_beside(document, table, row).is_empty()
+        });
+    let mut carried = false;
+    let all_follow = cells.iter().all(|&cell| {
+        let layout = &document.nodes[cell].layout;
+        let padding = document
+            .physical_style(cell)
+            .padding()
+            .resolve_or_zero(Some(layout.size.width));
+        let content_top =
+            top + document.pagination_local_y(cell) - row_top + layout.border.top + padding.top;
+        let Some(bounds) = line_bounds(document, cell) else {
+            return false;
+        };
+        let past = bounds
+            .last()
+            .is_some_and(|&(_, bottom)| content_top + bottom > page_end + 0.001);
+        carried |= past;
+        !past || lines_move_in_cell(document, cascade, cell, body_id)
+    });
+    !spanned && all_follow && carried
+}
+
 /// How far below the top of the row `row` the first break that splits it
 /// can go (see [`row_splits`]): the end of the first content of its cells
 /// that a page can hold apart from the rest of the row, when a break at any
@@ -544,6 +602,58 @@ fn content_ends(
         }
         content_ends(document, child, origin, ends, tops);
     }
+}
+
+/// Whether a cell of the row `row`, placed with its top at `top` in the
+/// flow, starts its content before a break at `page_end` but puts none of it
+/// there, which
+/// Chromium takes as a break before the row: the row then starts the next
+/// page whole, even when it is taller than that page.
+pub(super) fn row_breaks_before_content(
+    document: &super::super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    row: usize,
+    top: f32,
+    (page_end, next_page_step): (f32, f32),
+) -> bool {
+    let cells: Vec<usize> = document.nodes[row]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell| {
+            sibling_renders(document, cell)
+                && document.nodes[cell].display() == DisplayValue::TableCell
+        })
+        .collect();
+    let row_top = cells
+        .iter()
+        .map(|&cell| document.pagination_local_y(cell))
+        .fold(f32::INFINITY, f32::min);
+    !document.context.pagination_on_transposed_axes
+        && cells.iter().any(|&cell| {
+            let layout = &document.nodes[cell].layout;
+            let padding = document
+                .physical_style(cell)
+                .padding()
+                .resolve_or_zero(Some(layout.size.width));
+            let cell_top = top + document.pagination_local_y(cell) - row_top;
+            let shift = layout.padding.top - padding.top;
+            let tops = (cell_top - shift, cell_top + layout.border.top + padding.top);
+            let closing = padding.bottom + layout.border.bottom;
+            // Edges that run past the page end themselves break there. Only
+            // lines laid out in the cell itself are judged here: blocks
+            // inside it move their own content down. A first line that no
+            // page holds stays where it is.
+            !document.nodes[cell].used_writing_mode.is_vertical()
+                && shift.is_finite()
+                && tops.1 < page_end - 0.001
+                && line_bounds(document, cell).is_some_and(|bounds| {
+                    bounds.first().is_some_and(|&(line_top, line_bottom)| {
+                        tops.1 - tops.0 + line_bottom - line_top <= next_page_step + 0.001
+                    })
+                })
+                && !content_fits(document, cascade, cell, tops, closing, page_end)
+        })
 }
 
 /// Whether the cell `cell`, with its border box at `cell_top` in the flow,

@@ -62,3 +62,41 @@ fn bundled_fonts_and_the_system_layer_both_build_paragraphs_in_parallel() {
 mod continuation_tests;
 mod pipeline_tests;
 mod viewport_tests;
+
+#[test]
+fn table_column_measurement_preserves_cancellation_limits_and_invalid_targets() {
+    let resources = RenderResources::new();
+    let doc = crate::parse_html_with_resources(b"<table><tr><td>x</table>".as_slice(), &resources)
+        .unwrap();
+    let table = doc
+        .dom()
+        .preorder(doc.dom().root_index())
+        .find(|&id| doc.dom().get_node(id).unwrap().tag_name() == Some("table"))
+        .unwrap();
+    let measure = |config: &LayoutConfig, id| {
+        measure_table_columns(&doc, Default::default(), config, &resources, &[], id)
+    };
+    let mut config = LayoutConfig::default();
+    assert!(matches!(
+        measure(&config, usize::MAX),
+        Err(RenderError::Layout(
+            raikiri_traits::LayoutError::Internal { .. }
+        ))
+    ));
+    config.limits.max_document_pages = Some(0);
+    assert!(matches!(
+        measure(&config, table),
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 0,
+            actual: 1
+        })
+    ));
+    let controller = raikiri_traits::AbortController::new();
+    config.signal = Some(controller.signal.clone());
+    controller.abort();
+    assert!(matches!(
+        measure(&config, table),
+        Err(RenderError::Layout(raikiri_traits::LayoutError::Aborted))
+    ));
+}

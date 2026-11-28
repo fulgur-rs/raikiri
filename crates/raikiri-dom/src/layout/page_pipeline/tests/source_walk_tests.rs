@@ -163,6 +163,7 @@ fn text_source() -> PageFragmentSource {
         fragment_clip: Some(paint_clip(0.0, 0.0, 5.0, 5.0)),
         overflow_chain: Some(1),
         own_overflow_source: Some(2),
+        painted_shift: 0.0,
     }
 }
 
@@ -299,6 +300,7 @@ fn a_paragraph_is_a_text_root_and_its_text_a_source_with_the_lines_it_is_on() {
             fragmentainer: None,
             fragment_clip: None,
             overflow_chain: None,
+            painted_shift: 0.0,
         }]
     );
     let [source] = sources_of(&walked, text)[..] else {

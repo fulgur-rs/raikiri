@@ -2200,24 +2200,26 @@ fn unsupported_generic_box_content_limits_record_none() {
     let cases: Vec<(&str, &str, String)> = vec![
         // An inline-level box.
         ("display:block", "span", format!("display:inline;{keyword}")),
-        (
-            "display:block",
-            "div",
-            format!("display:grid;{keyword};writing-mode:vertical-rl"),
-        ),
-        (
-            "display:flex",
-            "div",
-            format!("display:grid;{keyword};writing-mode:vertical-rl"),
-        ),
         // A multicol container and a box in its columns.
         ("display:block", "div", format!("{block};column-count:2")),
         ("display:block;column-count:2", "div", block.clone()),
-        // A vertical box writes on physical axes different from its parent.
+        // A vertical box in the flow of a vertical block container, which
+        // lays it out on its own axes.
+        (
+            "display:block;writing-mode:vertical-rl",
+            "div",
+            format!("{block};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:block;writing-mode:vertical-rl",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        // An inline-level vertical flex or grid container.
         (
             "display:block",
             "div",
-            format!("{block};writing-mode:vertical-rl"),
+            format!("display:inline-grid;{keyword};writing-mode:vertical-rl"),
         ),
     ];
     let borrowed: Vec<(&str, &str, &str)> = cases

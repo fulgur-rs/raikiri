@@ -171,16 +171,64 @@ fn push_size_overrides(
     tree.push_overrides(entries.into_iter().map(|entry| (key, entry)).collect());
 }
 
+/// Forget the measures that an override of the boxes `changed`, pushed or
+/// undone outside every layout that resolves keyword sizes, may change.
+///
+/// A measure of a box is a layout of the box and what it holds, so it reads
+/// the styles of the box and of the boxes inside it, and some of the style of
+/// the box it is laid out in. A change of `changed` reaches the measures of
+/// the boxes it is in or is, and of the boxes laid out in it.
+pub(crate) fn forget_measures_around(tree: &mut LayoutSession<'_>, changed: &[usize]) {
+    if tree.context.content_limit_depth != 0
+        || tree.context.content_limit_measures.is_empty()
+        || changed.is_empty()
+    {
+        return;
+    }
+    let mut containing = HashSet::new();
+    for &node in changed {
+        containing.extend(tree.inclusive_ancestors(node));
+        let mut layout_parent = tree.taffy_parent_of(node);
+        while let Some(parent) = layout_parent {
+            containing.insert(parent);
+            layout_parent = tree.taffy_parent_of(parent);
+        }
+    }
+    let changed: HashSet<usize> = changed.iter().copied().collect();
+    let mut measures = std::mem::take(&mut tree.context.content_limit_measures);
+    measures.retain(|key, _| {
+        if containing.contains(&key.node) {
+            return false;
+        }
+        // The box it is laid out in, and any box between the two that lends
+        // it no box of its own (`display: contents`).
+        let parent = tree.taffy_parent_of(key.node);
+        !tree
+            .ancestors(key.node)
+            .take_while(|&ancestor| Some(ancestor) != parent)
+            .chain(parent)
+            .any(|ancestor| changed.contains(&ancestor))
+    });
+    tree.context.content_limit_measures = measures;
+}
+
 /// Run `f`, a layout that resolves keyword sizes, with the measures of the
-/// boxes inside it remembered for as long as the outermost such layout runs.
+/// boxes inside it remembered.
 ///
 /// A box measured for its keyword sizes lays its contents out again for each
 /// measure, and the boxes inside it do the same, so without the memory the
 /// work doubles with every level of boxes that carry keyword sizes.
+///
+/// The measures outlive the layout: every layout of a container with such
+/// items measures them again, and a chain of nested containers would measure
+/// the innermost boxes once for each container above them. A measure stays
+/// for as long as nothing it depends on changes outside these layouts, see
+/// [`forget_measures_around`], and until the root is laid out again. A
+/// measure taken while one of these layouts overrides a style for something
+/// other than a measure, or inside a fragmentainer or a percentage-basis
+/// scope, holds a state the next layout may not set up again, so it lasts
+/// only until the outermost of these layouts ends.
 fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>) -> R) -> R {
-    if tree.context.content_limit_depth == 0 {
-        tree.context.content_limit_measures.clear();
-    }
     tree.context.content_limit_depth += 1;
     let checkpoint = tree.override_checkpoint();
     let probe_depth = tree.context.content_limit_probes.len();
@@ -196,6 +244,11 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.context.content_limit_measures.clear();
     }
     tree.context.content_limit_depth -= 1;
+    if tree.context.content_limit_depth == 0 {
+        for key in std::mem::take(&mut tree.context.content_limit_transient_measures) {
+            tree.context.content_limit_measures.remove(&key);
+        }
+    }
     match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
@@ -220,6 +273,11 @@ pub(super) fn with_content_limits(
     let limits = tree.nodes[idx].content_limits;
     if !applies(tree, idx, &limits) {
         return dispatch(tree, node_id, inputs);
+    }
+    if resolves_on_vertical_axes(tree, idx) {
+        return scoped(tree, |tree| {
+            with_vertical_content_limits(tree, node_id, limits, inputs, dispatch)
+        });
     }
     scoped(tree, |tree| {
         // Resolve height only after the width bounds have been published.
@@ -254,6 +312,230 @@ pub(super) fn with_content_limits(
             })
         })
     })
+}
+
+/// Whether the keyword limits of the box `idx` are resolved on vertical axes:
+/// it is laid out on the axes of a vertical writing mode, flex and grid
+/// containers included.
+fn resolves_on_vertical_axes(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    super::block_right_to_left(tree, idx).is_some()
+}
+
+/// [`with_content_limits`] for a box laid out on vertical axes, whose physical
+/// height is its inline size and whose physical width is its block size (CSS
+/// Writing Modes 4 §6.2). A keyword `min-height` or `max-height` stands for
+/// the min-content or max-content inline size of the box, or the room it is
+/// offered within those for `fit-content`, as a keyword `width` of a
+/// horizontal box does; a keyword `min-width` or `max-width` stands for its
+/// automatic block size at the inline size the height limits leave it (CSS
+/// Sizing 3 §5.1). The inline axis is resolved first.
+fn with_vertical_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: ContentLimits,
+    mut inputs: LayoutInput,
+    dispatch: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let height = vertical_inline_bounds(tree, node_id, &limits, &inputs);
+    let adjustment =
+        box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+    with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
+        if let Some(known) = inputs.known_dimensions.height {
+            let known = height.apply(known);
+            inputs.known_dimensions.height = Some(known);
+            inputs.available_space.height = AvailableSpace::Definite(known);
+        }
+        let width = vertical_block_bounds(tree, node_id, &limits, &inputs);
+        let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+        with_size_overrides(tree, idx, width.overrides(true, adjustment), |tree| {
+            inputs.known_dimensions.width = inputs
+                .known_dimensions
+                .width
+                .map(|known| width.apply(known));
+            dispatch(tree, node_id, inputs)
+        })
+    })
+}
+
+/// The border-box heights the keyword `min-height` and `max-height` of the
+/// vertical box `node_id` stand for: its min-content and max-content inline
+/// sizes, measured without its `height`, `min-height` and `max-height`, and
+/// for `fit-content` the room `inputs` offer it within those.
+fn vertical_inline_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    let measure = |tree: &mut LayoutSession<'_>, space| {
+        let mut along = *inputs;
+        along.run_mode = RunMode::ComputeSize;
+        along.sizing_mode = SizingMode::InherentSize;
+        along.axis = RequestedAxis::Both;
+        along.known_dimensions = Size::NONE;
+        along.known_dimensions_are_definite = Size {
+            width: false,
+            height: false,
+        };
+        along.available_space.height = space;
+        along.vertical_margins_are_collapsible = Line::FALSE;
+        let key = MeasureKey::new(tree, idx, false, &along, Bounds::default(), None);
+        use LengthProperty::*;
+        // A flex or grid container measures its inline size without its
+        // block-axis limits but at its stated block size, which a column
+        // container wraps its lines in: a wrapping column of items is as tall
+        // as its lines side by side are wide at that size.
+        let properties: &[LengthProperty] = if is_flex_grid_container(tree, idx) {
+            &[Height, MinHeight, MaxHeight, MinWidth, MaxWidth]
+        } else {
+            &[Height, MinHeight, MaxHeight]
+        };
+        let mut entries = neutral_size_overrides(properties);
+        // A keyword the box states with a ratio stands for the inline size
+        // the ratio gives its block size, whatever its content holds (CSS
+        // Sizing 4 §5.1), as `automatic_height` finds for a horizontal box.
+        // The automatic minimum of a flex item keeps the size of its content.
+        let own = tree.nodes[idx].content_limits;
+        let authored = |size: Dimension| !size.is_auto() && !is_stretch(size);
+        let style = tree.physical_style(idx);
+        if (authored(own.min.height) || authored(own.max.height))
+            && let Some(ratio) = style.stated_aspect_ratio()
+        {
+            if style.block_aspect_ratio().is_none() {
+                entries.push(OwnedPropertyOverride::aspect_ratio(Some(ratio)));
+            }
+            entries.push(zero_length(MinHeight));
+        }
+        probe(tree, node_id, key, along, entries)
+    };
+    let wrapping_column = tree.nodes[idx].layout_display() == Display::Flex && {
+        let style = tree.physical_style(idx);
+        style.flex_wraps() && !style.flex_direction_is_row()
+    };
+    let mut resolved = [None, None];
+    for (slot, keyword) in resolved
+        .iter_mut()
+        .zip([limits.min.height, limits.max.height])
+    {
+        let expanded = keyword.expand();
+        *slot = match expanded {
+            ExpandedDimension::Stretch => stretch_limit_height(tree, idx, inputs),
+            // A wrapping column container measures as tall at min-content room
+            // as at its stated width, not as its tallest line, so the keywords
+            // that stand for that size are left unresolved.
+            ExpandedDimension::MinContent
+            | ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_)
+                if wrapping_column =>
+            {
+                None
+            }
+            ExpandedDimension::MinContent => Some(measure(tree, AvailableSpace::MinContent)),
+            ExpandedDimension::MaxContent => Some(measure(tree, AvailableSpace::MaxContent)),
+            ExpandedDimension::FitContent
+            | ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_) => {
+                // The limit of `fit-content(<length-percentage>)` stands in
+                // for the room the parent offers, which the margins of the box
+                // take from. A vertical box out of a vertical flow is offered
+                // a definite inline size; one that is not keeps its
+                // max-content size.
+                let margins = stretch_margins(tree, idx, inputs.parent_size.width, false);
+                let offered = (inputs.available_space.height.into_option())
+                    .map_or(f32::INFINITY, |room| room - margins);
+                let room = fit_content_room(tree, idx, expanded, inputs.parent_size.height, false)
+                    .unwrap_or(offered);
+                let max_content = measure(tree, AvailableSpace::MaxContent);
+                Some(
+                    max_content
+                        .min(room)
+                        .max(measure(tree, AvailableSpace::MinContent)),
+                )
+            }
+            _ => None,
+        };
+    }
+    Bounds {
+        min: resolved[0],
+        max: resolved[1],
+    }
+}
+
+/// The border-box widths the keyword `min-width` and `max-width` of the
+/// vertical box `node_id` stand for: along its block axis every intrinsic
+/// keyword is its automatic width at the height `inputs` give it, and
+/// `stretch` is the room it would stretch to.
+fn vertical_block_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    // Browsers measure an intrinsic keyword along the block axis of a grid
+    // container, or of a flex container whose main axis is its inline axis,
+    // at the stated block size, which the tracks or the line stretch to fill:
+    // a grid with `width:300px;max-width:min-content` stays 300px wide. Those
+    // keywords are left unresolved here, so the box keeps its stated size.
+    let fills_stated_block_size = is_flex_grid_container(tree, idx)
+        && (tree.nodes[idx].layout_display() != Display::Flex
+            || tree.physical_style(idx).flex_direction_is_row());
+    let is_measured =
+        |size: Dimension| !size.is_auto() && !is_stretch(size) && !fills_stated_block_size;
+    let measured = (is_measured(limits.min.width) || is_measured(limits.max.width)).then(|| {
+        let mut along = *inputs;
+        along.run_mode = RunMode::ComputeSize;
+        along.axis = RequestedAxis::Both;
+        along.known_dimensions.width = None;
+        along.known_dimensions_are_definite.width = false;
+        along.vertical_margins_are_collapsible = Line::FALSE;
+        let percentage_height_basis = (is_oof_box(tree, idx) || is_flex_grid_item(tree, idx))
+            .then(|| content_percentage_height_basis(tree, idx, inputs))
+            .flatten();
+        let key = MeasureKey::new(
+            tree,
+            idx,
+            true,
+            &along,
+            Bounds::default(),
+            percentage_height_basis,
+        );
+        if let Some(height) = percentage_height_basis {
+            tree.context
+                .content_limit_percentage_height_bases
+                .push((idx, height));
+        }
+        use LengthProperty::*;
+        let width = probe(
+            tree,
+            node_id,
+            key,
+            along,
+            neutral_size_overrides(&[Width, MinWidth, MaxWidth]),
+        );
+        if percentage_height_basis.is_some() {
+            tree.context.content_limit_percentage_height_bases.pop();
+        }
+        width
+    });
+    let bound = |tree: &LayoutSession<'_>, size: Dimension| {
+        if is_stretch(size) {
+            stretch_width(tree, idx, inputs)
+        } else if size.is_auto() {
+            None
+        } else {
+            measured
+        }
+    };
+    Bounds {
+        min: bound(tree, limits.min.width),
+        max: bound(tree, limits.max.width),
+    }
 }
 
 /// Lay out an out-of-flow box whose containing block is an inline element.
@@ -1677,9 +1959,12 @@ fn containing_block_dependence(tree: &LayoutSession<'_>, idx: usize) -> Containi
 /// the content has a say, as it does for an out-of-flow box. An item whose sizes
 /// depend on the grid area keeps its authored sizes: the area is not known until
 /// the tracks are. An item whose only such size is a `height` as a percentage
-/// of the area still gets the minimum width of its content and of its edges,
-/// which do not depend on the height; the height it states is not raised to
-/// the edges here, as the area it is a percentage of is not known.
+/// of the area gets no minimum width here: it measures itself, so its automatic minimum is its min-content contribution,
+/// which the algorithm asks for again once the rows are sized. Chromium makes
+/// `aspect-ratio: 2/1; height: 50%` with 25px borders 137.5px wide in a 75px
+/// row of a 100px grid: the column grows to the 125px the height of that row
+/// gives, where a minimum taken at a zero height would hold it at the 50px of
+/// the borders.
 ///
 /// The overrides are written for a width along the columns, so the caller does
 /// not ask for them for a grid that runs its algorithm on the axes of its own
@@ -1724,7 +2009,7 @@ fn grid_item_ratio_overrides(
     for &item in &items {
         entries.extend(ratio_max_size_overrides(tree, usize::from(item), no_area));
     }
-    entries.extend(ratio_width_floors(tree, &items, no_area));
+    entries.extend(ratio_width_floors(tree, &independent, no_area));
     let overridden = entries.iter().map(|(key, _)| *key).collect::<HashSet<_>>();
     let items = items
         .into_iter()
@@ -2848,6 +3133,25 @@ fn with_item_content_limits_for_parent_sizes(
                         },
                     );
 
+                    // A minimum the ratio of the item carries keeps the
+                    // path below, which caps it at the stated size.
+                    if item.ratio_minimum.is_none() && resolves_on_vertical_axes(tree, idx) {
+                        // The inline axis of a vertical item is its height.
+                        let height = vertical_inline_bounds(tree, child, &limits, &item_inputs);
+                        let adjustment = box_sizing_height_adjustment(
+                            tree,
+                            idx,
+                            parent_size.width.unwrap_or(0.0),
+                        );
+                        push_size_overrides(tree, idx, height.overrides(false, adjustment));
+                        let width = vertical_block_bounds(tree, child, &limits, &item_inputs);
+                        let adjustment =
+                            box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+                        push_size_overrides(tree, idx, width.overrides(true, adjustment));
+                        saved_caches.push((idx, tree.take_layout_cache(idx)));
+                        tree.context.content_limit_probes.push(idx);
+                        continue;
+                    }
                     let ratio_is_redundant = if let Some((width, size)) = item
                         .ratio_minimum
                         .and_then(|minimum| Some((minimum.width, minimum.stretched?)))
@@ -3079,7 +3383,10 @@ impl MeasureKey {
         let style = tree.physical_style(node);
         let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
         let (padding, border) = (style.padding(), style.border());
-        let flex_grid = is_flex_grid_container(tree, node);
+        // A vertical flex or grid container keeps the sizes across its block
+        // size like any vertical box while that size is measured.
+        let flex_grid =
+            is_flex_grid_container(tree, node) && !(width && resolves_on_vertical_axes(tree, node));
         // Key only the cross-axis sizes that the probe deliberately preserves.
         let cross_sizes = if width && flex_grid {
             [None; 3]
@@ -3169,7 +3476,16 @@ fn probe(
         return size;
     }
     let idx = usize::from(node_id);
-    let output = with_size_overrides(tree, idx, neutral, |tree| {
+    #[cfg(test)]
+    {
+        tree.context.content_limit_measure_runs += 1;
+    }
+    let key_of_box = tree.nodes.box_key(idx).expect("live content-limit box");
+    let neutral = neutral
+        .into_iter()
+        .map(|entry| (key_of_box, entry))
+        .collect();
+    let output = tree.with_measure_overrides(neutral, |tree| {
         tree.context.content_limit_probes.push(idx);
         let cache = tree.take_layout_cache(idx);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -3187,6 +3503,14 @@ fn probe(
     } else {
         output.size.height
     };
+    // A measure taken under a style or a fragmentainer that only this layout
+    // sets up is good only until the outermost keyword-size layout ends.
+    if tree.transient_overrides_active()
+        || !tree.context.fragmentation_stack.is_empty()
+        || !tree.context.resolved_edge_bases.is_empty()
+    {
+        tree.context.content_limit_transient_measures.push(key);
+    }
     tree.context.content_limit_measures.insert(key, size);
     size
 }
@@ -3407,7 +3731,33 @@ fn resolved_width_bounds(
     if is_replaced_content(tree, idx) {
         return replaced_keyword_bounds(tree, idx, limits, inputs).0;
     }
+    if resolves_on_vertical_axes(tree, idx) {
+        return vertical_width_bounds(tree, node_id, limits, inputs);
+    }
     width_bounds(tree, node_id, limits, inputs)
+}
+
+/// [`vertical_block_bounds`] at the inline size the keyword height limits of
+/// the vertical box `node_id` leave it, for a parent or a positioning pass
+/// that settles the width of the box before the box lays itself out.
+fn vertical_width_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    let height = vertical_inline_bounds(tree, node_id, limits, inputs);
+    let adjustment =
+        box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+    with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
+        let mut inputs = *inputs;
+        inputs.known_dimensions.height = inputs
+            .known_dimensions
+            .height
+            .map(|known| height.apply(known));
+        vertical_block_bounds(tree, node_id, limits, &inputs)
+    })
 }
 
 fn resolved_height_bounds(
@@ -3421,6 +3771,9 @@ fn resolved_height_bounds(
     if is_replaced_content(tree, idx) {
         return replaced_keyword_bounds(tree, idx, limits, inputs).1;
     }
+    if resolves_on_vertical_axes(tree, idx) {
+        return vertical_inline_bounds(tree, node_id, limits, inputs);
+    }
     height_bounds(tree, node_id, limits, inputs, width)
 }
 
@@ -3432,53 +3785,39 @@ fn width_bounds(
 ) -> Bounds {
     let idx = usize::from(node_id);
     let flex_grid_container = is_flex_grid_container(tree, idx);
-    let mut measures: Option<(f32, f32)> = None;
-    let mut measure_contents = |tree: &mut LayoutSession<'_>| {
-        *measures.get_or_insert_with(|| {
-            let mut measure = |space| {
-                let along = LayoutInput {
-                    run_mode: RunMode::ComputeSize,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Both,
-                    known_dimensions: Size::NONE,
-                    known_dimensions_are_definite: Size {
-                        width: false,
-                        height: false,
-                    },
-                    parent_size: inputs.parent_size,
-                    available_space: Size {
-                        width: space,
-                        height: AvailableSpace::MaxContent,
-                    },
-                    vertical_margins_are_collapsible: Line::FALSE,
-                };
-                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
-                use LengthProperty::*;
-                let vertical_ratio = flex_grid_container
-                    && super::block_right_to_left(tree, idx).is_some()
-                    && tree.physical_style(idx).stated_aspect_ratio().is_some();
-                // The physical height is the inline size of a vertical box.
-                // Keep its effective value while measuring its block size.
-                let properties: &[LengthProperty] = if vertical_ratio {
-                    &[Width, MinWidth, MinHeight, MaxWidth, MaxHeight]
-                } else if flex_grid_container {
-                    &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
-                } else {
-                    &[Width, MinWidth, MaxWidth]
-                };
-                probe(
-                    tree,
-                    node_id,
-                    key,
-                    along,
-                    neutral_size_overrides(properties),
-                )
-            };
-            (
-                measure(AvailableSpace::MinContent),
-                measure(AvailableSpace::MaxContent),
-            )
-        })
+    // Each width is measured only when a keyword asks for it: a `min-content`
+    // limit alone does not lay the box out at its max-content width too.
+    let measure = |tree: &mut LayoutSession<'_>, space| {
+        let along = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            parent_size: inputs.parent_size,
+            available_space: Size {
+                width: space,
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+        use LengthProperty::*;
+        let properties: &[LengthProperty] = if flex_grid_container {
+            &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+        } else {
+            &[Width, MinWidth, MaxWidth]
+        };
+        probe(
+            tree,
+            node_id,
+            key,
+            along,
+            neutral_size_overrides(properties),
+        )
     };
     let mut resolved = [None, None];
     for (slot, keyword) in resolved
@@ -3501,17 +3840,27 @@ fn width_bounds(
         ) {
             continue;
         }
-        let (min_content, max_content) = measure_contents(tree);
+        match expanded {
+            ExpandedDimension::MinContent => {
+                *slot = Some(measure(tree, AvailableSpace::MinContent));
+                continue;
+            }
+            ExpandedDimension::MaxContent => {
+                *slot = Some(measure(tree, AvailableSpace::MaxContent));
+                continue;
+            }
+            _ => {}
+        }
+        let min_content = measure(tree, AvailableSpace::MinContent);
+        let max_content = measure(tree, AvailableSpace::MaxContent);
         let fit = |room: f32| max_content.min(room).max(min_content);
         // The limit of `fit-content(<length-percentage>)` stands in for the
         // room the parent offers; one that cannot resolve leaves the box
         // sized by the room, as `fit-content` is.
         let limit = fit_content_room(tree, idx, expanded, inputs.parent_size.width, true);
-        *slot = Some(match (expanded, limit) {
-            (ExpandedDimension::MinContent, _) => min_content,
-            (ExpandedDimension::MaxContent, _) => max_content,
-            (_, Some(limit)) => fit(limit),
-            (_, None) => match inputs.available_space.width {
+        *slot = Some(match limit {
+            Some(limit) => fit(limit),
+            None => match inputs.available_space.width {
                 AvailableSpace::MinContent => min_content,
                 AvailableSpace::MaxContent => max_content,
                 AvailableSpace::Definite(room) => fit(stretch_fit_width(tree, idx, inputs, room)),
@@ -3593,6 +3942,26 @@ fn automatic_height(
         &[Height, MinHeight, MaxHeight]
     };
     let mut entries = neutral_size_overrides(properties);
+    // The intrinsic heights an authored `min-height` or `max-height` keyword
+    // of a box with a ratio stands for are the height the ratio gives its
+    // width (CSS Sizing 4 §5.1), whatever its content holds, so the
+    // content-based minimum of an `auto` minimum height leaves them alone. A
+    // ratio that a stated height leaves nothing to do still gives them once
+    // that height is set aside. The automatic minimum of a flex item, measured
+    // here too, keeps the height of its content. Replaced content resolves
+    // its keywords with its natural ratio apart from this.
+    let own = tree.nodes[idx].content_limits;
+    let authored = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    let style = tree.physical_style(idx);
+    if (authored(own.min.height) || authored(own.max.height))
+        && !is_replaced_content(tree, idx)
+        && let Some(ratio) = style.stated_aspect_ratio()
+    {
+        if style.block_aspect_ratio().is_none() {
+            entries.push(OwnedPropertyOverride::aspect_ratio(Some(ratio)));
+        }
+        entries.push(zero_length(MinHeight));
+    }
     if flex_grid_container {
         entries.extend(width.overrides(true, width_adjustment));
     }

@@ -1677,8 +1677,6 @@ css/CSS2/pagination/block-page-break-inside-avoid-13-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-4-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-7-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-8-print.html
-css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
-css/CSS2/pagination/float-page-break-inside-avoid-8-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
@@ -1886,8 +1884,6 @@ css/CSS2/pagination/block-page-break-inside-avoid-6-print.html
 css/CSS2/pagination/float-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/float-page-break-inside-avoid-3-print.html
 css/CSS2/pagination/float-page-break-inside-avoid-4-print.html
-css/CSS2/pagination/float-page-break-inside-avoid-5-print.html
-css/CSS2/pagination/float-page-break-inside-avoid-6-print.html
 css/CSS2/pagination/row-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/row-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-1-print.html
@@ -2039,6 +2035,8 @@ css/css-break/grid/grid-item-fragmentation-017.html
 css/css-break/grid/grid-item-fragmentation-018.html
 css/css-break/grid/grid-item-fragmentation-019.html
 css/css-break/grid/grid-item-fragmentation-020.html
+css/css-break/grid/grid-item-fragmentation-028.html
+css/css-break/grid/grid-item-fragmentation-029.html
 css/css-break/grid/grid-item-fragmentation-030.html
 css/css-break/grid/grid-item-fragmentation-031.html
 css/css-break/grid/grid-item-fragmentation-035.html
@@ -2418,13 +2416,10 @@ css/css-flexbox/flexbox-baseline-multi-line-horiz-003.html
 css/css-flexbox/flexbox-baseline-multi-line-horiz-004.html
 css/css-flexbox/flexbox-baseline-single-item-001a.html
 css/css-flexbox/flexbox-basic-img-horiz-001.xhtml
-css/css-flexbox/flexbox-break-request-horiz-001a.html
 css/css-flexbox/flexbox-break-request-horiz-001b.html
 css/css-flexbox/flexbox-break-request-horiz-002a.html
 css/css-flexbox/flexbox-break-request-horiz-002b.html
-css/css-flexbox/flexbox-break-request-vert-001a.html
 css/css-flexbox/flexbox-break-request-vert-001b.html
-css/css-flexbox/flexbox-break-request-vert-002a.html
 css/css-flexbox/flexbox-break-request-vert-002b.html
 css/css-flexbox/flexbox-column-row-gap-001.html
 css/css-flexbox/flexbox-column-row-gap-003.html
@@ -3011,6 +3006,7 @@ css/css-multicol/multicol-basic-001.html
 css/css-multicol/multicol-basic-002.html
 css/css-multicol/multicol-basic-003.html
 css/css-multicol/multicol-basic-004.html
+css/css-multicol/multicol-contained-absolute.html
 css/css-multicol/multicol-dynamic-add-001.html
 css/css-multicol/multicol-dynamic-add-002.html
 css/css-multicol/multicol-dynamic-add-003.html
@@ -5256,6 +5252,7 @@ css/css-break/root-margin-001-print.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-017.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-025.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-026.html
+css/css-sizing/aspect-ratio/grid-aspect-ratio-027.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-028.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-029.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-040.html
@@ -5591,3 +5588,24 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-039.html
 css/css-images/image-set/image-set-resolution-002.html
 css/css-images/image-set/image-set-resolution-003.html
 css/css-sizing/aspect-ratio/replaced-element-012.html
+
+# --- Breaks that flex items avoid in columns, and absolutely positioned children of a multi-column container that holds a flex container (WPT pin 97ea26e2, EXACT, Linux, 2026-11-27) ---
+# A break before or after an item that it avoids moves to the break before the item above, an item that avoids breaks inside it moves to the next column, and a break truncates the row gap and the block-end margin before it. The absolutely positioned children whose containing block is the multi-column container now leave the columns as they do beside blocks, so the flex container is sliced across the columns instead of being laid out in one.
+css/css-break/flexbox/flex-container-fragmentation-005.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-016.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-019.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-021.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-054.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-062.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-015.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-016.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-017.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-018.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-047.html
+css/css-break/flexbox/single-line-column-flex-fragmentation-048.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-014.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-015.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-016.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-035.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-036.html
+css/css-break/flexbox/single-line-row-flex-fragmentation-037.html

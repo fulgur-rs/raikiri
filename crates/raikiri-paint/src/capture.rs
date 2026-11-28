@@ -34,6 +34,11 @@ impl<'a, S> CaptureScene<'a, S> {
         self.captures.pop().unwrap_or_default()
     }
 
+    /// How many captures are open.
+    pub(crate) fn capture_depth(&self) -> usize {
+        self.captures.len()
+    }
+
     pub(crate) fn layer_depth(&self) -> usize {
         self.layers.as_ref().map_or(0, Vec::len)
     }

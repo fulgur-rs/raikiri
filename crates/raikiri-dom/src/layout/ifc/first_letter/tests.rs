@@ -408,7 +408,7 @@ fn generated_before_propagates_the_floating_letter_error_through_projection() {
 fn adjacent_letter_selection_skips_hidden_and_out_of_flow_inline_subtrees() {
     for (tag, css) in [
         ("span", "display:none"),
-        ("script", "display:inline"),
+        ("template", "display:inline"),
         ("span", "display:inline;position:absolute"),
         ("span", "display:inline;float:left"),
     ] {

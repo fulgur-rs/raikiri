@@ -385,6 +385,147 @@ impl RuleTree {
             .any(|rule| rule.selectors.slice().iter().any(is_forward_dependent))
     }
 
+    /// Screen author and user rules for dependencies on sibling rows or
+    /// document-wide page state before laying out separate table windows.
+    pub fn permits_table_window_styles(&self) -> bool {
+        use crate::property::{ContentComponent, PropertyKey, PropertyValue};
+        use selectors::parser::{Combinator, Component};
+
+        fn local_selector(selector: &Selector<RaikiriSelectorImpl>) -> bool {
+            selector
+                .iter_raw_match_order()
+                .all(|component| match component {
+                    Component::Where(list) | Component::Is(list) | Component::Negation(list) => {
+                        list.slice().iter().all(local_selector)
+                    }
+                    Component::LocalName(_)
+                    | Component::ExplicitUniversalType
+                    | Component::Class(_)
+                    | Component::ID(_)
+                    | Component::Root
+                    | Component::AttributeInNoNamespaceExists { .. }
+                    | Component::AttributeInNoNamespace { .. }
+                    | Component::Combinator(Combinator::Child | Combinator::Descendant) => true,
+                    _ => false,
+                })
+        }
+
+        let uniform_pages = self.page_rules.iter().all(|rule| {
+            rule.selector
+                .entries
+                .iter()
+                .all(|entry| entry.ident.is_none() && entry.pseudos.is_empty())
+                && rule.declarations.iter().all(|decl| {
+                    matches!(
+                        decl.key,
+                        PropertyKey::MarginTop
+                            | PropertyKey::MarginRight
+                            | PropertyKey::MarginBottom
+                            | PropertyKey::MarginLeft
+                    )
+                })
+                && rule.margin_box_rules.iter().all(|slot| {
+                    slot.declarations.iter().all(|decl| {
+                        let PropertyValue::Content(content) = decl.value() else {
+                            return false;
+                        };
+                        content.alt().is_none()
+                            && content.iter().all(|part| match part {
+                                ContentComponent::Literal(_) => true,
+                                ContentComponent::Counter { name, .. } => {
+                                    matches!(name.as_str(), "page" | "pages")
+                                }
+                                _ => false,
+                            })
+                    })
+                })
+        });
+        uniform_pages
+            && self
+                .style_rules
+                .iter()
+                .chain(self.media_rules.iter().map(|media| &media.rule))
+                .filter(|rule| rule.origin != Origin::UserAgent)
+                .all(|rule| {
+                    let local_values = rule.declarations.iter().all(|decl| {
+                        // The border shorthand resets border-image as well as the four edges.
+                        if let PropertyValue::BorderImageSource(image) = decl.value() {
+                            return matches!(image, crate::property::BackgroundImage::None);
+                        }
+                        if let PropertyValue::CustomProperty(property) = decl.value() {
+                            return self
+                                .consumer_properties
+                                .iter()
+                                .any(|registration| registration.storage_name() == property.name);
+                        }
+                        matches!(
+                            decl.key,
+                            PropertyKey::Color
+                                | PropertyKey::BackgroundColor
+                                | PropertyKey::FontFamily
+                                | PropertyKey::FontSize
+                                | PropertyKey::FontWeight
+                                | PropertyKey::LineHeight
+                                | PropertyKey::TextAlign
+                                | PropertyKey::Width
+                                | PropertyKey::Height
+                                | PropertyKey::BorderSpacing
+                                | PropertyKey::BorderCollapse
+                                | PropertyKey::BreakInside
+                                | PropertyKey::PaddingTop
+                                | PropertyKey::PaddingRight
+                                | PropertyKey::PaddingBottom
+                                | PropertyKey::PaddingLeft
+                                | PropertyKey::MarginTop
+                                | PropertyKey::MarginRight
+                                | PropertyKey::MarginBottom
+                                | PropertyKey::MarginLeft
+                                | PropertyKey::BorderImageSlice
+                                | PropertyKey::BorderImageWidth
+                                | PropertyKey::BorderImageRepeat
+                                | PropertyKey::BorderImageOutset
+                                | PropertyKey::BorderTopWidth
+                                | PropertyKey::BorderRightWidth
+                                | PropertyKey::BorderBottomWidth
+                                | PropertyKey::BorderLeftWidth
+                                | PropertyKey::BorderTopStyle
+                                | PropertyKey::BorderRightStyle
+                                | PropertyKey::BorderBottomStyle
+                                | PropertyKey::BorderLeftStyle
+                                | PropertyKey::BorderTopColor
+                                | PropertyKey::BorderRightColor
+                                | PropertyKey::BorderBottomColor
+                                | PropertyKey::BorderLeftColor
+                        )
+                    });
+                    local_values && rule.selectors.slice().iter().all(local_selector)
+                })
+    }
+
+    /// Additional restrictions for reusing page geometry across table windows.
+    /// Call after checking [`Self::permits_table_window_styles`].
+    pub fn permits_table_page_templates(&self) -> bool {
+        use crate::property::PropertyKey::*;
+        use selectors::parser::Component;
+        self.page_rules.iter().all(|rule| rule.margin_box_rules.is_empty())
+            && self.style_rules.iter().chain(self.media_rules.iter().map(|media| &media.rule))
+                .filter(|rule| rule.origin != Origin::UserAgent)
+                .all(|rule| rule.declarations.iter().all(|decl| {
+                    let tags: &[&str] = match decl.key {
+                        Height | PaddingTop | PaddingBottom | PaddingLeft | PaddingRight => &["td", "th"],
+                        Width => &["table", "td", "th"],
+                        BreakInside => &["tr"],
+                        MarginTop | MarginLeft | MarginRight | MarginBottom => return false,
+                        _ => return true,
+                    };
+                    rule.selectors.slice().iter().all(|selector| {
+                        let mut components = selector.iter_raw_match_order();
+                        matches!(components.next(), Some(Component::LocalName(name)) if tags.contains(&name.lower_name.0.as_str()))
+                            && components.next().is_none()
+                    })
+                }))
+    }
+
     pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder<'_> {
         self.layers.order(Some(context))
     }

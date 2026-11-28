@@ -292,7 +292,7 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
         if !node.is_in_document() {
             continue; // cov:ignore: detached nodes are excluded before traversal
         }
-        if node.is_non_rendered_html_element() {
+        if node.is_unrendered_html_element() {
             continue;
         }
         if let Some(text) = node.text_content() {
@@ -762,9 +762,59 @@ pub(crate) fn run_pipeline(
     config: &LayoutConfig,
     inputs: PipelineInputs<'_, '_>,
 ) -> Result<PipelineRun, RenderError> {
+    Ok(with_prepared_run(
+        doc,
+        defaults,
+        config,
+        inputs.resources,
+        inputs.consumer_properties,
+        |run| match run.execute(inputs) {
+            Ok(output) => Ok(PipelineRun::Completed(Box::new(output))),
+            Err(stop) => stop.into_run(),
+        },
+    )?
+    .unwrap_or(PipelineRun::Aborted))
+}
+
+pub(crate) fn measure_table_columns(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    config: &LayoutConfig,
+    resources: &RenderResources<'_>,
+    registrations: &[ConsumerPropertyRegistration],
+    table: usize,
+) -> Result<(), RenderError> {
+    with_prepared_run(
+        doc,
+        defaults,
+        config,
+        Some(resources),
+        registrations,
+        |run| {
+            let first = run.first_page(None)?;
+            raikiri_dom::layout::measure_window_columns(
+                first.dom,
+                &first.first_cascade,
+                first.page_box,
+                table,
+            )?;
+            Ok(())
+        },
+    )?
+    .ok_or(RenderError::Layout(raikiri_traits::LayoutError::Aborted))
+}
+
+fn with_prepared_run<T>(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    config: &LayoutConfig,
+    resource_input: Option<&RenderResources<'_>>,
+    registrations: &[ConsumerPropertyRegistration],
+    execute: impl FnOnce(&Run<'_, '_>) -> Result<T, RenderError>,
+) -> Result<Option<T>, RenderError> {
     let media_context = &config.media_context;
     let default_resources;
-    let resources = match inputs.resources {
+    let resources = match resource_input {
         Some(resources) => resources,
         None => {
             default_resources = RenderResources::new();
@@ -804,7 +854,7 @@ pub(crate) fn run_pipeline(
         PageLayoutControl::for_geometry_discovery(config.limits.max_document_pages)
             .with_abort_check(&is_aborted);
     if is_aborted() {
-        return Ok(PipelineRun::Aborted);
+        return Ok(None);
     }
     if config.limits.max_document_pages == Some(0) {
         return Err(RenderError::LimitExceeded {
@@ -819,7 +869,7 @@ pub(crate) fn run_pipeline(
     // consumer registrations, and media context, so the rule tree is built once.
     let tree = build_rule_tree_with_limits(
         &doc.uncascaded,
-        inputs.consumer_properties,
+        registrations,
         &config.limits.rule_tree_limits(),
     )?;
 
@@ -847,10 +897,7 @@ pub(crate) fn run_pipeline(
         page_control: &page_control,
         discovery_control: &discovery_control,
     };
-    match run.execute(inputs) {
-        Ok(output) => Ok(PipelineRun::Completed(Box::new(output))),
-        Err(stop) => stop.into_run(),
-    }
+    execute(&run).map(Some)
 }
 
 impl PipelineOutput {

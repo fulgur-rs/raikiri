@@ -33,6 +33,9 @@ pub struct LayoutStyleView<'a> {
     pub(crate) collapsing_table_width: bool,
     pub(crate) table_item_align_self: Option<values::AlignSelf>,
     pub(crate) table_item_justify_self: Option<values::AlignSelf>,
+    /// Whether the layout library is told of no preferred aspect ratio (see
+    /// [`Self::with_hidden_aspect_ratio`]).
+    pub(crate) hidden_aspect_ratio: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -44,6 +47,24 @@ impl<'a> OverrideLayer<'a> {
         match self {
             Self::Borrowed(values) => values.len(),
             Self::Owned(values) => values.len(),
+        }
+    }
+    fn length(self, property: LengthProperty) -> Option<LengthValue<'a>> {
+        match self {
+            Self::Borrowed(entries) => entries.iter().rev().find_map(|entry| match &entry.0 {
+                OverrideKind::Length(key, value) if *key == property => Some(value.as_borrowed()),
+                _ => None,
+            }),
+            Self::Owned(entries) => {
+                let entry = entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.overrides_length(property))?;
+                match entry.as_borrowed().0 {
+                    OverrideKind::Length(_, value) => Some(value),
+                    _ => unreachable!(), // cov:ignore: overrides_length selected an owned length entry
+                }
+            }
         }
     }
     fn get(self, index: usize) -> PropertyOverride<'a> {
@@ -76,6 +97,7 @@ impl<'a> LayoutStyleView<'a> {
             collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
+            hidden_aspect_ratio: false,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -100,6 +122,7 @@ impl<'a> LayoutStyleView<'a> {
             collapsing_table_width: false,
             table_item_align_self: None,
             table_item_justify_self: None,
+            hidden_aspect_ratio: false,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -144,6 +167,17 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub const fn with_hidden_table_height(mut self) -> Self {
         self.hidden_table_height = true;
+        self
+    }
+
+    /// Tell the layout library of no preferred aspect ratio, while the box's
+    /// own layout, which reads its style apart from this view, still keeps
+    /// it. A grid item that is a scroll container has an automatic minimum
+    /// size of zero, which a ratio read here would replace with the size the
+    /// ratio carries over from its other axis.
+    #[inline]
+    pub const fn with_hidden_aspect_ratio(mut self) -> Self {
+        self.hidden_aspect_ratio = true;
         self
     }
 
@@ -365,12 +399,7 @@ impl<'a> LayoutStyleView<'a> {
     }
 
     pub(crate) fn scoped_length(&self, property: LengthProperty) -> Option<LengthValue<'a>> {
-        (0..self.scoped.len())
-            .rev()
-            .find_map(|index| match self.scoped.get(index).0 {
-                OverrideKind::Length(p, value) if p == property => Some(value),
-                _ => None,
-            })
+        self.scoped.length(property)
     }
     #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {
@@ -383,10 +412,10 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub(crate) fn length(&self, property: LengthProperty) -> LengthValue<'a> {
         if self.has_overrides
-            && let Some(value) = self.overrides().find_map(|entry| match entry {
-                OverrideKind::Length(p, v) if p == property => Some(v),
-                _ => None,
-            })
+            && let Some(value) = self
+                .scoped
+                .length(property)
+                .or_else(|| self.pass.length(property))
         {
             return value;
         }

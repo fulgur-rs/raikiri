@@ -654,7 +654,7 @@ fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
             doc.append_element(
                 Some(body),
                 if prefix == "nonrendered" {
-                    "meta"
+                    "template"
                 } else {
                     "div"
                 },

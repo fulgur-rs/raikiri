@@ -132,7 +132,8 @@ pub(crate) fn places_lines(cascade: &CascadeResult, node: usize, text: &str) -> 
 }
 
 /// The single line of a paragraph that no text node places (see
-/// [`single_unplaced_line`]).
+/// [`single_unplaced_line`]), or the run of such lines that ends it (see
+/// [`unplaced_lines_from`]), from the top of its first line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct UnplacedLine {
     /// The line, in the root's content box.
@@ -167,9 +168,80 @@ pub(crate) fn single_unplaced_line(
         return None;
     }
     let lines = ifc.lines.as_ref()?;
-    let [line] = lines.lines.as_slice() else {
+    if lines.lines.len() != 1 {
         return None;
-    };
+    }
+    unplaced_line_at(doc, cascade, root, lines, 0)
+}
+
+/// The number of lines of the paragraph rooted at `root` when it has more
+/// lines than one and each of them is a glyphless line that no text node
+/// places (see [`single_unplaced_line`]), such as a paragraph of `br` line
+/// breaks alone. No text candidate places these lines either, so pagination
+/// breaks between them by the paragraph's own `orphans` and `widows`, as
+/// Chromium breaks between the lines of text.
+pub(crate) fn unplaced_blank_line_count(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Option<usize> {
+    let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.multicol_fragments.is_some() {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    let count = lines.lines.len();
+    (count > 1
+        && lines.block_line_starts.is_empty()
+        && (0..count).all(|index| {
+            glyph_owners(&lines.lines[index]).is_empty()
+                && unplaced_line_at(doc, cascade, root, lines, index)
+                    .is_some_and(|line| !line.atomic)
+        }))
+    .then_some(count)
+}
+
+/// The lines of the paragraph rooted at `root` from its line `first` to its
+/// last, taken together, when no text node places any of them (see
+/// [`single_unplaced_line`]) and the last holds generated text, whatever
+/// lines come before them: the lines before them are placed by their own
+/// text, or lie above a block of the paragraph. A run of more lines than one
+/// is not atomic: a page break may still fall between its lines.
+pub(crate) fn unplaced_lines_from(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    first: usize,
+) -> Option<UnplacedLine> {
+    let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
+    if ifc.multicol_fragments.is_some() {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    let last = lines.lines.len().checked_sub(1)?;
+    let mut run = unplaced_line_at(doc, cascade, root, lines, first)?;
+    for index in first + 1..=last {
+        let line = unplaced_line_at(doc, cascade, root, lines, index)?;
+        run.line.bottom = line.line.bottom;
+        run.atomic = false;
+    }
+    // The ids of generated text name no node of the document.
+    glyph_owners(&lines.lines[last])
+        .iter()
+        .any(|&owner| doc.nodes.get(owner).is_none())
+        .then_some(run)
+}
+
+/// The line `index` of the paragraph rooted at `root`, when no text node
+/// places it.
+fn unplaced_line_at(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    lines: &super::root::IfcLines,
+    index: usize,
+) -> Option<UnplacedLine> {
+    let line = &lines.lines[index];
     if line_owners_counted::<false>(line)
         .iter()
         .any(|&owner| is_placing_text_owner(doc, cascade, owner))
@@ -191,10 +263,10 @@ pub(crate) fn single_unplaced_line(
     {
         return None;
     }
-    let top = lines.line_top(0) - super::outside_marker::fit_leading(doc, root, 0);
+    let top = lines.line_top(index) - super::outside_marker::fit_leading(doc, root, index);
     Some(UnplacedLine {
         line: IfcTextLine {
-            line: 0,
+            line: index,
             top,
             bottom: top + block_size,
         },

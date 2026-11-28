@@ -72,6 +72,7 @@ fn marker_projection_propagates_a_cached_counter_snapshot_budget_error() {
         fragmentainer: None,
         fragment_clip: None,
         overflow_chain: None,
+        painted_shift: 0.0,
     }];
     let error = prepare_markers(&document, &cascade, &roots, &[]).unwrap_err();
     let raikiri_traits::LayoutError::CounterSnapshotLimitExceeded { limit, actual } = error else {
@@ -1234,4 +1235,41 @@ fn a_marker_keeps_the_first_page_without_a_line_or_a_flow_down_the_page() {
     assert_eq!(marker_page(Some(500.0), Some(&flow), first), first);
     // An item with no page at all.
     assert_eq!(marker_page(Some(150.0), Some(&flow), None), None);
+}
+
+#[test]
+fn cell_runs_preserve_text_and_decline_vertical_lines_without_appending() {
+    let mut document = Document::new();
+    document.set_font_collection(
+        crate::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/text-autospace"
+        )))
+        .unwrap(),
+    );
+    let shape = |writing_mode| {
+        document
+            .shape_standalone_text(
+                "cell",
+                &crate::StandaloneStyle {
+                    writing_mode,
+                    ..Default::default()
+                },
+                None,
+                crate::StandaloneAlign::Start,
+            )
+            .unwrap()
+    };
+    let horizontal = shape(shodo::geometry::WritingMode::HorizontalTb);
+    let vertical = shape(shodo::geometry::WritingMode::VerticalRl);
+    let cell = NodeId::new(1);
+    let text = NodeId::new(2);
+    let mut runs = Vec::new();
+    assert!(horizontal.append_cell_runs((2.0, 3.0), CssColor::BLACK, cell, text, &mut runs));
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "cell");
+    assert_eq!(runs[0].source, RunSource::Text(text));
+    assert_eq!(runs[0].line.root, cell);
+    assert!(!vertical.append_cell_runs((2.0, 3.0), CssColor::BLACK, cell, text, &mut runs));
+    assert_eq!(runs.len(), 1);
 }

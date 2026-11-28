@@ -1613,10 +1613,10 @@ fn paint_single_page_skips_noscript_subtree_content() {
 #[test]
 fn paint_single_page_skips_datalist_subtree_content() {
     // <body>before<datalist>hidden</datalist>after</body>
-    // §15.3.1 hides <datalist> with `display: none`. Prevent author CSS
-    // overrides from leaking its content into painted glyphs.
+    // §15.3.1 hides <datalist> with a user agent `display: none`, which the
+    // fixture writes inline as this cascade has no UA sheet.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<datalist>hidden</datalist>after</body></html>",
+        b"<html><head></head><body>before<datalist style=\"display:none\">hidden</datalist>after</body></html>",
         "datalist",
     );
 }
@@ -1635,9 +1635,11 @@ fn paint_single_page_skips_noembed_subtree_content() {
 #[test]
 fn paint_single_page_skips_noframes_subtree_content() {
     // <body>before<noframes>hidden</noframes>after</body>
-    // <noframes> also uses RAWTEXT parsing (§13.2.6.4.7) and §15.3.1 hiding.
+    // <noframes> also uses RAWTEXT parsing (§13.2.6.4.7) and §15.3.1 hiding,
+    // a user agent `display: none` written inline as this cascade has no UA
+    // sheet.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<noframes>hidden</noframes>after</body></html>",
+        b"<html><head></head><body>before<noframes style=\"display:none\">hidden</noframes>after</body></html>",
         "noframes",
     );
 }
@@ -1648,11 +1650,11 @@ fn paint_single_page_skips_rp_subtree_content() {
     // <rp> is fallback parentheses for ruby. "In body" inserts it normally
     // even outside `<ruby>` (§13.2.6.4.7: a current node other than ruby / rtc
     // marks a parse error but preserves the structure).
-    // §15.3.1 hides it via `display: none`; §15.3.4 only styles ruby / rt
-    // and does not make rp visible. This defense-in-depth gate prevents
-    // content leaks even without ruby support.
+    // §15.3.1 hides it via a user agent `display: none`, written inline as
+    // this cascade has no UA sheet; §15.3.4 only styles ruby / rt and does
+    // not make rp visible.
     assert_inert_html_content_not_painted(
-        b"<html><head></head><body>before<rp>hidden</rp>after</body></html>",
+        b"<html><head></head><body>before<rp style=\"display:none\">hidden</rp>after</body></html>",
         "rp",
     );
 }
@@ -1660,7 +1662,7 @@ fn paint_single_page_skips_rp_subtree_content() {
 #[test]
 fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
     // <template> is already skipped by the is_in_document() gate. Also pin
-    // that is_non_rendered_html_element() independently skips it.
+    // that is_unrendered_html_element() independently skips it.
     // "before<template>...</template>after" yields two GlyphRuns.
     assert_inert_html_content_not_painted(
         b"<html><head></head><body>before<template><p>secret</p></template>after</body></html>",
@@ -2334,7 +2336,9 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
 fn trace_records_box_clip_opacity_and_text_in_walk_order() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    // The user agent `display: none` of `head`, as this cascade has no UA
+    // sheet.
+    let _head = doc.append_element(Some(html), "head", Some("display:none"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
     let o = doc.append_element(
         Some(body),
@@ -3806,6 +3810,80 @@ fn a_grid_cut_off_by_the_columns_loses_its_bottom_outline() {
     let (top, bottom) = (fills[0], fills[3]);
     assert_eq!(top.0, top.1, "{fills:?}");
     assert!(bottom.0.height() == 0.0, "{fills:?}");
+}
+
+/// A grid that layout breaks into column pieces is drawn in each of them,
+/// not cut off at the bottom of the first column.
+#[test]
+fn a_grid_broken_into_column_pieces_is_drawn_in_each_column() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px}</style></head><body><article><div style="display:grid;height:200px;background:#00f"></div></article></body></html>"#,
+    );
+    let mut fills = visible_fill_bounds(&scene, (0, 0, 255));
+    fills.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+    assert_eq!(fills.len(), 2, "{fills:?}");
+    for (fill, x) in fills.iter().zip([0.0, 50.0]) {
+        assert_eq!(
+            (fill.0.x0, fill.0.y0, fill.0.width(), fill.0.height()),
+            (x, 0.0, 50.0, 100.0),
+            "{fills:?}"
+        );
+    }
+}
+
+/// A table whose cells hold no lines, which layout breaks into column
+/// pieces, is drawn in each of them, caption, rows and all, not cut off at
+/// the bottom of the first column.
+#[test]
+fn a_table_broken_into_column_pieces_is_drawn_in_each_column() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px} table{border-spacing:0;width:100%}</style></head><body><article><table><caption style="height:30px;background:#0f0"></caption><tr style="height:170px"><td style="background:#00f"></td></tr></table></article></body></html>"#,
+    );
+    let caption = visible_fill_bounds(&scene, (0, 255, 0));
+    assert_eq!(caption.len(), 1, "{caption:?}");
+    assert_eq!(
+        (
+            caption[0].0.x0,
+            caption[0].0.y0,
+            caption[0].0.width(),
+            caption[0].0.height()
+        ),
+        (0.0, 0.0, 50.0, 30.0),
+        "{caption:?}"
+    );
+    let mut rows = visible_fill_bounds(&scene, (0, 0, 255));
+    rows.sort_by(|a, b| a.0.x0.total_cmp(&b.0.x0));
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    for (row, (x, y, height)) in rows.iter().zip([(0.0, 30.0, 70.0), (50.0, 0.0, 100.0)]) {
+        assert_eq!(
+            (row.0.x0, row.0.y0, row.0.width(), row.0.height()),
+            (x, y, 50.0, height),
+            "{rows:?}"
+        );
+    }
+}
+
+/// A caption below the rows of a table broken into column pieces continues
+/// where the rows end, in the column the break puts it in.
+#[test]
+fn a_caption_below_a_table_broken_into_column_pieces_follows_its_rows() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{columns:2;column-gap:0;width:100px;height:100px} table{border-spacing:0;width:100%}</style></head><body><article><table><caption style="caption-side:bottom;height:40px;background:#0f0"></caption><tr style="height:90px"><td style="background:#00f"></td></tr></table></article></body></html>"#,
+    );
+    let shown = |rgb| {
+        let mut fills: Vec<_> = visible_fill_bounds(&scene, rgb)
+            .into_iter()
+            .filter(|fill| fill.0.height() > 0.0)
+            .map(|fill| (fill.0.x0, fill.0.y0, fill.0.width(), fill.0.height()))
+            .collect();
+        fills.sort_by(|a, b| a.0.total_cmp(&b.0));
+        fills
+    };
+    assert_eq!(shown((0, 255, 0)), [(50.0, 25.0, 50.0, 40.0)]);
+    assert_eq!(
+        shown((0, 0, 255)),
+        [(0.0, 0.0, 50.0, 65.0), (50.0, 0.0, 50.0, 25.0)]
+    );
 }
 
 /// What overflows a grid or a table in columns shows beside it and above it

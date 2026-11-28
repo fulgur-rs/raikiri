@@ -78,6 +78,43 @@ pub(crate) fn columns_follow_their_items(style: &LayoutStyleView<'_>) -> bool {
 pub(crate) struct RowSizing(Vec<TrackSizingFunction>);
 
 impl RowSizing {
+    /// Whether the rows of the grid laid out with `style` repeat to fill its
+    /// height (`repeat(auto-fill, ...)` or `repeat(auto-fit, ...)`): how many
+    /// there are depends on whether that height is known.
+    pub(crate) fn repeat_to_fill(style: &LayoutStyleView<'_>) -> bool {
+        let style = TaffyStyle::new(*style);
+        style.grid_template_rows().is_some_and(|mut components| {
+            components.any(|component| {
+                matches!(
+                    component,
+                    GenericGridTemplateComponent::Repeat(repeat)
+                        if matches!(repeat.count(), RepetitionCount::AutoFill | RepetitionCount::AutoFit)
+                )
+            })
+        })
+    }
+
+    /// Whether a row of the grid laid out with `style` is at least a positive
+    /// length tall whatever its items hold: an explicit row, or with `items`
+    /// an implicit one, whose minimum track size is such a length.
+    /// Percentages are left out, as the grid's own block size is what they
+    /// would resolve against.
+    pub(crate) fn have_a_length(style: &LayoutStyleView<'_>, items: bool) -> bool {
+        let style = TaffyStyle::new(*style);
+        let length = |track: TrackSizingFunction| {
+            track
+                .min
+                .definite_value(None, |_, _| 0.0)
+                .is_some_and(|px| px > 0.0)
+        };
+        style.grid_template_rows().is_some_and(|mut components| {
+            components.any(|component| match component {
+                GenericGridTemplateComponent::Single(track) => length(track),
+                GenericGridTemplateComponent::Repeat(repetition) => repetition.tracks().any(length),
+            })
+        }) || items && style.grid_auto_rows().any(length)
+    }
+
     /// The sizing function of every row of the grid laid out with `style`, as
     /// the grid algorithm expands them for the row counts `rows` (CSS Grid 1
     /// §7.2 explicit tracks, §7.6 implicit tracks).

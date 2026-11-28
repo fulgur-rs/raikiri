@@ -218,6 +218,16 @@ pub(crate) fn line_space(
         }
         slot = next;
     }
+    // A float that the page walk grew past a page edge narrows the lines
+    // below its end laid out unbroken, down to where it ends on the page
+    // after.
+    let [left, right] = ctx.line_extension_edges(y, height);
+    if let Some(edge) = left {
+        start = start.max(edge - content_inline_start);
+    }
+    if let Some(edge) = right {
+        end = end.min(edge - content_inline_start);
+    }
     LineSpace {
         inline_start: start,
         inline_size: (end - start).max(0.0),
@@ -458,6 +468,7 @@ pub(crate) fn place_lines(
         object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),
         beside_floats: false,
+        below_floats: false,
         external_float_gap: 0.0,
         discarded_float_gap: 0.0,
         escaping_margin: CollapsibleMarginSet::ZERO,
@@ -624,9 +635,7 @@ pub(crate) fn rebreak_roots(
             .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb);
         let alignment = doc
             .finished_style(cascade, id)
-            .filter(|_| {
-                horizontal && !crate::layout::dispatch::is_table_box(doc.nodes[id].display())
-            })
+            .filter(|_| !crate::layout::dispatch::is_table_box(doc.nodes[id].display()))
             .map_or(
                 raikiri_layout_style::values::AlignContent::NORMAL,
                 |style| style.view().align_content(),
@@ -636,12 +645,22 @@ pub(crate) fn rebreak_roots(
             .as_mut()
             .and_then(|root| root.lines.as_mut())
         {
-            let content = layout.size.height
-                - layout.padding.top
-                - layout.padding.bottom
-                - layout.border.top
-                - layout.border.bottom
-                - layout.scrollbar_size.height;
+            // A vertical paragraph aligns its lines along the width.
+            let content = if horizontal {
+                layout.size.height
+                    - layout.padding.top
+                    - layout.padding.bottom
+                    - layout.border.top
+                    - layout.border.bottom
+                    - layout.scrollbar_size.height
+            } else {
+                layout.size.width
+                    - layout.padding.left
+                    - layout.padding.right
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.scrollbar_size.width
+            };
             let offset = crate::layout::dispatch::block_flow::content_alignment_offset(
                 alignment,
                 content - lines.height,

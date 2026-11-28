@@ -22,7 +22,7 @@ pub(crate) fn supports(tree: &LayoutSession<'_>, idx: usize, root: &IfcRoot) -> 
     tree.context.fragmentation_stack.is_empty()
         && tree.nodes[idx]
             .multicol
-            .is_some_and(|style| style.horizontal && !style.height_definite)
+            .is_some_and(|style| style.horizontal)
         && root.generated_blocks.is_empty()
         && root.boxes.iter().any(|box_| box_.kind == IfcBoxKind::Block)
         && root.boxes.iter().all(|box_| match box_.kind {
@@ -105,28 +105,38 @@ pub(crate) fn arrange(
             y = ((y + pending.resolve()) * 64.0).round() / 64.0;
             pending = CollapsibleMarginSet::ZERO;
             // A group above a spanner is balanced even under `column-fill:
-            // auto`, which fills the columns of the last one.
+            // auto`, which fills the columns of the last one. In a container
+            // whose height is bounded, each group has what the groups and
+            // spanners above it leave of that height (CSS Multi-column 1,
+            // 7.1 and 8.1), and at least a pixel, as in Chromium: each of
+            // its columns then holds a line.
             let group = FragmentationContext {
                 column_fill: if spanner.is_some() {
                     ColumnFillValue::Balance
                 } else {
                     context.column_fill
                 },
-                available_height: None,
+                available_height: context.available_height.map(|height| (height - y).max(1.0)),
                 ..context
             };
             let (mut columns, height) = group_column_fragments(lines, start..stop, group, y);
             if perform {
                 tree.nodes[owner].multicol_groups.push(MulticolGroup {
+                    // Balanced columns are as tall as the group; those that
+                    // fill in turn reach the height the group has.
                     context: FragmentationContext {
                         origin_x: geometry.edges.0,
                         origin_y: geometry.top_edge + y,
+                        available_height: group
+                            .available_height
+                            .filter(|_| group.column_fill == ColumnFillValue::Auto),
                         ..group
                     },
                     height,
                     occupied: columns.iter().map(|column| column.fragmentainer).collect(),
                     slice: None,
                     run_start: None,
+                    min_height: 0.0,
                 });
             }
             first_baseline = first_baseline.or_else(|| line_baseline(lines, &columns, start));

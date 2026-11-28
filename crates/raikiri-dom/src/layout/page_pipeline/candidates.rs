@@ -24,7 +24,7 @@ use super::{
     push_in_flow_boxes_rev, run_paragraph, selected_page_name, unplaced_line,
     unplaced_line_after_block,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How much of the content of an absolutely positioned box that starts past
 /// the edge of the clip that contains it is kept, in px: the box is hidden
@@ -282,6 +282,10 @@ pub(super) struct ElementContext {
     /// has a break to take of its own, and the box stays; one that does not
     /// moves along with the box (see [`super::closing_edges_move`]).
     pub(super) closing_edges_float_reach: f32,
+    /// For a block that holds one box: the room at its end that its set size
+    /// leaves below its content, which is part of `closing_edges_inside` but
+    /// does not follow the box (see [`super::closing_edges_move`]).
+    pub(super) closing_edges_gap: f32,
     /// The block that the box ends, and the bottom padding and border that
     /// close it, when the block's `min-height` leaves room below the box: the
     /// edges follow the box only once pagination moved content in the block
@@ -293,6 +297,10 @@ pub(super) struct ElementContext {
     /// follow the box only while it ends inside the block (see
     /// [`super::capped_edges_follow`]).
     pub(super) capped_edges_block: Option<usize>,
+    /// For the first atomic inline of a line in a paragraph that no text
+    /// places: the box takes the page break before that line (see
+    /// [`super::leading_inline::assign`]).
+    pub(super) textless_line: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -384,8 +392,8 @@ impl BoxContext {
             .is_some_and(|attributes| attributes.is_grid_item)
     }
 
-    /// The single unplaced line that keeps the box whole (see
-    /// [`super::unplaced_line`]).
+    /// The unplaced line, or the first lines of a paragraph of blank lines,
+    /// that keep the box whole (see [`super::unplaced_line`]).
     pub(super) fn unplaced_line(self) -> Option<UnplacedBlockLine> {
         self.element_attributes()
             .and_then(|attributes| attributes.unplaced_line)
@@ -451,6 +459,11 @@ impl BoxContext {
             .and_then(|attributes| attributes.leading_piece_end)
     }
 
+    pub(super) fn textless_line(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.textless_line)
+    }
+
     pub(super) fn leading_block_piece_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.leading_block_piece_end)
@@ -479,6 +492,11 @@ impl BoxContext {
     pub(super) fn closing_edges_float_reach(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_float_reach)
+    }
+
+    pub(super) fn closing_edges_gap(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges_gap)
     }
 
     pub(super) fn capped_edges_block(self) -> Option<usize> {
@@ -546,7 +564,7 @@ fn can_descend_for_named_page(
 ) -> bool {
     document.get_node(node_id).is_some_and(|node| {
         node.is_in_document()
-            && !node.is_non_rendered_html_element()
+            && !node.is_unrendered_html_element()
             && document.nodes[node_id].display() != DisplayValue::None
             && !matches!(
                 document.nodes[node_id].position(),
@@ -1049,6 +1067,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     enclosing_line_clips: HashMap<usize, Option<usize>>,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    /// For each paragraph looked at, the first atomic inline of each of its
+    /// lines when no text places them (see
+    /// [`super::leading_inline::textless_first_atoms`]).
+    textless_first_atoms: HashMap<usize, HashSet<usize>>,
     /// Whether each flex container looked at holds a sole table that
     /// fragments as block flow does, so that its items are not scanned again
     /// for each of them.
@@ -1083,6 +1105,28 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
 pub(super) type PrecedingBottoms = HashMap<usize, (usize, f32)>;
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
+    /// Whether `node` is an atomic inline, or an inline replaced box, that
+    /// comes first on a line of a paragraph that no text places.
+    fn first_on_textless_line(&mut self, node: usize) -> bool {
+        let document = self.document;
+        let display = document.nodes[node].display();
+        if !(display.is_atomic_inline_level()
+            || display.is_inline_level()
+                && crate::layout::is_replaced_for_pagination(document, node))
+        {
+            return false;
+        }
+        document
+            .layout_ancestors(node)
+            .find(|&parent| document.nodes[parent].is_ifc_root())
+            .is_some_and(|root| {
+                self.textless_first_atoms
+                    .entry(root)
+                    .or_insert_with(|| super::leading_inline::textless_first_atoms(document, root))
+                    .contains(&node)
+            })
+    }
+
     pub(super) fn new(
         document: &'a LayoutSession<'doc>,
         cascade: &'a CascadeResult,
@@ -1104,6 +1148,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             enclosing_line_clips: HashMap::new(),
             control,
             named_page_subtree_cache: HashMap::new(),
+            textless_first_atoms: HashMap::new(),
             sole_table_holders: HashMap::new(),
             inner_tail_paths: HashMap::new(),
             run_breaks: HashMap::new(),
@@ -1229,7 +1274,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         let Some(node) = document.get_node(node_id) else {
             return Ok(()); // cov:ignore: traversal IDs come from this document's valid child graph.
         };
-        if !node.is_in_document() || node.is_non_rendered_html_element() {
+        if !node.is_in_document() || node.is_unrendered_html_element() {
             return Ok(());
         }
         match node.kind() {
@@ -1398,10 +1443,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 };
                 let computed = &cascade.computed[node_id];
                 // A floated box does not establish a page transition merely
-                // because it carries an inherited/explicit `page` value.  In
-                // particular, CSS Page 3 keeps a float in the preceding
-                // fragmentainer in the page-name-float cases.
+                // because it carries an inherited/explicit `page` value: a
+                // float's `page` value opens no page and is not the start
+                // value of anything (Chromium).
                 let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+                // A left or right float, as against a footnote body.
+                let side_float = is_float && super::is_side_float(document, cascade, node_id);
                 let float_subtree = inside_float || is_float;
                 let out_of_flow_subtree = inside_out_of_flow
                     || matches!(
@@ -1468,6 +1515,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
+                // The items of a column flex container in columns are placed
+                // by the columns, which their positions in the flex container
+                // do not say: the page breaks between the columns, not
+                // between the items.
+                let paged_column_flex = column_flex && !in_columns(document, cascade, node_id);
                 // An inline-level flex container takes the page of its
                 // containing block, and one inside an item of a row flex
                 // container sits on the page that row's line is printed on,
@@ -1510,7 +1562,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 } else {
                     propagated_page_name
                 };
-                let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
+                // A float is no part of the page flow: neither its own page
+                // value nor those of the boxes in it name the pages it
+                // reaches, which take the type of the flow around it.
+                let page_name = if side_float {
+                    frame.inherited_page_name
+                } else if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
                     own_page_name.or(frame.inherited_page_name)
@@ -1598,7 +1655,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !node.children.iter().any(|&child| {
                         let child_node = &document.nodes[child];
                         if child_node.is_display_none()
-                            || child_node.is_non_rendered_html_element()
+                            || child_node.is_unrendered_html_element()
                             || matches!(
                                 document.nodes[child].position(),
                                 PositionValue::Absolute | PositionValue::Fixed
@@ -1641,8 +1698,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         .flatten();
                 // A line after a block child keeps nothing whole: the page
                 // breaks between the block and the line, inside a flex or
-                // grid item too, as between the lines of text there.
-                let line_after_block = unplaced_base
+                // grid item, a float or a table cell too, as between the
+                // lines of text there.
+                let line_after_block = (!inside_out_of_flow
+                    && !is_rendered_leaf
+                    && !document.context.pagination_on_transposed_axes)
                     .then(|| unplaced_line_after_block(document, cascade, node_id))
                     .flatten();
                 let unbreakable_box = box_is_unbreakable(
@@ -1726,8 +1786,27 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // has one (see `lays_out_children_in_block_flow`). Chromium
                 // takes the break there whatever holds that box: a flex item,
                 // a grid item or a table cell, anonymous or not.
+                // The same holds in the flow inside an absolutely positioned
+                // box, which takes the breaks forced inside it, though not
+                // inside a fixed box.
+                let in_static_positioned_flow = out_of_flow_subtree
+                    && !inside_float
+                    && !inline_level
+                    && !is_float
+                    && !super::is_out_of_flow_positioned(document, node_id)
+                    && super::splits_at_forced_breaks(document, node_id);
+                // The same holds in the block flow inside a float.
+                let in_float_flow = inside_float
+                    && !inline_level
+                    && !is_float
+                    && super::in_float_block_flow(
+                        document,
+                        cascade,
+                        node_id,
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let after_forced_break = self.forces_break_after
-                    && in_any_flow
+                    && (in_any_flow || in_static_positioned_flow || in_float_flow)
                     && is_plain_block_box(document, node_id)
                     && !direct_body_child
                     && frame
@@ -1829,7 +1908,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 })
                 .flatten()
                 .filter(|lone| {
-                    lone.tail + frame.closing_edges > 0.001
+                    let edges = if lone.cut { 0.0 } else { frame.closing_edges };
+                    lone.tail + edges - lone.gap.min(0.0) > 0.001
                         && candidate_raw_y + node.layout.size.height <= frame.clip_end
                         && (tie_offset.is_some() || break_before_available())
                         && !page_edge_constraint(document, cascade, node_id, true).0
@@ -2075,7 +2155,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // A flex container nested in block flow moves whole when what
                 // follows its items runs past the page end (see
                 // `flex_margins_move`), so it needs a place of its own.
-                let flex_margins_base = nested_candidate_base
+                // Inside the item of a flex row, it moves the row it begins
+                // with it (see `starts_single_row`); the walk over its
+                // ancestors drops it where some other one lays boxes beside it.
+                let flex_margins_base = (nested_candidate_base
+                    || (inside_flex
+                        && participates_in_flow
+                        && !direct_body_child
+                        && !out_of_flow_subtree
+                        && !inside_table))
                     && !inline_level
                     && super::has_flex_trailing_space(document, node_id);
                 let run_break_base = self.finds_nested_runs
@@ -2107,10 +2195,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // a clip box around it holds the break depends on where
                 // pagination puts that box, so it is judged there (see
                 // `clip_holds_breaks`).
-                let sets_page_flow = deferred_named_break_after
-                    || own_page_name.is_some()
-                    || forces_page_break(document, cascade, node_id, true)
+                let forces_break_here = forces_page_break(document, cascade, node_id, true)
                     || forces_page_break(document, cascade, node_id, false);
+                let sets_page_flow =
+                    deferred_named_break_after || own_page_name.is_some() || forces_break_here;
+                // A box in the block flow of a float is a candidate only for
+                // a break forced before, after or inside it, which splits the
+                // float; page names inside a float name no page.
+                let float_flow_break = in_float_flow
+                    && (after_forced_break
+                        || super::takes_forced_break(document, cascade, body_id, node_id, true)
+                        || super::takes_forced_break(document, cascade, body_id, node_id, false));
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         // A replaced box that no break goes through and that
@@ -2119,7 +2214,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         // with a height of its own does not keep it from
                         // moving. The conditions are those under which
                         // `open_page_for_box` moves the holder.
-                        let holder = (unbreakable_box
+                        let holder = ((unbreakable_box || flex_margins_base || avoids_by_property)
                             && !sets_page_flow
                             && !after_forced_break
                             && !inside_float
@@ -2128,7 +2223,34 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             && !flex_item_candidate
                             && !grid_item_candidate)
                             .then(|| leading_holder(document, cascade, body_id, node_id, true).0)
-                            .filter(|&holder| holder != node_id);
+                            .filter(|&holder| holder != node_id)
+                            // A box that avoids a break inside it goes only as
+                            // far up as `avoided_box_holder` takes it, also
+                            // when it moves for the margins of its items: not
+                            // past padding or border above it, and not out of
+                            // columns, where it splits instead. Nor does it
+                            // take a box it runs out of, such as a clip of a
+                            // smaller height, which holds it where it is.
+                            .filter(|&holder| {
+                                let bottom = super::current_abs_y(document, node_id)
+                                    + node.layout.size.height;
+                                unbreakable_box
+                                    || (flex_margins_base && !avoids_by_property)
+                                    || document
+                                        .ancestors(node_id)
+                                        .take_while(|&id| id != holder)
+                                        .chain(std::iter::once(holder))
+                                        .all(|id| {
+                                            let ancestor = &document.nodes[id];
+                                            !ancestor.is_multicol_container()
+                                                && ancestor.layout.border.top == 0.0
+                                                && ancestor.layout.padding.top == 0.0
+                                                && bottom
+                                                    <= super::current_abs_y(document, id)
+                                                        + ancestor.layout.size.height
+                                                        + 0.01
+                                        })
+                            });
                         candidate_ancestor_constraints(document, cascade, node_id, body_id, holder)
                     } else {
                         (false, false)
@@ -2162,17 +2284,34 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     leading_block_piece.filter(|_| direct_body_child || can_move_nested);
                 let column_replaced_piece =
                     column_replaced_piece.filter(|_| direct_body_child || can_move_nested);
+                // The first atomic inline of a line in a paragraph that no
+                // text places takes the page break before that line, as the
+                // text of a line does (see `leading_inline::assign`).
+                let textless_line_candidate = participates_in_flow
+                    && !inside_float
+                    && !out_of_flow_subtree
+                    && !inside_table
+                    && !inside_flex
+                    && (direct_body_child || can_move_nested)
+                    && !document.context.pagination_on_transposed_axes
+                    && self.first_on_textless_line(node_id);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
-                    .map(|lone| lone.tail.max(0.0));
+                    .map(|lone| lone.inside());
+                // A block whose first box moves with the edges that close it
+                // breaks away from the edges after the block, and from the
+                // blocks of set size around it (see `LoneBox::cut`).
+                let lone_cut = lone_tail
+                    .filter(|_| can_move_nested)
+                    .is_some_and(|lone| lone.cut);
                 // How far the floats beside the box of such a block, and those
                 // of the blocks it ends, reach below the box. Both ends are
                 // measured at their normal-flow positions, as the page fit is.
                 let closing_edges_float_reach =
                     if let Some(lone) = lone_tail.filter(|_| can_move_nested) {
                         let box_end = candidate_raw_y + node.layout.size.height
-                            - lone.tail.max(0.0)
+                            - lone.inside()
                             - accumulated_relative_offset_y(document, cascade, body_id, node_id);
                         lone.float_reach
                             .max((frame.float_bottom - box_end).max(0.0))
@@ -2233,13 +2372,23 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && break_before_available()
                         && breaks_only_around(document, cascade, node_id, self.has_named_pages)
                 });
-                let is_break_candidate = !is_body
+                // The body is no box to break before, but the line after a
+                // block child of its own takes a break as in any paragraph.
+                let is_break_candidate = (!is_body
+                    || (node_id == body_id && line_after_block.is_some()))
                     && document.nodes[node_id].display() != DisplayValue::Contents
-                    && !inside_float
+                    // Inside a float, only the boxes of its block flow that
+                    // take a break, or whose line follows a block, are
+                    // candidates.
+                    && (!inside_float
+                        || float_flow_break
+                        || (in_float_flow && line_after_block.is_some()))
                     && (margin_candidate
                         || (participates_in_flow
                             && direct_body_child
-                            && (explicit_page_name.is_none() || inline_level))
+                            // A float's own page value is no part of the
+                            // page flow (see `own_page_name`).
+                            && (explicit_page_name.is_none() || inline_level || side_float))
                         || nested_avoid_candidate
                         || nested_float_candidate
                         || closing_edges_candidate
@@ -2249,6 +2398,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || run_tail_candidate
                         || run_break_candidate
                         || line_after_block_candidate
+                        || textless_line_candidate
                         || avoided_unit.is_some()
                         || leading_piece.is_some()
                         || leading_block_piece.is_some()
@@ -2330,15 +2480,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 unbreakable: unbreakable_box,
                                 unbreakable_room,
                                 avoided_break_before: avoided_break_passed_on,
-                                closing_edges: if closing_edges_candidate
-                                    || lone_box_candidate.is_some()
-                                {
+                                closing_edges: if lone_cut {
+                                    0.0
+                                } else if closing_edges_candidate || lone_box_candidate.is_some() {
                                     frame.closing_edges
                                 } else {
                                     0.0
                                 },
                                 capped_edges_block: frame.capped_edges_block.filter(|_| {
-                                    closing_edges_candidate || lone_box_candidate.is_some()
+                                    !lone_cut
+                                        && (closing_edges_candidate || lone_box_candidate.is_some())
                                 }),
                                 closing_edges_inside: lone_box_candidate.unwrap_or(0.0),
                                 closing_edges_span: match frame.tie {
@@ -2358,6 +2509,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 first_grid_row,
                                 leading_block_piece_end: leading_block_piece,
                                 leading_column_replaced_piece_end: column_replaced_piece,
+                                textless_line: textless_line_candidate,
                                 run_tail_edges: if run_tail_candidate {
                                     frame.closing_edges
                                 } else {
@@ -2377,6 +2529,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 lone_run_head_offset: tie_offset
                                     .filter(|_| !break_before_available()),
                                 closing_edges_float_reach,
+                                closing_edges_gap: lone_tail
+                                    .filter(|_| can_move_nested)
+                                    .map_or(0.0, |lone| lone.gap),
                                 min_height_edges: min_height_edges_candidate,
                             },
                         ),
@@ -2868,7 +3023,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                         | DisplayValue::TableFooterGroup
                                         | DisplayValue::TableRow
                                 ),
-                            flex_column_parent: column_flex
+                            flex_column_parent: paged_column_flex
                                 || (document.nodes[node_id].display() == DisplayValue::Contents
                                     && flex_column_parent),
                             grid_single_column_parent: document.nodes[node_id].formatting_context
@@ -2880,7 +3035,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     && !(document.nodes[child_id].display()
                                         == DisplayValue::Table
                                         && stacks_tables)),
-                            named_flex_context: if column_flex {
+                            named_flex_context: if paged_column_flex {
                                 Some(node_id)
                             } else if is_flex {
                                 None
@@ -3046,25 +3201,29 @@ fn unbreakable_room(
     let overflows = |bottom: f32| bottom - top < height + node.layout.margin.bottom.min(0.0) - 0.01;
     let mut room = f32::INFINITY;
     let mut child = node_id;
+    let mut box_child = node_id;
     for ancestor in document
         .layout_ancestors(node_id)
         .take_while(|&id| id != body_id)
     {
-        if renders_in_flow_before(document, ancestor, child) {
+        let starts_row = super::starts_single_row(document, cascade, ancestor, box_child);
+        if renders_in_flow_before(document, ancestor, child) && !starts_row {
             break;
         }
         child = ancestor;
         if document.nodes[ancestor].display() == DisplayValue::Contents {
             continue;
         }
+        box_child = ancestor;
         // Positions inside an inline formatting context or out of the flow
         // are not those of the flow: the walk stops below such a box.
         if super::has_unusual_coordinates(document, ancestor) {
             break;
         }
         room = room.min(flow_y(ancestor) + document.nodes[ancestor].layout.size.height - top);
-        if !is_plain_block_box(document, ancestor)
-            || document.nodes[ancestor].is_multicol_container()
+        if !(is_plain_block_box(document, ancestor) || starts_row)
+            || (document.nodes[ancestor].is_multicol_container()
+                && !super::is_single_column(document, ancestor))
             || is_floating_box_for_pagination(document, cascade, ancestor)
         {
             break;
@@ -3115,4 +3274,19 @@ fn lays_out_children_in_block_flow(document: &Document, parent: usize) -> bool {
             | DisplayValue::Table
             | DisplayValue::TableRow
     ) && node.multicol.is_none()
+}
+
+/// Whether `node_id` sits in the columns of a multicol container, other than
+/// one that `column-count: 1` keeps to one column: not in a spanner, which
+/// lies in the flow of the pages around the columns.
+fn in_columns(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    for id in std::iter::once(node_id).chain(document.ancestors(node_id)) {
+        if crate::layout::multicol::spanning::is_spanner_in(document, cascade, id) {
+            return false;
+        }
+        if id != node_id && document.nodes[id].is_multicol_container() {
+            return !super::is_single_column(document, id);
+        }
+    }
+    false
 }
